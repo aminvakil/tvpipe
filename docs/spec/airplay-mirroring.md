@@ -1052,8 +1052,9 @@ Keep the last 512 sent PT 96 packets, indexed by sequence number (for RFC
 
 For each sequence `first … first+count−1` (at most 513 lookups), answer to
 the request's source address from the control socket: if stored, `0x80
-0xd6 <request id u16be> ‖ <stored packet bytes>`; if not stored, send the 8-byte **expired reply** `0x80 0xd6 <request id
-u16be> <that sequence u16be> 0x00 0x00` and stop processing the request. Vector: `audio.txt`
+0xd6 <request id u16be> ‖ <stored packet bytes>`; if not stored, send the
+8-byte **expired reply** `0x80 0xd6 <request id u16be> <that sequence
+u16be> 0x00 0x00` and stop processing the request. Vector: `audio.txt`
 "retransmit request".
 
 ### 8.7 ALAC frame layout (verbatim / uncompressed)
