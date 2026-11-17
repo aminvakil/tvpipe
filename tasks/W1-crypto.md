@@ -1,6 +1,6 @@
 # W1 Crypto
 
-Status: in progress. Owns `src/crypto/**`, `tests/vectors/crypto/**`.
+Status: done (pending merge). Owns `src/crypto/**`, `tests/vectors/crypto/**`.
 
 - [x] `aes.rs`: AES-128/256 block encrypt (+ decrypt for CBC), table-based
       (T-tables), key expansion. FIPS-197 Appendix C KATs.
@@ -14,7 +14,7 @@ Status: in progress. Owns `src/crypto/**`, `tests/vectors/crypto/**`.
 - [x] `bigint.rs`: fixed-width unsigned big integers sized for 3072-bit
       (and 4096-bit headroom): from/to big-endian bytes, add, sub, mul, mod,
       modpow (Montgomery or plain). Vectors generated with Python `pow()`.
-- [ ] `srp.rs`: SRP-6a client, SHA-512, RFC 5054 3072-bit group, HAP
+- [x] `srp.rs`: SRP-6a client, SHA-512, RFC 5054 3072-bit group, HAP
       conventions (username `Pair-Setup`, k = H(N | pad(g)), u = H(pad(A) |
       pad(B)), x = H(s | H(I ":" P)), K = H(S), M1 = H(H(N) xor H(g) | H(I) |
       s | A | B | K), M2 = H(A | M1 | K)). Test with a transcript you
@@ -34,3 +34,19 @@ Done when: all KATs pass; clippy clean; AES-CTR ≥200 MB/s in release.
 Sources allowed: FIPS-197, SP 800-38A, RFC 5054, RFC 8439, RFC 5869,
 HAP spec (public), pyatv (MIT). Never doubletake/UxPlay/playfair/airfry/
 RottingApple.
+
+## Notes (W1)
+
+- `SrpClient::new(user, pin, salt, B)` draws `a` after seeing `B` and
+  re-draws until neither `A` nor `S` has a leading zero byte, so minimal
+  vs. padded encodings cannot disagree for them. Only the receiver's `B`
+  (1 in 256) could still be hashed differently than the receiver expects
+  in `M1`; we follow srptools (pyatv): minimal `B` in `M1`, padded in `u`.
+- `SrpServer` exists for local test receivers / W5 unit tests.
+- Transcripts: `scripts/vectors/srp.py`, independent Python, cross-checked
+  against srptools 1.0.1 (pyatv's pin) and 2.0.0 via
+  `uv run --no-project --with srptools==1.0.1 python3 scripts/vectors/srp.py`.
+- Benchmarks (M5 Max, release): AES-128-CTR 741 MB/s; 3072-bit modpow with
+  a 3072-bit exponent ~11 ms (`cargo test --release -- --ignored --nocapture`).
+- X25519 has no KAT: ring exposes only ephemeral keys, so the test checks
+  agreement between two generated keys.
