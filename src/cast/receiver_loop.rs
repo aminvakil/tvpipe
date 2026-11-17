@@ -7,11 +7,16 @@
 //!     cargo test cast::receiver_loop -- --ignored --nocapture
 //! ```
 //!
+//! `STREAMLIB_CAST_LOSS=0.02` puts a relay in the media path that drops
+//! 2% of the packets in each direction; `STREAMLIB_CAST_AUDIO=0` sends
+//! video only.
+//!
 //! The ffmpeg output is parsed here only because the W4 demuxer is not
 //! merged yet: Annex B H.264 with access unit delimiters, and Ogg Opus.
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -187,6 +192,61 @@ fn parses_generated_streams() {
     assert!((49..=52).contains(&packets.len()), "{}", packets.len());
 }
 
+/// A UDP relay that drops `loss` of the packets in each direction.
+/// Returns its address for the sender and a stop flag.
+fn lossy_relay(receiver: SocketAddr, loss: f64) -> (SocketAddr, Arc<AtomicBool>) {
+    let front = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let back = UdpSocket::bind("127.0.0.1:0").unwrap();
+    back.connect(receiver).unwrap();
+    let addr = front.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let sender: Arc<std::sync::Mutex<Option<SocketAddr>>> = Default::default();
+    let pump = |from: UdpSocket, to: UdpSocket, forward: bool, seed: u32| {
+        let stop = stop.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            from.set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let mut buf = vec![0u8; 2048];
+            let mut x = seed;
+            let (mut passed, mut dropped) = (0u64, 0u64);
+            while !stop.load(Ordering::Acquire) {
+                let Ok((n, src)) = from.recv_from(&mut buf) else {
+                    continue;
+                };
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                if (x as f64 / u32::MAX as f64) < loss {
+                    dropped += 1;
+                    continue;
+                }
+                passed += 1;
+                if forward {
+                    *sender.lock().unwrap() = Some(src);
+                    let _ = to.send(&buf[..n]);
+                } else if let Some(s) = *sender.lock().unwrap() {
+                    let _ = to.send_to(&buf[..n], s);
+                }
+            }
+            let dir = if forward {
+                "sender->receiver"
+            } else {
+                "receiver->sender"
+            };
+            eprintln!("relay {dir}: passed {passed}, dropped {dropped}");
+        });
+    };
+    pump(
+        front.try_clone().unwrap(),
+        back.try_clone().unwrap(),
+        true,
+        0x1234_5678,
+    );
+    pump(back, front, false, 0x8765_4321);
+    (addr, stop)
+}
+
 #[test]
 #[ignore = "needs a Cast receiver (scripts/receivers/cast-receiver.sh)"]
 fn openscreen_receiver_loop() {
@@ -199,6 +259,10 @@ fn openscreen_receiver_loop() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
     let audio = std::env::var("STREAMLIB_CAST_AUDIO").map_or(true, |v| v != "0");
+    let loss: f64 = std::env::var("STREAMLIB_CAST_LOSS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0);
     crate::log::set_level(crate::log::Level::Debug);
     let (v, a) = generate(secs, "1280x720");
     let (avcc, vframes) = h264_frames(&v);
@@ -213,6 +277,19 @@ fn openscreen_receiver_loop() {
         audio,
         ..CastOptions::default()
     };
+    let mut relay_stop = None;
+    let mut opts = opts;
+    if loss > 0.0 {
+        // The ANSWER's port is only known after connect, so the relay
+        // targets the receiver's default Cast Streaming port.
+        let port = std::env::var("STREAMLIB_CAST_UDP_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2344);
+        let (relay, stop) = lossy_relay(SocketAddr::new(addr.ip(), port), loss);
+        opts.media_relay = Some(relay);
+        relay_stop = Some(stop);
+    }
     let mut sink = connect(addr, "cast-receiver", &opts).expect("connect");
     eprintln!("capabilities: {:?}", sink.capabilities());
     sink.start(
@@ -268,4 +345,8 @@ fn openscreen_receiver_loop() {
     std::thread::sleep(Duration::from_millis(500));
     eprintln!("stats: {:?}, dropped video {dropped}", sink.stats());
     sink.stop().unwrap();
+    if let Some(stop) = relay_stop {
+        stop.store(true, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }

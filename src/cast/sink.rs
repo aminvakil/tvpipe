@@ -76,6 +76,9 @@ pub struct CastOptions {
     /// Pacing rate; default `max(24 Mibit/s, 3 × video bitrate)`.
     pub burst_bitrate: Option<u32>,
     pub connect_timeout: Duration,
+    /// Send media to this address instead of the receiver's ANSWERed
+    /// port (a relay, e.g. the lossy one in the receiver loop test).
+    pub media_relay: Option<SocketAddr>,
 }
 
 impl Default for CastOptions {
@@ -90,6 +93,7 @@ impl Default for CastOptions {
             android_rtp_hack: false,
             burst_bitrate: None,
             connect_timeout: Duration::from_secs(5),
+            media_relay: None,
         }
     }
 }
@@ -362,6 +366,7 @@ pub struct StreamingSink {
     caps: Capabilities,
     negotiated: Negotiated,
     burst_bitrate: u32,
+    media_relay: Option<SocketAddr>,
     control_tx: ChannelSender,
     control: Option<Control>,
     control_thread: Option<JoinHandle<()>>,
@@ -402,6 +407,7 @@ impl StreamingSink {
             burst_bitrate: opts
                 .burst_bitrate
                 .unwrap_or_else(|| DEFAULT_BURST_BITRATE.max(video_bps.saturating_mul(3))),
+            media_relay: opts.media_relay,
             control_tx,
             control: Some(control),
             control_thread: Some(thread),
@@ -500,7 +506,9 @@ impl Sink for StreamingSink {
             }
             (None, _) => None,
         };
-        let peer = SocketAddr::new(self.receiver_ip, self.negotiated.udp_port);
+        let peer = self
+            .media_relay
+            .unwrap_or(SocketAddr::new(self.receiver_ip, self.negotiated.udp_port));
         let bind = if peer.is_ipv4() {
             SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))
         } else {
