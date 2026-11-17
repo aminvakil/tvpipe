@@ -5,4 +5,7 @@
 
 pub mod credentials;
 pub mod discovery;
+pub mod info;
+pub mod pair;
+pub mod pairing;
 pub mod secure;

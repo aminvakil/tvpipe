@@ -200,7 +200,7 @@ impl Store {
                     identity: Identity::generate()?,
                     receivers: Vec::new(),
                 };
-                info!("created controller identity {}", store.identity.id);
+                debug!("created controller identity {}", store.identity.id);
                 store.save()?;
                 Ok(store)
             }
