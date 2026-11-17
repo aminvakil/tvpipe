@@ -1,0 +1,628 @@
+//! Fanout: one encode to many sinks (PLAN §3 "fanout").
+//!
+//! Each sink gets a bounded queue and its own thread, so a slow receiver
+//! never stalls the demuxer or the other receivers. Policy per sink:
+//!
+//! - Audio of another [`AudioFamily`] is not queued.
+//! - A sink starts in "waiting for keyframe" state; video is dropped until
+//!   the next keyframe.
+//! - When the queue is full, the new frame is dropped; if it was video, the
+//!   sink waits for the next keyframe again (later frames would reference
+//!   the dropped one).
+//! - When the sink reports [`Sink::wants_keyframe`] (PLI, loss), queued and
+//!   new non-key video is dropped until the next keyframe.
+//! - [`SinkStatus::Finished`] or an error removes the sink; the others go on.
+//!
+//! Sources: PLAN §3, §5.1 (no keyframes on demand: skip to the next IDR).
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+
+use crate::error::{Error, Result};
+use crate::media::source::StreamInfo;
+use crate::types::{AudioFamily, EncodedFrame, Sink, SinkStatus, TrackKind};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FanoutConfig {
+    /// Frames queued per sink (video and audio together).
+    pub max_frames: usize,
+    /// Bytes queued per sink.
+    pub max_bytes: usize,
+}
+
+impl Default for FanoutConfig {
+    fn default() -> FanoutConfig {
+        // About half a second of 60 fps video plus 10 ms audio.
+        FanoutConfig {
+            max_frames: 96,
+            max_bytes: 16 << 20,
+        }
+    }
+}
+
+/// Per-sink counters.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SinkStats {
+    /// Frames handed to `Sink::push`.
+    pub pushed: u64,
+    /// `push` returned `Dropped`.
+    pub sink_dropped: u64,
+    /// Dropped because the queue was full.
+    pub dropped_full: u64,
+    /// Video dropped while waiting for a keyframe.
+    pub dropped_waiting: u64,
+}
+
+/// How a sink ended.
+#[derive(Debug)]
+pub enum SinkEnd {
+    /// Ran until the fanout closed and `stop()` succeeded.
+    Stopped,
+    /// The receiver ended the session.
+    Finished,
+    /// `start`, `push` or `stop` failed.
+    Failed(Error),
+}
+
+struct State {
+    queue: VecDeque<EncodedFrame>,
+    bytes: usize,
+    /// Drop non-key video until a keyframe is queued.
+    waiting_for_key: bool,
+    /// No more frames will come.
+    closed: bool,
+    /// Discard the queue instead of draining it on close.
+    abort: bool,
+    /// The sink thread is gone; drop everything.
+    dead: bool,
+    stats: SinkStats,
+}
+
+struct Shared {
+    state: Mutex<State>,
+    cond: Condvar,
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+struct Handle {
+    name: String,
+    family: AudioFamily,
+    shared: Arc<Shared>,
+    thread: Option<JoinHandle<SinkEnd>>,
+}
+
+pub struct Fanout {
+    sinks: Vec<Handle>,
+    config: FanoutConfig,
+}
+
+impl Fanout {
+    /// Starts one thread per sink; each calls `start()` with the video
+    /// info and the audio track of its family, then pushes frames.
+    pub fn new(
+        sinks: Vec<Box<dyn Sink>>,
+        info: &StreamInfo,
+        config: FanoutConfig,
+    ) -> Result<Fanout> {
+        let mut handles = Vec::with_capacity(sinks.len());
+        for sink in sinks {
+            let name = sink.name().to_owned();
+            let family = sink.capabilities().audio_family;
+            let shared = Arc::new(Shared {
+                state: Mutex::new(State {
+                    queue: VecDeque::new(),
+                    bytes: 0,
+                    waiting_for_key: true,
+                    closed: false,
+                    abort: false,
+                    dead: false,
+                    stats: SinkStats::default(),
+                }),
+                cond: Condvar::new(),
+            });
+            let video = info.video.clone();
+            let audio = info.audio_for(family).cloned();
+            let thread_shared = shared.clone();
+            let thread = std::thread::Builder::new()
+                .name(format!("sink-{name}"))
+                .spawn(move || {
+                    let end = run_sink(sink, &video, audio.as_ref(), &thread_shared);
+                    let mut st = thread_shared.lock();
+                    st.dead = true;
+                    st.queue.clear();
+                    st.bytes = 0;
+                    end
+                })
+                .map_err(|e| Error::io("spawn sink thread", e))?;
+            handles.push(Handle {
+                name,
+                family,
+                shared,
+                thread: Some(thread),
+            });
+        }
+        Ok(Fanout {
+            sinks: handles,
+            config,
+        })
+    }
+
+    /// Queues a frame for every sink that takes it. Never blocks on sinks.
+    pub fn push(&self, frame: &EncodedFrame) {
+        for h in &self.sinks {
+            if let TrackKind::Audio(f) = frame.track {
+                if f != h.family {
+                    continue;
+                }
+            }
+            let mut st = h.shared.lock();
+            if st.dead || st.closed {
+                continue;
+            }
+            let video = frame.track == TrackKind::Video;
+            if video && st.waiting_for_key {
+                if !frame.keyframe {
+                    st.stats.dropped_waiting += 1;
+                    continue;
+                }
+                st.waiting_for_key = false;
+            }
+            let full = st.queue.len() >= self.config.max_frames
+                || st.bytes + frame.data.len() > self.config.max_bytes;
+            if full {
+                st.stats.dropped_full += 1;
+                if video {
+                    if !st.waiting_for_key {
+                        debug!("{}: queue full, skipping to the next keyframe", h.name);
+                    }
+                    st.waiting_for_key = true;
+                }
+                continue;
+            }
+            st.bytes += frame.data.len();
+            st.queue.push_back(frame.clone());
+            drop(st);
+            h.shared.cond.notify_one();
+        }
+    }
+
+    /// Sinks still running.
+    pub fn active(&self) -> usize {
+        self.sinks.iter().filter(|h| !h.shared.lock().dead).count()
+    }
+
+    /// Frames currently queued per sink.
+    pub fn queued(&self) -> Vec<(String, usize)> {
+        self.sinks
+            .iter()
+            .map(|h| (h.name.clone(), h.shared.lock().queue.len()))
+            .collect()
+    }
+
+    pub fn stats(&self) -> Vec<(String, SinkStats)> {
+        self.sinks
+            .iter()
+            .map(|h| (h.name.clone(), h.shared.lock().stats.clone()))
+            .collect()
+    }
+
+    /// Ends the stream: with `drain`, sinks get their queued frames first;
+    /// otherwise queues are discarded (Ctrl-C). Then every sink's `stop()`
+    /// runs and the threads are joined.
+    pub fn close(mut self, drain: bool) -> Vec<(String, SinkEnd)> {
+        for h in &self.sinks {
+            let mut st = h.shared.lock();
+            st.closed = true;
+            st.abort = !drain;
+            drop(st);
+            h.shared.cond.notify_all();
+        }
+        let mut out = Vec::new();
+        for h in &mut self.sinks {
+            let end = match h.thread.take().map(JoinHandle::join) {
+                Some(Ok(end)) => end,
+                Some(Err(_)) => {
+                    SinkEnd::Failed(Error::process(format!("{}: sink thread panicked", h.name)))
+                }
+                None => SinkEnd::Stopped,
+            };
+            out.push((h.name.clone(), end));
+        }
+        out
+    }
+}
+
+impl Drop for Fanout {
+    fn drop(&mut self) {
+        // Not closed explicitly: abort and stop the sinks anyway.
+        for h in &self.sinks {
+            let mut st = h.shared.lock();
+            st.closed = true;
+            st.abort = true;
+            drop(st);
+            h.shared.cond.notify_all();
+        }
+        for h in &mut self.sinks {
+            if let Some(t) = h.thread.take() {
+                let _ = t.join();
+            }
+        }
+    }
+}
+
+fn run_sink(
+    mut sink: Box<dyn Sink>,
+    video: &crate::types::VideoInfo,
+    audio: Option<&crate::types::AudioInfo>,
+    shared: &Shared,
+) -> SinkEnd {
+    let name = sink.name().to_owned();
+    if let Err(e) = sink.start(video, audio) {
+        error!("{name}: start failed: {e}");
+        let _ = sink.stop();
+        return SinkEnd::Failed(e);
+    }
+    let mut end = SinkEnd::Stopped;
+    loop {
+        let frame = {
+            let mut st = shared.lock();
+            loop {
+                if st.closed && (st.abort || st.queue.is_empty()) {
+                    break None;
+                }
+                if let Some(f) = st.queue.pop_front() {
+                    st.bytes -= f.data.len();
+                    break Some(f);
+                }
+                st = shared.cond.wait(st).unwrap_or_else(|e| e.into_inner());
+            }
+        };
+        let Some(frame) = frame else { break };
+        if frame.track == TrackKind::Video && sink.wants_keyframe() {
+            let mut st = shared.lock();
+            if !frame.keyframe {
+                // Skip this and everything queued up to the next keyframe.
+                if !st.waiting_for_key {
+                    debug!("{name}: receiver wants a keyframe; skipping to the next one");
+                }
+                st.stats.dropped_waiting += 1;
+                let before = st.queue.len();
+                let mut removed = 0usize;
+                let mut seen_key = false;
+                st.queue.retain(|f| {
+                    seen_key |= f.track == TrackKind::Video && f.keyframe;
+                    let drop = !seen_key && f.track == TrackKind::Video;
+                    if drop {
+                        removed += f.data.len();
+                    }
+                    !drop
+                });
+                st.bytes -= removed;
+                let dropped = (before - st.queue.len()) as u64;
+                st.stats.dropped_waiting += dropped;
+                if !seen_key {
+                    st.waiting_for_key = true;
+                }
+                continue;
+            }
+        }
+        match sink.push(&frame) {
+            Ok(SinkStatus::Accepted) => shared.lock().stats.pushed += 1,
+            Ok(SinkStatus::Dropped) => {
+                let mut st = shared.lock();
+                st.stats.pushed += 1;
+                st.stats.sink_dropped += 1;
+            }
+            Ok(SinkStatus::Finished) => {
+                info!("{name}: receiver ended the session");
+                end = SinkEnd::Finished;
+                break;
+            }
+            Err(e) => {
+                error!("{name}: {e}");
+                end = SinkEnd::Failed(e);
+                break;
+            }
+        }
+    }
+    if let Err(e) = sink.stop() {
+        warn!("{name}: stop failed: {e}");
+        if matches!(end, SinkEnd::Stopped) {
+            end = SinkEnd::Failed(e);
+        }
+    }
+    end
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{AudioCodec, AudioInfo, Capabilities, VideoCodec, VideoInfo};
+    use crate::util::ratio::Ratio;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+
+    #[derive(Default)]
+    struct Log {
+        frames: Mutex<Vec<(TrackKind, u64, bool)>>,
+        started_audio: Mutex<Option<AudioCodec>>,
+        stopped: AtomicBool,
+    }
+
+    struct MockSink {
+        name: String,
+        caps: Capabilities,
+        log: Arc<Log>,
+        /// Each push waits for a token (to simulate a stalled receiver).
+        gate: Option<mpsc::Receiver<()>>,
+        wants_key: Arc<AtomicBool>,
+        finish_after: Option<usize>,
+    }
+
+    impl Sink for MockSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.caps
+        }
+        fn start(&mut self, _v: &VideoInfo, a: Option<&AudioInfo>) -> Result<()> {
+            *self.log.started_audio.lock().unwrap() = a.map(|a| a.codec);
+            Ok(())
+        }
+        fn push(&mut self, f: &EncodedFrame) -> Result<SinkStatus> {
+            if let Some(g) = &self.gate {
+                let _ = g.recv();
+            }
+            let mut frames = self.log.frames.lock().unwrap();
+            frames.push((f.track, f.pts, f.keyframe));
+            if f.keyframe && f.track == TrackKind::Video {
+                self.wants_key.store(false, Ordering::SeqCst);
+            }
+            if self.finish_after.is_some_and(|n| frames.len() >= n) {
+                return Ok(SinkStatus::Finished);
+            }
+            Ok(SinkStatus::Accepted)
+        }
+        fn wants_keyframe(&self) -> bool {
+            self.wants_key.load(Ordering::SeqCst)
+        }
+        fn stop(&mut self) -> Result<()> {
+            self.log.stopped.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn caps(family: AudioFamily) -> Capabilities {
+        Capabilities {
+            max_width: 1920,
+            max_height: 1080,
+            max_fps: Ratio::integer(60),
+            video_codecs: vec![VideoCodec::H264],
+            audio_formats: vec![],
+            audio_family: family,
+            max_bitrate_kbps: None,
+            min_latency_ms: None,
+            preferred_latency_ms: None,
+        }
+    }
+
+    fn mock(name: &str, family: AudioFamily) -> (MockSink, Arc<Log>, Arc<AtomicBool>) {
+        let log = Arc::new(Log::default());
+        let wants = Arc::new(AtomicBool::new(false));
+        (
+            MockSink {
+                name: name.into(),
+                caps: caps(family),
+                log: log.clone(),
+                gate: None,
+                wants_key: wants.clone(),
+                finish_after: None,
+            },
+            log,
+            wants,
+        )
+    }
+
+    fn info() -> StreamInfo {
+        let audio = |codec| AudioInfo {
+            codec,
+            sample_rate: 48_000,
+            channels: 2,
+            frame_samples: 480,
+            config: vec![],
+        };
+        StreamInfo {
+            video: VideoInfo {
+                codec: VideoCodec::H264,
+                width: 1280,
+                height: 720,
+                fps: Ratio::integer(30),
+                avcc: vec![1],
+            },
+            audio: vec![
+                (AudioFamily::AirPlay, audio(AudioCodec::PcmS16le)),
+                (AudioFamily::Cast, audio(AudioCodec::Opus)),
+            ],
+        }
+    }
+
+    fn video(pts: u64, key: bool) -> EncodedFrame {
+        EncodedFrame {
+            track: TrackKind::Video,
+            pts,
+            keyframe: key,
+            data: Arc::from(vec![0u8; 100]),
+        }
+    }
+
+    fn audio(family: AudioFamily, pts: u64) -> EncodedFrame {
+        EncodedFrame {
+            track: TrackKind::Audio(family),
+            pts,
+            keyframe: true,
+            data: Arc::from(vec![0u8; 10]),
+        }
+    }
+
+    fn videos(log: &Log) -> Vec<u64> {
+        log.frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| f.0 == TrackKind::Video)
+            .map(|f| f.1)
+            .collect()
+    }
+
+    #[test]
+    fn routes_audio_and_waits_for_first_keyframe() {
+        let (a, alog, _) = mock("airplay", AudioFamily::AirPlay);
+        let (c, clog, _) = mock("cast", AudioFamily::Cast);
+        let f = Fanout::new(
+            vec![Box::new(a), Box::new(c)],
+            &info(),
+            FanoutConfig::default(),
+        )
+        .unwrap();
+        f.push(&video(0, false)); // before the first keyframe: dropped
+        f.push(&video(1, true));
+        f.push(&audio(AudioFamily::AirPlay, 10));
+        f.push(&audio(AudioFamily::Cast, 20));
+        f.push(&video(2, false));
+        let ends = f.close(true);
+        assert!(ends.iter().all(|(_, e)| matches!(e, SinkEnd::Stopped)));
+        assert_eq!(videos(&alog), [1, 2]);
+        assert_eq!(videos(&clog), [1, 2]);
+        let audio_pts = |log: &Log| -> Vec<u64> {
+            log.frames
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|f| f.0 != TrackKind::Video)
+                .map(|f| f.1)
+                .collect()
+        };
+        assert_eq!(audio_pts(&alog), [10]);
+        assert_eq!(audio_pts(&clog), [20]);
+        assert_eq!(
+            *alog.started_audio.lock().unwrap(),
+            Some(AudioCodec::PcmS16le)
+        );
+        assert_eq!(*clog.started_audio.lock().unwrap(), Some(AudioCodec::Opus));
+        assert!(alog.stopped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn slow_sink_skips_to_next_keyframe_without_blocking_others() {
+        let (mut slow, slog, _) = mock("slow", AudioFamily::AirPlay);
+        let (gate_tx, gate_rx) = mpsc::channel();
+        slow.gate = Some(gate_rx);
+        let (fast, flog, _) = mock("fast", AudioFamily::Cast);
+        let cfg = FanoutConfig {
+            max_frames: 3,
+            max_bytes: 1 << 20,
+        };
+        let f = Fanout::new(vec![Box::new(slow), Box::new(fast)], &info(), cfg).unwrap();
+        let wait_for = |log: &Log, n: usize| {
+            while videos(log).len() < n {
+                std::thread::yield_now();
+            }
+        };
+        // GOP of 5: keyframes at 0, 5, 10. The fast sink keeps up.
+        for i in 0..12u64 {
+            f.push(&video(i, i % 5 == 0));
+            wait_for(&flog, i as usize + 1);
+            if i == 0 {
+                // The slow sink has taken frame 0 and is stuck in push.
+                while f.queued()[0].1 > 0 {
+                    std::thread::yield_now();
+                }
+            }
+        }
+        // The slow sink is stuck in push(0) with 1..=3 queued; 4 hit the
+        // full queue, so 5..=11 were skipped as well (5 and 10 because the
+        // queue was still full, the rest waiting for a keyframe).
+        for _ in 0..4 {
+            gate_tx.send(()).unwrap();
+        }
+        wait_for(&slog, 4);
+        while f.stats()[0].1.pushed < 4 {
+            std::thread::yield_now();
+        }
+        // Deltas are still skipped; it resumes at the next keyframe.
+        for i in 12..18u64 {
+            f.push(&video(i, i == 15));
+            wait_for(&flog, i as usize + 1);
+        }
+        for _ in 0..10 {
+            let _ = gate_tx.send(());
+        }
+        drop(gate_tx);
+        let stats = f.stats();
+        f.close(true);
+        assert_eq!(videos(&flog), (0..18).collect::<Vec<_>>());
+        assert_eq!(videos(&slog), [0, 1, 2, 3, 15, 16, 17]);
+        let slow_stats = &stats.iter().find(|s| s.0 == "slow").unwrap().1;
+        assert_eq!(slow_stats.dropped_full, 3); // 4, 5, 10
+        assert_eq!(slow_stats.dropped_waiting, 8); // 6..=9, 11..=14
+    }
+
+    #[test]
+    fn wants_keyframe_drops_queued_and_new_deltas() {
+        let (mut s, log, wants) = mock("pli", AudioFamily::Cast);
+        let (gate_tx, gate_rx) = mpsc::channel();
+        s.gate = Some(gate_rx);
+        let f = Fanout::new(vec![Box::new(s)], &info(), FanoutConfig::default()).unwrap();
+        f.push(&video(0, true));
+        // Let frame 0 through, then the receiver reports loss.
+        gate_tx.send(()).unwrap();
+        while videos(&log).is_empty() {
+            std::thread::yield_now();
+        }
+        wants.store(true, Ordering::SeqCst);
+        for i in 1..8u64 {
+            f.push(&video(i, i == 6));
+        }
+        f.push(&audio(AudioFamily::Cast, 99));
+        for _ in 0..20 {
+            let _ = gate_tx.send(());
+        }
+        drop(gate_tx);
+        f.close(true);
+        assert_eq!(videos(&log), [0, 6, 7]);
+        // Audio is not dropped for a keyframe request.
+        assert!(log.frames.lock().unwrap().iter().any(|f| f.1 == 99));
+    }
+
+    #[test]
+    fn finished_sink_is_removed_and_abort_discards() {
+        let (mut s, log, _) = mock("done", AudioFamily::Cast);
+        s.finish_after = Some(2);
+        let (other, olog, _) = mock("other", AudioFamily::AirPlay);
+        let f = Fanout::new(
+            vec![Box::new(s), Box::new(other)],
+            &info(),
+            FanoutConfig::default(),
+        )
+        .unwrap();
+        for i in 0..5u64 {
+            f.push(&video(i, i == 0));
+        }
+        while f.active() == 2 {
+            std::thread::yield_now();
+        }
+        assert_eq!(f.active(), 1);
+        let ends = f.close(false);
+        assert!(matches!(ends[0].1, SinkEnd::Finished));
+        assert_eq!(videos(&log), [0, 1]);
+        assert!(log.stopped.load(Ordering::SeqCst));
+        assert!(olog.stopped.load(Ordering::SeqCst));
+    }
+}

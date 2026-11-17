@@ -20,7 +20,7 @@ Status: in progress. Owns `src/media/**`, `examples/slrw-gen.rs`,
       localhost TCP listeners feeding ffmpeg rawvideo/s16le inputs; sample
       generator that writes moving color bars + a sine tone.
 - [x] `clock.rs`: media clock mapping first pts to `Instant`.
-- [ ] `fanout.rs`: bounded per-sink queues + one thread per sink;
+- [x] `fanout.rs`: bounded per-sink queues + one thread per sink;
       keyframe-skip when full or when the sink `wants_keyframe()`.
 - [x] `streamlib debug-pipeline`: put the command body in
       `media::debug::run(&PipelineOptions)` in your module (prints stream
