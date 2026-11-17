@@ -1,0 +1,154 @@
+# AirPlay screen mirroring: constants, in the vector-file format
+# (`key = value` blocks, see tests/vectors/sample.txt). Referenced from
+# docs/spec/airplay-mirroring.md. Integers are decimal unless prefixed 0x.
+
+# --- /info feature bits used by mirroring (bit index into the 64-bit
+# --- `features` value; bit 0 = least significant). §2.3
+name = feature bits
+screen_mirroring = 7
+fairplay_sap = 14
+audio_format_pcm_44100_stereo = 18
+audio_format_alac_44100_stereo = 19
+audio_format_aaclc_44100_stereo = 20
+audio_format_aaceld_44100_stereo = 21
+third_party_receiver_a = 26
+screen_1080p_default = 28
+volume_control = 32
+coreutils_pairing_a = 38
+ptp_timing = 41
+screen_multi_codec_hevc = 42
+coreutils_pairing_b = 43
+coreutils_pairing_c = 46
+coreutils_pairing_d = 48
+third_party_tv_family = 49
+third_party_receiver_b = 51
+audio_stream_connections = 59
+audio_media_data_control = 60
+audio_rfc2198_redundancy = 61
+
+# --- supportedFormats.screenStream bits (audio formats for screen audio). §2.4
+name = screen audio format mask
+pcm_44100_16_stereo = 0x00000800
+alac_44100_16_stereo = 0x00040000
+aaclc_44100_stereo = 0x00400000
+aaceld_44100_stereo = 0x01000000
+
+# --- audio stream descriptor per codec. §4.6, §8.1
+name = audio codec ALAC
+ct = 2
+spf = 352
+sr = 44100
+audioFormat = 0x40000
+
+name = audio codec AAC-ELD
+ct = 8
+spf = 480
+sr = 44100
+audioFormat = 0x1000000
+
+# --- sourceVersion thresholds (major.minor.patch, numeric compare). §2.5
+name = sourceVersion thresholds
+ptp_minimum = 354.54.6
+media_data_control_minimum = 450.1.0
+initial_volume_query_minimum = 120.2.0
+
+# --- playout leads. §2.7
+name = latency profiles (ms)
+video_normal = 75
+audio_normal = 85
+video_wireless = 100
+audio_wireless = 170
+video_low = 40
+audio_low = 50
+explicit_override_min = 5
+explicit_override_max = 2000
+
+# Dynamic audio latency ladders (MediaDataControl, optional, §8.10): first
+# value is the initial/safest; reports may step through the others.
+name = dynamic audio latency ladders (ms)
+ladder_low = 50 46 40 36 30
+ladder_normal = 85 81 75 71 65
+ladder_wireless = 170 166 160 156 150
+
+# ms -> samples at 44.1 kHz, truncating (floor(ms * 44100 / 1000)).
+name = latency samples examples
+ms_85 = 3748
+ms_170 = 7497
+ms_100 = 4410
+ms_50 = 2205
+ms_75 = 3307
+
+# --- fixed SETUP strings sent by the reference sender. §4.1, §4.7
+name = sender identity strings
+user_agent = AirPlay/935.7.1
+sourceVersion = 980.71.1
+osBuildVersion = 13F69
+model = Linux
+audioMode = default
+video_timestampInfo_names = SubSu BePxT AfPxT BefEn EmEnc
+fairplay_et = 32
+
+# --- key-derivation labels (ASCII, no terminator). §5
+name = key derivation labels
+video_ctr_key_prefix = AirPlayStreamKey
+video_ctr_iv_prefix = AirPlayStreamIV
+datastream_salt_prefix = DataStream-Salt
+datastream_output_info = DataStream-Output-Encryption-Key
+datastream_input_info = DataStream-Input-Encryption-Key
+events_salt = Events-Salt
+events_receiver_to_sender_info = Events-Write-Encryption-Key
+events_sender_to_receiver_info = Events-Read-Encryption-Key
+control_salt = Control-Salt
+control_write_info = Control-Write-Encryption-Key
+control_read_info = Control-Read-Encryption-Key
+
+# --- video data channel header. §6
+name = video packet types (header byte 4)
+video_frame = 0x00
+codec_config = 0x01
+heartbeat = 0x02
+sender_report = 0x05
+
+name = video header byte 5
+idr = 0x10
+non_idr = 0x00
+
+name = video header bytes 6..7 (option)
+h264_config = 0x16 0x01
+hevc_config = 0x1e 0x01
+h264_config_suspend = 0x56 0x01
+hevc_config_suspend = 0x5e 0x01
+heartbeat = 0x1e 0x00
+video_frame = 0x00 0x00
+
+# --- realtime audio RTP. §8
+name = audio RTP payload types
+audio = 96
+audio_rfc2198 = 97
+sync_ntp = 0xd4
+retransmit_request = 0xd5
+retransmit_response = 0xd6
+sync_ptp = 0xd7
+ntp_timing_request = 0xd2
+ntp_timing_reply = 0xd3
+
+name = audio transport limits
+max_datagram_bytes = 1472
+retransmit_history_packets = 512
+redundant_audio = 2
+sync_sequence_field = 4
+
+# --- time. §7
+name = time constants
+ntp_epoch_offset_seconds = 2208988800
+feedback_interval_ms = 2000
+heartbeat_interval_ms = 1000
+sync_interval_ms = 1000
+
+# --- volume. §8.9
+name = volume (dB)
+default = -20
+quiet_target = -27
+minimum = -30
+maximum = 0
+mute = -144
