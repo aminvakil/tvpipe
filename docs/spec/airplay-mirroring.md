@@ -28,6 +28,20 @@ written `int`, `real`, `bool`, `string`, `data`, `dict`, `array`. A bplist
 unsigned 64-bit quantity (clock ids, seeds, bit masks) it may arrive or must
 be sent as a negative `int` and is reinterpreted bit-for-bit.
 
+### Minimal path for the dev Apple TV
+
+The smallest implementation that the dev Apple TV accepted [HW]: HAP
+pair-verify (existing), FairPlay, control-first SETUP with PTP (§4.1,
+§7.2), event channel answering `200` to everything (§9), `GET /info` for
+the canvas, early RECORD, audio SETUP in layout S with a random ChaCha key
+and no MediaDataControl seed, video SETUP, then: codec packet + ChaCha
+video frames + 1 s heartbeats (§6), `/feedback` every 2 s, ALAC (verbatim
+is enough) in PT 96 ChaCha packets sent once each (§8.3, §8.4), a sync
+packet at start and every second (§8.5), retransmit answers (§8.6), and
+TEARDOWN. Everything else (NTP, legacy profile, media-first ordering,
+RFC 2198, volume policy, MediaDataControl, HEVC) is for other receivers or
+robustness.
+
 ---
 
 ## 1. Overview
@@ -1021,7 +1035,10 @@ ChaCha overhead the datagram is 1452 bytes (≤ 1472). Vector: `audio.txt`
 "ALAC verbatim frame" (decodes with ffmpeg's ALAC decoder to the given PCM).
 Compressed ALAC frames (the reference's normal output, ~270 bytes for a
 tone) are equally valid but need an encoder; verbatim is enough for
-correctness, at ~1.4 Mbit/s of audio.
+correctness, at ~1.4 Mbit/s of audio. At 1416 bytes no RFC 2198
+redundant block fits in a datagram, so verbatim frames go out without
+redundancy under RFC 2198 (and triple the audio rate under the N, N−1, N−2
+scheme).
 
 ### 8.8 Start-up and pacing
 
