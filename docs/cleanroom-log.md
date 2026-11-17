@@ -15,3 +15,5 @@ checkouts under `~/.cache/checkouts/github.com/{omarroth,nored,uber6}`.
 Isolation is by instruction only, not by sandbox.
 | 2026-11-17 | subagent `w5-pairing` | clean implementer W5 | repo, HAP spec, pyatv (MIT), RFCs, Apple TV black-box | `src/airplay/{pairing,secure,credentials,info,pair}.rs` |
 | 2026-11-17 | subagent `w8-cast` | clean implementer W8 | repo, openscreen (BSD-3), pychromecast/node-castv2/rust_cast (MIT), RFCs, openssl as oracle; no tainted sources | `src/cast/**` (done on openscreen receiver) |
+| 2026-11-18 | subagent `w6-fairplay` | FairPlay LGPL porter (dirty, decision 0005) | doubletake (LGPL-3.0+), repo | `src/airplay/fairplay/**` (LGPL) |
+| 2026-11-18 | subagent `s2-spec` | spec writer (dirty room) | doubletake, UxPlay, repo | `docs/spec/airplay-mirroring.md`, vectors |

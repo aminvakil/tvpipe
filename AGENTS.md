@@ -22,7 +22,12 @@ workstream.
 
 - Do **not** read or copy code from doubletake, UxPlay, RPiPlay, playfair,
   airfry, or RottingApple unless your assigned role is "spec writer (dirty
-  room)". Spec writers never write code in `src/`.
+  room)" or "FairPlay LGPL porter". Spec writers never write code in `src/`.
+- **FairPlay is an LGPL port for now** (human decision 2026-11-18, PLAN §10
+  fallback; `docs/decisions/0005-fairplay-lgpl.md`). Only the FairPlay porter
+  reads doubletake, and it writes only `src/airplay/fairplay/**` (plus its
+  vectors and license files). That directory is LGPL-3.0-or-later; nothing
+  outside it may copy from it or from doubletake.
 - Permissive references (openscreen, pyatv, pychromecast, node-castv2,
   rust_cast, RFCs) may be read and ported with attribution.
 - Commit bodies for protocol code must include a `Sources:` line (see
