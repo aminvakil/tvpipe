@@ -58,15 +58,12 @@ video_normal = 75
 audio_normal = 85
 video_wireless = 100
 audio_wireless = 170
-video_low = 40
-audio_low = 50
 explicit_override_min = 5
 explicit_override_max = 2000
 
-# Dynamic audio latency ladders (MediaDataControl, optional, §8.10): first
-# value is the initial/safest; reports may step through the others.
+# Dynamic audio latency ladders for the two profiles of §2.7 (MediaDataControl,
+# §8.10; the stepping algorithm is out of scope). First value = initial lead.
 name = dynamic audio latency ladders (ms)
-ladder_low = 50 46 40 36 30
 ladder_normal = 85 81 75 71 65
 ladder_wireless = 170 166 160 156 150
 
@@ -75,7 +72,6 @@ name = latency samples examples
 ms_85 = 3748
 ms_170 = 7497
 ms_100 = 4410
-ms_50 = 2205
 ms_75 = 3307
 
 # --- fixed SETUP strings sent by the reference sender. §4.1, §4.7

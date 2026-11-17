@@ -47,15 +47,25 @@ packet = 806000010000016000000000753d5eacf88ed4c2c30496112e5f222138044912
 
 name = PTP sync (TimeAnnounce), first
 latency_samples = 3748
-packet = 90d70004fffff2bc000444f265dbf50efffff2bcaabbccfffe00000a
+rtp_now = 352
+t_32_32 = 0012562b72b020c4
+t_ns = 1201707447999999
+timeline_id = aabbccfffe00000a
+packet = 90d70004fffff2bc000444f2518fddfffffff2bcaabbccfffe00000a
 
-name = PTP sync, periodic
+name = PTP sync, periodic (one second later)
 latency_samples = 3748
-packet = 80d7000400009f00000444f2a176bf0e00009f00aabbccfffe00000a
+rtp_now = 44452
+t_32_32 = 0012562c72b020c4
+t_ns = 1201708447999999
+timeline_id = aabbccfffe00000a
+packet = 80d7000400009f00000444f28d2aa7ff00009f00aabbccfffe00000a
 
 name = NTP sync, first
 latency_samples = 3748
-packet = 90d40004fffff2bc83bcd4abc9dd2a3800000160
+rtp_now = 352
+t_32_32 = 83bcd4ab72b020c4
+packet = 90d40004fffff2bc83bcd4ab72b020c400000160
 
 name = retransmit request for seq 1..2; seq 1 known, seq 2 expired
 request = 80d5000700010002

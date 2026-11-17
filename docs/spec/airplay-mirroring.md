@@ -116,8 +116,12 @@ access-control entry is sufficient for a mirroring session on the Apple TV
 
 FairPlay is done by `airplay::fairplay` (LGPL port, decision 0005); this
 spec only uses its outputs. Run it after pair-verify, on the (encrypted)
-control connection, when `/info` feature bit 14 is set. If `/fp-setup`
-answers 404, treat FairPlay as unsupported and continue without it.
+control connection, when `/info` feature bit 14 is set. FairPlay counts as
+unsupported, and the session continues without it, only when feature 14 is
+absent or either `/fp-setup` request is answered 404. Every other failure
+(any other non-2xx status, an m2/m4 of the wrong length or with a bad
+header, `check_m4` rejecting m4, a transport error) aborts the session
+setup [REF].
 
 Wire: two `POST /fp-setup` requests, each with headers `X-Apple-ET: 32` and
 `Content-Type: application/octet-stream`; bodies m1 (16 bytes) → response
@@ -236,8 +240,12 @@ Size rules (reference policy):
 - H.264 canvas = nominal, except: if the maximum is ≤ 1920×1080 in both
   dimensions, use the component-wise larger of nominal and maximum.
   (Dev Apple TV: max 3840×2160 > 1080p, so the H.264 canvas stays
-  1280×720.) A user-requested size is scaled down, aspect preserved, to fit
-  the canvas. Round both dimensions down to even.
+  1280×720.) A user-requested size (both width and height given) that fits within the
+canvas in both dimensions is used as is (no upscaling, smaller is fine);
+otherwise it is scaled by `min(canvas_w / w, canvas_h / h)` with each
+result rounded to the nearest integer (halves away from zero). Then, in
+every case, round both dimensions down to even. Without a request the
+canvas itself is used (rounded down to even).
 - The encoded size is announced only in the codec packet (§6.2); [HW] a
   1920×1080 stream was accepted while the canvas said 1280×720 (rendering
   not confirmed).
@@ -297,11 +305,16 @@ anchor PTP (§7.2). SETUP response bodies are bplists
 
 Requests are strictly sequential on the control connection (one
 outstanding request). Observed latencies [HW]: SETUP #1 130–480 ms,
-TEARDOWN ~750 ms, others < 50 ms. The reference waits up to 30 s for a
-response (in NTP mode SETUP #1 waits for the receiver's timing probes, so
-it is slow when they are lost) and abandons the connection, not just the
-request, after a timeout: a late response would otherwise be read as the
-answer to the next request.
+TEARDOWN ~750 ms, others < 50 ms. Response timeouts used by the reference: 3 s for the post-SETUP `GET /info`
+refresh (§4.3) and the volume `GET_PARAMETER` (§4.9); 2 s for the cleanup
+TEARDOWN after a failed setup (§4.14); 30 s for everything else (in NTP
+mode SETUP #1 is answered only after the receiver's timing probes, so it
+is slow when they are lost). Connect timeouts: control 10 s, video data
+5 s, event and MediaDataControl 3 s. A timeout or transport error while
+waiting for a response makes the control connection unusable (a late
+response would be read as the answer to the next request): treat it as
+fatal for the session, unlike a complete non-2xx response, which leaves the
+connection in sync.
 
 **HTTP Digest** (receivers with a playback password, `statusFlags` bit 7):
 a request may be answered `401` with `WWW-Authenticate: Digest realm="…",
@@ -325,7 +338,7 @@ application/x-apple-binary-plist`. Full examples (bplist hex plus XML) in
 
 | Key | Type | Value |
 |---|---|---|
-| `deviceID` | string | a stable sender id formatted as a MAC, e.g. `02:34:73:DA:E2:DF` (uppercase, locally administered) |
+| `deviceID` | string | a sender id formatted as a MAC, six uppercase hex pairs with colons, first octet `02` (locally administered), e.g. `02:34:73:DA:E2:DF`. The reference takes the first 12 hex digits of a UUID generated per control connection and forces the first octet to `02`, so the value changes every run; it is not related to the pairing identity and need not match anything sent in pair-setup/verify [HW: a fresh random value per run was accepted with streamlib's stored pairing]. Deriving it from the controller id is also fine. |
 | `macAddress` | string | same as `deviceID` |
 | `sessionUUID` | string | random UUID v4, lowercase; reused in `RECORD`'s `Session:` header |
 | `sourceVersion` | string | `980.71.1` |
@@ -377,8 +390,10 @@ that has one; a session without an event channel is allowed.
 
 If the SETUP #1 response had no `info` dict with a usable `displays`
 entry, send `GET /info` (no body) on the control connection and parse the
-bplist response (§2.6). A non-2xx answer is not fatal (keep the old info);
-a 401 here is fatal for this attempt (configure the password first).
+bplist response (§2.6), with a 3 s timeout. A complete non-2xx answer is
+not fatal (keep the old info), except 401, which is fatal for this attempt
+(configure the password first). A timeout, a transport error or an
+incomplete response is fatal (§3).
 
 ### 4.4 Early RECORD
 
@@ -435,14 +450,16 @@ Layout S adds:
 
 | Key | Type | Value |
 |---|---|---|
-| `isMedia` | bool | false (true routes grouped receivers through the media path and can stall audio [REF]) |
+| `isMedia` | bool | false [REF: required value for screen audio] |
 | `supportsDynamicStreamID` | bool | true |
 | `shk` | data | HAP profile: the 32-byte random audio key (§5.1). Omitted otherwise. |
 | `streamConnections` | dict | `{streamConnectionTypeRTP: {streamConnectionKeyUseStreamEncryptionKey: bool (true iff shk present)}, streamConnectionTypeRTCP: {streamConnectionKeyPort: int (our audio control port)}}` |
 | optionally inside `streamConnections` | | `streamConnectionTypeMediaDataControl: {streamConnectionKeyEncryptionSeed: int (random 64-bit seed, bit pattern)}` — only if §8.10 is implemented |
 
 Layout P adds: `controlPort` (int, our audio control port), and `shk`
-(32 bytes) in the HAP profile.
+(32 bytes) in the HAP profile. Layout P does **not** send `isMedia`,
+`supportsDynamicStreamID` or `streamConnections`; layout S does **not**
+send the flat `controlPort`. Both send all the common keys.
 
 If the audio SETUP is answered 400, 406, 415, 455 or 501, retry it once
 with the other layout; keep whichever was accepted.
@@ -498,9 +515,10 @@ Content-Type: text/parameters
 body: "volume\r\n"
 ```
 
-and parse a line `volume: <float>` (case-insensitive name) from the body. A
-non-2xx answer is not fatal; a 2xx answer without a parsable value counts as
-"invalid".
+and parse a line `volume: <float>` (case-insensitive name) from the body,
+with a 3 s timeout. A complete non-2xx answer is not fatal (volume stays
+unknown); a 2xx answer without a parsable value counts as "invalid"; a
+timeout or transport error is fatal (§3).
 
 ### 4.10 Late RECORD
 
@@ -522,9 +540,8 @@ Failure is not fatal. Then start: the feedback loop (first `POST /feedback`
 immediately, then every 2 s, §4.13), the video stream (§6), the heartbeat
 (§6.4), and audio once the first video frame has been sent (§8.8).
 
-Do not send `GET_PARAMETER` keep-alives during streaming: some receivers
-never answer, and a blocked control connection delays `/feedback` long
-enough for the receiver to stop video [REF].
+Do not send `GET_PARAMETER` keep-alives during streaming [REF]; `/feedback`
+(§4.13) is the only periodic control request.
 
 ### 4.12 Media-first ordering (legacy receivers)
 
@@ -547,8 +564,8 @@ receivers reject that [MODEL].
 ### 4.13 Steady state on the control connection
 
 `POST /feedback` with no body and no `Content-Type` (`Content-Length: 0`),
-every 2 s, the first immediately after setup (the receiver's idle timeout
-starts at SETUP). Response: a bplist, `{streams: []}` on the Apple TV
+every 2 s, the first immediately after setup (do not wait for the first
+video frame). Response: a bplist, `{streams: []}` on the Apple TV
 [HW]; other receivers list stream dicts like `{type: 96, sr: 44100}`
 [MODEL]. Each response also re-anchors the PTP clock (§7.2). A failed
 feedback request is logged, not fatal.
@@ -758,32 +775,22 @@ its encoder bitrate adaptation; out of scope for this spec).
 
 What the reference feeds receivers: H.264 (High profile works [HW]),
 progressive 4:2:0 8-bit, **no B-frames**, an IDR at least every ~0.5 s
-(`(fps + 1) / 2` frames) so a receiver joining or recovering gets a
-random-access point soon, constant-bitrate-ish rate control with a VBV of
+(`(fps + 1) / 2` frames), constant-bitrate-ish rate control with a VBV of
 about two frames, bitrate ≈ width × height × fps / 15000 kbit/s clamped to
 1800–12000 (4500 default). Annex-B output with AUDs makes access-unit
 splitting trivial. The receiver may send `forceKeyFrame` on the event
 channel (§9); honour it if the encoder can.
 
-### 6.7 HEVC (optional)
+### 6.7 HEVC (not implementable from this spec yet)
 
-Allowed only when feature 42 is set. Codec packet option byte 6 = 0x1e,
-byte 7 = 0x01; payload = a complete ISO-BMFF `hvc1` visual sample entry
-(box size u32be, `hvc1`, 6 reserved, data_reference_index = 1, 16 bytes
-predefined/reserved, width u16be at offset 32, height at 34, 0x00480000
-twice (72 dpi), 4 reserved, frame_count = 1 at 48, 32-byte compressor name
-(zero), depth 0x0018 at 82, 0xFFFF at 84) whose only child is an `hvcC` box
-(u32be size, `hvcC`, then an ISO/IEC 14496-15 HEVCDecoderConfigurationRecord:
-version 1, profile/tier/compatibility/constraint/level bytes copied from
-the SPS profile_tier_level, min_spatial_segmentation 0 (`0xF000` with
-reserved bits), parallelismType 0 (`0xFC`), chroma_format and bit depths
-from the SPS, avgFrameRate 0, constantFrameRate 0, numTemporalLayers =
-sps_max_sub_layers_minus1 + 1, temporalIdNested from the SPS,
-lengthSizeMinusOne = 3, then three arrays VPS/SPS/PPS, each
-`array_completeness = 1` with one NAL). Frame payloads as §6.3 with HEVC
-NAL types: drop 32–35 (VPS, SPS, PPS, AUD), IDR flag for types 16–21.
-Receivers detect HEVC by the `hvc1` fourcc at payload offset 4. Not needed
-for the M6/M7 milestones.
+Allowed only when feature 42 is set. Known facts: the codec packet uses
+option bytes 6–7 = `0x1e 0x01`; its payload is an ISO-BMFF `hvc1` visual
+sample entry (width/height, 72 dpi, depth 0x0018) whose only child is an
+`hvcC` box with lengthSizeMinusOne = 3 and one VPS, SPS and PPS; receivers
+recognise HEVC by the `hvc1` fourcc at payload offset 4; frame payloads are
+as §6.3 with VPS/SPS/PPS/AUD (NAL types 32–35) removed and the IDR flag set
+for NAL types 16–21. The exact `hvcC` bit packing and a vector are not
+part of this spec; it is out of scope for M6/M7.
 
 ---
 
@@ -807,7 +814,8 @@ own monotonic clock onto the receiver's timeline directly and never sends
 or answers PTP messages (the receiver's clock is the master; nothing has to
 listen on UDP 319/320).
 
-- **Anchor**: when the SETUP response that carries `timingPeerInfo.ClockID`
+- **Anchor**: when the SETUP response that carries `timingPeerInfo` (or
+  `asyncPTPClockConfig = true`)
   (SETUP #1, or the first SETUP in media-first ordering) has been read
   completely, at local monotonic time `t0`, set `R0 = (received + processing)
   ms` from that response's two headers, converted to 32.32 seconds. The
@@ -817,12 +825,17 @@ listen on UDP 319/320).
 - **Re-anchor** on every `/feedback` response read at local time `t1`:
   compute `R1` from its headers the same way and the projection `P = R0 +
   (t1 − t0)`; the new anchor is `(t1, max(R1, P))`. The mapping never moves
-  backwards (network delay makes fresh samples look old; audio and video
-  share this one mapping, so it must stay continuous).
+backwards; audio and video timestamps both come from it.
 - **Timeline change**: an event-channel `updateTimingPeerInfo` (§9)
-  replaces the timeline id; carry the current mapping forward unchanged
-  (if there is no mapping yet, start one at the sender's own monotonic time
-  as `R0`).
+  replaces the timeline id and keeps the current mapping unchanged.
+- **Clock id arriving late** (`asyncPTPClockConfig`, §4.1): anchor the
+  mapping from that SETUP response's two headers anyway (they are present
+  on every response), and take only the timeline id from the later
+  `updateTimingPeerInfo`. If the headers are missing, PTP failed (§2.5).
+  (The reference instead starts the mapping from its own monotonic clock
+  in this case, which the never-backwards rule can then keep ahead of the
+  receiver indefinitely; do not copy that. No receiver seen here uses the
+  asynchronous form, so this rule is untested.)
 
 Worked example [HW]: SETUP #1 response headers `…ReceivedTimestamp:
 1201707321`, `…ProcessingTime: 127` → `R0` = 1201707.448 s = 32.32
@@ -1010,11 +1023,14 @@ NTP form, 20 bytes:
 | 2 | u16be | 4 |
 | 4 | u32be | `rtp_play` |
 | 8 | u64be | `T` = `C(t) + 2208988800 s`, 32.32 |
-| 16 | u32be | `rtp_now` (not `rtp_play`; receivers derive the latency from the difference and stay silent if both are equal [REF]) |
+| 16 | u32be | `rtp_now` (not `rtp_play`: in this form the two RTP fields differ by `L` [REF]) |
 
 Example [HW, ClockID scrubbed]: first PTP packet `90d70004 fffff2bc
 000444f26299deaa fffff2bc aabbccfffe00000a` (rtp_now 352, L 3748, so
-rtp_play = 352 − 3748 mod 2³²). Vectors in `audio.txt`.
+rtp_play = 352 − 3748 mod 2³²; `T` = 1201707.530 s = R(t) at the first
+audio frame's capture, no lead). Vectors in `audio.txt` list their inputs
+(`rtp_now`, `t_32_32`, `t_ns`, `timeline_id`) next to each packet; note
+the nanosecond conversion floors (`…447999999`).
 
 If the source clock jumps backwards (new segment), continue the RTP
 timestamps after the last frame and send the next sync packet with 0x90
@@ -1036,9 +1052,8 @@ Keep the last 512 sent PT 96 packets, indexed by sequence number (for RFC
 
 For each sequence `first … first+count−1` (at most 513 lookups), answer to
 the request's source address from the control socket: if stored, `0x80
-0xd6 <request id u16be> ‖ <stored packet bytes>`; if not stored, send the
-8-byte "futile" form `0x80 0xd6 <request id u16be> <that sequence u16be>
-0x00 0x00` and stop processing the request. Vector: `audio.txt`
+0xd6 <request id u16be> ‖ <stored packet bytes>`; if not stored, send the 8-byte **expired reply** `0x80 0xd6 <request id
+u16be> <that sequence u16be> 0x00 0x00` and stop processing the request. Vector: `audio.txt`
 "retransmit request".
 
 ### 8.7 ALAC frame layout (verbatim / uncompressed)
@@ -1078,8 +1093,8 @@ scheme).
   consecutive stale frames at start-up.
 - Establish the RTP/clock mapping (first sync packet) at the first fresh
   frame, then send each frame as soon as it is encoded; do not buffer.
-- In steady state never drop a frame for being late (a hole forces the
-  receiver to conceal); send it anyway.
+- In steady state never drop a frame for being late; send it anyway, so the
+  RTP sample sequence has no holes.
 
 ### 8.9 Volume
 
@@ -1123,18 +1138,27 @@ adds the seed entry to the audio descriptor (§4.6), and after setup
 connects TCP to the returned MediaDataControl port. Framing is the same as
 the control channel (u16le length ≤ 1024, ChaCha20-Poly1305, AAD = the two
 length bytes, counter nonces from 0 per direction) with the §5.1 keys.
-Inside, messages are a 32-byte header plus payload: u32be total size
-(header included), 4-byte type (`sync` = reply wanted, `asyn` = no reply),
-8 bytes copied into replies, 4-byte command, u64be reply token, u32be
-status; payload a bplist. Commands seen [HW]: `raup` (audio performance
+Inside, messages are a 32-byte header plus payload:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | u32be | total size, header included (≥ 32) |
+| 4 | 4 | message type, ASCII: `sync` (reply wanted), `asyn` (no reply), `rply` (a reply) |
+| 8 | 8 | opaque; copied unchanged into the reply |
+| 16 | 4 | command, ASCII (`raup`, `rrmt`, …) |
+| 20 | u64be | reply token; copied into the reply |
+| 28 | u32be | status (0 in requests) |
+| 32 | … | payload, a bplist | Commands seen [HW]: `raup` (audio performance
 report: `ProtocolVersion` 1, `SessionDurationSec`, `RenderDeadlineMinMs`,
 glitch histograms) and `rrmt` (RTP statistics: `lostPackets`,
-`latePackets`, `totalGlitches`, `latencyMs`, …). For `sync` messages reply
-with a 32-byte header: size 32, type `rply`, the 8 copied bytes, the same
-command and token, status (0 ok, 1 bad report). A sender may use `raup`
-reports that carry a `LiveAdaptiveGlitchHistogram` to step the audio lead
-along the ladders in the data file, re-sending a sync packet when it
-changes. Skipping this channel entirely is fine: the session keeps the
+`latePackets`, `totalGlitches`, `latencyMs`, …). For `sync` messages reply with a 32-byte header and no payload: size 32,
+type `rply`, bytes 8–15 of the request, the same command, the same token,
+status 0 (accepted) or 1 (payload not a valid report); no other status
+values are known. Vector: `channels.txt` "MediaDataControl". The
+dynamic-latency algorithm (when and by how much to step the audio lead
+along the ladders in the data file, driven by `raup` reports carrying a
+`LiveAdaptiveGlitchHistogram`) is **out of scope** for this spec; a sender
+that connects this channel should keep its initial lead. Skipping this channel entirely is fine: the session keeps the
 initial lead [HW, a session without it was accepted]. The `rrmt` report is
 a cheap way to check that audio arrives.
 
@@ -1145,8 +1169,8 @@ a cheap way to check that audio arrives.
 TCP to `eventPort`. HAP profile: the same framing as the encrypted control
 channel (u16le plaintext length ≤ 1024 ‖ ciphertext ‖ 16-byte tag, AAD =
 the 2 length bytes, ChaCha nonce = 4 zero bytes ‖ u64le counter, counters
-from 0 per direction) but with the §5.1 event keys. Legacy profile:
-plaintext. Message boundaries do not align with frames.
+from 0 per direction) but with the §5.1 event keys (vector: `channels.txt`
+"event channel"). Legacy profile: plaintext. Message boundaries do not align with frames.
 
 The receiver sends RTSP requests; the sender only answers. Request:
 `POST /command RTSP/1.0` with `CSeq`, `Content-Type:
@@ -1182,7 +1206,7 @@ not the session.
 | Roku (Streaming Stick 4K 3820R2, sourceVersion 377.40.00) [MODEL; Roku/TCL Roku reported working] | legacy (HKP 3) | media-first | advertises PTP (feature 41, `PTPInfo`), uses NTP with receiver probes | layout P | omits `supportedFormats`; AAC-ELD |
 | LG (75UP75009LC, sourceVersion 377.25.06) [MODEL; LG not in the reference's tested list] | HKP 3 but TLV8/HAP, encrypted control | media-first (rejects control-only SETUP) | accepts PTP but sends no anchor headers → PTP fails → fall back to NTP on a new connection | — | ALAC only (`screenStream` 0x40000); third-party TV family |
 | Samsung TU8300, Hisense, TCL Google TV [REF: reported working] | — | — | — | — | no per-family facts recorded; third-party TVs need an explicit initial volume |
-| UxPlay (open-source receiver, advertises AppleTV3,2) [MODEL] | legacy raw pairing | control-first | NTP, receiver probes | ALAC, layout P | no `eventPort`; legacy AES video with mixed key |
+| UxPlay (open-source receiver, advertises AppleTV3,2) [MODEL] | legacy raw pairing | control-first | NTP, receiver probes | ALAC, layout P | no `eventPort`; AES-CTR video keyed from `K = SHA-512(K_fp ‖ S)[0..16]`, because the legacy pair-verify sent `X-Apple-PD: 1` (§2.2, §5.2) |
 | AirServer / Airtame [MODEL] | legacy raw pairing | control-first | NTP, **sender-initiated** (SETUP response has `timingPort`) | AAC-ELD only (`screenStream` 0x1000000) | |
 | Xiaomi 4K HDR TV (AFTBR92D74) [REF] | | | | | reported not working |
 
@@ -1238,6 +1262,7 @@ FairPlay skipped (see §2.2 caveat).
 | `keys.txt` | master key `K`; legacy video CTR key/IV for two ids; ChaCha video keys; event keys; MediaDataControl keys with a high-bit seed |
 | `video.txt` | avcC record; codec packet header+payload; two ChaCha video frames (header = AAD, ciphertext‖tag); five AES-CTR payloads on one keystream; an NTP-mode frame header; heartbeat |
 | `audio.txt` | ChaCha audio packets (nonce 0, 1); RFC 2198 packet with two redundant blocks plus its stored PT 96 copy; AES-CBC packet with a partial block; PTP and NTP sync packets; retransmit request and both response forms; ALAC verbatim frame with its PCM |
+| `channels.txt` | legacy raw pair-verify CTR key/IV; an encrypted event-channel frame; a MediaDataControl request header and its reply |
 | `setup.txt` | SETUP #1 (PTP/HAP; NTP/legacy with root fields), SETUP #2 (both layouts), SETUP #3 as bplist hex with an XML rendering |
 | `appletv-session.txt` | scrubbed real request/response bodies and headers from the Apple TV session in §11, MediaDataControl messages, and the codec/frame/sync/heartbeat bytes it accepted |
 
@@ -1266,16 +1291,21 @@ file are zeroed.
 
 Receivers whose features lack all of bits 38/43/46/48, or that have bit 26
 or 51, use `X-Apple-HKP: 3` and may implement the original non-TLV
-protocol. Request headers for these: `Content-Type:
-application/octet-stream`, `User-Agent`, `X-Apple-ProtocolVersion: 1`,
-`CSeq`, `Content-Length`, and on pair-verify `X-Apple-PD: 1`; no
-`X-Apple-Session-ID`.
+protocol. Raw pair-verify requests carry `Content-Type: application/octet-stream`,
+`User-Agent`, `X-Apple-ProtocolVersion: 1`, `X-Apple-PD: 1`, `CSeq` and
+`Content-Length`; no `X-Apple-Session-ID`.
 
-- Raw pair-setup (transient): `POST /pair-setup`, body = the sender's
-  32-byte Ed25519 public key; response = the receiver's 32-byte Ed25519
-  public key. If this fails, try TLV8 transient pair-setup with HKP 3; if
-  that also fails with 400/404/405/415/455/501, the receiver is not
-  legacy.
+- Raw pair-setup: `POST /pair-setup` with only the usual `CSeq`,
+  `User-Agent`, `Content-Type: application/octet-stream` and
+  `Content-Length` headers; body = the sender's 32-byte Ed25519 public key
+  (the controller's long-term key, the same one sent in V1); response = the
+  receiver's 32-byte Ed25519 public key. It is unauthenticated (no PIN).
+  Do it once and store the receiver key with the controller identity, like
+  a HAP pairing; later connections only run raw pair-verify against the
+  stored key. If a later connection does run raw pair-setup again, the
+  returned key must equal the stored one, else refuse the receiver. If raw
+  pair-setup fails, try TLV8 transient pair-setup with HKP 3; if that also
+  fails with 400/404/405/415/455/501, the receiver is not legacy.
 - Raw pair-verify, two `POST /pair-verify` exchanges:
   - V1 (68 bytes): `01 00 00 00` ‖ sender X25519 ephemeral public key (32)
     ‖ sender Ed25519 public key (32).
@@ -1284,6 +1314,7 @@ application/octet-stream`, `User-Agent`, `X-Apple-ProtocolVersion: 1`,
   - `S` = X25519(sender secret, receiver public). AES-128-CTR key =
     `SHA-512("Pair-Verify-AES-Key" ‖ S)[0..16]`, initial counter block =
     `SHA-512("Pair-Verify-AES-IV" ‖ S)[0..16]` (plain SHA-512, not HKDF).
+    Vector: `channels.txt` "legacy raw pair-verify".
   - Decrypt the signature with keystream bytes 0–63; verify it with the
     receiver's long-term Ed25519 key (the one from pair-setup, stored) over
     `receiver X25519 pub ‖ sender X25519 pub`.
