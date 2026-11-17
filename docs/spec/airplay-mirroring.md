@@ -571,6 +571,35 @@ or times out, close the control connection.
 
 ## 5. Keys and ciphers
 
+### 5.0 Which path applies
+
+The choice depends only on how the current control connection was
+verified, not on the receiver model:
+
+| | **HAP profile**: control channel encrypted after TLV8 pair-verify (every `airplay::pair::connect` connection; the Apple TV) | **Legacy profile**: raw pair-verify, control channel plaintext (Appendix A) |
+|---|---|---|
+| Video payload | **ChaCha20-Poly1305**, key per §5.1 (HKDF from `S`), AAD = 128-byte header, nonce = 4 zero bytes ‖ u64le frame counter from 0, tag appended (§6.3) | **AES-128-CTR**, key/IV = `fairplay::stream_key_iv(K, video streamConnectionID)` (§5.2), one continuous keystream, no tag |
+| Audio payload | **ChaCha20-Poly1305**, random 32-byte key sent as audio `shk`, AAD = RTP bytes 4–11, nonce counter appended (§8.3) | **AES-128-CBC**, key `K`, IV `eiv`, whole blocks only (§8.3); clear if no FairPlay |
+| `ekey`/`eiv`/`et` in session SETUP | **not sent** | sent |
+| Video `shk`/`shiv` | `K` / `eiv` (placeholders for the receiver; nothing in the sender is keyed by them) | `K` / `eiv` (the receiver derives the CTR key from `shk`) |
+| Event channel | ChaCha20-Poly1305, Events keys (§5.1, §9) | plaintext |
+
+So in the HAP profile FairPlay contributes only `K` (via `shk`) and `eiv`
+(via `shiv`); `ekey` is produced but not sent, and neither
+`fairplay::stream_key_iv` nor any AES path is used for video or audio.
+This was checked on the Apple TV [HW]: the accepted session's SETUP #1 had
+no `ekey`/`eiv`/`et`, the audio descriptor carried a 32-byte ChaCha `shk`,
+and the video ran ChaCha20-Poly1305.
+
+Mapping to `airplay::fairplay` (main): `fp_setup(&mut client)` → session;
+`K_fp` = 16 random bytes chosen by the sender; `ekey =
+session.wrap_key(&K_fp)`; `K = stream_master_key(&K_fp, S)` where `S` is
+`Control::shared.secret()` in the HAP profile and the raw pair-verify
+secret in the legacy profile when `X-Apple-PD: 1` was sent (pass an empty
+secret only when it was not); `stream_key_iv(&K, id)` = §5.2 video key/IV,
+legacy profile only. `eiv` is 16 random bytes chosen by the sender (not a
+FairPlay output).
+
 ChaCha20-Poly1305 below is always the RFC 8439 AEAD (as in `ring`) with a
 96-bit nonce formed as **4 zero bytes followed by a 64-bit little-endian
 counter**. (Apple's code uses the original 64-bit-nonce ChaCha20 variant;
