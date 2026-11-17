@@ -3,6 +3,7 @@
 //!
 //! Owner: W4 (PLAN §3, §5).
 
+pub mod clock;
 pub mod debug;
 pub mod ffmpeg;
 pub mod h264;
