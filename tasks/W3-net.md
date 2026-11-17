@@ -1,6 +1,7 @@
 # W3 Net + discovery
 
-Status: in progress. Owns `src/net/**`, `src/airplay/discovery.rs`
+Status: done; HTTP/RTSP framing waits for merge from `w3-net`. LG/Samsung/Cast captures still
+open (no such responder was visible on 2026-11-17). Owns `src/net/**`, `src/airplay/discovery.rs`
 (TXT parsing only), `tests/fixtures/net/**`.
 
 - [x] `net/dns.rs` (or inside `mdns.rs`): DNS message build/parse: header,
@@ -34,3 +35,18 @@ nothing that's needed but replace serials/MACs with fakes).
 
 Sources allowed: RFC 1035, RFC 6762, RFC 6763, RFC 9110/9112, RFC 2326,
 pyatv (MIT) for TXT/feature bit meaning. Never doubletake/UxPlay/etc.
+
+## Notes for integration
+
+- `discover` is wired in `session.rs` (main). For `--to`:
+  `net::discover::resolve(query, timeout, &ifaces)` (`Ok(None)` when the
+  query is an IP address), or `net::discover::discover` + `net::device::select`.
+- W5: `net::rtsp::RtspClient` over `TcpStream`; after pair-verify take the
+  socket with `client.into_conn().into_parts()` (leftover must be empty),
+  wrap it, and continue with `RtspClient::replace_conn(Conn::new(wrapped))`.
+  Real `/info` responses: `tests/fixtures/net/*.rtsp`.
+- `--interface ADDR` binds the query socket to ADDR. Without an
+  `IP_MULTICAST_IF` socket option (not in std) the OS picks the outgoing
+  interface: Linux uses the bound address's interface, other systems may
+  use the default multicast route. The default interface always works.
+

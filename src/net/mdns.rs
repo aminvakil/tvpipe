@@ -11,6 +11,11 @@
 //! for instances whose answers did not carry everything in the additional
 //! section (RFC 6763 §12). All records are kept in a [`Cache`], which
 //! resolves them into [`Instance`]s.
+//!
+//! One socket per local address. std cannot set `IP_MULTICAST_IF`, so a
+//! socket bound to a non-default interface's address relies on the OS to
+//! route the query out of that interface (Linux does; other systems may
+//! use the default multicast route instead).
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
