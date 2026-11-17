@@ -8,7 +8,7 @@ Which agent session had which role, which inputs it saw, and what it produced.
 | 2026-11-17 | subagent `w1-crypto` | clean implementer W1 | repo, FIPS-197, SP 800-38A, RFC 5054/8439/8032/5869, HAP spec, srptools (MIT, as oracle), Python stdlib; no tainted sources | `src/crypto/**` (done) |
 | 2026-11-17 | subagent `w2-codecs` | clean implementer W2 | repo, RFC 8259, HAP spec, protobuf encoding docs, pychromecast `cast_channel.proto` + generated `cast_channel_pb2` (MIT), CPython `plistlib.py` (PSF), plutil; no tainted sources | `src/codec/**` (done) |
 | 2026-11-17 | subagent `w3-net` | clean implementer W3 | repo, RFC 1035/6762/6763/9110/9112/2326, pyatv + pychromecast (MIT), live LAN captures; no tainted sources | `src/net/**`, `airplay/discovery.rs` (done, LG/Samsung/Cast fixtures pending) |
-| 2026-11-17 | subagent `w4-media` | clean implementer W4 | repo, Matroska/H.264 specs, ffmpeg black-box | `src/media/**` |
+| 2026-11-17 | subagent `w4-media` | clean implementer W4 | repo, RFC 8794, RFC 9559, ITU-T H.264, ISO/IEC 14496-15/-3, RFC 6716/7845, ffmpeg docs and black-box output; no tainted sources | `src/media/**`, `examples/slrw-gen.rs`, media fixtures/vectors/scripts (done) |
 
 Note: subagents share this machine's filesystem, which contains tainted
 checkouts under `~/.cache/checkouts/github.com/{omarroth,nored,uber6}`.
