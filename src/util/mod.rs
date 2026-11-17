@@ -2,6 +2,7 @@
 
 pub mod bytes;
 pub mod hex;
+pub mod interrupt;
 pub mod ratio;
 pub mod time;
 pub mod vectors;
