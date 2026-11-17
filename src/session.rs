@@ -614,7 +614,16 @@ fn play(opts: PlayOptions) -> Result<()> {
     let bin = ffmpeg::locate(opts.ffmpeg.as_deref())?;
     let probe = ffmpeg::Probe::run(&bin)?;
 
-    // 1. The input.
+    // 1. The input. A missing local file fails before any TV is touched.
+    if let InputSpec::Path(p) = &opts.input {
+        let looks_like_url = p.to_string_lossy().contains("://");
+        if !looks_like_url && !Path::new(p).exists() {
+            return Err(Error::not_found(format!(
+                "{}: no such file",
+                Path::new(p).display()
+            )));
+        }
+    }
     let input = match &opts.input {
         InputSpec::Path(p) => probe_input(&bin, p),
         InputSpec::TestPattern => InputInfo {
