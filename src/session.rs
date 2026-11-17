@@ -12,8 +12,8 @@ pub fn run(cmd: Command) -> Result<()> {
             json,
             interfaces,
         } => crate::net::discover::run(timeout, json, &interfaces),
-        Command::Pair { .. } => Err(Error::unimplemented("pair (M4)")),
-        Command::Unpair { .. } => Err(Error::unimplemented("unpair (M4)")),
+        Command::Pair { target, pin } => crate::airplay::pair::pair(&target, pin.as_deref()),
+        Command::Unpair { target } => crate::airplay::pair::unpair(&target),
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
