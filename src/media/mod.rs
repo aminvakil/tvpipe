@@ -5,3 +5,4 @@
 //! `clock.rs`, `fanout.rs` (PLAN §3, §5).
 
 pub mod h264;
+pub mod mkv;

@@ -7,7 +7,7 @@ Status: in progress. Owns `src/media/**`, `examples/slrw-gen.rs`,
       `-encoders` probe, argv builder from `EncodePlan` + input spec (PLAN
       §5.1, per-encoder low-latency flags), spawn with stdout pipe, stderr
       pump thread into the logger, kill/wait on drop.
-- [ ] `mkv.rs`: live EBML/Matroska demuxer over `Read`: unknown-size
+- [x] `mkv.rs`: live EBML/Matroska demuxer over `Read`: unknown-size
       Segment/Cluster, Tracks (CodecID, CodecPrivate, video/audio params,
       TrackTimestampScale/TimestampScale), SimpleBlock and BlockGroup
       (no lacing needed for our encodes, but parse Xiph/EBML/fixed lacing
