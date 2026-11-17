@@ -7,7 +7,11 @@ use crate::error::{Error, Result};
 
 pub fn run(cmd: Command) -> Result<()> {
     match cmd {
-        Command::Discover { .. } => Err(Error::unimplemented("discover (M2)")),
+        Command::Discover {
+            timeout,
+            json,
+            interfaces,
+        } => crate::net::discover::run(timeout, json, &interfaces),
         Command::Pair { .. } => Err(Error::unimplemented("pair (M4)")),
         Command::Unpair { .. } => Err(Error::unimplemented("unpair (M4)")),
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
