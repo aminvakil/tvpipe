@@ -288,6 +288,18 @@ const RAW_VIDEO_INPUT: [&str; 4] = [
 ];
 const RAW_AUDIO_INPUT: [&str; 2] = ["-thread_queue_size", "64"];
 
+/// `-re` for the next input, without ffmpeg's default initial burst
+/// (`-readrate_initial_burst`, 0.5 s since ffmpeg 6.1): a burst arrives
+/// faster than real time and overruns the sinks' in-flight windows. ffmpeg
+/// 8 treats `0` as "default", so the burst is 1 ms.
+fn push_realtime(a: &mut ArgList, probe: &Probe) {
+    a.push("-re");
+    // Unknown versions are git builds, i.e. new.
+    if probe.version.is_none_or(|v| v >= (6, 1)) {
+        a.extend(["-readrate_initial_burst", "0.001"]);
+    }
+}
+
 fn push_inputs(
     a: &mut ArgList,
     source: &Source,
@@ -301,7 +313,7 @@ fn push_inputs(
             looped,
         } => {
             if *realtime {
-                a.push("-re");
+                push_realtime(a, probe);
             }
             if *looped {
                 a.extend(["-stream_loop", "-1"]);
@@ -340,10 +352,11 @@ fn push_inputs(
                     warn!("ffmpeg lacks the drawtext filter; test pattern without wallclock");
                 }
             }
-            a.extend(["-re", "-f", "lavfi", "-i"]).push(video);
+            push_realtime(a, probe);
+            a.extend(["-f", "lavfi", "-i"]).push(video);
             // A 1 kHz beep at every full second (beep_factor: louder beep).
+            push_realtime(a, probe);
             a.extend([
-                "-re",
                 "-f",
                 "lavfi",
                 "-i",
@@ -1014,7 +1027,7 @@ pub(crate) mod tests {
         assert_eq!(
             joined(&inv),
             "-hide_banner -nostdin -nostats -loglevel warning \
-             -re -flags low_delay -i movie file.mkv \
+             -re -readrate_initial_burst 0.001 -flags low_delay -i movie file.mkv \
              -map 0:v:0 -c:v libx264 -vf scale=1280:720:force_original_aspect_ratio=decrease,\
              pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p \
              -bf 0 -g 30 -b:v 3000k -maxrate 3000k -bufsize 200k \
