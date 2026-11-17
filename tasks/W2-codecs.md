@@ -14,7 +14,7 @@ Status: in progress. Owns `src/codec/**`, `tests/vectors/codec/**`,
       and depth limits. Value type shared with nothing else (`Plist`).
       Fixtures produced by `plutil -convert binary1` and Python `plistlib`
       (generator script in `scripts/vectors/`), committed as binary files.
-- [ ] `tlv8.rs`: HAP TLV8 encode/decode with fragmentation of values > 255
+- [x] `tlv8.rs`: HAP TLV8 encode/decode with fragmentation of values > 255
       bytes and merging of consecutive same-type fragments; HAP type
       constants (Method, Identifier, Salt, PublicKey, Proof, EncryptedData,
       State, Error, RetryDelay, Certificate, Signature, Permissions,
