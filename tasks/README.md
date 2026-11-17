@@ -10,7 +10,7 @@ checklist as it lands pieces on `main`.
 | [W3 net](W3-net.md) | subagent `w3-net` | `w3-net` / `../streamlib-w3` | done (LG/Samsung/Cast captures pending) |
 | [W4 media](W4-media.md) | subagent `w4-media` | `w4-media` / `../streamlib-w4` | done |
 | [W5 AirPlay pairing](W5-airplay-pairing.md) | subagent `w5-pairing` | `w5-pairing` / `../streamlib-w5` | done (paired + re-verified on Apple TV) |
-| [W6 FairPlay (LGPL port)](W6-fairplay-lgpl.md) | subagent `w6-fairplay` | `w6-fairplay` / `../streamlib-w6` | in progress |
+| [W6 FairPlay (LGPL port)](W6-fairplay-lgpl.md) | subagent `w6-fairplay` | `w6-fairplay` / `../streamlib-w6` | done |
 | W7 AirPlay mirror | — | — | waits for W4+W5+W6+S2 |
 | [W8 Cast](W8-cast.md) | subagent `w8-cast` | `w8-cast` / `../streamlib-w8` | done on openscreen receiver; real hardware pending |
 | Cast play wiring | subagent `play-cast` | merged | done (openscreen receiver) |
