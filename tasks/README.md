@@ -13,6 +13,7 @@ checklist as it lands pieces on `main`.
 | W6 FairPlay (clean) | — | — | waits for spec S1 |
 | W7 AirPlay mirror | — | — | waits for W4+W5+W6+S2 |
 | [W8 Cast](W8-cast.md) | subagent `w8-cast` | `w8-cast` / `../streamlib-w8` | done on openscreen receiver; real hardware pending |
+| Cast play wiring | subagent `play-cast` | merged | done (openscreen receiver) |
 | S1/S2 specs (dirty) | — | — | not started; needs human go-ahead |
 
 ## Notes for later workstreams
@@ -34,3 +35,6 @@ checklist as it lands pieces on `main`.
 - `-re` inputs: ffmpeg's 0.5 s initial read burst overruns the Cast
   in-flight window; `media::ffmpeg` now passes `-readrate_initial_burst
   0.001` (0 means "default" in ffmpeg 8).
+- W4 follow-up: with SLRW input the game writes ~0.4 s before ffmpeg
+  connects; drop stale audio at start so the Cast sink doesn't discard the
+  first ~36 audio frames.
