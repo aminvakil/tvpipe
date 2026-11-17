@@ -5,3 +5,4 @@
 
 pub mod aes;
 pub mod modes;
+pub mod ring;

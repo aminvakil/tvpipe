@@ -21,7 +21,7 @@ Status: in progress. Owns `src/crypto/**`, `tests/vectors/crypto/**`.
       generate with an independent Python implementation (write the
       script to `scripts/vectors/srp.py`). Expose: client new(user, pin,
       salt, B, private a from rng) → A, M1, verify(M2) → session key.
-- [ ] `ring.rs`: thin wrappers: Ed25519 keypair (from/to 32-byte seed),
+- [x] `ring.rs`: thin wrappers: Ed25519 keypair (from/to 32-byte seed),
       sign/verify; X25519 ephemeral agreement (note: ring's X25519 is
       ephemeral-only, which is fine for pair-verify); ChaCha20-Poly1305
       seal/open with 12-byte nonce and AAD (HAP uses 8-byte counters
