@@ -5,6 +5,7 @@
 
 pub mod credentials;
 pub mod discovery;
+pub mod fairplay;
 pub mod info;
 pub mod pair;
 pub mod pairing;
