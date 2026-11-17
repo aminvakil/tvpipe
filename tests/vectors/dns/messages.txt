@@ -1,0 +1,26 @@
+# DNS message known answers. `msg` is the wire message, `expect` the
+# decoded questions (q NAME TYPE [qu]) and records (r NAME TTL [flush] DATA),
+# separated by " | ". `reencoded` (optional) is our compressed encoding (`same`: equal
+# to `msg`).
+
+name = PTR answer with a compression pointer to the question-less header end
+msg = 0000 8400 0000 0001 0000 0000
+      085f616972706c6179045f746370056c6f63616c00 000c 0001 00001194 0005
+      025456 c00c
+expect = r _airplay._tcp.local 4500 PTR TV._airplay._tcp.local
+reencoded = same
+
+name = QU question for SRV, then A with cache-flush
+msg = 0000 0000 0001 0000 0000 0001
+      0254560474657374056c6f63616c00 0021 8001
+      c00c 0001 8001 00000078 0004 c0a80122
+expect = q TV.test.local 33 qu | r TV.test.local 120 flush A 192.168.1.34
+
+name = SRV, TXT with a boolean key, AAAA, NSEC with a two-window bitmap
+msg = 0000 8400 0000 0004 0000 0000
+      0254560474657374056c6f63616c00 0021 0001 00000078 0008 0000 0000 1b58 c00c
+      c00c 0010 0001 00001194 000d 0770773d74727565 0461636c30
+      c00c 001c 0001 00000078 0010 fe800000000000000000000000000001
+      c00c 002f 0001 00000078 000b c00c 0004 40000008 010160
+expect = r TV.test.local 120 SRV 0 0 7000 TV.test.local | r TV.test.local 4500 TXT pw=true,acl0 | r TV.test.local 120 AAAA fe80::1 | r TV.test.local 120 NSEC TV.test.local [1, 28, 257, 258]
+reencoded = same
