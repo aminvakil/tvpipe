@@ -1,67 +1,16 @@
 //! H.264 framing for Cast: receivers decode Annex B byte streams (start
 //! codes, parameter sets in band), while our frames are AVCC with the
-//! parameter sets in the `avcC` record.
-//!
-//! This is a deliberately small, private converter; the general H.264
-//! helpers belong to `media::h264` (W4).
+//! parameter sets in the `avcC` record. Parsing is `media::h264`'s; this
+//! only re-frames.
 //!
 //! Sources: ISO/IEC 14496-15 §5.3.3.1 (AVCDecoderConfigurationRecord),
 //! ITU-T H.264 Annex B (byte stream format).
 
 use crate::error::{Error, Result};
-use crate::util::bytes::Reader;
+pub use crate::media::h264::AvcConfig;
+use crate::media::h264::{avcc_nals, nal_type, nal_unit_type};
 
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
-const NAL_SPS: u8 = 7;
-const NAL_PPS: u8 = 8;
-
-/// The parts of an `avcC` record we need.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AvcConfig {
-    /// Bytes per NAL length prefix (1, 2 or 4).
-    pub length_size: usize,
-    pub sps: Vec<Vec<u8>>,
-    pub pps: Vec<Vec<u8>>,
-}
-
-impl AvcConfig {
-    pub fn parse(avcc: &[u8]) -> Result<AvcConfig> {
-        let mut r = Reader::new(avcc, "avcC");
-        if r.u8()? != 1 {
-            return Err(r.error("unsupported configurationVersion"));
-        }
-        r.skip(3)?; // profile, compatibility, level
-        let length_size = (r.u8()? & 0x03) as usize + 1;
-        if length_size == 3 {
-            return Err(r.error("3-byte NAL lengths are not allowed"));
-        }
-        let mut sps = Vec::new();
-        for _ in 0..(r.u8()? & 0x1f) {
-            let n = r.u16_be()? as usize;
-            sps.push(r.bytes(n)?.to_vec());
-        }
-        let mut pps = Vec::new();
-        for _ in 0..r.u8()? {
-            let n = r.u16_be()? as usize;
-            pps.push(r.bytes(n)?.to_vec());
-        }
-        Ok(AvcConfig {
-            length_size,
-            sps,
-            pps,
-        })
-    }
-}
-
-impl Default for AvcConfig {
-    fn default() -> AvcConfig {
-        AvcConfig {
-            length_size: 4,
-            sps: Vec::new(),
-            pps: Vec::new(),
-        }
-    }
-}
 
 /// Converts one AVCC access unit to Annex B. With `keyframe`, the SPS/PPS
 /// from `cfg` are prepended unless the unit already carries an SPS.
@@ -73,15 +22,13 @@ pub fn avcc_to_annexb(
 ) -> Result<()> {
     out.clear();
     let mut nals = Vec::new();
-    let mut r = Reader::new(data, "avcc frame");
     let mut has_sps = false;
-    while !r.is_at_end() {
-        let n = r.uint_be(cfg.length_size)? as usize;
-        if n == 0 {
+    for nal in avcc_nals(data, cfg.length_size as usize) {
+        let nal = nal?;
+        if nal.is_empty() {
             continue;
         }
-        let nal = r.bytes(n)?;
-        has_sps |= nal[0] & 0x1f == NAL_SPS;
+        has_sps |= nal_unit_type(nal) == Some(nal_type::SPS);
         nals.push(nal);
     }
     if nals.is_empty() {
@@ -98,13 +45,6 @@ pub fn avcc_to_annexb(
         out.extend_from_slice(nal);
     }
     Ok(())
-}
-
-/// True if an Annex B or AVCC unit's first NAL looks like a parameter set
-/// (diagnostics only).
-pub fn is_parameter_set(nal: &[u8]) -> bool {
-    nal.first()
-        .is_some_and(|b| matches!(b & 0x1f, NAL_SPS | NAL_PPS))
 }
 
 #[cfg(test)]
@@ -144,10 +84,11 @@ mod tests {
         let with_sps = [0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x65];
         avcc_to_annexb(&with_sps, &c, true, &mut out).unwrap();
         assert_eq!(out, [0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x65]);
+        // Zero-length NAL units are skipped.
+        avcc_to_annexb(&[0, 0, 0, 0, 0, 0, 0, 1, 0x41], &c, false, &mut out).unwrap();
+        assert_eq!(out, [0, 0, 0, 1, 0x41]);
         // Truncated or empty input is an error.
         assert!(avcc_to_annexb(&frame[..5], &c, false, &mut out).is_err());
         assert!(avcc_to_annexb(&[], &c, false, &mut out).is_err());
-        assert!(is_parameter_set(&[0x68]));
-        assert!(!is_parameter_set(&[0x65]));
     }
 }
