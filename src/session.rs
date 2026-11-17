@@ -15,7 +15,7 @@ pub fn run(cmd: Command) -> Result<()> {
         Command::Pair { .. } => Err(Error::unimplemented("pair (M4)")),
         Command::Unpair { .. } => Err(Error::unimplemented("unpair (M4)")),
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
-        Command::DebugPipeline(_) => Err(Error::unimplemented("debug-pipeline (M3)")),
+        Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
 }
 
