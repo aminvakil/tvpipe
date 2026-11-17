@@ -3,3 +3,5 @@
 //! Owner: W3 (PLAN §3, §6).
 
 pub mod dns;
+pub mod iface;
+pub mod mdns;
