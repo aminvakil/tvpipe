@@ -14,7 +14,9 @@ workstream.
   known-answer tests or fixtures.
 - Never panic on data from the network or from ffmpeg. Return errors.
 - Platform-neutral code only. No OS media/discovery APIs; `cfg(target_os)` is
-  only acceptable for config-directory paths.
+  only acceptable for config-directory paths. The one exception is
+  `src/util/interrupt.rs` (Ctrl-C handling, `cfg(unix)`/`cfg(windows)`; see
+  `docs/decisions/0004-ctrl-c.md`).
 
 ## Clean room
 

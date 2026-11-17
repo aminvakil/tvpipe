@@ -18,6 +18,9 @@ use std::io::{BufRead, IsTerminal};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
+/// Set only by the signal/console handler, so a Ctrl-C stop exits with 130
+/// while `q` + Enter exits with 0.
+static SIGNALLED: AtomicBool = AtomicBool::new(false);
 
 /// Installs the Ctrl-C handler. Returns false if the platform refused (or
 /// has no handler here); Ctrl-C then kills the process as usual.
@@ -28,6 +31,11 @@ pub fn install() -> bool {
 /// Whether a stop was requested (Ctrl-C, SIGTERM, or `q` on stdin).
 pub fn requested() -> bool {
     REQUESTED.load(Ordering::SeqCst)
+}
+
+/// Whether the stop came from Ctrl-C/SIGTERM (exit status 130).
+pub fn signalled() -> bool {
+    SIGNALLED.load(Ordering::SeqCst)
 }
 
 /// Requests a stop from code (e.g. the stdin watcher).
@@ -64,7 +72,7 @@ pub fn watch_stdin() {
 
 #[cfg(unix)]
 mod sys {
-    use super::REQUESTED;
+    use super::{REQUESTED, SIGNALLED};
     use std::sync::atomic::Ordering;
 
     // POSIX signal numbers; identical on every unix we build for.
@@ -83,6 +91,7 @@ mod sys {
     extern "C" fn on_signal(_signum: i32) {
         // Only async-signal-safe operations: a lock-free atomic swap, and
         // `_exit` (which runs no atexit handlers or destructors).
+        SIGNALLED.store(true, Ordering::SeqCst);
         if REQUESTED.swap(true, Ordering::SeqCst) {
             // SAFETY: `_exit` is async-signal-safe and takes any status.
             unsafe { _exit(130) }
@@ -99,7 +108,7 @@ mod sys {
 
 #[cfg(windows)]
 mod sys {
-    use super::REQUESTED;
+    use super::{REQUESTED, SIGNALLED};
     use std::sync::atomic::Ordering;
 
     const CTRL_C_EVENT: u32 = 0;
@@ -116,7 +125,10 @@ mod sys {
         match event {
             // First press: handled (TRUE); second: not handled (FALSE), so
             // the default handler ends the process.
-            CTRL_C_EVENT | CTRL_BREAK_EVENT => !REQUESTED.swap(true, Ordering::SeqCst) as i32,
+            CTRL_C_EVENT | CTRL_BREAK_EVENT => {
+                SIGNALLED.store(true, Ordering::SeqCst);
+                !REQUESTED.swap(true, Ordering::SeqCst) as i32
+            }
             _ => 0,
         }
     }

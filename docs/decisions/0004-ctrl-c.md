@@ -1,6 +1,6 @@
 # 0004: Ctrl-C handling (platform FFI exception)
 
-Status: accepted by lead as an exception to AGENTS.md ("platform-neutral
+Status: accepted by the human (2026-11-18). A Ctrl-C/SIGTERM stop exits with status 130 after teardown; `q` + Enter exits with 0.
 code only; `cfg(target_os)` only for config paths"). **The human has the
 final say**; dropping this means Ctrl-C ends streamlib without STOP or
 TEARDOWN.

@@ -30,7 +30,16 @@ fn main() -> ExitCode {
     } else {
         log::Level::Info
     });
-    match session::run(command) {
+    let rv = session::run(command);
+    // A Ctrl-C/SIGTERM stop exits with 130 like other CLI tools, after the
+    // receivers got their clean teardown.
+    if util::interrupt::signalled() {
+        if let Err(err) = rv {
+            eprintln!("error: {err}");
+        }
+        return ExitCode::from(130);
+    }
+    match rv {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err}");
