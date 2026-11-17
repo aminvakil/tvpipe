@@ -24,9 +24,9 @@ Status: in progress. Owns `src/net/**`, `src/airplay/discovery.rs`
       (status line, headers, Content-Length bodies, chunked for HTTP) over
       any `Read + Write`, so it works on TCP and on W5's encrypted stream.
       Size limits on headers/bodies.
-- [ ] Wire `streamlib discover [--json] [--timeout] [--interface]` in
-      `session.rs` (coordinate: it's a small function; lead owns the file,
-      you may add `fn discover` there).
+- [ ] `streamlib discover [--json] [--timeout] [--interface]`: put the
+      command body in `net::discover::run(timeout, json, interfaces)`
+      (or similar) in your module; the lead wires it into `session.rs`.
 
 Done when: `streamlib discover` lists real devices on this network (run
 it!), plus parsing fixtures. Capture real responses for fixtures (scrub

@@ -22,9 +22,10 @@ Status: in progress. Owns `src/media/**`, `examples/slrw-gen.rs`,
 - [ ] `clock.rs`: media clock mapping first pts to `Instant`.
 - [ ] `fanout.rs`: bounded per-sink queues + one thread per sink;
       keyframe-skip when full or when the sink `wants_keyframe()`.
-- [ ] Wire `streamlib debug-pipeline` in `session.rs` (you may add
-      `fn debug_pipeline` there): prints pts/keyframe/size per frame and
-      stream info.
+- [ ] `streamlib debug-pipeline`: put the command body in
+      `media::debug::run(&PipelineOptions)` in your module (prints stream
+      info and pts/keyframe/size per frame); the lead wires it into
+      `session.rs`.
 
 Done when: `debug-pipeline` output matches `ffprobe -show_packets` for
 ffmpeg-generated test files (write a script under `scripts/` that checks
