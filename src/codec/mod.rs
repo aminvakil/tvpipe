@@ -1,7 +1,12 @@
-//! Wire formats: JSON, binary plist, TLV8, CastMessage protobuf.
+//! Wire formats (owner: W2).
 //!
-//! Owner: W2. Planned files: `json.rs`, `bplist.rs`, `tlv8.rs`,
-//! `protobuf.rs` (PLAN §3).
+//! - [`json`]: JSON value, parser and serializer (Cast payloads, CLI output).
+//! - [`bplist`]: binary property lists (AirPlay `/info`, RTSP SETUP bodies).
+//! - [`tlv8`]: HAP TLV8 (AirPlay pair-setup / pair-verify).
+//! - [`protobuf`]: protobuf wire helpers and the Cast `CastMessage`.
+//!
+//! Every decoder works on untrusted bytes: errors, never panics. Fixture
+//! generators live in `scripts/vectors/`.
 
 pub mod bplist;
 mod fuzz;

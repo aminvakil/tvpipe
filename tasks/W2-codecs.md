@@ -1,6 +1,6 @@
 # W2 Codecs
 
-Status: in progress. Owns `src/codec/**`, `tests/vectors/codec/**`,
+Status: done (pending merge). Owns `src/codec/**`, `tests/vectors/codec/**`,
 `tests/fixtures/codec/**`.
 
 - [x] `json.rs`: `Value` (Null, Bool, Number as f64 + preserved i64 when
@@ -34,3 +34,13 @@ Sources allowed: RFC 8259, Apple's public CF bplist format description
 (CFBinaryPList.c is APSL — describe, don't copy), HAP spec, protobuf
 encoding docs, openscreen/pychromecast for `cast_channel.proto` field
 numbers.
+
+Notes:
+
+- Fixture generators: `scripts/vectors/json_fixtures.py`,
+  `scripts/vectors/protobuf_fixtures.py` (needs the `protobuf` pip package
+  and pychromecast's generated `cast_channel_pb2`; see its docstring),
+  `scripts/vectors/bplist_fixtures.py` (macOS: plutil + plistlib).
+  `scripts/vectors/bplist_check.sh` checks our bplist writer's output with
+  plutil and plistlib.
+- The bplist writer reproduces plistlib (`sort_keys=False`) byte for byte.
