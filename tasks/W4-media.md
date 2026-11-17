@@ -3,7 +3,7 @@
 Status: in progress. Owns `src/media/**`, `examples/slrw-gen.rs`,
 `tests/fixtures/media/**`.
 
-- [ ] `ffmpeg.rs`: locate ffmpeg (`--ffmpeg`, `$STREAMLIB_FFMPEG`, PATH),
+- [x] `ffmpeg.rs`: locate ffmpeg (`--ffmpeg`, `$STREAMLIB_FFMPEG`, PATH),
       `-encoders` probe, argv builder from `EncodePlan` + input spec (PLAN
       §5.1, per-encoder low-latency flags), spawn with stdout pipe, stderr
       pump thread into the logger, kill/wait on drop.
