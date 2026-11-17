@@ -8,7 +8,7 @@ Status: in progress. Owns `src/codec/**`, `tests/vectors/codec/**`,
       parser (RFC 8259, full string escapes incl. surrogate pairs, depth
       limit), compact serializer, convenience getters (`get`, `as_str`,
       `as_u64`, ...). Builders for constructing Cast messages ergonomically.
-- [ ] `bplist.rs`: bplist00 reader and writer: null/bool, int (1/2/4/8/16
+- [x] `bplist.rs`: bplist00 reader and writer: null/bool, int (1/2/4/8/16
       byte), real (4/8), date, data, ASCII and UTF-16 strings, arrays, dicts
       (sets/UIDs not needed). Offsets/refs of any width, bounds-checked, cycle
       and depth limits. Value type shared with nothing else (`Plist`).
