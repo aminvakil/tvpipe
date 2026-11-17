@@ -256,6 +256,14 @@ fn assign<'a>(tracks: &'a [Track], specs: &[TrackSpec]) -> Result<Vec<(&'a Track
         }
         return Ok(out);
     }
+    // `-map 0:a:0?` drops the audio outputs when the input has none.
+    let audio_less = tracks.len() == 1
+        && tracks[0].track_type == TrackType::Video
+        && specs.first().is_some_and(|s| s.kind == TrackKind::Video);
+    if audio_less && specs.len() > 1 {
+        warn!("input has no audio; streaming video only");
+        return Ok(vec![(&tracks[0], specs[0])]);
+    }
     if tracks.len() != specs.len() {
         return Err(Error::protocol(format!(
             "media: ffmpeg wrote {} tracks, expected {}",
@@ -410,7 +418,8 @@ fn audio_info(t: &Track, planned_samples: u32) -> Result<AudioInfo> {
                 .ok_or_else(|| Error::malformed("media: ALAC track without config"))?;
             (AudioCodec::Alac, n)
         }
-        "A_OPUS" => (AudioCodec::Opus, pick(960)),
+        // Unknown (0) unless planned: Opus packets carry their own duration.
+        "A_OPUS" => (AudioCodec::Opus, pick(0)),
         "A_AAC" => {
             let (aot, frame) = aac_config(&t.codec_private)?;
             match aot {
@@ -576,6 +585,8 @@ mod tests {
         plan.video.width = 320;
         plan.video.height = 240;
         plan.video.bitrate_kbps = 500;
+        // Resampled from the fixture's 44.1 kHz.
+        plan.audio[0].sample_rate = 48_000;
         let src = Source::Url {
             url: vectors::path("tests/fixtures/media/live.mkv").into(),
             realtime: false,
@@ -594,10 +605,11 @@ mod tests {
         );
         let mut counts = std::collections::HashMap::<TrackKind, Vec<u64>>::new();
         let mut keys = Vec::new();
+        let mut pcm_sizes = Vec::new();
         while let Some(f) = r.next_frame().unwrap() {
             let fr = f.frame;
             if fr.track == TrackKind::Audio(AudioFamily::AirPlay) {
-                assert!(fr.data.len() <= 352 * 4);
+                pcm_sizes.push(fr.data.len());
             }
             if fr.track == TrackKind::Video && fr.keyframe {
                 keys.push(counts.get(&TrackKind::Video).map_or(0, |v| v.len()));
@@ -605,6 +617,9 @@ mod tests {
             counts.entry(fr.track).or_default().push(fr.pts);
         }
         proc.wait().unwrap();
+        // Whole 352-sample stereo frames, except possibly the last.
+        pcm_sizes.pop();
+        assert!(pcm_sizes.iter().all(|&n| n == 352 * 4), "{pcm_sizes:?}");
         let video = &counts[&TrackKind::Video];
         assert_eq!(video.len(), 30);
         assert_eq!(keys, [0]);

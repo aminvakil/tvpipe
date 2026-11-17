@@ -3,7 +3,10 @@
 //!
 //! Owner: W4 (PLAN §3, §5).
 
+pub mod debug;
 pub mod ffmpeg;
 pub mod h264;
 pub mod mkv;
+pub mod rawin;
+pub mod slrw;
 pub mod source;

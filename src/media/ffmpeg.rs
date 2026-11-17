@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crate::error::{Error, Result};
+use crate::log::Level;
 use crate::types::{
     AudioCodec, AudioFamily, AudioPlan, EncodePlan, Encoder, TrackKind, VideoCodec,
 };
@@ -248,13 +249,17 @@ struct InputMaps {
 /// `-fflags +nobuffer`: it makes ffmpeg drop the packets it read while
 /// probing (half the frames of a short file in tests).
 const LOW_DELAY_INPUT: [&str; 2] = ["-flags", "low_delay"];
-/// Raw game input: the game paces it, timestamps are arrival times.
-const RAW_INPUT: [&str; 4] = [
+/// Raw game video: the game paces it; frames are stamped with their
+/// arrival time, so dropped frames leave gaps instead of shifting the
+/// timeline. Raw audio is timed by its sample count instead (arrival
+/// times of TCP reads would jitter).
+const RAW_VIDEO_INPUT: [&str; 4] = [
     "-use_wallclock_as_timestamps",
     "1",
     "-thread_queue_size",
     "64",
 ];
+const RAW_AUDIO_INPUT: [&str; 2] = ["-thread_queue_size", "64"];
 
 fn push_inputs(
     a: &mut ArgList,
@@ -325,7 +330,7 @@ fn push_inputs(
                 return Err(Error::unsupported("raw input needs video (--raw-video)"));
             };
             a.extend(LOW_DELAY_INPUT)
-                .extend(RAW_INPUT)
+                .extend(RAW_VIDEO_INPUT)
                 .extend(["-f", "rawvideo", "-pixel_format"])
                 .push(&v.pix_fmt)
                 .push("-video_size")
@@ -336,8 +341,7 @@ fn push_inputs(
                 .push(format!("tcp://{}", v.addr));
             let audio_map = match audio {
                 Some(au) => {
-                    a.extend(LOW_DELAY_INPUT)
-                        .extend(RAW_INPUT)
+                    a.extend(RAW_AUDIO_INPUT)
                         .push("-f")
                         .push(&au.sample_fmt)
                         .push("-sample_rate")
@@ -553,10 +557,14 @@ fn push_audio(a: &mut ArgList, i: usize, p: &AudioPlan, map: &str, probe: &Probe
                 return Err(Error::usage("PCM plan needs frame_samples"));
             }
             // PCM has no frame size of its own; cut fixed-size packets.
-            a.push(s("-c"))
-                .push("pcm_s16le")
-                .push(s("-filter"))
-                .push(format!("asetnsamples=n={}:p=0", p.frame_samples));
+            // Resample first: `-ar`/`-ac` conversions run after this filter.
+            a.push(s("-c")).push("pcm_s16le").push(s("-filter")).push(format!(
+                "aresample={rate},aformat=sample_fmts=s16:sample_rates={rate}:channel_layouts={layout},\
+                 asetnsamples=n={n}:p=0",
+                rate = p.sample_rate,
+                layout = layout_name(p.channels),
+                n = p.frame_samples
+            ));
         }
     }
     Ok(())
@@ -658,6 +666,12 @@ impl Process {
     /// Starts `ffmpeg args...` with stdout piped and stderr pumped into the
     /// logger (each line at warn level; ffmpeg runs at `-loglevel warning`).
     pub fn spawn(ffmpeg: &Path, args: &[OsString]) -> Result<Process> {
+        Process::spawn_logging(ffmpeg, args, Level::Warn)
+    }
+
+    /// Like [`Process::spawn`], logging stderr lines at `level` (use
+    /// `Debug` with `-loglevel info`).
+    pub fn spawn_logging(ffmpeg: &Path, args: &[OsString], level: Level) -> Result<Process> {
         debug!(
             "spawn {} {}",
             ffmpeg.display(),
@@ -681,7 +695,7 @@ impl Process {
                 let tail = tail.clone();
                 let spawned = std::thread::Builder::new()
                     .name("ffmpeg-stderr".into())
-                    .spawn(move || pump_stderr(stderr, &tail));
+                    .spawn(move || pump_stderr(stderr, &tail, level));
                 match spawned {
                     Ok(h) => Some(h),
                     Err(e) => {
@@ -723,6 +737,26 @@ impl Process {
         let _ = self.child.kill();
     }
 
+    /// After a demux error: if ffmpeg exits with a failure within a short
+    /// grace period, its error (with its last stderr line); else `None`, and
+    /// the process is killed.
+    pub fn failure(&mut self) -> Option<Error> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) if status.success() => return None,
+                Ok(Some(_)) => return self.wait().err(),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => {
+                    self.kill();
+                    return None;
+                }
+            }
+        }
+    }
+
     /// Waits for exit. A failure status becomes an error carrying ffmpeg's
     /// last stderr line.
     pub fn wait(&mut self) -> Result<ExitStatus> {
@@ -757,7 +791,7 @@ impl Drop for Process {
     }
 }
 
-fn pump_stderr(stderr: std::process::ChildStderr, tail: &Mutex<VecDeque<String>>) {
+fn pump_stderr(stderr: std::process::ChildStderr, tail: &Mutex<VecDeque<String>>, level: Level) {
     let mut r = BufReader::new(stderr);
     let mut buf = Vec::new();
     loop {
@@ -772,7 +806,7 @@ fn pump_stderr(stderr: std::process::ChildStderr, tail: &Mutex<VecDeque<String>>
             if line.is_empty() {
                 continue;
             }
-            warn!("ffmpeg: {line}");
+            crate::log_at!(level, "ffmpeg: {line}");
             if let Ok(mut t) = tail.lock() {
                 if t.len() == STDERR_TAIL {
                     t.pop_front();
@@ -905,7 +939,8 @@ pub(crate) mod tests {
              pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p \
              -bf 0 -g 30 -b:v 3000k -maxrate 3000k -bufsize 200k \
              -preset veryfast -tune zerolatency -profile:v high -keyint_min 30 -sc_threshold 0 \
-             -map 0:a:0? -ar:a:0 44100 -ac:a:0 2 -c:a:0 pcm_s16le -filter:a:0 asetnsamples=n=352:p=0 \
+             -map 0:a:0? -ar:a:0 44100 -ac:a:0 2 -c:a:0 pcm_s16le -filter:a:0 aresample=44100,\
+             aformat=sample_fmts=s16:sample_rates=44100:channel_layouts=stereo,asetnsamples=n=352:p=0 \
              -map 0:a:0? -ar:a:1 48000 -ac:a:1 2 -c:a:1 libopus -b:a:1 96k -frame_duration:a:1 10 \
              -application:a:1 lowdelay -vbr:a:1 off \
              -max_interleave_delta 0 -muxdelay 0 -muxpreload 0 -f matroska -live 1 \
