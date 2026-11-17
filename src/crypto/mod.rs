@@ -4,5 +4,6 @@
 //! `ring.rs` (PLAN §3).
 
 pub mod aes;
+pub mod bigint;
 pub mod modes;
 pub mod ring;

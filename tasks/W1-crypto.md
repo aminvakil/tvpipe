@@ -11,7 +11,7 @@ Status: in progress. Owns `src/crypto/**`, `tests/vectors/crypto/**`.
       (`#[ignore]`, ≥200 MB/s for CTR on a modern CPU).
       Measured: 741 MB/s AES-128-CTR on Apple M5 Max
       (`cargo test --release ctr_throughput -- --ignored --nocapture`).
-- [ ] `bigint.rs`: fixed-width unsigned big integers sized for 3072-bit
+- [x] `bigint.rs`: fixed-width unsigned big integers sized for 3072-bit
       (and 4096-bit headroom): from/to big-endian bytes, add, sub, mul, mod,
       modpow (Montgomery or plain). Vectors generated with Python `pow()`.
 - [ ] `srp.rs`: SRP-6a client, SHA-512, RFC 5054 3072-bit group, HAP
