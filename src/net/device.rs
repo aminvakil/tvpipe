@@ -378,7 +378,7 @@ pub fn cache_from_packets<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::net::dns::{Message, RData, Record, FLAG_AA, FLAG_QR};
     use crate::util::vectors;

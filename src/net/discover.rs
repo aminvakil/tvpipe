@@ -1,6 +1,5 @@
 //! `streamlib discover` and `--to NAME` resolution (PLAN §4, §6).
 
-use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
@@ -8,6 +7,7 @@ use super::device::{self, Device};
 use super::iface;
 use super::mdns::{self, BrowseOptions, Cache};
 use crate::airplay::discovery::format_features;
+use crate::codec::json::Value;
 use crate::error::Result;
 use crate::util::hex;
 
@@ -132,156 +132,91 @@ pub fn to_table(devices: &[Device]) -> String {
 
 /// Machine-readable output: a JSON array of devices.
 pub fn to_json(devices: &[Device]) -> String {
-    let mut out = String::from("[");
-    for (i, d) in devices.iter().enumerate() {
-        out.push_str(if i == 0 { "\n  {" } else { ",\n  {" });
-        let mut f = Fields::new(&mut out, 4);
-        f.str("name", &d.name);
-        f.raw(
+    let list = Value::array(devices.iter().map(device_json));
+    format!("{list:#}\n")
+}
+
+fn device_json(d: &Device) -> Value {
+    let mut v = Value::object()
+        .with("name", d.name.as_str())
+        .with(
             "addresses",
-            &format!(
-                "[{}]",
-                d.addrs()
-                    .iter()
-                    .map(|a| json_str(&a.to_string()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        );
-        f.opt_str("model", d.model());
-        for (key, ap) in [("airplay", &d.airplay), ("raop", &d.raop)] {
-            let Some(ap) = ap else { continue };
-            let mut o = String::from("{");
-            let mut g = Fields::new(&mut o, 6);
-            endpoint_fields(&mut g, &ap.endpoint);
-            let t = &ap.txt;
-            g.opt_str("model", t.model.as_deref());
-            g.opt_str("srcvers", t.srcvers.as_deref());
-            g.opt_str("osvers", t.osvers.as_deref());
-            g.opt_str("deviceid", t.deviceid.as_deref());
-            g.opt_str("features", t.features.map(format_features).as_deref());
-            g.opt_str("flags", t.flags.map(|f| format!("{f:#x}")).as_deref());
-            g.opt_str("pk", t.pk.as_deref().map(hex::encode).as_deref());
-            g.raw("mirroring", bool_str(t.supports_mirroring()));
-            g.raw("password", bool_str(t.password_required()));
-            g.raw("pin", bool_str(t.pin_required()));
-            g.finish();
-            f.raw(key, &o);
-        }
-        if let Some(c) = &d.cast {
-            let mut o = String::from("{");
-            let mut g = Fields::new(&mut o, 6);
-            endpoint_fields(&mut g, &c.endpoint);
-            let t = &c.txt;
-            g.opt_str("friendly_name", t.friendly_name.as_deref());
-            g.opt_str("model", t.model.as_deref());
-            g.opt_str("id", t.id.as_deref());
-            if let Some(ca) = t.capabilities {
-                g.raw("capabilities", &ca.to_string());
-            }
-            g.opt_str("status", t.status.as_deref());
-            g.raw("video", bool_str(d.cast_video()));
-            g.raw("group", bool_str(t.is_group()));
-            g.finish();
-            f.raw("cast", &o);
-        }
-        f.finish();
+            Value::array(d.addrs().iter().map(|a| a.to_string())),
+        )
+        .with_opt("model", d.model());
+    for (key, ap) in [("airplay", &d.airplay), ("raop", &d.raop)] {
+        let Some(ap) = ap else { continue };
+        let t = &ap.txt;
+        let o = endpoint_json(&ap.endpoint)
+            .with_opt("model", t.model.as_deref())
+            .with_opt("srcvers", t.srcvers.as_deref())
+            .with_opt("osvers", t.osvers.as_deref())
+            .with_opt("deviceid", t.deviceid.as_deref())
+            .with_opt("features", t.features.map(format_features))
+            .with_opt("flags", t.flags.map(|f| format!("{f:#x}")))
+            .with_opt("pk", t.pk.as_deref().map(hex::encode))
+            .with("mirroring", t.supports_mirroring())
+            .with("password", t.password_required())
+            .with("pin", t.pin_required());
+        v = v.with(key, o);
     }
-    out.push_str(if devices.is_empty() { "]\n" } else { "\n]\n" });
-    out
+    if let Some(c) = &d.cast {
+        let t = &c.txt;
+        let o = endpoint_json(&c.endpoint)
+            .with_opt("friendly_name", t.friendly_name.as_deref())
+            .with_opt("model", t.model.as_deref())
+            .with_opt("id", t.id.as_deref())
+            .with_opt("capabilities", t.capabilities)
+            .with_opt("status", t.status.as_deref())
+            .with("video", d.cast_video())
+            .with("group", t.is_group());
+        v = v.with("cast", o);
+    }
+    v
 }
 
-fn endpoint_fields(g: &mut Fields<'_>, ep: &device::Endpoint) {
-    g.str("instance", &ep.instance);
-    g.str("host", &ep.host);
-    g.raw("port", &ep.port.to_string());
-    g.str("address", &ep.addr().to_string());
-}
-
-fn bool_str(b: bool) -> &'static str {
-    if b {
-        "true"
-    } else {
-        "false"
-    }
-}
-
-/// Writes `"key": value` members of one JSON object, one per line.
-struct Fields<'a> {
-    out: &'a mut String,
-    indent: usize,
-    first: bool,
-}
-
-impl<'a> Fields<'a> {
-    fn new(out: &'a mut String, indent: usize) -> Fields<'a> {
-        Fields {
-            out,
-            indent,
-            first: true,
-        }
-    }
-
-    fn raw(&mut self, key: &str, value: &str) {
-        let sep = if self.first { "" } else { "," };
-        self.first = false;
-        let _ = write!(
-            self.out,
-            "{sep}\n{:indent$}{}: {value}",
-            "",
-            json_str(key),
-            indent = self.indent
-        );
-    }
-
-    fn str(&mut self, key: &str, value: &str) {
-        self.raw(key, &json_str(value));
-    }
-
-    fn opt_str(&mut self, key: &str, value: Option<&str>) {
-        if let Some(v) = value {
-            self.str(key, v);
-        }
-    }
-
-    fn finish(self) {
-        let _ = write!(self.out, "\n{:indent$}}}", "", indent = self.indent - 2);
-    }
-}
-
-/// A JSON string literal (RFC 8259 §7).
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+fn endpoint_json(ep: &device::Endpoint) -> Value {
+    Value::object()
+        .with("instance", ep.instance.as_str())
+        .with("host", ep.host.as_str())
+        .with("port", ep.port)
+        .with("address", ep.addr().to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn json_escapes() {
-        assert_eq!(json_str("a\"b\\c\n\u{1}é"), "\"a\\\"b\\\\c\\n\\u0001é\"");
-    }
+    use crate::codec::json;
 
     #[test]
     fn empty_outputs() {
         assert_eq!(to_json(&[]), "[]\n");
         assert_eq!(to_table(&[]), "no receivers found\n");
+    }
+
+    #[test]
+    fn lan_capture_json() {
+        let devices = crate::net::device::tests::lan_devices();
+        let v = json::parse(&to_json(&devices)).unwrap();
+        let list = v.as_array().unwrap();
+        assert_eq!(list.len(), 13);
+        let tv = list
+            .iter()
+            .find(|d| d["name"].as_str() == Some("Livingroom (2)"))
+            .unwrap();
+        assert_eq!(tv["model"].as_str(), Some("AppleTV6,2"));
+        assert_eq!(tv["addresses"][0].as_str(), Some("192.168.1.34"));
+        let ap = &tv["airplay"];
+        assert_eq!(ap["port"].as_u64(), Some(7000));
+        assert_eq!(ap["deviceid"].as_str(), Some("AA:BB:CC:00:00:0A"));
+        assert_eq!(ap["features"].as_str(), Some("0x4A7FDFD5,0x3C177FDE"));
+        assert_eq!(ap["flags"].as_str(), Some("0x644"));
+        assert_eq!(ap["mirroring"].as_bool(), Some(true));
+        assert_eq!(ap["pk"].as_str().map(str::len), Some(64));
+        assert!(tv["raop"]["instance"]
+            .as_str()
+            .unwrap()
+            .ends_with("@Livingroom"));
+        assert!(tv["cast"].is_null());
     }
 }
