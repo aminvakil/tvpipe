@@ -19,7 +19,7 @@ Status: in progress. Owns `src/codec/**`, `tests/vectors/codec/**`,
       constants (Method, Identifier, Salt, PublicKey, Proof, EncryptedData,
       State, Error, RetryDelay, Certificate, Signature, Permissions,
       FragmentData, FragmentLast, Flags, Separator).
-- [ ] `protobuf.rs`: varint + length-delimited wire format, `CastMessage`
+- [x] `protobuf.rs`: varint + length-delimited wire format, `CastMessage`
       (protocol_version=1 enum, source_id=2, destination_id=3, namespace=4,
       payload_type=5 enum, payload_utf8=6, payload_binary=7) encode/decode.
       Unknown fields skipped. `protoc` is not installed; build fixtures by

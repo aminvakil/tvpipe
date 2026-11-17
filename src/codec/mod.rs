@@ -5,4 +5,5 @@
 
 mod fuzz;
 pub mod json;
+pub mod protobuf;
 pub mod tlv8;
