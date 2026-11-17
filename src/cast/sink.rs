@@ -909,6 +909,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sink_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<StreamingSink>();
+        assert_send::<Box<dyn Sink>>();
+    }
+
+    #[test]
     fn media_clock_anchors_and_reanchors() {
         let mut c = MediaClock::default();
         let t0 = Instant::now();

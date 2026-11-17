@@ -435,33 +435,31 @@ fn media(udp: &UdpSocket, state: &Mutex<State>, stop: &AtomicBool, opts: Options
     while !stop.load(Ordering::Acquire) {
         let mut send_now = false;
         if let Ok((n, from)) = udp.recv_from(&mut buf) {
-            {
-                peer = Some(from);
-                let now = Instant::now();
-                let pkt = &buf[..n];
-                let mut st = state.lock().unwrap();
-                if super::rtcp::is_rtcp(pkt) {
-                    let Some(author) = super::rtcp::author_ssrc(pkt) else {
-                        continue;
-                    };
-                    if let Some(s) = st.streams.iter_mut().find(|s| s.sender_ssrc == author) {
-                        if let Ok(Some(sr)) = SenderReport::parse(pkt, author) {
-                            s.sender_reports.push(sr);
-                            s.last_sr_at = Some(now);
-                        }
+            peer = Some(from);
+            let now = Instant::now();
+            let pkt = &buf[..n];
+            let mut st = state.lock().unwrap();
+            if super::rtcp::is_rtcp(pkt) {
+                let Some(author) = super::rtcp::author_ssrc(pkt) else {
+                    continue;
+                };
+                if let Some(s) = st.streams.iter_mut().find(|s| s.sender_ssrc == author) {
+                    if let Ok(Some(sr)) = SenderReport::parse(pkt, author) {
+                        s.sender_reports.push(sr);
+                        s.last_sr_at = Some(now);
                     }
-                } else if let Ok(p) = RtpPacket::parse(pkt) {
-                    rng ^= rng << 13;
-                    rng ^= rng >> 17;
-                    rng ^= rng << 5;
-                    let drop_it = (rng as f64 / u32::MAX as f64) < opts.loss;
-                    if let Some(s) = st.streams.iter_mut().find(|s| s.sender_ssrc == p.ssrc) {
-                        if drop_it {
-                            s.dropped += 1;
-                        } else {
-                            s.packets += 1;
-                            send_now |= s.on_rtp(&p, now);
-                        }
+                }
+            } else if let Ok(p) = RtpPacket::parse(pkt) {
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                let drop_it = (rng as f64 / u32::MAX as f64) < opts.loss;
+                if let Some(s) = st.streams.iter_mut().find(|s| s.sender_ssrc == p.ssrc) {
+                    if drop_it {
+                        s.dropped += 1;
+                    } else {
+                        s.packets += 1;
+                        send_now |= s.on_rtp(&p, now);
                     }
                 }
             }
