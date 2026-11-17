@@ -21,6 +21,16 @@ checklist as it lands pieces on `main`.
   audio as `PcmS16le` with `frame_samples = 352` (ffmpeg cuts exact packets)
   and wrap PCM as uncompressed ALAC frames in `airplay/audio.rs`.
 - Lead (session.rs): ffprobe the input before planning so inputs without
-  audio don't get `0:a:0?` maps (avoids ffmpeg warnings).
+  audio don't get `0:a:0?` maps (avoids ffmpeg warnings). Done (play-cast).
 - Lead: switch `cast/annexb.rs` and the private clock in `cast/sink.rs` to
-  `media::h264` / `media::clock` (both on main now).
+  `media::h264` / `media::clock` (both on main now). Done (play-cast); the
+  Cast sink keeps its own anchoring rule on `media::clock` (early frames
+  keep future reference times; ffmpeg delivers in bursts).
+- `play --to` forms: `NAME` (discovery), `IP` (Cast on 8009), `IP:PORT`
+  (Cast, except 7000 = AirPlay), `cast:…` / `airplay:…` to force one.
+  Devices with both protocols go over Cast until AirPlay mirroring lands.
+- Ctrl-C: `util::interrupt` (decision 0004). SIGINT/SIGTERM/`q` stop the
+  session without draining; a second Ctrl-C exits at once (130).
+- `-re` inputs: ffmpeg's 0.5 s initial read burst overruns the Cast
+  in-flight window; `media::ffmpeg` now passes `-readrate_initial_burst
+  0.001` (0 means "default" in ffmpeg 8).

@@ -39,6 +39,9 @@ audio codec than the one negotiated, `start` fails.
 
 ## Duplication to resolve after W4 lands
 
+Resolved on branch play-cast: `annexb` parses with `media::h264`; the
+sink's clock is a `media::clock::MediaClock` (with the rule below kept).
+
 - `cast::annexb` converts AVCC → Annex B and prepends SPS/PPS from the
   `avcC` on key frames (Cast receivers decode Annex B). If `media::h264`
   grows an equivalent, the cast module can switch to it.
