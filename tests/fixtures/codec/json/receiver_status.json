@@ -1,0 +1,35 @@
+{
+  "requestId": 2,
+  "status": {
+    "applications": [
+      {
+        "appId": "0F5096E8",
+        "appType": "WEB",
+        "displayName": "Chrome Mirroring",
+        "iconUrl": "",
+        "isIdleScreen": false,
+        "launchedFromCloud": false,
+        "namespaces": [
+          {"name": "urn:x-cast:com.google.cast.debugoverlay"},
+          {"name": "urn:x-cast:com.google.cast.cac"},
+          {"name": "urn:x-cast:com.google.cast.webrtc"},
+          {"name": "urn:x-cast:com.google.cast.remoting"}
+        ],
+        "sessionId": "7E2FF513-CDF6-9A91-2B28-3E3DE7BAC174",
+        "statusText": "Chrome Mirroring",
+        "transportId": "web-5",
+        "universalAppId": "0F5096E8"
+      }
+    ],
+    "isActiveInput": true,
+    "isStandBy": false,
+    "userEq": {},
+    "volume": {
+      "controlType": "attenuation",
+      "level": 0.5,
+      "muted": false,
+      "stepInterval": 0.05000000074505806
+    }
+  },
+  "type": "RECEIVER_STATUS"
+}

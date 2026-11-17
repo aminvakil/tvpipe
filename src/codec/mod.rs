@@ -4,4 +4,5 @@
 //! `protobuf.rs` (PLAN §3).
 
 mod fuzz;
+pub mod json;
 pub mod tlv8;

@@ -1,0 +1,191 @@
+# JSON parser/serializer known answers (RFC 8259).
+# input (or input_hex) is parsed; output (or output_hex) is our compact
+# serialization.
+# Blocks without output must fail with ErrorKind::Malformed (error = a
+# substring of the message, optional).
+
+name = null
+input = null
+output = null
+
+name = literals in array
+input = [true,false,null]
+output = [true,false,null]
+
+name = whitespace everywhere
+input_hex = 20 0a 7b 09 22 61 22 0d 0a 3a 20 5b 20 31 20 2c 32 5d 20 7d 0a
+output = {"a":[1,2]}
+
+name = integers
+input = [0,-1,42,9223372036854775807,-9223372036854775808]
+output = [0,-1,42,9223372036854775807,-9223372036854775808]
+
+name = big integer falls back to float
+input = 18446744073709551616
+output = 1.8446744073709552e19
+
+name = floats
+input = [1.5,-0.25,1e3,1E+3,2.5e-3,0.1,100.0]
+output = [1.5,-0.25,1000.0,1000.0,0.0025,0.1,100.0]
+
+name = negative zero
+input = [-0,-0.0]
+output = [0,-0.0]
+
+name = tiny and huge floats
+input = [5e-324,1.7976931348623157e308,1e-7]
+output = [5e-324,1.7976931348623157e308,1e-7]
+
+name = simple escapes
+input = "a\"b\\c\/d\b\f\n\r\t"
+output = "a\"b\\c/d\b\f\n\r\t"
+
+name = unicode escapes
+input = "\u0041\u00e9\u20ac\u0000\u001f"
+output = "Aé€\u0000\u001f"
+
+name = surrogate pair
+input = "\ud83d\ude00 \uD834\uDD1E"
+output = "😀 𝄞"
+
+name = lone high surrogate at end
+input = "x\ud800"
+output = "x�"
+
+name = lone high surrogate before text
+input = "\ud800abc"
+output = "�abc"
+
+name = lone low surrogate
+input = "\udc00"
+output = "�"
+
+name = two high surrogates then low
+input = "\ud800\ud83d\ude00"
+output = "�😀"
+
+name = high surrogate then simple escape
+input = "\ud800\n"
+output = "�\n"
+
+name = raw utf-8 passes through
+input = "grüße 日本"
+output = "grüße 日本"
+
+name = object order kept
+input = {"z":1,"a":{"y":[],"b":{}},"m":"x"}
+output = {"z":1,"a":{"y":[],"b":{}},"m":"x"}
+
+name = duplicate keys kept on parse
+input = {"a":1,"a":2}
+output = {"a":1,"a":2}
+
+name = empty containers
+input = [[],{},[{}],""]
+output = [[],{},[{}],""]
+
+name = DEL is not escaped
+input_hex = 22 7f 22
+output_hex = 227f22
+
+# --- errors ---
+
+name = empty input
+input_hex =
+error = unexpected end
+
+name = only whitespace
+input_hex = 20 20
+error = unexpected end
+
+name = trailing comma in array
+input = [1,]
+error = unexpected character
+
+name = trailing comma in object
+input = {"a":1,}
+error = expected string key
+
+name = trailing garbage
+input = 1 2
+error = trailing characters
+
+name = leading zero
+input = 01
+error = leading zero
+
+name = bare minus
+input = -
+error = expected digit
+
+name = dot without digits
+input = 1.
+error = after decimal point
+
+name = leading dot
+input = .5
+error = unexpected character
+
+name = exponent without digits
+input = 1e+
+error = exponent
+
+name = number overflow
+input = 1e400
+error = out of range
+
+name = plus sign
+input = +1
+error = unexpected character
+
+name = single quotes
+input = 'a'
+error = unexpected character
+
+name = unquoted key
+input = {a:1}
+error = expected string key
+
+name = missing colon
+input = {"a" 1}
+error = expected ':'
+
+name = unterminated string
+input = "abc
+error = unterminated string
+
+name = raw newline in string
+input_hex = 22 61 0a 62 22
+error = control character
+
+name = bad escape
+input = "\x41"
+error = invalid escape
+
+name = short unicode escape
+input = "\u12"
+error = invalid \u escape
+
+name = invalid utf-8
+input_hex = 22 ff 22
+error = invalid UTF-8
+
+name = truncated literal
+input = tru
+error = invalid literal
+
+name = misspelled literal
+input = nul1
+error = invalid literal
+
+name = NaN is not JSON
+input = NaN
+error = unexpected character
+
+name = unclosed array
+input = [1,2
+error = expected ','
+
+name = unclosed object
+input = {"a":1
+error = expected ','

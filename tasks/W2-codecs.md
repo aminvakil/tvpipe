@@ -3,7 +3,7 @@
 Status: in progress. Owns `src/codec/**`, `tests/vectors/codec/**`,
 `tests/fixtures/codec/**`.
 
-- [ ] `json.rs`: `Value` (Null, Bool, Number as f64 + preserved i64 when
+- [x] `json.rs`: `Value` (Null, Bool, Number as f64 + preserved i64 when
       integral, String, Array, Object as ordered Vec<(String, Value)>),
       parser (RFC 8259, full string escapes incl. surrogate pairs, depth
       limit), compact serializer, convenience getters (`get`, `as_str`,
