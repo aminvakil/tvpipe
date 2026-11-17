@@ -13,9 +13,9 @@
 //! receiver ending the session. [`Sink::push`] only converts, encrypts and
 //! queues; it never waits for the network.
 //!
-//! Timing: pushed frames drive a [`media::clock`](crate::media::clock)
-//! (the first anchors it, early ones move it earlier); every frame's
-//! reference time is derived from its pts on that clock, so audio and video
+//! Timing: the first frame pushed anchors a
+//! [`media::clock`](crate::media::clock) (its arrival instant ↔ its pts);
+//! every frame's reference time is derived from its pts on that clock, so audio and video
 //! stay in sync, and the receiver plays each frame at reference time +
 //! target delay. If frames arrive later than their reference time by more
 //! than [`MAX_LATENESS`] (a stalled encoder), the clock is moved forward.
@@ -258,20 +258,26 @@ fn wait_for<T>(
     }
 }
 
-/// Maps media pts to reference instants (shared by audio and video):
-/// `media::clock` (anchored on the first frame, moved earlier by frames
-/// that arrive early), plus a re-anchor to now for frames more than
-/// [`MAX_LATENESS`] late, so the receiver does not drop everything after
-/// an encoder stall.
+/// Maps media pts to reference instants (shared by audio and video) on a
+/// `media::clock`, anchored on the first frame. Early frames keep their
+/// pts-derived (future) reference time: ffmpeg delivers in bursts, and
+/// moving the anchor earlier would squeeze a burst's frames together.
+/// Frames more than [`MAX_LATENESS`] late (a stalled encoder) or far in the
+/// future (a jump in the input) re-anchor the clock to now.
 fn reference_time(clock: &MediaClock, pts: u64, rate: u32, now: Instant) -> Instant {
-    clock.observe_at(pts, rate, now);
+    let max_early = Duration::from_secs(2);
+    let in_window = |late: i128| {
+        late <= MAX_LATENESS.as_nanos() as i128 && -late <= max_early.as_nanos() as i128
+    };
     match (clock.lateness(pts, rate, now), clock.instant_for(pts, rate)) {
-        (Some(late), Some(t)) if late <= MAX_LATENESS.as_nanos() as i128 => t,
+        (Some(late), Some(t)) if in_window(late) => t,
         (late, _) => {
-            debug!(
-                "cast: re-anchoring media clock ({} ms late)",
-                late.unwrap_or(0) / 1_000_000
-            );
+            if let Some(late) = late {
+                debug!(
+                    "cast: re-anchoring media clock ({} ms late)",
+                    late / 1_000_000
+                );
+            }
             clock.reanchor_at(pts, rate, now);
             now
         }
@@ -933,10 +939,10 @@ mod tests {
         // 300 ms late: re-anchored to now.
         let t3 = t0 + Duration::from_millis(2300);
         assert_eq!(r(12.0, t3), t3);
-        // Early frames move the anchor earlier (start-up delay is not kept).
+        // Early frames (a burst) keep their place on the timeline.
         assert_eq!(
-            r(12.2, t3 + Duration::from_millis(100)),
-            t3 + Duration::from_millis(100)
+            r(12.5, t3 + Duration::from_millis(100)),
+            t3 + Duration::from_millis(500)
         );
         // A jump far ahead re-anchors too.
         assert_eq!(
