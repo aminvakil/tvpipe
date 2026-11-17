@@ -1,0 +1,14 @@
+NAME                 ADDRESS        PROTOCOLS             MODEL
+Adrian               192.168.1.27   airplay,raop          Bookshelf
+Amalia               192.168.1.17   airplay,raop          Bookshelf
+Armin’s MacBook Pro  192.168.1.101  airplay(mirror),raop  Mac17,7
+Balcony              192.168.1.19   airplay,raop          Move 2
+Bathroom Maria       192.168.1.11   airplay,raop          One SL
+Bedroom              192.168.1.16   airplay,raop          Beam
+Dining Room          192.168.1.45   airplay,raop          One SL
+Kitchen              192.168.1.26   airplay,raop          One
+Livingroom (2)       192.168.1.34   airplay(mirror),raop  AppleTV6,2
+Martin               192.168.1.23   airplay,raop          One SL
+NB-XXXXXXXXXX        192.168.1.136  airplay(mirror),raop  Mac16,12
+Office Maria         192.168.1.14   airplay,raop          One SL
+Workshop             192.168.1.44   airplay,raop          One SL

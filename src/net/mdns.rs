@@ -241,7 +241,7 @@ pub fn browse(opts: &BrowseOptions, mut done: impl FnMut(&Cache) -> bool) -> Res
         let sock = match open_socket(local) {
             Ok(s) => s,
             Err(e) => {
-                warn!("mdns: cannot browse from {local}: {e}");
+                warn!("cannot browse from {local}: {e}");
                 continue;
             }
         };
@@ -252,7 +252,7 @@ pub fn browse(opts: &BrowseOptions, mut done: impl FnMut(&Cache) -> bool) -> Res
         let stop = stop.clone();
         readers.push(std::thread::spawn(move || recv_loop(reader, tx, stop)));
         debug!(
-            "mdns: browsing from {}",
+            "browsing from {}",
             sock.local_addr()
                 .map_or(local.to_string(), |a| a.to_string())
         );
@@ -295,7 +295,7 @@ pub fn browse(opts: &BrowseOptions, mut done: impl FnMut(&Cache) -> bool) -> Res
                 continue;
             }
             asked.insert(key, now);
-            trace!("mdns: follow-up {} type {}", q.name, q.qtype);
+            trace!("follow-up {} type {}", q.name, q.qtype);
             id = id.wrapping_add(1);
             send(&sockets, opts.target, &Message::query(id, vec![q]));
         }
@@ -316,7 +316,7 @@ pub fn browse(opts: &BrowseOptions, mut done: impl FnMut(&Cache) -> bool) -> Res
                             break Ok(());
                         }
                     }
-                    Err(e) => debug!("mdns: ignoring packet from {from}: {e}"),
+                    Err(e) => debug!("ignoring packet from {from}: {e}"),
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -337,7 +337,7 @@ fn open_socket(local: Ipv4Addr) -> Result<UdpSocket> {
         .map_err(|e| Error::io(format!("mdns: bind {local}"), e))?;
     // RFC 6762 §11: send with IP TTL 255. Failure is not fatal.
     if let Err(e) = sock.set_multicast_ttl_v4(255) {
-        debug!("mdns: set multicast TTL: {e}");
+        debug!("set multicast TTL: {e}");
     }
     sock.set_read_timeout(Some(Duration::from_millis(100)))
         .map_err(|e| Error::io("mdns: set read timeout", e))?;
@@ -348,13 +348,13 @@ fn send(sockets: &[UdpSocket], target: SocketAddrV4, msg: &Message) {
     let bytes = match msg.to_bytes(true) {
         Ok(b) => b,
         Err(e) => {
-            warn!("mdns: cannot encode query: {e}");
+            warn!("cannot encode query: {e}");
             return;
         }
     };
     for s in sockets {
         if let Err(e) = s.send_to(&bytes, target) {
-            debug!("mdns: send from {:?}: {e}", s.local_addr().ok());
+            debug!("send from {:?}: {e}", s.local_addr().ok());
         }
     }
 }
@@ -378,7 +378,7 @@ fn recv_loop(sock: UdpSocket, tx: mpsc::Sender<(SocketAddr, Vec<u8>)>, stop: Arc
                         | std::io::ErrorKind::ConnectionReset
                 ) => {}
             Err(e) => {
-                debug!("mdns: receive failed: {e}");
+                debug!("receive failed: {e}");
                 return;
             }
         }
