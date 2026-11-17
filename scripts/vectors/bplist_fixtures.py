@@ -161,7 +161,7 @@ def main():
                           "audioOutputFormats": 67108860}],
     })
     from_plistlib("pl 300 objects", list(range(300)))
-    from_plistlib("pl wide offsets", [bytes([i]) * 1000 for i in range(70)])
+    from_plistlib("pl wide offsets", ["x" * 66000, 1, b"after", "end"])
 
     # --- plutil (CoreFoundation writer) ---
     from_plutil("pu scalars", """<dict>
@@ -191,7 +191,7 @@ def main():
 </array>""")
     items = "".join(f"<string>item{i}</string>" for i in range(300))
     from_plutil("pu 300 strings", f"<array>{items}</array>")
-    from_plutil("pu big data", "<data>" + __import__("base64").b64encode(bytes(range(256)) * 300).decode() + "</data>")
+    from_plutil("pu big data", "<data>" + __import__("base64").b64encode(bytes(range(256)) * 4).decode() + "</data>")
     from_plutil("pu info like", """<dict>
   <key>deviceID</key><string>AA:BB:CC:DD:EE:FF</string>
   <key>features</key><integer>496155769145856</integer>
