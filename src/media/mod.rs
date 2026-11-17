@@ -3,3 +3,5 @@
 //!
 //! Owner: W4. Planned files: `ffmpeg.rs`, `mkv.rs`, `h264.rs`, `rawin.rs`,
 //! `clock.rs`, `fanout.rs` (PLAN §3, §5).
+
+pub mod h264;

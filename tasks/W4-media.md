@@ -13,7 +13,7 @@ Status: in progress. Owns `src/media/**`, `examples/slrw-gen.rs`,
       (no lacing needed for our encodes, but parse Xiph/EBML/fixed lacing
       or reject cleanly), keyframe flag, timestamps → `EncodedFrame` in
       90 kHz / sample ticks. Element size limits. Never panics.
-- [ ] `h264.rs`: NAL iteration (AVCC and Annex B), avcC parse/build, SPS
+- [x] `h264.rs`: NAL iteration (AVCC and Annex B), avcC parse/build, SPS
       parse (profile, level, dimensions incl. cropping, VUI fps if present),
       IDR detection.
 - [ ] `rawin.rs` + `examples/slrw-gen.rs`: SLRW framing (PLAN §5.2), two
