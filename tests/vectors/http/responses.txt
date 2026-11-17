@@ -1,0 +1,106 @@
+# HTTP/RTSP response parsing known answers. `raw` is the wire bytes with
+# \r and \n escaped; the parser is also fed one byte at a time. Optional:
+# `head` (response to HEAD), `headers` (k=v | k=v), `body`, `rest` (bytes
+# left after the message), `error` (ErrorKind).
+
+name = RTSP with Content-Length and pipelined rest
+raw = RTSP/1.0 200 OK\r\nContent-Length: 5\r\nCSeq: 1\r\n\r\nhelloRTSP/1.0
+version = RTSP/1.0
+status = 200
+reason = OK
+headers = Content-Length=5 | CSeq=1
+body = hello
+rest = RTSP/1.0
+
+name = RTSP without Content-Length has an empty body
+raw = RTSP/1.0 200 OK\r\nCSeq: 2\r\n\r\nRTSP/1.0 200 OK\r\n
+version = RTSP/1.0
+status = 200
+reason = OK
+rest = RTSP/1.0 200 OK\r\n
+
+name = HTTP without length reads to close
+raw = HTTP/1.1 200 OK\r\nServer: AirTunes/366.0\r\n\r\nall of it
+version = HTTP/1.1
+status = 200
+reason = OK
+headers = Server=AirTunes/366.0
+body = all of it
+
+name = HTTP chunked with extension and trailer
+raw = HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n4;x=y\r\nWiki\r\na\r\npedia in\r\n\r\n0\r\nExpires: never\r\n\r\nNEXT
+version = HTTP/1.1
+status = 200
+reason = OK
+body = Wikipedia in\r\n
+rest = NEXT
+
+name = RTSP ignores Transfer-Encoding
+raw = RTSP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\nok
+version = RTSP/1.0
+status = 200
+reason = OK
+body = ok
+
+name = Bare LF line endings, folded header, header whitespace
+raw = HTTP/1.0 404 Not Found\nX-A:  one\n  two\nContent-Length:0\n\n
+version = HTTP/1.0
+status = 404
+reason = Not Found
+headers = X-A=one two | Content-Length=0
+
+name = Response to HEAD has no body despite Content-Length
+raw = HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nX
+head = yes
+version = HTTP/1.1
+status = 200
+reason = OK
+rest = X
+
+name = 204 and 304 have no body
+raw = HTTP/1.1 304 Not Modified\r\nContent-Length: 3\r\n\r\nabc
+version = HTTP/1.1
+status = 304
+reason = Not Modified
+rest = abc
+
+name = Empty reason phrase
+raw = RTSP/1.0 470 \r\nContent-Length: 0\r\n\r\n
+version = RTSP/1.0
+status = 470
+
+name = Truncated body
+raw = RTSP/1.0 200 OK\r\nContent-Length: 10\r\n\r\nshort
+error = Closed
+
+name = Conflicting Content-Length
+raw = HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab
+error = Malformed
+
+name = Bad status code
+raw = HTTP/1.1 2000 OK\r\n\r\n
+error = Malformed
+
+name = Unknown version
+raw = SIP/2.0 200 OK\r\n\r\n
+error = Malformed
+
+name = Header without colon
+raw = HTTP/1.1 200 OK\r\nNoColon\r\n\r\n
+error = Malformed
+
+name = Space before colon
+raw = HTTP/1.1 200 OK\r\nX-A : 1\r\n\r\n
+error = Malformed
+
+name = Bad chunk size
+raw = HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n
+error = Malformed
+
+name = Missing CRLF after chunk data
+raw = HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nabX\r\n0\r\n\r\n
+error = Malformed
+
+name = Closed before anything
+raw =
+error = Closed

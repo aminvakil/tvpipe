@@ -20,7 +20,7 @@ Status: in progress. Owns `src/net/**`, `src/airplay/discovery.rs`
       32-bit hex halves `0xLO,0xHI` → u64, `pk`, `model`, `srcvers`,
       `deviceid`, `flags`, `pw`) and Cast (`fn`, `md`, `id`, `ca`).
       Name matching: case-insensitive, unique prefix.
-- [ ] `net/http.rs` + `net/rtsp.rs`: request writer and response reader
+- [x] `net/http.rs` + `net/rtsp.rs`: request writer and response reader
       (status line, headers, Content-Length bodies, chunked for HTTP) over
       any `Read + Write`, so it works on TCP and on W5's encrypted stream.
       Size limits on headers/bodies.

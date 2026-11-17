@@ -5,5 +5,7 @@
 pub mod device;
 pub mod discover;
 pub mod dns;
+pub mod http;
 pub mod iface;
 pub mod mdns;
+pub mod rtsp;
