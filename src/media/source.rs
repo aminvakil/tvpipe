@@ -576,11 +576,9 @@ mod tests {
     #[test]
     fn ffmpeg_encode_roundtrip() {
         use crate::media::ffmpeg::{self, Output, Process, Source};
-        let Ok(bin) = ffmpeg::locate(None) else {
-            eprintln!("ffmpeg not found; skipping");
+        let Some((bin, probe)) = ffmpeg::tests::real_ffmpeg() else {
             return;
         };
-        let probe = ffmpeg::Probe::run(&bin).unwrap();
         let mut plan = ffmpeg::tests::plan();
         plan.video.width = 320;
         plan.video.height = 240;

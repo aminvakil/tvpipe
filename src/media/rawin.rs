@@ -474,11 +474,9 @@ mod tests {
         use crate::media::ffmpeg::{self, Output, Process};
         use crate::media::source::MediaReader;
         use crate::types::{AudioFamily, TrackKind};
-        let Ok(bin) = ffmpeg::locate(None) else {
-            eprintln!("ffmpeg not found; skipping");
+        let Some((bin, probe)) = ffmpeg::tests::real_ffmpeg() else {
             return;
         };
-        let probe = ffmpeg::Probe::run(&bin).unwrap();
         let (v, a) = specs();
         let raw = RawInput::bind(Some(&v), Some(&a)).unwrap();
         let mut plan = ffmpeg::tests::plan();

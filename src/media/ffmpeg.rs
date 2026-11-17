@@ -61,6 +61,9 @@ fn find_in_path(name: &str, path: &OsStr) -> Option<PathBuf> {
 /// What a given ffmpeg binary can do.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Probe {
+    /// `(major, minor)` from `ffmpeg -version`, if it parses (git builds
+    /// print a revision instead of a version).
+    pub version: Option<(u32, u32)>,
     pub encoders: BTreeSet<String>,
     pub filters: BTreeSet<String>,
 }
@@ -84,7 +87,15 @@ impl Probe {
             }
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         };
+        let version = parse_version(&run("-version")?);
+        match version {
+            Some((major, _)) if major < MIN_MAJOR_VERSION => warn!(
+                "ffmpeg {major} is older than {MIN_MAJOR_VERSION}.x; options like -ch_layout may fail"
+            ),
+            _ => {}
+        }
         Ok(Probe {
+            version,
             encoders: parse_listing(&run("-encoders")?),
             filters: parse_listing(&run("-filters")?),
         })
@@ -97,6 +108,20 @@ impl Probe {
     pub fn has_filter(&self, name: &str) -> bool {
         self.filters.contains(name)
     }
+}
+
+/// The oldest ffmpeg major version we test against (we need `-ch_layout`,
+/// new in 5.1).
+pub const MIN_MAJOR_VERSION: u32 = 6;
+
+/// `ffmpeg version 8.1 ...` → `(8, 1)`; `n7.0.2` → `(7, 0)`.
+pub fn parse_version(text: &str) -> Option<(u32, u32)> {
+    let v = text.lines().next()?.strip_prefix("ffmpeg version ")?;
+    let v = v.split_whitespace().next()?.trim_start_matches('n');
+    let mut parts = v.split(|c: char| !c.is_ascii_digit());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|m| m.parse().ok()).unwrap_or(0);
+    Some((major, minor))
 }
 
 /// Parses `-encoders` / `-filters` output: after the `------` line, each
@@ -243,6 +268,8 @@ impl ArgList {
 struct InputMaps {
     video: String,
     audio: Option<String>,
+    /// The input's constant frame rate, when we know it.
+    video_fps: Option<Ratio>,
 }
 
 /// Input options for low decoder delay (apply to the next `-i`). Not
@@ -283,6 +310,7 @@ fn push_inputs(
             Ok(InputMaps {
                 video: "0:v:0".into(),
                 audio: Some("0:a:0?".into()),
+                video_fps: None,
             })
         }
         Source::Args(args) => {
@@ -293,6 +321,7 @@ fn push_inputs(
             Ok(InputMaps {
                 video: "0:v:0".into(),
                 audio: Some("0:a:0?".into()),
+                video_fps: None,
             })
         }
         Source::TestPattern { clock } => {
@@ -323,6 +352,7 @@ fn push_inputs(
             Ok(InputMaps {
                 video: "0:v:0".into(),
                 audio: Some("1:a:0".into()),
+                video_fps: None,
             })
         }
         Source::Raw { video, audio } => {
@@ -357,6 +387,7 @@ fn push_inputs(
             Ok(InputMaps {
                 video: "0:v:0".into(),
                 audio: audio_map,
+                video_fps: Some(v.fps),
             })
         }
     }
@@ -373,12 +404,18 @@ fn layout_name(channels: u8) -> String {
     }
 }
 
-/// The `-vf` chain: letterbox into the target size, fixed fps.
-fn video_filter(w: u32, h: u32, fps: Ratio, encoder: Encoder) -> String {
+/// The `-vf` chain: letterbox into the target size, fixed fps. `fps` is
+/// `None` when the input already runs at the plan's rate (raw game input):
+/// the fps filter holds one frame back to decide, which costs a frame of
+/// latency.
+fn video_filter(w: u32, h: u32, fps: Option<Ratio>, encoder: Encoder) -> String {
     let mut f = format!(
         "scale={w}:{h}:force_original_aspect_ratio=decrease,\
-         pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
+         pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     );
+    if let Some(fps) = fps {
+        f.push_str(&format!(",fps={fps}"));
+    }
     match encoder {
         Encoder::Vaapi => f.push_str(",format=nv12,hwupload"),
         Encoder::Qsv | Encoder::Nvenc | Encoder::VideoToolbox => f.push_str(",format=nv12"),
@@ -387,7 +424,12 @@ fn video_filter(w: u32, h: u32, fps: Ratio, encoder: Encoder) -> String {
     f
 }
 
-fn push_video(a: &mut ArgList, plan: &EncodePlan, encoder: Encoder, map: &str) -> Result<()> {
+fn push_video(
+    a: &mut ArgList,
+    plan: &EncodePlan,
+    encoder: Encoder,
+    maps: &InputMaps,
+) -> Result<()> {
     let v = &plan.video;
     if v.width == 0 || v.height == 0 || v.fps.num == 0 || v.fps.den == 0 || v.bitrate_kbps == 0 {
         return Err(Error::usage("video plan needs size, fps and bitrate"));
@@ -398,9 +440,14 @@ fn push_video(a: &mut ArgList, plan: &EncodePlan, encoder: Encoder, map: &str) -
     let kbps = v.bitrate_kbps;
     // VBV buffer of about two frames keeps per-frame sizes even.
     let bufsize = ((kbps as u64 * 2 * v.fps.den as u64) / v.fps.num as u64).max(1);
-    a.extend(["-map", map, "-c:v", name])
+    a.extend(["-map", &maps.video, "-c:v", name])
         .push("-vf")
-        .push(video_filter(v.width, v.height, v.fps, encoder))
+        .push(video_filter(
+            v.width,
+            v.height,
+            (maps.video_fps != Some(v.fps)).then_some(v.fps),
+            encoder,
+        ))
         .extend(["-bf", "0", "-g"])
         .push(&gop)
         .push("-b:v")
@@ -601,7 +648,7 @@ pub fn build(
     let mut tracks = Vec::new();
     match plan {
         Some(p) => {
-            push_video(&mut a, p, encoder.unwrap_or_default(), &maps.video)?;
+            push_video(&mut a, p, encoder.unwrap_or_default(), &maps)?;
             tracks.push(TrackSpec {
                 kind: TrackKind::Video,
                 frame_samples: 0,
@@ -867,8 +914,41 @@ pub(crate) mod tests {
         }
     }
 
+    /// The real ffmpeg if it is installed, recent and has libx264 and
+    /// libopus; tests that need it skip otherwise.
+    pub(crate) fn real_ffmpeg() -> Option<(PathBuf, Probe)> {
+        let bin = locate(None).ok()?;
+        let probe = Probe::run(&bin).ok()?;
+        let ok = probe.version.is_some_and(|(m, _)| m >= MIN_MAJOR_VERSION)
+            && probe.has_encoder("libx264")
+            && probe.has_encoder("libopus");
+        if !ok {
+            eprintln!("ffmpeg missing, too old or without libx264/libopus; skipping");
+            return None;
+        }
+        Some((bin, probe))
+    }
+
+    #[test]
+    fn version_parse() {
+        assert_eq!(
+            parse_version("ffmpeg version 8.1 Copyright (c) 2000-2026"),
+            Some((8, 1))
+        );
+        assert_eq!(
+            parse_version("ffmpeg version n7.0.2-static https://"),
+            Some((7, 0))
+        );
+        assert_eq!(
+            parse_version("ffmpeg version 6.1.1-3ubuntu5 Copyright"),
+            Some((6, 1))
+        );
+        assert_eq!(parse_version("ffmpeg version N-112345-gdeadbeef"), None);
+    }
+
     pub(crate) fn probe() -> Probe {
         Probe {
+            version: Some((8, 1)),
             encoders: ["libx264", "h264_videotoolbox", "libopus", "alac", "aac"]
                 .map(String::from)
                 .into(),
@@ -954,7 +1034,7 @@ pub(crate) mod tests {
             video: Some(RawVideoInput {
                 width: 640,
                 height: 360,
-                fps: Ratio::integer(60),
+                fps: Ratio::integer(30),
                 pix_fmt: "rgba".into(),
                 addr: "127.0.0.1:5000".parse().unwrap(),
             }),
@@ -969,12 +1049,14 @@ pub(crate) mod tests {
         p.video.encoder = Encoder::VideoToolbox;
         let s = joined(&build(&src, Output::Encode(&p), &probe(), "warning").unwrap());
         assert!(s.contains(
-            "-f rawvideo -pixel_format rgba -video_size 640x360 -framerate 60 -i tcp://127.0.0.1:5000"
+            "-f rawvideo -pixel_format rgba -video_size 640x360 -framerate 30 -i tcp://127.0.0.1:5000"
         ));
         assert!(s.contains("-f s16le -sample_rate 48000 -ch_layout stereo -i tcp://127.0.0.1:5001"));
         assert!(s.contains("-map 1:a:0 -ar:a:0 44100"));
         assert!(s.contains("-c:v h264_videotoolbox"));
         assert!(s.contains("-realtime 1"));
+        // Raw input already runs at the plan's rate: no fps filter delay.
+        assert!(s.contains("setsar=1,format=nv12 "), "{s}");
 
         let copy = build(&src, Output::Copy, &probe(), "warning").unwrap();
         assert!(copy.tracks.is_empty());
