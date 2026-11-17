@@ -70,6 +70,13 @@ impl MediaClock {
         }
     }
 
+    /// Moves the anchor so that `pts` happens at `now`, also later (a sink
+    /// that fell behind: a stalled encoder or a jump in the input).
+    pub fn reanchor_at(&self, pts: u64, rate: u32, now: Instant) {
+        let media = ticks_to_duration(pts, rate);
+        *self.lock() = Some(Anchor { at: now, media });
+    }
+
     pub fn is_anchored(&self) -> bool {
         self.lock().is_some()
     }
@@ -173,5 +180,11 @@ mod tests {
             Some(t0 + Duration::from_millis(10))
         );
         assert!(c.lateness(0, 90_000, t0).unwrap() < 0);
+        // An explicit re-anchor may move it later.
+        c.reanchor_at(0, 90_000, t0 + Duration::from_secs(5));
+        assert_eq!(
+            c.instant_for(90_000, 90_000),
+            Some(t0 + Duration::from_secs(6))
+        );
     }
 }

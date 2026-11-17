@@ -13,12 +13,12 @@
 //! receiver ending the session. [`Sink::push`] only converts, encrypts and
 //! queues; it never waits for the network.
 //!
-//! Timing: the first frame pushed anchors a media clock (its arrival
-//! instant ↔ its pts); every frame's reference time is derived from its pts
-//! on that clock, so audio and video stay in sync, and the receiver plays
-//! each frame at reference time + target delay. If frames arrive later than
-//! their reference time by more than [`MAX_LATENESS`] (a stalled encoder),
-//! the clock is moved forward.
+//! Timing: pushed frames drive a [`media::clock`](crate::media::clock)
+//! (the first anchors it, early ones move it earlier); every frame's
+//! reference time is derived from its pts on that clock, so audio and video
+//! stay in sync, and the receiver plays each frame at reference time +
+//! target delay. If frames arrive later than their reference time by more
+//! than [`MAX_LATENESS`] (a stalled encoder), the clock is moved forward.
 //!
 //! Sources: openscreen `cast/standalone_sender/looping_file_cast_agent.cc`
 //! (launch/connect/negotiate flow), `cast/streaming/sender_packet_router.cc`
@@ -43,6 +43,7 @@ use super::streaming::{
 use crate::codec::protobuf::CastMessage;
 use crate::crypto::ring::random_array;
 use crate::error::{Error, ErrorKind, Result};
+use crate::media::clock::MediaClock;
 use crate::types::{
     AudioCodec, AudioFamily, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus, TrackKind,
     VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
@@ -257,29 +258,22 @@ fn wait_for<T>(
     }
 }
 
-/// Maps media pts to reference instants (shared by audio and video).
-#[derive(Debug, Default)]
-struct MediaClock {
-    /// `(instant, media time in seconds)` of the anchor.
-    anchor: Option<(Instant, f64)>,
-}
-
-impl MediaClock {
-    fn reference(&mut self, media_secs: f64, now: Instant) -> Instant {
-        let (at, secs) = *self.anchor.get_or_insert((now, media_secs));
-        let offset = media_secs - secs;
-        let t = if offset >= 0.0 {
-            at.checked_add(Duration::from_secs_f64(offset))
-        } else {
-            at.checked_sub(Duration::from_secs_f64(-offset))
-        };
-        match t {
-            Some(t) if t + MAX_LATENESS >= now && t <= now + Duration::from_secs(2) => t,
-            _ => {
-                debug!("cast: re-anchoring media clock (offset {offset:.3}s)");
-                self.anchor = Some((now, media_secs));
-                now
-            }
+/// Maps media pts to reference instants (shared by audio and video):
+/// `media::clock` (anchored on the first frame, moved earlier by frames
+/// that arrive early), plus a re-anchor to now for frames more than
+/// [`MAX_LATENESS`] late, so the receiver does not drop everything after
+/// an encoder stall.
+fn reference_time(clock: &MediaClock, pts: u64, rate: u32, now: Instant) -> Instant {
+    clock.observe_at(pts, rate, now);
+    match (clock.lateness(pts, rate, now), clock.instant_for(pts, rate)) {
+        (Some(late), Some(t)) if late <= MAX_LATENESS.as_nanos() as i128 => t,
+        (late, _) => {
+            debug!(
+                "cast: re-anchoring media clock ({} ms late)",
+                late.unwrap_or(0) / 1_000_000
+            );
+            clock.reanchor_at(pts, rate, now);
+            now
         }
     }
 }
@@ -531,7 +525,7 @@ impl Sink for StreamingSink {
             video: vsel
                 .map(|sel| self.make_track(&sel, VIDEO_CLOCK_RATE, packet_size))
                 .transpose()?,
-            clock: MediaClock::default(),
+            clock: MediaClock::new(),
             video_needs_key: true,
             dirty: false,
             stopped: false,
@@ -599,8 +593,7 @@ impl Sink for StreamingSink {
                 drop(st);
                 avcc_to_annexb(&frame.data, &media.avc, frame.keyframe, &mut media.scratch)?;
                 let mut st = lock(lock_ref);
-                let secs = frame.pts as f64 / VIDEO_CLOCK_RATE as f64;
-                let reference = st.clock.reference(secs, now);
+                let reference = reference_time(&st.clock, frame.pts, VIDEO_CLOCK_RATE, now);
                 let Some(track) = st.video.as_mut() else {
                     return Ok(SinkStatus::Dropped);
                 };
@@ -627,7 +620,7 @@ impl Sink for StreamingSink {
                 let Some(rate) = st.audio.as_ref().map(|t| t.input_rate) else {
                     return Ok(SinkStatus::Dropped);
                 };
-                let reference = st.clock.reference(frame.pts as f64 / rate as f64, now);
+                let reference = reference_time(&st.clock, frame.pts, rate, now);
                 let Some(track) = st.audio.as_mut() else {
                     return Ok(SinkStatus::Dropped);
                 };
@@ -917,22 +910,39 @@ mod tests {
 
     #[test]
     fn media_clock_anchors_and_reanchors() {
-        let mut c = MediaClock::default();
+        let c = MediaClock::new();
+        let r = |secs: f64, now| reference_time(&c, (secs * 90_000.0) as u64, 90_000, now);
         let t0 = Instant::now();
-        assert_eq!(c.reference(10.0, t0), t0);
-        assert_eq!(c.reference(10.5, t0), t0 + Duration::from_millis(500));
+        assert_eq!(r(10.0, t0), t0);
+        // Audio on the same timeline.
+        assert_eq!(
+            reference_time(
+                &c,
+                48_000 * 10 + 24_000,
+                48_000,
+                t0 + Duration::from_millis(500)
+            ),
+            t0 + Duration::from_millis(500)
+        );
         // On time.
         let t1 = t0 + Duration::from_secs(1);
-        assert_eq!(c.reference(11.0, t1), t1);
+        assert_eq!(r(11.0, t1), t1);
         // 50 ms late: tolerated.
         let t2 = t0 + Duration::from_millis(1550);
-        assert_eq!(c.reference(11.5, t2), t0 + Duration::from_millis(1500));
+        assert_eq!(r(11.5, t2), t0 + Duration::from_millis(1500));
         // 300 ms late: re-anchored to now.
         let t3 = t0 + Duration::from_millis(2300);
-        assert_eq!(c.reference(12.0, t3), t3);
-        assert_eq!(c.reference(12.1, t3), t3 + Duration::from_millis(100));
+        assert_eq!(r(12.0, t3), t3);
+        // Early frames move the anchor earlier (start-up delay is not kept).
+        assert_eq!(
+            r(12.2, t3 + Duration::from_millis(100)),
+            t3 + Duration::from_millis(100)
+        );
         // A jump far ahead re-anchors too.
-        assert_eq!(c.reference(100.0, t3), t3);
+        assert_eq!(
+            r(100.0, t3 + Duration::from_millis(200)),
+            t3 + Duration::from_millis(200)
+        );
     }
 
     #[test]
