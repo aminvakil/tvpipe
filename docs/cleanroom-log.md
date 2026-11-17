@@ -13,3 +13,5 @@ Which agent session had which role, which inputs it saw, and what it produced.
 Note: subagents share this machine's filesystem, which contains tainted
 checkouts under `~/.cache/checkouts/github.com/{omarroth,nored,uber6}`.
 Isolation is by instruction only, not by sandbox.
+| 2026-11-17 | subagent `w5-pairing` | clean implementer W5 | repo, HAP spec, pyatv (MIT), RFCs, Apple TV black-box | `src/airplay/{pairing,secure,credentials,info,pair}.rs` |
+| 2026-11-17 | subagent `w8-cast` | clean implementer W8 | repo, openscreen (BSD-3), pychromecast/node-castv2/rust_cast (MIT), RFCs | `src/cast/**` |
