@@ -116,7 +116,7 @@ pub fn random_uuid() -> Result<String> {
 }
 
 /// A receiver we paired with.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Receiver {
     /// The identifier the receiver sent in pair-setup M6 (and signs in
     /// pair-verify M2).
@@ -129,6 +129,22 @@ pub struct Receiver {
     pub device_id: Option<String>,
     /// The last address we reached it at (`ip:port`).
     pub addr: Option<String>,
+}
+
+impl std::fmt::Debug for Receiver {
+    /// Abbreviates the key so logs stay short and do not carry it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Receiver")
+            .field("id", &self.id_display())
+            .field(
+                "public_key",
+                &format_args!("{}..", hex::encode(&self.public_key[..4])),
+            )
+            .field("name", &self.name)
+            .field("device_id", &self.device_id)
+            .field("addr", &self.addr)
+            .finish()
+    }
 }
 
 impl Receiver {

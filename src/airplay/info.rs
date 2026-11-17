@@ -2,9 +2,14 @@
 //! model, feature bits, long-term key, displays and audio formats, and its
 //! mapping to [`Capabilities`].
 //!
-//! Receivers answer `/info` before pairing with a short dictionary and,
-//! over the encrypted channel, with the full one (`displays`,
-//! `audioFormats`, `audioLatencies`, ...). Every field is optional here:
+//! The dev Apple TV (AppleTV6,2, tvOS 26.6.1) answers a plain `GET /info`
+//! with the same dictionary before pairing and over the encrypted channel
+//! (`tests/fixtures/airplay/appletv-info-verified.bplist`): name, model,
+//! ids, `features`, `pk`, `statusFlags`, `supportedFormats` bitmasks per
+//! stream type and `receiverHDRCapability`, but no `displays`,
+//! `audioFormats` or `audioLatencies`. Those are parsed when present
+//! (other receivers, or a richer request W7 may send) and otherwise
+//! [`Info::capabilities`] falls back to defaults. Every field is optional:
 //! unknown or mistyped values are ignored, never fatal.
 //!
 //! Sources: key names as observed on the dev Apple TV (fixtures under
@@ -65,6 +70,16 @@ pub struct AudioLatency {
     pub output_micros: Option<u64>,
 }
 
+/// `supportedFormats`: an audio-format bitmask per stream type (meaning of
+/// the bits is W7's business; kept raw).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SupportedFormats {
+    pub audio_stream: Option<u64>,
+    pub screen_stream: Option<u64>,
+    pub buffer_stream: Option<u64>,
+    pub low_latency_audio_stream: Option<u64>,
+}
+
 /// The fields of `/info` we use. `raw` keeps the whole dictionary.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Info {
@@ -78,6 +93,15 @@ pub struct Info {
     /// The receiver's long-term Ed25519 key.
     pub pk: Option<Vec<u8>>,
     pub pi: Option<String>,
+    pub psi: Option<String>,
+    /// `featuresEx`: the extended feature bits, as sent (base64).
+    pub features_ex: Option<String>,
+    pub protocol_version: Option<String>,
+    pub os_build_version: Option<String>,
+    /// e.g. `"4k30"`.
+    pub hdr_capability: Option<String>,
+    pub has_udp_mirroring: Option<bool>,
+    pub supported_formats: SupportedFormats,
     pub displays: Vec<Display>,
     pub audio_formats: Vec<AudioFormats>,
     pub audio_latencies: Vec<AudioLatency>,
@@ -99,6 +123,13 @@ fn u64_of(p: Option<&Plist>) -> Option<u64> {
     int(p).and_then(|v| u64::try_from(v).ok())
 }
 
+/// A 64-bit bitmask that may be sent as a negative signed integer.
+fn bits_of(p: Option<&Plist>) -> Option<u64> {
+    int(p)
+        .filter(|v| *v >= i64::MIN as i128 && *v <= u64::MAX as i128)
+        .map(|v| v as u64)
+}
+
 fn string(p: Option<&Plist>) -> Option<String> {
     p.and_then(Plist::as_str).map(str::to_owned)
 }
@@ -115,7 +146,15 @@ impl Info {
             .as_dict()
             .ok_or_else(|| Error::malformed("info: top level is not a dictionary"))?;
         // `features` is a 64-bit field sent as a signed integer.
-        let features = int(d.get("features")).map(|v| v as u64).unwrap_or_default();
+        let features = bits_of(d.get("features")).unwrap_or_default();
+        let sf = d.get("supportedFormats").and_then(Plist::as_dict);
+        let bits = |key: &str| bits_of(sf.and_then(|f| f.get(key)));
+        let supported_formats = SupportedFormats {
+            audio_stream: bits("audioStream"),
+            screen_stream: bits("screenStream"),
+            buffer_stream: bits("bufferStream"),
+            low_latency_audio_stream: bits("lowLatencyAudioStream"),
+        };
         let displays = d
             .get("displays")
             .and_then(Plist::as_array)
@@ -171,6 +210,13 @@ impl Info {
             status_flags: u64_of(d.get("statusFlags")),
             pk: d.get("pk").and_then(Plist::as_data).map(<[u8]>::to_vec),
             pi: string(d.get("pi")),
+            psi: string(d.get("psi")),
+            features_ex: string(d.get("featuresEx")),
+            protocol_version: string(d.get("protocolVersion")),
+            os_build_version: string(d.get("osBuildVersion")),
+            hdr_capability: string(d.get("receiverHDRCapability")),
+            has_udp_mirroring: d.get("hasUDPMirroringSupport").and_then(Plist::as_bool),
+            supported_formats,
             displays,
             audio_formats,
             audio_latencies,
@@ -192,8 +238,10 @@ impl Info {
         self.displays.first()
     }
 
-    /// What the receiver can take for mirroring. Without `displays` (an
-    /// unpaired `/info`) this assumes 1920x1080 at 60 fps.
+    /// What the receiver can take for mirroring. Without `displays` (the
+    /// Apple TV never sends them in `/info`) this assumes 1920x1080 at
+    /// 60 fps, the safe mirroring default; HEVC is offered when the
+    /// receiver sets the multi-codec screen feature (bit 42).
     pub fn capabilities(&self) -> Capabilities {
         let disp = self.display();
         let (w, h) = disp
@@ -274,6 +322,40 @@ mod tests {
         let caps = info.capabilities();
         assert_eq!((caps.max_width, caps.max_height), (1920, 1080));
         assert_eq!(caps.video_codecs, [VideoCodec::H264, VideoCodec::Hevc]);
+    }
+
+    #[test]
+    fn verified_apple_tv() {
+        // Captured over the encrypted channel after pair-verify.
+        let body = crate::util::vectors::fixture("airplay/appletv-info-verified.bplist");
+        let info = Info::parse(&body).unwrap();
+        assert_eq!(info.model.as_deref(), Some("AppleTV6,2"));
+        assert_eq!(info.device_id.as_deref(), Some("AA:BB:CC:00:00:0A"));
+        assert_eq!(info.source_version.as_deref(), Some("960.13.1"));
+        assert_eq!(info.features, 4330070159449382869);
+        assert_eq!(info.features_ex.as_deref(), Some("1d9/St5/Fzw4oY58"));
+        assert_eq!(info.status_flags, Some(0x644));
+        assert_eq!(info.hdr_capability.as_deref(), Some("4k30"));
+        assert_eq!(info.has_udp_mirroring, Some(true));
+        assert_eq!(info.pk.as_deref(), Some(&(0..32).collect::<Vec<u8>>()[..]));
+        assert_eq!(
+            info.supported_formats,
+            SupportedFormats {
+                audio_stream: Some(21235712),
+                screen_stream: Some(21235712),
+                buffer_stream: Some(-577021992844656640i64 as u64),
+                low_latency_audio_stream: Some(0),
+            }
+        );
+        assert!(info.displays.is_empty() && info.audio_formats.is_empty());
+        assert!(info.has(features::SCREEN) && info.uses_ptp());
+        let caps = info.capabilities();
+        assert_eq!((caps.max_width, caps.max_height), (1920, 1080));
+        assert_eq!(caps.max_fps, Ratio::integer(60));
+        assert_eq!(caps.video_codecs, [VideoCodec::H264, VideoCodec::Hevc]);
+        assert_eq!(caps.audio_family, AudioFamily::AirPlay);
+        assert_eq!(caps.audio_formats.len(), 1);
+        assert_eq!(caps.min_latency_ms, None);
     }
 
     #[test]

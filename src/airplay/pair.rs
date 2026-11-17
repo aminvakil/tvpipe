@@ -521,18 +521,26 @@ mod hardware {
         let Some(t) = atv() else { return };
         let mut store = Store::open_default().unwrap();
         let r = pair_with(&t, &mut store, None, || prompt_pin("the TV")).unwrap();
-        eprintln!("paired: {} {:?}", r.id_display(), r);
+        eprintln!("paired: {} ({})", r.name, r.id_display());
     }
 
     /// Pair-verify with the stored credentials, then `/info` over the
-    /// encrypted channel; saves the body to `target/appletv-info-verified.bplist`.
+    /// encrypted channel; saves the body to `target/appletv-info-verified.bplist`
+    /// (scrub it with `tests/fixtures/airplay/scrub_info.py` before committing).
     #[test]
     #[ignore]
     fn hardware_verify() {
         let Some(t) = atv() else { return };
         let store = Store::open_default().unwrap();
         let mut control = connect(&t, &store).unwrap();
-        eprintln!("{control:?}");
+        eprintln!(
+            "verified with {} at {}",
+            match &control.auth {
+                Auth::Verified(r) => r.name.as_str(),
+                Auth::Transient => "(transient)",
+            },
+            control.addr
+        );
         let resp = control.client.request("GET", "/info", &[], None).unwrap();
         let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
