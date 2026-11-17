@@ -23,6 +23,8 @@ pub mod streaming;
 #[cfg(test)]
 mod fake_receiver;
 #[cfg(test)]
+mod receiver_loop;
+#[cfg(test)]
 mod testing;
 
 #[allow(unused_imports)] // wired into session.rs by the lead
