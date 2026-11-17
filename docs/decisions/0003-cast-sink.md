@@ -1,4 +1,4 @@
-# 0002: Cast sink API and integration notes (W8)
+# 0003: Cast sink API and integration notes (W8)
 
 Status: proposal for the lead. No frozen interface changes.
 
