@@ -2,13 +2,15 @@
 
 Status: in progress. Owns `src/crypto/**`, `tests/vectors/crypto/**`.
 
-- [ ] `aes.rs`: AES-128/256 block encrypt (+ decrypt for CBC), table-based
+- [x] `aes.rs`: AES-128/256 block encrypt (+ decrypt for CBC), table-based
       (T-tables), key expansion. FIPS-197 Appendix C KATs.
-- [ ] `modes.rs`: CTR (big-endian 128-bit counter, arbitrary-length input,
+- [x] `modes.rs`: CTR (big-endian 128-bit counter, arbitrary-length input,
       resumable keystream position so a continuous stream can be encrypted
       in pieces) and CBC (no padding; caller handles partial blocks).
       SP 800-38A F.2/F.5 KATs. A release-mode throughput test
       (`#[ignore]`, ≥200 MB/s for CTR on a modern CPU).
+      Measured: 741 MB/s AES-128-CTR on Apple M5 Max
+      (`cargo test --release ctr_throughput -- --ignored --nocapture`).
 - [ ] `bigint.rs`: fixed-width unsigned big integers sized for 3072-bit
       (and 4096-bit headroom): from/to big-endian bytes, add, sub, mul, mod,
       modpow (Montgomery or plain). Vectors generated with Python `pow()`.
