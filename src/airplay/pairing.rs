@@ -566,3 +566,118 @@ mod tests {
         assert!(parse_verify_m2(&[6, 1, 2, 3, 2, 0, 0, 5, 0]).is_err());
     }
 }
+
+/// Hostile-input smoke tests: random and mutated bodies for every parser
+/// must give errors, never panics.
+#[cfg(test)]
+mod fuzz {
+    use super::*;
+    use crate::airplay::info::Info;
+    use crate::airplay::secure::SecureStream;
+    use crate::net::http::tests::Duplex;
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        fn mutate(&mut self, seed: &[u8]) -> Vec<u8> {
+            let mut v = seed.to_vec();
+            for _ in 0..1 + self.below(6) {
+                match self.below(4) {
+                    0 if !v.is_empty() => {
+                        let i = self.below(v.len());
+                        v[i] ^= 1 << self.below(8);
+                    }
+                    1 if !v.is_empty() => {
+                        let i = self.below(v.len());
+                        v[i] = [0, 1, 0xff, 0x7f, 2][self.below(5)];
+                    }
+                    2 => v.truncate(self.below(v.len() + 1)),
+                    _ => {
+                        let i = self.below(v.len() + 1);
+                        v.insert(i, self.next() as u8);
+                    }
+                }
+            }
+            v
+        }
+    }
+
+    #[test]
+    fn parsers_never_panic() {
+        let m2 = Tlv8::new()
+            .with_u8(tag::STATE, 2)
+            .with(tag::SALT, vec![1; 16])
+            .with(tag::PUBLIC_KEY, vec![0x55; 384])
+            .encode();
+        let m4 = Tlv8::new()
+            .with_u8(tag::STATE, 4)
+            .with(tag::PROOF, vec![3; 64])
+            .encode();
+        let m6 = Tlv8::new()
+            .with_u8(tag::STATE, 6)
+            .with(tag::ENCRYPTED_DATA, vec![9; 150])
+            .encode();
+        let v2 = Tlv8::new()
+            .with_u8(tag::STATE, 2)
+            .with(tag::PUBLIC_KEY, vec![4; 32])
+            .with(tag::ENCRYPTED_DATA, vec![5; 120])
+            .encode();
+        let info = crate::util::vectors::fixture("net/appletv-info.rtsp");
+        let info_body = info[info.windows(8).position(|w| w == b"bplist00").unwrap()..].to_vec();
+        let identity = Identity::generate().unwrap();
+        let k = [7u8; 64];
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..3000 {
+            let _ = parse_setup_m2(&rng.mutate(&m2));
+            let _ = parse_setup_m6(&rng.mutate(&m6), &k);
+            let _ = open_setup_m6(&k, &rng.mutate(&[0; 100]));
+            if let Ok(m2) = parse_verify_m2(&rng.mutate(&v2)) {
+                let _ = verify_exchange(&identity, b"id", &[1; 32], &[2; 32], &m2, &[3; 32]);
+            }
+            let _ = parse(&rng.mutate(&m4), "m4", 4);
+            let _ = Info::parse(&rng.mutate(&info_body));
+        }
+        // M3 setup with hostile B values (zero, N, too long) errors.
+        for b in [
+            vec![0u8; 384],
+            crate::crypto::srp::N_3072.to_vec(),
+            vec![0xff; 400],
+        ] {
+            let m2 = SetupM2 {
+                salt: vec![1; 16],
+                public_key: b,
+            };
+            assert!(setup_m3(&m2, "1234").is_err());
+        }
+    }
+
+    #[test]
+    fn secure_stream_never_panics() {
+        let keys = Keys::control(b"k").unwrap();
+        let mut w = SecureStream::new(Duplex::new(&[]), &keys.swapped());
+        use std::io::{Read, Write};
+        w.write_all(b"RTSP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .unwrap();
+        let wire = w.into_inner().output;
+        let mut rng = Rng(42);
+        for _ in 0..2000 {
+            let input = rng.mutate(&wire);
+            let mut d = Duplex::new(&input);
+            d.piece = 1 + rng.below(50);
+            let mut r = SecureStream::new(d, &keys);
+            let mut out = Vec::new();
+            let _ = r.read_to_end(&mut out);
+        }
+    }
+}

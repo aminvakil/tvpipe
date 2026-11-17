@@ -287,11 +287,24 @@ pub fn pair(target: &str, pin: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// The `unpair` command body: forgets the stored pairing. Looks the
-/// target up in the store by name or address first, and only browses when
-/// that finds nothing.
+/// The `unpair` command body: forgets the stored pairing.
 pub fn unpair(target: &str) -> Result<()> {
     let mut store = Store::open_default()?;
+    let removed = forget(&mut store, target, resolve)?;
+    for r in &removed {
+        println!("Forgot pairing with {} ({})", r.name, r.id_display());
+    }
+    Ok(())
+}
+
+/// Removes the pairings for `target` from `store` and saves it. Looks the
+/// target up by name or address first and only calls `resolve` (which
+/// browses) when that finds nothing.
+pub fn forget(
+    store: &mut Store,
+    target: &str,
+    resolve: impl FnOnce(&str) -> Result<Target>,
+) -> Result<Vec<Receiver>> {
     let addr = parse_addr(target).map(|a| a.ip().to_string());
     let local = Query {
         names: if addr.is_none() { vec![target] } else { vec![] },
@@ -300,8 +313,9 @@ pub fn unpair(target: &str) -> Result<()> {
     };
     let mut removed = store.remove(&local);
     if removed.is_empty() && addr.is_none() {
-        if let Ok(t) = resolve(target) {
-            removed = store.remove(&t.query());
+        match resolve(target) {
+            Ok(t) => removed = store.remove(&t.query()),
+            Err(e) => debug!("unpair: cannot resolve {target:?}: {e}"),
         }
     }
     if removed.is_empty() {
@@ -310,10 +324,7 @@ pub fn unpair(target: &str) -> Result<()> {
         )));
     }
     store.save()?;
-    for r in &removed {
-        println!("Forgot pairing with {} ({})", r.name, r.id_display());
-    }
-    Ok(())
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -417,6 +428,46 @@ mod tests {
         let err = connect(&target(&fake), &store).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Auth);
         assert!(err.message().contains("streamlib pair"), "{err}");
+    }
+
+    #[test]
+    fn forget_by_name_address_or_discovery() {
+        let fake = FakeReceiver::start(Config::default());
+        let path = temp_dir("pair-forget").join(FILE_NAME);
+        let mut store = Store::open(&path).unwrap();
+        pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
+        let no_browse = |_: &str| -> Result<Target> { panic!("should not browse") };
+        let removed = forget(&mut store, "fake tv", no_browse).unwrap();
+        assert_eq!(removed.len(), 1);
+        assert!(Store::open(&path).unwrap().receivers.is_empty());
+
+        pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
+        let ip = fake.addr.ip().to_string();
+        assert_eq!(forget(&mut store, &ip, no_browse).unwrap().len(), 1);
+
+        // Unknown name: falls back to discovery, then reports not found.
+        let err = forget(&mut store, "Other", |_| Err(Error::not_found("x"))).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn repeated_verify_and_repair() {
+        let fake = FakeReceiver::start(Config::default());
+        let path = temp_dir("pair-repeat").join(FILE_NAME);
+        let mut store = Store::open(&path).unwrap();
+        pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
+        let mut secrets = Vec::new();
+        for _ in 0..3 {
+            let mut c = connect(&target(&fake), &store).unwrap();
+            assert!(matches!(c.auth, Auth::Verified(_)));
+            get_info(&mut c.client).unwrap();
+            secrets.push(c.shared.secret().to_vec());
+        }
+        // Fresh ephemeral keys every time.
+        assert_ne!(secrets[0], secrets[1]);
+        // Pairing again replaces the record instead of adding one.
+        pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
+        assert_eq!(Store::open(&path).unwrap().receivers.len(), 1);
     }
 
     #[test]
