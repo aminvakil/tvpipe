@@ -6,11 +6,14 @@
 pub mod audio;
 pub mod credentials;
 pub mod discovery;
+pub mod events;
 pub mod fairplay;
 pub mod info;
 pub mod keys;
 pub mod mirror;
 pub mod pair;
 pub mod pairing;
+pub mod policy;
 pub mod secure;
+pub mod setup;
 pub mod timing;
