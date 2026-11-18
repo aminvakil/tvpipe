@@ -23,7 +23,9 @@ The share page's rules ([`share-protocol.md`](share-protocol.md)), with one more
     screen, while the player only shows what tvpipe streams anyway, so
     a lasting token there is the better trade.
 - `GET /?t=TOKEN`: the page. `GET /player.js`: the script (static, no
-  token). `GET /ws?t=TOKEN`: the WebSocket (RFC 6455, no extensions).
+  token). `GET /fonts/NAME.woff2`: the page's fonts (`src/browser/fonts/`,
+  static, no token). `GET /ws?t=TOKEN`: the WebSocket (RFC 6455, no
+  extensions).
 - Every request needs a `Host` of `127.0.0.1:PORT`, `localhost:PORT` or
   `[::1]:PORT` (421 otherwise: DNS rebinding); the page and the socket
   need the token (403).

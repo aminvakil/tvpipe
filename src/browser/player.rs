@@ -1,11 +1,11 @@
 //! `--to browser`: a receiver that plays tvpipe's stream in a browser tab
 //! (W14; protocol in docs/player-protocol.md).
 //!
-//! [`BrowserSink`] serves the player page (`player.html`, `player.js`) on
-//! 127.0.0.1 with the same security as the share page
-//! (`browser::share`): a random `?t=` token on the page and the socket, a
-//! loopback `Host` (no DNS rebinding), and the WebSocket only from the
-//! page's own origin. Any number of tabs may watch. Each gets the decoder
+//! [`BrowserSink`] serves the player page (`player.html`, `player.js`,
+//! the fonts of [`fonts`]) on 127.0.0.1 with the same security as the
+//! share page (`browser::share`): a random `?t=` token on the page and the
+//! socket, a loopback `Host` (no DNS rebinding), and the WebSocket only
+//! from the page's own origin. Any number of tabs may watch. Each gets the decoder
 //! configuration as JSON, then one binary SLRW record (docs/slrw.md) per
 //! WebSocket message: H.264 access units (AVCC, as the session has them)
 //! and s16le PCM, stamped with the frame's instant on the session's
@@ -33,6 +33,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::browser::fonts;
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
 use crate::media::clock::{SessionClock, SinkClock, Tolerance};
@@ -428,6 +429,7 @@ impl Shared {
                 "image/x-icon",
                 Vec::new(),
             )),
+            p if p.starts_with("/fonts/") => fonts::reply(p),
             _ if !token_ok => Reply::Response(httpd::error_response(
                 403,
                 "Forbidden (open the URL tvpipe printed)",

@@ -78,7 +78,7 @@
   function showMessage(title, detail) {
     var m = $('message');
     if (!ui || title === null) { m.hidden = true; return; }
-    m.firstChild.textContent = title;
+    m.querySelector('b').textContent = title;
     $('detail').textContent = detail || '';
     m.hidden = false;
   }
