@@ -1325,7 +1325,7 @@ pub fn passthrough_candidate(opts: &PlayOptions) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::cli::Size;
     use crate::media::passthrough::tests::{caps, fixture};
@@ -1517,7 +1517,7 @@ mod tests {
     }
 
     /// An H.264 elementary stream (Annex B) from ffmpeg: 30 frames, GOP 10.
-    fn annexb_stream() -> Option<Vec<u8>> {
+    pub(crate) fn annexb_stream() -> Option<Vec<u8>> {
         let (bin, _) = crate::media::ffmpeg::tests::real_ffmpeg()?;
         let out = std::process::Command::new(bin)
             .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
@@ -1531,7 +1531,7 @@ mod tests {
     }
 
     /// Splits an Annex B stream with AUDs into access units.
-    fn access_units(stream: &[u8]) -> Vec<Vec<u8>> {
+    pub(crate) fn access_units(stream: &[u8]) -> Vec<Vec<u8>> {
         let mut aus: Vec<Vec<u8>> = Vec::new();
         for nal in h264::annexb_nals(stream) {
             if h264::nal_unit_type(nal) == Some(h264::nal_type::AUD) || aus.is_empty() {
@@ -1546,7 +1546,7 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+    pub(crate) struct SharedBuf(pub(crate) Arc<Mutex<Vec<u8>>>);
 
     impl Write for SharedBuf {
         fn write(&mut self, b: &[u8]) -> io::Result<usize> {

@@ -840,11 +840,23 @@ pub fn check(
     sinks: &[(&str, &Capabilities)],
     opts: CheckOptions,
 ) -> std::result::Result<PassPlan, Incompatible> {
-    let mut reasons: Vec<String> = info.problems.clone();
-    let v = &info.video;
+    let mut reasons = file_reasons(info, opts);
     if sinks.is_empty() {
         reasons.push("no receivers".into());
     }
+    sink_reasons(info, sinks, opts, reasons)
+}
+
+/// Whether the file itself could pass (receivers aside): lets the session
+/// shape its offers (bitrate, AAC) before connecting.
+pub fn file_ok(info: &FileInfo, opts: CheckOptions) -> bool {
+    file_reasons(info, opts).is_empty()
+}
+
+/// The reasons that do not depend on the receivers.
+fn file_reasons(info: &FileInfo, opts: CheckOptions) -> Vec<String> {
+    let mut reasons: Vec<String> = info.problems.clone();
+    let v = &info.video;
     if let Some(sps) = &info.sps {
         if sps.chroma_format_idc != 1 {
             let name = match sps.chroma_format_idc {
@@ -895,6 +907,16 @@ pub fn check(
             ));
         }
     }
+    reasons
+}
+
+fn sink_reasons(
+    info: &FileInfo,
+    sinks: &[(&str, &Capabilities)],
+    opts: CheckOptions,
+    mut reasons: Vec<String>,
+) -> std::result::Result<PassPlan, Incompatible> {
+    let v = &info.video;
     for (name, c) in sinks {
         if !c.video_codecs.contains(&v.codec) {
             reasons.push(format!("{name} does not take {:?} video", v.codec));

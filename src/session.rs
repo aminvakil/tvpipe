@@ -1,37 +1,45 @@
-//! Orchestration: connect → plan → ffmpeg → fanout → teardown (PLAN §3).
+//! Orchestration: connect → choose the input → fanout → teardown (PLAN §3).
 //!
 //! Owner: lead.
 //!
 //! `play` / `test-pattern`:
 //!
-//! 1. Probe the input (`ffprobe`): size, frame rate, audio or not, finite
-//!    (paced with `-re`) or live.
+//! 1. Probe the input: an MP4/MOV/Matroska file with our own demuxer
+//!    (`media::passthrough::probe`), anything else with `ffprobe`: size,
+//!    frame rate, audio or not, finite (paced) or live.
 //! 2. Resolve every `--to` (discovery for names; `ADDR[:PORT]` skips it)
-//!    and connect all sinks before ffmpeg starts. Cast sinks negotiate
-//!    OFFER/ANSWER here, so their capabilities are final.
-//! 3. Plan the encode: the user's options (or the input's own size and
-//!    rate) clamped by the intersection of the sinks' capabilities.
-//! 4. Start ffmpeg and the demuxer; push every frame through the fanout.
+//!    and connect all sinks before any input starts. Cast sinks negotiate
+//!    OFFER/ANSWER here, so their capabilities are final; the offer keeps
+//!    a passable file's bitrate and AAC, and offers AAC for an encoding
+//!    game.
+//! 3. Choose the input (`media::input`): a file that fits every receiver
+//!    is sent unchanged (`PassthroughInput`), `--raw-video ...:h264` reads
+//!    the game's H.264 (`SlrwEncodedInput`), everything else is encoded by
+//!    ffmpeg (`FfmpegInput`) after planning the encode from the user's
+//!    options and the sinks' capabilities. ffmpeg is only located when
+//!    needed.
+//! 4. Push every frame through the fanout; while a sink wants a keyframe,
+//!    ask the input for one (only an encoding game can).
 //! 5. Tear down on EOF (after one playout delay, so the tail plays), on
 //!    Ctrl-C / SIGTERM / `q` (see `util::interrupt`, without draining), or
 //!    when every receiver has ended the session. Every sink's `stop()` runs
-//!    (Cast: STOP + CLOSE) and ffmpeg is killed and reaped.
+//!    (Cast: STOP + CLOSE) and the input finishes (ffmpeg is reaped).
 
 use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::cast::{self, CastOptions};
 use crate::cli::{Command, InputSpec, PlayOptions, Size};
 use crate::error::{Error, Result};
-use crate::log::Level;
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
-use crate::media::ffmpeg::{self, Output, Source};
-use crate::media::source::MediaReader;
+use crate::media::ffmpeg::{self, Source};
+use crate::media::input::{
+    self, EncodedOptions, FfmpegInput, Input, PassthroughInput, SlrwEncodedInput,
+};
+use crate::media::{passthrough, rawin};
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioPlan, Capabilities, EncodePlan, Encoder, Sink,
     TrackKind, VideoCodec, VideoPlan,
@@ -80,9 +88,6 @@ const MIN_DEFAULT_KBPS: u32 = 1_000;
 const MAX_DEFAULT_KBPS: u32 = 20_000;
 /// How long `ffprobe` may take before we go on without it.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-/// After a stop request, ffmpeg gets this long to exit by itself (it got
-/// SIGINT too) before it is killed.
-const KILL_GRACE: Duration = Duration::from_millis(300);
 /// Opus frames: 10 ms (lowest latency libopus offers without overhead
 /// blowing up).
 const OPUS_FRAME_SAMPLES: u32 = 480;
@@ -484,10 +489,7 @@ fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> R
             bitrate = bitrate.min(b);
         }
     }
-    let latency_ms = caps
-        .iter()
-        .filter_map(|c| c.min_latency_ms)
-        .fold(d.latency_ms, u32::max);
+    let latency_ms = latency(d, caps);
     let mut audio_plans = Vec::new();
     if audio {
         for family in [AudioFamily::Cast, AudioFamily::AirPlay] {
@@ -527,10 +529,6 @@ fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> R
 
 // ---------------------------------------------------------------------------
 // The session
-
-fn lock(p: &Mutex<ffmpeg::Process>) -> std::sync::MutexGuard<'_, ffmpeg::Process> {
-    p.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 fn connect_all(
     targets: &[Target],
@@ -598,52 +596,6 @@ fn stop_all(sinks: Vec<Box<dyn Sink>>) {
     }
 }
 
-/// Kills ffmpeg when a stop is requested (after a grace period: it got
-/// SIGINT too) or when the session is done, so the demuxer's read ends.
-struct Watcher {
-    done: Arc<AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Watcher {
-    fn start(proc: Arc<Mutex<ffmpeg::Process>>) -> Result<Watcher> {
-        let done = Arc::new(AtomicBool::new(false));
-        let flag = done.clone();
-        let thread = std::thread::Builder::new()
-            .name("ffmpeg-watch".into())
-            .spawn(move || {
-                let mut stop_at = None;
-                loop {
-                    if flag.load(Ordering::Acquire) {
-                        return;
-                    }
-                    if interrupt::requested() {
-                        let at = *stop_at.get_or_insert_with(|| Instant::now() + KILL_GRACE);
-                        if Instant::now() >= at {
-                            lock(&proc).kill();
-                            return;
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-            })
-            .map_err(|e| Error::io("spawn ffmpeg watcher", e))?;
-        Ok(Watcher {
-            done,
-            thread: Some(thread),
-        })
-    }
-}
-
-impl Drop for Watcher {
-    fn drop(&mut self) {
-        self.done.store(true, Ordering::Release);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EndReason {
     Eof,
@@ -651,15 +603,77 @@ enum EndReason {
     ReceiversGone,
 }
 
+/// ffmpeg, located and probed on first use: passthrough and encoded SLRW
+/// never need it.
+struct Tools<'a> {
+    explicit: Option<&'a Path>,
+    found: Option<(std::path::PathBuf, ffmpeg::Probe)>,
+}
+
+impl<'a> Tools<'a> {
+    fn new(explicit: Option<&'a Path>) -> Tools<'a> {
+        Tools {
+            explicit,
+            found: None,
+        }
+    }
+
+    fn get(&mut self) -> Result<(&Path, &ffmpeg::Probe)> {
+        if self.found.is_none() {
+            let bin = ffmpeg::locate(self.explicit)?;
+            let probe = ffmpeg::Probe::run(&bin)?;
+            self.found = Some((bin, probe));
+        }
+        match &self.found {
+            Some((bin, probe)) => Ok((bin, probe)),
+            None => Err(Error::not_found("ffmpeg")),
+        }
+    }
+}
+
+/// What a probed file says, in the form `desired` takes.
+fn file_input_info(fi: &passthrough::FileInfo) -> InputInfo {
+    InputInfo {
+        width: Some(fi.video.width).filter(|&w| w > 0),
+        height: Some(fi.video.height).filter(|&h| h > 0),
+        fps: Some(fi.video.fps).filter(|f| f.num > 0 && f.den > 0),
+        has_audio: Some(fi.audio.is_some() || fi.unsupported_audio.is_some()),
+        has_video: Some(true),
+        duration: fi.duration,
+    }
+}
+
+/// Where the frames come from, decided once the receivers are known.
+enum Route {
+    Passthrough(std::path::PathBuf, passthrough::PassPlan),
+    Encoded,
+    Ffmpeg,
+}
+
+/// The game's ends of our stdio (SLRW in, keyframe requests out).
+struct GameIo {
+    stdin: Box<dyn std::io::Read + Send>,
+    stdout: Box<dyn std::io::Write + Send>,
+}
+
 fn play(opts: PlayOptions) -> Result<()> {
+    play_io(
+        opts,
+        GameIo {
+            stdin: Box::new(std::io::stdin()),
+            stdout: Box::new(std::io::stdout()),
+        },
+    )
+}
+
+fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
     if !interrupt::install() {
         warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
     }
     if opts.input != InputSpec::Stdin {
         interrupt::watch_stdin();
     }
-    let bin = ffmpeg::locate(opts.ffmpeg.as_deref())?;
-    let probe = ffmpeg::Probe::run(&bin)?;
+    let mut tools = Tools::new(opts.ffmpeg.as_deref());
 
     // 1. The input. A missing local file fails before any TV is touched.
     if let InputSpec::Path(p) = &opts.input {
@@ -671,8 +685,28 @@ fn play(opts: PlayOptions) -> Result<()> {
             )));
         }
     }
+    let encoded = opts
+        .raw_video
+        .as_ref()
+        .is_some_and(|v| v.pix_fmt == rawin::ENCODED_PIX_FMT);
+    if encoded && opts.input != InputSpec::Stdin {
+        return Err(Error::usage(
+            "--raw-video ...:h264 reads SLRW from stdin (-)",
+        ));
+    }
+    let candidate = input::passthrough_candidate(&opts);
+    let probed = candidate.as_deref().map(passthrough::probe);
     let input = match &opts.input {
-        InputSpec::Path(p) => probe_input(&bin, p),
+        InputSpec::Path(p) => match &probed {
+            Some(Ok(fi)) => file_input_info(fi),
+            _ => match tools.get() {
+                Ok((bin, _)) => probe_input(bin, p),
+                Err(e) => {
+                    debug!("not probing the input: {e}");
+                    InputInfo::default()
+                }
+            },
+        },
         InputSpec::TestPattern => InputInfo {
             has_audio: Some(true),
             has_video: Some(true),
@@ -694,7 +728,38 @@ fn play(opts: PlayOptions) -> Result<()> {
     }
     let d = desired(&opts, &input);
 
-    // 2. Receivers, before ffmpeg.
+    // 2. Receivers, before ffmpeg. Offers follow what we can send: a file
+    // that may pass keeps its bitrate and its AAC; an encoding game's PCM
+    // becomes AAC for Cast.
+    let mut cast_opts = cast_options(&d, audio);
+    let check = passthrough::CheckOptions {
+        audio,
+        ..Default::default()
+    };
+    if let Some(Ok(fi)) = &probed {
+        if input::encode_forced_by(&opts).is_none() && passthrough::file_ok(fi, check) {
+            if let Some(k) = fi.peak_video_kbps.or(fi.video_kbps) {
+                cast_opts.max_bitrate_kbps =
+                    cast_opts.max_bitrate_kbps.max(k.min(MAX_DEFAULT_KBPS));
+            }
+            if let Some(a) = fi
+                .audio
+                .as_ref()
+                .filter(|a| audio && a.codec == AudioCodec::AacLc)
+            {
+                cast_opts.audio_codecs = vec![AudioCodec::AacLc];
+                cast_opts.audio_sample_rate = a.sample_rate;
+                cast_opts.audio_channels = a.channels;
+            }
+        }
+    }
+    if encoded && audio {
+        if let Some(f) = input::encoded_cast_audio(opts.raw_audio.as_ref()) {
+            cast_opts.audio_codecs = vec![AudioCodec::AacLc];
+            cast_opts.audio_sample_rate = f.sample_rate;
+            cast_opts.audio_channels = f.channels;
+        }
+    }
     let targets = opts
         .to
         .iter()
@@ -705,35 +770,112 @@ fn play(opts: PlayOptions) -> Result<()> {
         audio,
         ..Default::default()
     };
-    let sinks = connect_all(&targets, &cast_options(&d, audio), &mirror)?;
+    let sinks = connect_all(&targets, &cast_opts, &mirror)?;
     if interrupt::requested() {
         stop_all(sinks);
         return Ok(());
     }
 
-    // 3. The plan.
+    // 3. The route, then the input.
     let caps: Vec<&Capabilities> = sinks.iter().map(|s| s.capabilities()).collect();
-    let plan = match plan(&d, opts.encoder, &caps, audio) {
-        Ok(p) => p,
+    let named: Vec<(&str, &Capabilities)> =
+        sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
+    let route = match (&candidate, &probed) {
+        _ if encoded => Route::Encoded,
+        (Some(path), Some(probed)) => match input::decide_file(probed, &opts, &named) {
+            input::FileDecision::Passthrough { info: fi, plan } => {
+                info!(
+                    "passthrough: sending {} unchanged ({:?} {}x{}@{}{})",
+                    path.display(),
+                    fi.video.codec,
+                    fi.video.width,
+                    fi.video.height,
+                    fi.video.fps,
+                    match (&fi.audio, plan.audio_families.is_empty()) {
+                        (Some(a), false) => format!(", {:?} audio", a.codec),
+                        _ => String::new(),
+                    }
+                );
+                Route::Passthrough(path.clone(), plan)
+            }
+            input::FileDecision::Ffmpeg { why } => {
+                info!("{why}");
+                Route::Ffmpeg
+            }
+        },
+        _ => Route::Ffmpeg,
+    };
+    let opened: Result<(Box<dyn Input>, u32)> = (|| match route {
+        Route::Passthrough(path, plan) => {
+            let realtime = opts.realtime.unwrap_or(true);
+            let i = PassthroughInput::open(&path, &plan, realtime, opts.looped)?;
+            Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
+        }
+        Route::Encoded => {
+            if let Some(c) = caps
+                .iter()
+                .find(|c| !c.video_codecs.contains(&VideoCodec::H264))
+            {
+                return Err(Error::unsupported(format!(
+                    "a receiver does not take H.264 (it offers {:?})",
+                    c.video_codecs
+                )));
+            }
+            let raw_audio = opts.raw_audio.as_ref().filter(|_| audio);
+            let (families, warnings) = input::encoded_audio_families(raw_audio, &named);
+            for w in warnings {
+                warn!("{w}");
+            }
+            let video = opts
+                .raw_video
+                .clone()
+                .ok_or_else(|| Error::usage("--raw-video missing"))?;
+            let i = SlrwEncodedInput::open(
+                io.stdin,
+                EncodedOptions {
+                    video,
+                    audio: raw_audio.cloned(),
+                    audio_families: families,
+                    back_channel: Some(io.stdout),
+                },
+            )?;
+            Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
+        }
+        Route::Ffmpeg => {
+            let plan = plan(&d, opts.encoder, &caps, audio)?;
+            info!(
+                "plan: {}x{}@{} {} kbit/s, gop {}, audio {:?}, latency {} ms",
+                plan.video.width,
+                plan.video.height,
+                plan.video.fps,
+                plan.video.bitrate_kbps,
+                plan.video.gop,
+                plan.audio
+                    .iter()
+                    .map(|a| format!("{:?} {:?} {} Hz", a.family, a.codec, a.sample_rate))
+                    .collect::<Vec<_>>(),
+                plan.latency_ms
+            );
+            let (bin, probe) = tools.get()?;
+            let (source, raw) = ffmpeg_source(&opts, &input, io.stdin)?;
+            let i = FfmpegInput::start(bin, probe, &source, &plan, raw)?;
+            Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
+        }
+    })();
+    drop(caps);
+    drop(named);
+    let (input, latency_ms) = match opened {
+        Ok(v) => v,
         Err(e) => {
             stop_all(sinks);
+            if interrupt::requested() {
+                info!("stopped");
+                return Ok(());
+            }
             return Err(e);
         }
     };
-    info!(
-        "plan: {}x{}@{} {} kbit/s, gop {}, audio {:?}, latency {} ms",
-        plan.video.width,
-        plan.video.height,
-        plan.video.fps,
-        plan.video.bitrate_kbps,
-        plan.video.gop,
-        plan.audio
-            .iter()
-            .map(|a| format!("{:?} {:?} {} Hz", a.family, a.codec, a.sample_rate))
-            .collect::<Vec<_>>(),
-        plan.latency_ms
-    );
-    match stream(&opts, &bin, &probe, &input, &plan, sinks) {
+    match stream(input, latency_ms, sinks) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -743,95 +885,56 @@ fn play(opts: PlayOptions) -> Result<()> {
     }
 }
 
-/// Steps 4 and 5: ffmpeg → demuxer → fanout, then teardown. Consumes the
-/// sinks; they are stopped on every path.
-fn stream(
+/// The playout delay shared by all sinks: `--latency` or the default,
+/// raised to every receiver's minimum.
+fn latency(d: &Desired, caps: &[&Capabilities]) -> u32 {
+    caps.iter()
+        .filter_map(|c| c.min_latency_ms)
+        .fold(d.latency_ms, u32::max)
+}
+
+/// Raw SLRW for ffmpeg: the bound listeners and the game's stream.
+type RawFeed = (rawin::RawInput, Box<dyn std::io::Read + Send>);
+
+/// The ffmpeg input for `opts`.
+fn ffmpeg_source(
     opts: &PlayOptions,
-    bin: &Path,
-    probe: &ffmpeg::Probe,
     input: &InputInfo,
-    plan: &EncodePlan,
+    stdin: Box<dyn std::io::Read + Send>,
+) -> Result<(Source, Option<RawFeed>)> {
+    Ok(match &opts.input {
+        InputSpec::Path(p) => (
+            Source::Url {
+                url: p.clone(),
+                realtime: opts
+                    .realtime
+                    .unwrap_or(input.duration.is_some() || Path::new(p).is_file()),
+                looped: opts.looped,
+            },
+            None,
+        ),
+        InputSpec::FfmpegArgs(a) => (Source::Args(a.clone()), None),
+        InputSpec::TestPattern => (Source::TestPattern { clock: true }, None),
+        InputSpec::Stdin => {
+            let r = rawin::RawInput::bind(opts.raw_video.as_ref(), opts.raw_audio.as_ref())?;
+            let s = r.source();
+            (s, Some((r, stdin)))
+        }
+    })
+}
+
+/// Steps 4 and 5: input → fanout, then teardown. Consumes the sinks; they
+/// are stopped on every path.
+fn stream(
+    mut input: Box<dyn Input>,
+    latency_ms: u32,
     sinks: Vec<Box<dyn Sink>>,
 ) -> Result<EndReason> {
-    let mut raw = None;
-    let source = match &opts.input {
-        InputSpec::Path(p) => Source::Url {
-            url: p.clone(),
-            realtime: opts
-                .realtime
-                .unwrap_or(input.duration.is_some() || Path::new(p).is_file()),
-            looped: opts.looped,
-        },
-        InputSpec::FfmpegArgs(a) => Source::Args(a.clone()),
-        InputSpec::TestPattern => Source::TestPattern { clock: true },
-        InputSpec::Stdin => {
-            let r = match crate::media::rawin::RawInput::bind(
-                opts.raw_video.as_ref(),
-                opts.raw_audio.as_ref(),
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    stop_all(sinks);
-                    return Err(e);
-                }
-            };
-            let s = r.source();
-            raw = Some(r);
-            s
-        }
-    };
-    let (loglevel, level) = if crate::log::enabled(Level::Debug) {
-        ("info", Level::Debug)
-    } else {
-        ("warning", Level::Warn)
-    };
-    let started = (|| {
-        let inv = ffmpeg::build(&source, Output::Encode(plan), probe, loglevel)?;
-        let mut proc = ffmpeg::Process::spawn_logging(bin, &inv.args, level)?;
-        let stdout = proc
-            .take_stdout()
-            .ok_or_else(|| Error::process("ffmpeg stdout not piped"))?;
-        Ok((inv, proc, stdout))
-    })();
-    let (inv, proc, stdout) = match started {
-        Ok(v) => v,
-        Err(e) => {
-            stop_all(sinks);
-            return Err(e);
-        }
-    };
-    let proc = Arc::new(Mutex::new(proc));
-    let watcher = match Watcher::start(proc.clone()) {
-        Ok(w) => w,
-        Err(e) => {
-            stop_all(sinks);
-            return Err(e);
-        }
-    };
-    let forwarder = match raw.take().map(|r| r.start(std::io::stdin())).transpose() {
-        Ok(f) => f,
-        Err(e) => {
-            stop_all(sinks);
-            return Err(e);
-        }
-    };
-    let ffmpeg_error =
-        |proc: &Mutex<ffmpeg::Process>, e: Error| -> Error { lock(proc).failure().unwrap_or(e) };
-
-    let mut reader = match MediaReader::new(stdout, &inv.tracks) {
-        Ok(r) => r,
-        Err(e) => {
-            stop_all(sinks);
-            if interrupt::requested() {
-                return Ok(EndReason::Interrupted);
-            }
-            return Err(ffmpeg_error(&proc, e));
-        }
-    };
-    let info = reader.info().clone();
+    let info = input.info().clone();
     let v = &info.video;
     info!(
-        "ffmpeg: {:?} {}x{}@{}{}",
+        "{}: {:?} {}x{}@{}{}",
+        input.describe(),
         v.codec,
         v.width,
         v.height,
@@ -842,19 +945,28 @@ fn stream(
             .collect::<String>()
     );
     // On failure the sinks are dropped, which stops them.
-    let fanout = Fanout::new(sinks, &info, FanoutConfig::default())?;
+    let fanout = match Fanout::new(sinks, &info, FanoutConfig::default()) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = input.finish(false);
+            return Err(e);
+        }
+    };
 
     let t0 = Instant::now();
     let mut frames = [0u64; 2];
-    let mut demux_error = None;
+    let mut input_error = None;
     let end = loop {
         if interrupt::requested() {
             break EndReason::Interrupted;
         }
-        match reader.next_frame() {
+        match input.next_frame() {
             Ok(Some(f)) => {
-                frames[(f.frame.track != TrackKind::Video) as usize] += 1;
-                fanout.push(&f.frame);
+                frames[(f.track != TrackKind::Video) as usize] += 1;
+                fanout.push(&f);
+                if fanout.keyframe_wanted() {
+                    input.request_keyframe();
+                }
                 if fanout.active() == 0 {
                     info!("every receiver ended the session");
                     break EndReason::ReceiversGone;
@@ -863,45 +975,26 @@ fn stream(
             Ok(None) if interrupt::requested() => break EndReason::Interrupted,
             Ok(None) => break EndReason::Eof,
             Err(e) if interrupt::requested() => {
-                debug!("demuxer after stop request: {e}");
+                debug!("input after stop request: {e}");
                 break EndReason::Interrupted;
             }
             Err(e) => {
-                demux_error = Some(e);
+                input_error = Some(e);
                 break EndReason::Eof;
             }
         }
     };
     let elapsed = t0.elapsed();
-    if end == EndReason::Eof && demux_error.is_none() {
+    let clean_eof = end == EndReason::Eof && input_error.is_none();
+    if clean_eof {
         // Let the last frames play out before STOP.
-        std::thread::sleep(Duration::from_millis(plan.latency_ms as u64 + 100));
+        std::thread::sleep(Duration::from_millis(latency_ms as u64 + 100));
     }
     let stats = fanout.stats();
     let ends = fanout.close(end == EndReason::Eof);
-
-    // ffmpeg: on EOF it has exited; otherwise kill it.
-    drop(watcher);
-    let ffmpeg_result = {
-        let mut p = lock(&proc);
-        if end != EndReason::Eof {
-            p.kill();
-        }
-        match demux_error {
-            Some(e) => Err(p.failure().unwrap_or(e)),
-            None if end == EndReason::Eof => p.wait().map(|_| ()),
-            None => {
-                let _ = p.wait();
-                Ok(())
-            }
-        }
-    };
-    if let Some(f) = forwarder {
-        match f.finish() {
-            Ok(s) => debug!("raw input: {s:?}"),
-            Err(e) => debug!("raw input: {e}"),
-        }
-    }
+    // ffmpeg: on a clean EOF it has exited (its status counts); otherwise
+    // it is killed.
+    let input_result = input.finish(clean_eof);
 
     info!(
         "sent {} video and {} audio frames in {:.1} s",
@@ -925,7 +1018,10 @@ fn stream(
             st.pushed, st.sink_dropped, st.dropped_full, st.dropped_waiting
         );
     }
-    ffmpeg_result?;
+    if let Some(e) = input_error {
+        return Err(e);
+    }
+    input_result?;
     if failed > 0 && failed == ends.len() {
         let msg = ends.into_iter().find_map(|(name, e)| match e {
             SinkEnd::Failed(e) => Some(format!("{name}: {e}")),
@@ -941,6 +1037,7 @@ fn stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::ffmpeg::Output;
 
     fn caps(w: u32, h: u32, fps: u32, kbps: u32) -> Capabilities {
         Capabilities {
@@ -1232,6 +1329,169 @@ mod tests {
         assert!(st.streams.iter().all(|s| s.codec == "h264"));
         let v = &st.streams[0];
         assert!((28..=31).contains(&v.frames.len()), "{}", v.frames.len());
+    }
+
+    /// A file x264 made without B-frames (1 s, GOP 15, AAC-LC 48 kHz).
+    fn passthrough_file(name: &str) -> Option<std::path::PathBuf> {
+        let (bin, _) = crate::media::ffmpeg::tests::real_ffmpeg()?;
+        let dir = std::env::temp_dir().join(format!("streamlib-session-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join(name);
+        let ok = StdCommand::new(&bin)
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
+            .args([
+                "-i",
+                "testsrc2=size=320x240:rate=30:duration=1",
+                "-f",
+                "lavfi",
+            ])
+            .args(["-i", "sine=frequency=440:sample_rate=48000:duration=1"])
+            .args([
+                "-c:v", "libx264", "-bf", "0", "-g", "15", "-pix_fmt", "yuv420p",
+            ])
+            .args(["-c:a", "aac", "-ac", "2"])
+            .arg(&path)
+            .status()
+            .ok()?
+            .success();
+        ok.then_some(path)
+    }
+
+    const NO_FFMPEG: &str = "/nonexistent/streamlib-test/ffmpeg";
+
+    fn is_adts(data: &[u8]) -> bool {
+        data.len() > 7 && data[0] == 0xff && data[1] & 0xf6 == 0xf0
+    }
+
+    #[test]
+    fn passthrough_to_cast_without_ffmpeg() {
+        use crate::cast::fake_receiver::{FakeReceiver, Options};
+        let Some(path) = passthrough_file("pt.mp4") else {
+            return;
+        };
+        let rx = FakeReceiver::spawn(Options::default());
+        play(file_opts(NO_FFMPEG.into(), path, rx.addr.to_string())).unwrap();
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        assert!(st.stopped, "STOP not received");
+        // The file's AAC is offered alone, so the receiver takes it.
+        let offer = st.offer.as_ref().unwrap().to_string();
+        assert!(
+            offer.contains("\"aac\"") && !offer.contains("\"opus\""),
+            "{offer}"
+        );
+        let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
+        let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
+        assert_eq!(v.frames.len(), 30);
+        assert!(v.frames[&0].keyframe);
+        // 1 s in 1024-sample units plus the encoder's priming unit.
+        assert!((46..=49).contains(&a.frames.len()), "{}", a.frames.len());
+        assert!(a.frames.values().all(|f| is_adts(&f.data)));
+    }
+
+    #[test]
+    fn b_frames_need_ffmpeg() {
+        use crate::cast::fake_receiver::{FakeReceiver, Options};
+        let Some((_, path)) = media_file("bf.mp4", false) else {
+            return;
+        };
+        let rx = FakeReceiver::spawn(Options::default());
+        let e = play(file_opts(NO_FFMPEG.into(), path, rx.addr.to_string())).unwrap_err();
+        assert!(e.to_string().contains(NO_FFMPEG), "{e}");
+        let state = rx.shutdown();
+        assert!(state.lock().unwrap().stopped, "STOP not received");
+    }
+
+    /// Hands out SLRW records at their due times, like a game.
+    struct PacedReader {
+        chunks: std::collections::VecDeque<(Duration, Vec<u8>)>,
+        start: Option<Instant>,
+        cur: Vec<u8>,
+        pos: usize,
+    }
+
+    impl std::io::Read for PacedReader {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let start = *self.start.get_or_insert_with(Instant::now);
+            if self.pos == self.cur.len() {
+                let Some((due, chunk)) = self.chunks.pop_front() else {
+                    return Ok(0);
+                };
+                std::thread::sleep((start + due).saturating_duration_since(Instant::now()));
+                self.cur = chunk;
+                self.pos = 0;
+            }
+            let n = out.len().min(self.cur.len() - self.pos);
+            out[..n].copy_from_slice(&self.cur[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn encoded_slrw_to_cast_without_ffmpeg() {
+        use crate::cast::fake_receiver::{FakeReceiver, Options};
+        use crate::media::input::tests::{access_units, annexb_stream, SharedBuf};
+        use crate::media::slrw::{self, Kind};
+        let Some(stream) = annexb_stream() else {
+            return;
+        };
+        let aus = access_units(&stream);
+        let mut chunks = std::collections::VecDeque::new();
+        let mut head = Vec::new();
+        slrw::write_magic(&mut head).unwrap();
+        slrw::write_control(&mut head, slrw::CONTROL_KEYFRAME_REQUESTS).unwrap();
+        chunks.push_back((Duration::ZERO, head));
+        for (i, au) in aus.iter().enumerate() {
+            let pts = i as u64 * 33_333;
+            let mut rec = Vec::new();
+            slrw::write_h264(&mut rec, pts, i % 10 == 0, true, au).unwrap();
+            slrw::write_packet(&mut rec, Kind::Audio, pts, &[3u8; 1600 * 4]).unwrap();
+            chunks.push_back((Duration::from_micros(pts), rec));
+        }
+        let mut end = Vec::new();
+        slrw::write_packet(&mut end, Kind::End, 0, &[]).unwrap();
+        chunks.push_back((Duration::from_millis(1000), end));
+        let rx = FakeReceiver::spawn(Options::default());
+        let o = PlayOptions {
+            to: vec![rx.addr.to_string()],
+            latency_ms: Some(100),
+            ffmpeg: Some(NO_FFMPEG.into()),
+            raw_video: Some("160x120@30:h264".parse().unwrap()),
+            raw_audio: Some("48000:2:s16le".parse().unwrap()),
+            input: InputSpec::Stdin,
+            ..opts()
+        };
+        let out = SharedBuf::default();
+        let io = GameIo {
+            stdin: Box::new(PacedReader {
+                chunks,
+                start: None,
+                cur: Vec::new(),
+                pos: 0,
+            }),
+            stdout: Box::new(out.clone()),
+        };
+        play_io(o, io).unwrap();
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        assert!(st.stopped, "STOP not received");
+        let offer = st.offer.as_ref().unwrap().to_string();
+        assert!(
+            offer.contains("\"aac\"") && !offer.contains("\"opus\""),
+            "{offer}"
+        );
+        let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
+        let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
+        assert_eq!(v.frames.len(), 30);
+        // 48000 samples of PCM through aacenc: 46 full units (+ the flush).
+        assert!((45..=48).contains(&a.frames.len()), "{}", a.frames.len());
+        assert!(a.frames.values().all(|f| is_adts(&f.data)));
+        // Only "keyframe" lines (if any) went to the game.
+        let back = out.0.lock().unwrap().clone();
+        assert!(back
+            .split(|&b| b == b'\n')
+            .all(|l| l.is_empty() || l == b"keyframe"));
     }
 
     #[test]
