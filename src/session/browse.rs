@@ -107,14 +107,14 @@ pub(super) fn browse_with(
         fps: Some(fps),
         ..opts.clone()
     });
+    let budget = shared_budget(opts.latency_ms, &targets);
     let d = Desired {
         size: offer.size,
         fps,
         bitrate_kbps: offer.bitrate_kbps,
-        latency_ms: opts.latency_ms.unwrap_or(DEFAULT_LATENCY_MS),
+        latency_ms: budget.session_ms,
     };
     let mut cast_opts = share_cast_options(&d, &offer, audio, &pcm);
-    let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
     configure_browsers(
         &mut targets,

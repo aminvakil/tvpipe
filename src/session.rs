@@ -953,11 +953,7 @@ fn play_with(
     let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
     configure_browsers(&mut targets, &opts.browser, budget.browser_ms, audio);
-    if targets.iter().all(|t| matches!(t, Target::Browser(_))) {
-        // Only browsers: their delay is the session's (the plan, the
-        // tail played out at the end).
-        d.latency_ms = budget.browser_ms;
-    }
+    d.latency_ms = budget.session_ms;
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: budget.airplay_ms,
         audio,
@@ -1253,6 +1249,7 @@ fn share_with(
     // `plan` then fits the capture's aspect into the tightest of them.
     let offer = ShareOffer::new(&opts);
     let fps = opts.fps.unwrap_or(SHARE_FPS);
+    let budget = shared_budget(opts.latency_ms, &targets);
     let d = Desired {
         size: opts.size.unwrap_or(Size {
             width: cap.width.max(2),
@@ -1261,10 +1258,9 @@ fn share_with(
         fps,
         // Without --bitrate: chosen from the planned size, below.
         bitrate_kbps: opts.bitrate_kbps.unwrap_or(offer.bitrate_kbps),
-        latency_ms: opts.latency_ms.unwrap_or(DEFAULT_LATENCY_MS),
+        latency_ms: budget.session_ms,
     };
     let mut cast_opts = share_cast_options(&d, &offer, audio, &pcm);
-    let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
     configure_browsers(
         &mut targets,
@@ -1484,6 +1480,11 @@ struct Budget {
     airplay_ms: Option<u32>,
     /// Browser tabs' playout delay (`--to browser`).
     browser_ms: u32,
+    /// The session's own delay, the same rule for `play`, `test-pattern`,
+    /// `preview` and `share` (with or without URL): what the plan says
+    /// and how long the tail plays out at the end. `--latency`, else the
+    /// browsers' when only browsers watch, else [`DEFAULT_LATENCY_MS`].
+    session_ms: u32,
 }
 
 /// The playout delay of a browser alone (`preview`): nothing between
@@ -1510,12 +1511,14 @@ fn shared_budget(user: Option<u32>, targets: &[Target]) -> Budget {
                 cast_ms: c,
                 airplay_ms: Some(c),
                 browser_ms: c,
+                session_ms: c,
             }
         }
         None if cast && airplay => Budget {
             cast_ms: DEFAULT_LATENCY_MS,
             airplay_ms: Some(DEFAULT_LATENCY_MS),
             browser_ms: DEFAULT_LATENCY_MS,
+            session_ms: DEFAULT_LATENCY_MS,
         },
         // Browsers show frames when the TVs do: Cast's delay, or the
         // AirPlay automatic profile's video lead (which is the browser's
@@ -1527,6 +1530,11 @@ fn shared_budget(user: Option<u32>, targets: &[Target]) -> Budget {
                 DEFAULT_LATENCY_MS
             } else {
                 BROWSER_LATENCY_MS
+            },
+            session_ms: if !targets.is_empty() && !cast && !airplay {
+                BROWSER_LATENCY_MS
+            } else {
+                DEFAULT_LATENCY_MS
             },
         },
     };

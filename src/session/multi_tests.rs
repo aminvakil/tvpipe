@@ -421,6 +421,7 @@ fn budgets() {
             cast_ms: d,
             airplay_ms: Some(d),
             browser_ms: d,
+            session_ms: d,
         }
     );
     assert_eq!(
@@ -429,6 +430,7 @@ fn budgets() {
             cast_ms: d,
             airplay_ms: None,
             browser_ms: d,
+            session_ms: d,
         }
     );
     assert_eq!(
@@ -437,6 +439,7 @@ fn budgets() {
             cast_ms: d,
             airplay_ms: None,
             browser_ms: BROWSER_LATENCY_MS,
+            session_ms: d,
         }
     );
     assert_eq!(
@@ -445,8 +448,25 @@ fn budgets() {
             cast_ms: 120,
             airplay_ms: Some(120),
             browser_ms: 120,
+            session_ms: 120,
         }
     );
+    // Only browsers (`preview`, `play`/`share --to browser`): theirs.
+    let browser = Target::Browser(Box::default());
+    let only = b(None, &[browser.clone(), browser.clone()]);
+    assert_eq!(
+        (only.browser_ms, only.session_ms),
+        (BROWSER_LATENCY_MS, BROWSER_LATENCY_MS)
+    );
+    // A browser next to a TV: the TV's.
+    let mixed = b(None, &[browser.clone(), cast.clone()]);
+    assert_eq!((mixed.browser_ms, mixed.session_ms), (d, d));
+    let mixed = b(None, &[browser, airplay.clone()]);
+    assert_eq!(
+        (mixed.browser_ms, mixed.session_ms),
+        (BROWSER_LATENCY_MS, d)
+    );
+    assert_eq!(b(Some(9000), &[]).session_ms, 2000);
     // Clamped to what both protocols take.
     assert_eq!(b(Some(1), &both).cast_ms, 5);
     assert_eq!(b(Some(9000), &both).airplay_ms, Some(2000));
