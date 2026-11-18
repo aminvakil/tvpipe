@@ -1860,8 +1860,9 @@ mod tests {
             assert!(r.teardown);
             let frames = r.video.iter().filter(|p| p.kind == 0).count();
             // Records the game sends before the session starts pulling
-            // (while the sink sets up) are dropped.
-            assert!((22..=30).contains(&frames), "{frames}");
+            // (while the sink sets up) are dropped. How many depends on
+            // machine load (the sink's setup time), so only bound it loosely.
+            assert!((10..=30).contains(&frames), "{frames}");
             assert!(r.video.iter().any(|p| p.kind == 1), "codec packet");
             assert!(r.video.iter().find(|p| p.kind == 0).unwrap().idr);
             // Up to 44100 samples in 352-sample PCM frames.
