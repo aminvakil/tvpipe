@@ -27,6 +27,19 @@ You need Rust 1.85 or newer and a C toolchain for `ring`. For general file
 and capture input, put `ffmpeg` (and `ffprobe`) in `PATH`, or pass
 `--ffmpeg PATH` or set `$TVPIPE_FFMPEG`.
 
+Platform notes:
+
+- Windows: AirPlay receivers send timing requests to UDP ports tvpipe
+  opens, so Windows Firewall may ask to allow tvpipe the first time; allow
+  it on private networks. Pipe SLRW game input from `cmd.exe`, a program
+  that spawns tvpipe, or PowerShell 7.4+; older PowerShell re-encodes
+  binary pipes between programs.
+- ffmpeg 6 or newer (tested with 6.1, 7.1 and 8.1). The first frames of
+  SLRW input are dropped while ffmpeg starts (about 0.3 s with Debian's
+  ffmpeg 7.1).
+- `scripts/cross-check.sh` runs clippy for the Windows targets and builds
+  a Windows `.exe` from macOS or Linux with zig as the C toolchain.
+
 ## Quick start
 
 ```sh
