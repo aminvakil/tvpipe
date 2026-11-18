@@ -337,6 +337,9 @@ fn chrome_share_to_fakes() {
         eprintln!("TVPIPE_TEST_CHROME not set");
         return;
     };
+    if std::env::var("TVPIPE_TEST_CHROME_DEBUG").is_ok() {
+        crate::log::set_level(crate::log::Level::Debug);
+    }
     let secs: u64 = std::env::var("TVPIPE_TEST_CHROME_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -421,20 +424,33 @@ fn chrome_share_to_fakes() {
             PageSeen::default()
         }));
     };
+    // TVPIPE_TEST_CHROME_TO: a real receiver instead of the fakes.
+    let real = std::env::var("TVPIPE_TEST_CHROME_TO").ok();
+    let to = match &real {
+        Some(name) => vec![name.clone()],
+        None => vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)],
+    };
     let o = ShareOptions {
         latency_ms: None,
         size: std::env::var("TVPIPE_TEST_CHROME_SIZE")
             .ok()
             .map(|s| s.parse().unwrap()),
-        ..share_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)])
+        ..share_opts(to)
     };
-    let r = share_with(o, &connect, chrome_stop, &hook);
+    let r = if real.is_some() {
+        share_with(o, &connect_one, chrome_stop, &hook)
+    } else {
+        share_with(o, &connect, chrome_stop, &hook)
+    };
     joined(&driver);
     let _ = std::fs::remove_dir_all(&dir);
     for line in report.lock().unwrap().iter() {
         eprintln!("page: {line}");
     }
     r.unwrap();
+    if real.is_some() {
+        return;
+    }
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     let (tc, ta) = (*cast_tally.lock().unwrap(), *airplay_tally.lock().unwrap());

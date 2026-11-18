@@ -89,6 +89,14 @@ The H.264 must have no B-frames (decode order = presentation order). The
 script asks for Constrained Baseline first (then Main, High), at the
 smallest level that fits the plan, with `latencyMode: "realtime"`.
 
+## Encoder warm-up
+
+The first pictures of a hardware encoder can come out most of a second
+after capture (VideoToolbox in Chrome: ~0.9 s). Starting the timeline on
+them made Cast's in-flight window overflow at once. Until it has sent a
+keyframe, the page discards chunks: non-key ones, and keyframes more than
+150 ms late (it asks its encoder for another), for at most 3 s.
+
 ## Flow control
 
 tvpipe reads records as fast as the session takes them; when it falls

@@ -30,6 +30,10 @@
   // this often, so receivers keep getting pictures and keyframes.
   var IDLE_REPEAT_MS = 250;
   var STATS_MS = 2000;
+  // Encoder warm-up: keyframes later than this are discarded (and asked
+  // for again) until one is on time, for at most WARMUP_MAX_MS.
+  var WARMUP_LATE_MS = 150;
+  var WARMUP_MAX_MS = 3000;
   // Constrained Baseline first: no B-frames anywhere, every encoder has it.
   var DEFAULT_PROFILES = ['42E0', '4D40', '6400'];
   // [level_idc, MaxFS (macroblocks), MaxMBPS] (H.264 Table A-1).
@@ -510,6 +514,20 @@
         this.ws.send(record(KIND_CONFIG, chunk.timestamp, [new Uint8Array([0]), desc]));
       }
     }
+    var late = (clock() - chunk.timestamp) / 1000;
+    if (!this.sentKey) {
+      // The first pictures out of a (hardware) encoder can be most of a
+      // second old: starting with them would put tvpipe's timeline that
+      // far behind (Cast's in-flight window overflows at once). Wait for
+      // a keyframe that is on time, unless the encoder never gets there.
+      if (this.firstChunkAt === undefined) this.firstChunkAt = clock();
+      var patient = clock() - this.firstChunkAt < WARMUP_MAX_MS * 1000;
+      if (chunk.type !== 'key' || (late > WARMUP_LATE_MS && patient)) {
+        if (chunk.type === 'key') this.needKey = true;
+        this.stats.warmup++;
+        return;
+      }
+    }
     var data = new Uint8Array(chunk.byteLength);
     chunk.copyTo(data);
     var flags = chunk.type === 'key' ? FLAG_KEY : 0;
@@ -525,7 +543,7 @@
     if (flags & FLAG_KEY) this.sentKey = true;
     this.stats.bytes += data.length;
     this.stats.chunks++;
-    this.stats.latencySum += (clock() - chunk.timestamp) / 1000;
+    this.stats.latencySum += late;
   };
 
   Capture.prototype._startAudio = function (plan) {
@@ -577,7 +595,7 @@
   Capture.prototype._freshStats = function () {
     return {
       since: performance.now(), source: 0, encoded: 0, repeated: 0, dropped: 0, chunks: 0,
-      bytes: 0, latencySum: 0, keyRequests: 0, audioBytes: 0, audioDropped: 0
+      bytes: 0, latencySum: 0, keyRequests: 0, audioBytes: 0, audioDropped: 0, warmup: 0
     };
   };
 
@@ -591,7 +609,7 @@
       kbps: Math.round(s.bytes * 8 / secs / 1000),
       audioKbps: Math.round(s.audioBytes * 8 / secs / 1000),
       encodeMs: s.chunks ? +(s.latencySum / s.chunks).toFixed(1) : null,
-      dropped: s.dropped, repeated: s.repeated, keyRequests: s.keyRequests,
+      dropped: s.dropped, repeated: s.repeated, keyRequests: s.keyRequests, warmup: s.warmup,
       queue: this.encoder ? this.encoder.encodeQueueSize : 0,
       buffered: this.ws.bufferedAmount, codec: this.codec,
       width: this.plan ? this.plan.width : 0, height: this.plan ? this.plan.height : 0
