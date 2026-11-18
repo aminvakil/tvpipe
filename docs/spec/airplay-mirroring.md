@@ -497,6 +497,14 @@ Response: `{streams: [{type: 110, dataPort: int}]}` [HW]. No `dataPort` is
 fatal. If the event channel is still not connected and this response has
 `eventPort`, connect it now.
 
+Gaps [HW, dev Apple TV]: the reference sends SETUP #3 right after SETUP #2,
+but the Apple TV accepted a 5 s pause between SETUP #2 and SETUP #3 (no
+`/feedback` during the pause), and a 10 s pause between the end of setup
+and the first codec packet while `/feedback` ran every 2 s; both sessions
+then streamed normally (0 lost audio packets, data connection open until
+TEARDOWN). Longer gaps, gaps without `/feedback` after SETUP #3, and other
+receivers are untested; start `/feedback` as soon as SETUP #3 is answered.
+
 ### 4.8 Video data connection
 
 Connect TCP to `dataPort`; set `TCP_NODELAY`; a small send buffer (the
@@ -995,7 +1003,10 @@ up).
 
 Sent from the audio **control** socket to the receiver's RTCP port: one
 with the first audio frame, then one per second, and one immediately when
-the audio lead changes (§8.10).
+the audio lead changes (§8.10). The first sync packet goes out
+**before** the first audio RTP packet (the reference sends it, then the
+first frame; [HW] accepted); it establishes the mapping the receiver
+needs to schedule that frame.
 
 Define, at the sampled local instant `t`: `rtp_now` = the RTP timestamp of
 the sample captured at `t` (for the first packet: the first frame's
@@ -1004,6 +1015,17 @@ since that frame's capture instant, rounded to the nearest sample), `L` =
 audio lead in samples (= `latencyMax`), `rtp_play = rtp_now − L` (mod 2³²).
 Meaning: sample `rtp_play` is to be heard at network time `T` (= the
 receiver will play each sample L samples after its capture).
+
+Any instant `t` works as long as `rtp_now` and `T = map(t)` describe the
+same point of the sample↔time line. Choosing `t` = the capture instant of
+the frame just sent and `rtp_now` = that frame's RTP timestamp (no
+extrapolation) is equivalent, **provided** frame capture instants are
+derived from the sample position (first frame's instant + samples / 44100,
+e.g. from ffmpeg/SLRW timestamps). If capture instants are jittery
+wall-clock readings, every announcement carries that jitter (and steps by
+whole frames); the reference avoids this by sampling `t` = now and
+extrapolating `rtp_now` from the last frame. Either way `T` must come from
+the current clock mapping (§7.2) at the time the packet is built.
 
 PTP form, 28 bytes:
 
