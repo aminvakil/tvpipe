@@ -1532,7 +1532,7 @@ mod tests {
 /// ```
 ///
 /// - `STREAMLIB_CAST_ADDR` (default `127.0.0.1:8010`), `STREAMLIB_PT_SECS`
-///   (10).
+///   (10), `STREAMLIB_PT_LATENCY` (playout delay, 400 ms).
 /// - `STREAMLIB_PT_KIND`: `bf0` (no B-frames), `bframes` (x264 `-bf 3`,
 ///   B-pyramid), or `STREAMLIB_PT_FILE` for any MP4/MKV file.
 /// - `STREAMLIB_PT_ORDER`: the timestamp each frame carries: `pts` (its
@@ -1620,7 +1620,7 @@ mod experiments {
             info.video_kbps
         );
         let opts = CastOptions {
-            latency_ms: 400,
+            latency_ms: env("STREAMLIB_PT_LATENCY", "400").parse().unwrap(),
             max_width: info.video.width,
             max_height: info.video.height,
             max_fps: Ratio::integer(30),

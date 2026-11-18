@@ -1,6 +1,8 @@
 # Making ffmpeg optional
 
-Status: options for discussion (human request 2026-11-18). Nothing decided.
+Status: A and B decided and implemented by W9 (decision 0006,
+`media::{mp4,passthrough,input}`, decision 0007); experiment results
+below.
 
 Today every session runs ffmpeg (PLAN §5). The question is when we can skip
 it, also when the input format doesn't match what a receiver takes, and
@@ -94,6 +96,57 @@ encoded frames (any codec the device decodes, with B-frames) plus RPC
 messages. That would make passthrough of most files possible on Cast
 without re-encoding, at the cost of higher latency than mirroring and a
 second, larger protocol (openscreen `cast/streaming/remoting*`, BSD).
+
+## Experiments (W9)
+
+Run with `scripts/receivers/cast-receiver.sh run` (openscreen's
+`cast_receiver`, the ffmpeg + SDL build) and
+
+```sh
+STREAMLIB_PT_KIND=bframes STREAMLIB_PT_ORDER=dts \
+    cargo test media::input::experiments -- --ignored --nocapture
+```
+
+(`src/media/input.rs`, `mod experiments`: 1280x720@30 x264 files made by
+ffmpeg, sent unchanged through `cast::StreamingSink`, frames paced in
+decode order; the verdict comes from the receiver's log.)
+
+| File | Timestamps sent | Result on openscreen `cast_receiver` |
+|---|---|---|
+| no B-frames | pts | all 180/240 frames consumed and decoded; no warnings, also at 120 ms playout delay |
+| B-frames (`-bf 3`, pyramid, reorder depth 2) | pts (presentation) | **broken**: our Cast sink keeps RTP timestamps increasing and its in-flight window works on reference times, so frames going back in time trip `MaxDurationInFlight`; the sink then waits for the next keyframe (59 of 180 frames dropped) |
+| B-frames | dts (decode time) | all frames consumed, no decode errors or drift warnings, also at 120 ms playout delay (play-out margin at consume 47 ms vs 84 ms without B-frames) |
+| no B-frames + AAC-LC (only AAC offered; local patch, receivers prefer Opus) | raw AAC access units (MP4) | video fine; **every AAC frame fails** (`avcodec_send_packet: Invalid data`): the standalone receiver has no AudioSpecificConfig and runs ffmpeg's parser, which needs ADTS |
+| same | AAC wrapped in ADTS | audio decodes and plays, no errors |
+| MKV, H.264 + Opus | pts | video and audio decode, no errors |
+
+Why "dts" works there: openscreen's decoder (`decoder.cc`) assigns decoded
+pictures to sent frames first-in-first-out, so the n-th picture in
+presentation order plays at the n-th frame's timestamp. With decode-time
+stamps that is exactly the right cadence, delayed by the reorder depth;
+the last frames of the stream stay in the decoder. A receiver that maps
+output pictures by their own timestamps (Chrome's pipeline, and probably
+the Apple TV) would show B-frames at their decode time instead, i.e. out
+of order. So the openscreen result does **not** show that B-frames are
+safe; it only shows the receiver does not reject them.
+
+Decisions taken in the code (W9):
+
+- Passthrough refuses B-frames (`passthrough::check`; detected from the
+  MP4 sample table, the first seconds of other files, or the SPS's
+  `max_num_reorder_frames`). `CheckOptions::allow_reordering` exists for
+  hardware experiments (Chromecast, Apple TV once W7 merges).
+- Passthrough refuses keyframe intervals over 4 s: one
+  `MaxDurationInFlight` drop at session start (the receiver not ACKing
+  yet) cost a whole 2 s GOP in several runs; the file's GOP is what
+  recovery waits for.
+- AAC passthrough to Cast needs (a) a way to offer AAC first or only
+  (`CastOptions`, W8; openscreen picks Opus otherwise) and (b) knowing
+  whether real receivers want raw AAC or ADTS. Until then AAC files go
+  through ffmpeg for Cast (Opus); AAC for AirPlay is untested (W7).
+
+Still open (hardware): B-frames and AAC-LC on the Apple TV; scaling of
+a stream larger than the advertised canvas; B-frames on a Chromecast.
 
 ## Suggested order
 
