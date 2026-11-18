@@ -1240,7 +1240,8 @@ fn share_with(
     let audio = !opts.no_audio && cap.audio;
     if !opts.no_audio && !cap.audio {
         info!(
-            "share: the capture has no audio (the browser's picker has a \"share audio\" option)"
+            "share: the capture has no audio (Chrome/Edge: tick \"Also share tab audio\" in \
+             the picker; Safari and Firefox cannot share sound)"
         );
     }
     // Sizing: the stream is the capture's size (or --size), scaled down
