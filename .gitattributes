@@ -1,0 +1,4 @@
+# Checkouts use LF on every OS (Windows runners default to core.autocrlf=true,
+# which would turn text fixtures compared byte for byte into CRLF).
+# tests/fixtures/net/.gitattributes keeps its CRLF captures binary.
+* text=auto eol=lf
