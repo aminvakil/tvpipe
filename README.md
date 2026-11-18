@@ -49,6 +49,7 @@ tvpipe unpair NAME|ADDR
 tvpipe play --to NAME|ADDR [--to ...] [OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)
 tvpipe test-pattern --to NAME|ADDR [OPTIONS]
 tvpipe share --to NAME|ADDR [--open] [--port PORT] [OPTIONS]
+tvpipe browser URL --to NAME|ADDR [--visible] [--profile DIR] [--reload MIN] [OPTIONS]
 tvpipe preview [--open] [--port PORT] [OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]
 tvpipe debug-pipeline [OPTIONS] INPUT
 ```
@@ -98,6 +99,37 @@ tvpipe share --to TV --open
 stream takes the TV's screen shape with the capture centered (black bars), at
 the capture's size up to what the TV allows.  Stopping the share or closing the
 page ends the session.
+
+### A Web Page On The TV (`browser`)
+
+```sh
+# A dashboard on the TV, reloaded every 30 minutes
+tvpipe browser https://status.example.com --to TV --reload 30
+
+# A page that needs a login: log in once in the window, keep the profile
+tvpipe browser https://grafana.example.com --to TV --visible --profile ~/tvpipe-grafana
+tvpipe browser https://grafana.example.com --to TV --profile ~/tvpipe-grafana
+
+# A local file, also in a browser tab here
+tvpipe browser ./slides.html --to TV --to browser
+```
+
+`browser` starts a Chromium-based browser of its own (Chrome, Edge, Chromium or
+Brave; `--browser PATH` or `$TVPIPE_BROWSER` picks one), headless unless
+`--visible`, opens URL at exactly the stream's size (the TV's screen shape, at
+most 1920x1080 or `--size`) and shares that tab with its sound through the same
+path as `share`.  It never uses your browser profile: each run gets a temporary
+one, deleted afterwards, or `--profile DIR` keeps one (for logins).
+
+If the page navigates or reloads, it shares again; if the page or the browser
+crashes, it is started again.  Closing the window (`--visible`) or Ctrl-C ends
+the session and quits the browser.  The start takes about a second, a reload
+or navigation leaves a gap of about half a second.
+
+Sites that refuse automated browsers do not work: tvpipe does not hide that
+its browser is automated, and reports the site's 401/403/429.  Video calls are
+such a case (`docs/meet.md`): present a `--to browser` tab with the call's own
+UI instead.
 
 ### Playing To A Browser (`--to browser`, `preview`)
 

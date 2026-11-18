@@ -41,6 +41,19 @@ Several pages may connect; the first `capture` wins, later ones get
 closing its socket or sending `ended` ends the session (after one playout
 delay, like the end of a file).
 
+**Rejoin mode** (`tvpipe browser`): the source page is a document
+in tvpipe's own browser, and a navigation, a reload or a crash replaces
+it. There, the newest page that sends `capture` is the source (nobody
+gets `busy`); a source page that goes away mid-stream does not end the
+session, and the next one gets the same `plan` (its `content` placed for
+its own capture size) and continues the stream. Because `pts_us` is
+wall-clock time, the timeline has a gap and no jump. Its first records
+are an `h264-config` and a keyframe (the warm-up rule below); an SPS that
+differs from the first one in more than its VUI ends the session (Chrome
+on macOS changes the VUI's transfer characteristics between its first
+keyframes, which is accepted). The session ends when tvpipe gives up on
+the browser or the browser was closed.
+
 ## Text messages (JSON objects with a `type`)
 
 Page → tvpipe:
@@ -151,7 +164,7 @@ are dropped above the same threshold.
 - Clocks are `performance.timeOrigin + performance.now()` so page and
   worker timestamps agree.
 
-## Capture script API (for the headless mode)
+## Capture script API
 
 `capture.js` defines `globalThis.tvpipeCapture`:
 
@@ -172,3 +185,16 @@ c.stop(reason);
 `captureDisplay()` must run with transient user activation (a click; or
 CDP `Runtime.evaluate` with `userGesture: true` plus Chrome's
 auto-accept flags in the headless mode).
+
+`tvpipe browser` evaluates `capture.js` and then `src/browser/headless.js`
+in the page after every navigation. That one connects with
+`preferCurrentTab`, `selfBrowserSurface: 'include'`, no local audio, and
+calls `captureDisplay()` once the `config` arrives; its state is in
+`globalThis.__tvpipe` (`connecting`, `capturing`, `sharing`, `ended` with
+an `error`), which tvpipe polls. The tab must be allowed to reach
+`ws://127.0.0.1`: tvpipe bypasses the page's CSP (`Page.setBypassCSP`)
+and grants every origin Chrome's Local Network Access permission
+(`loopbackNetwork`; without it an https page fails with
+`net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`). On a `file://` page
+(an opaque origin) the audio worklet is loaded from a `data:` URL, since
+a `blob:` one fails there.

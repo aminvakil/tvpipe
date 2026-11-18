@@ -1,43 +1,68 @@
 # W13 `tvpipe browser URL` (headless Chrome, auto-shared)
 
-Status: in progress. Owns `src/browser/launch*` / `src/browser/cdp*` (or
-similar), the `browser` subcommand, docs. Reuses W12 (`capture.js`, share
-protocol, `net::websocket` client) and W14 (`--to browser` works as a
-target too). Decision 0012 option A.
+Status: done (pending merge). Owns `src/browser/{launch,cdp,headless}.rs`,
+`src/browser/headless.js`, `src/session/browse*.rs`, the `browser`
+subcommand, docs. Reuses W12 (`capture.js`, share protocol,
+`net::websocket` client) and W14 (`--to browser` works as a target too).
+How it works: ARCHITECTURE.md "Headless browser", docs/share-protocol.md
+("Rejoin mode", "Capture script API").
 
 ```
 tvpipe browser URL --to TV [--to browser] [--size WxH] [--fps N]
               [--profile DIR] [--visible] [--reload MIN] [--browser PATH]
 ```
 
-- [ ] Find a Chromium-based browser: `--browser PATH`, `$TVPIPE_BROWSER`,
-      then well-known install paths per OS (Chrome, Chrome Canary, Edge,
-      Chromium, Brave; `cfg(target_os)` allowed for these paths only, like
-      config dirs) and PATH (`google-chrome`, `chromium`, `msedge`, …).
-- [ ] Launch: `--headless=new` (unless `--visible`), window size = stream
-      size at device scale 1, own profile (temp dir by default, deleted on
-      exit; `--profile DIR` persistent for logins), flags needed for silent
-      tab capture with audio (`--auto-accept-this-tab-capture`, autoplay
-      policy, no first-run/default-browser prompts, no throttling of the
-      captured tab), `--remote-debugging-port=0` + read DevToolsActivePort.
-      Never touch the user's real browser profile.
-- [ ] Minimal CDP client over `net::websocket::connect` (JSON-RPC with ids,
-      events): Target/Page/Runtime as needed: open URL, inject `capture.js`
-      on every navigation (`Page.addScriptToEvaluateOnNewDocument` or
-      `Runtime.evaluate` after load), start the capture pointed at
-      tvpipe's loopback ws URL with a token, bypass CSP if needed
-      (`Page.setBypassCSP`) so the script can connect to 127.0.0.1.
-- [ ] Session: same encoded-input path as `share`; keyframe requests to the
-      page; audio PCM → AirPlay/browser, AAC → Cast. Stream size from the
-      receivers (W12's sizing/aspect logic), browser viewport set to it
-      (no bars).
-- [ ] Lifecycle: run until Ctrl-C / `q` / all receivers gone; on exit close
-      Chrome (Browser.close, then kill) and delete the temp profile;
-      restart Chrome and re-share if it crashes or the page dies;
-      `--reload MIN` reloads periodically; log page console errors at debug.
-- [ ] Tests: unit tests for path discovery and CDP framing (fake CDP
-      server over loopback WebSocket); opt-in real-Chrome test
-      (`TVPIPE_TEST_CHROME=1`) that streams a local test page with a moving
-      clock and a tone into the fake Cast receiver and the `--to browser`
-      player and checks decode, fps, audio, clean shutdown (no leftover
-      processes, profile dir removed).
+- [x] Find a Chromium-based browser: `--browser PATH` (also a name on
+      PATH or a macOS `.app`), `$TVPIPE_BROWSER`, then well-known install
+      paths per OS (Chrome, Edge, Chromium, Brave, Chrome Canary;
+      `browser/platform.rs`) and PATH (`google-chrome`, `chromium`,
+      `msedge`, …).
+- [x] Launch: `--headless=new` (unless `--visible`) with `--screen-info`
+      holding the viewport, the window fitted so the viewport is the
+      stream size at scale 1 (measured, then corrected again once
+      Chrome's "sharing this tab" bar appears), own profile (temp dir,
+      deleted on exit; `--profile DIR` persistent; the browsers' real
+      profiles refused), `--auto-accept-this-tab-capture`, autoplay, no
+      first-run/default-browser/keychain prompts, no background
+      throttling, `--remote-debugging-port=0` + `DevToolsActivePort`.
+- [x] CDP client over `net::websocket::connect` (ids, results, errors,
+      events, flattened sessions); capture.js + `headless.js` evaluated
+      after every navigation as a user gesture; `Page.setBypassCSP`;
+      Local Network Access granted (https pages are blocked from
+      127.0.0.1 otherwise).
+- [x] Session: share's encoded-input path; keyframe requests to the page;
+      PCM → AirPlay/browser, AAC → Cast; size from the receivers' shape and
+      limits, viewport = stream size (no bars).
+- [x] Lifecycle: Ctrl-C / `q` / receivers gone / browser closed; on exit
+      Browser.close, then kill, temp profile deleted; a crashed page is
+      loaded again, a dead browser started again (≤ 3 per minute);
+      navigations re-share (share server rejoin mode); `--reload MIN`;
+      console errors, exceptions and log entries at debug; dialogs
+      dismissed; 401/403/429 of the page reported; meet.google.com refused.
+- [x] Tests: path discovery, URLs, profiles, command line, page states;
+      CDP framing against a fake DevTools endpoint; the session with fake
+      pages (two documents to fake Cast + AirPlay, sizing, failures);
+      opt-in real Chrome (`TVPIPE_TEST_CHROME=...`):
+      `chrome_browser_to_cast_and_player` (clock + tone page, reloads, fake
+      Cast and the `--to browser` player in a second Chrome, ffprobe
+      decode, no leftovers) and `chrome_browser_survives_crashes`.
+      W12's Chrome helper now runs on `browser::launch`.
+
+Measured (Chrome 157, Apple Silicon, `-v`): browser start to first
+capture ~1.0 s, to the first frame at the receivers ~2.4 s (encoder
+warm-up); a reload or navigation leaves a ~0.55 s gap, a page crash
+~0.55 s, a browser crash ~3 s; 1920x1080@30 from github.com ~41 % CPU
+for Chrome + tvpipe together (one core = 100 %), 1.4 GB RSS (Chrome).
+Capture to tvpipe ~5 ms.
+
+Open:
+- The receivers connect before the browser starts (the page's size comes
+  from them), so a slow page keeps a connected TV waiting for its first
+  frame; starting the browser in parallel and resizing later would hide
+  the ~1 s launch.
+- `--visible` follows the screen's scaling (device scale 1.5 seen on a
+  scaled display), so the capture is scaled to the stream.
+- A browser that tvpipe cannot clean up (tvpipe killed with SIGKILL)
+  keeps running with its temp profile; Ctrl-C reaches it too (same
+  process group), and a second Ctrl-C exits at once.
+- Not tried: Edge, Brave, Chromium, Linux, Windows; real TVs.

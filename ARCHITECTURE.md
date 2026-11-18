@@ -139,9 +139,21 @@ encoded SLRW over a localhost WebSocket, so it takes the same path
 they get to fill their screen, so sinks report their screen shape
 (`Capabilities::display_aspect`: Cast from the ANSWER's `display`, AirPlay
 from the SETUP canvas) and the page centers the capture in a frame of that
-shape. A headless mode (`tvpipe browser URL`: drive an installed Chromium
-over the DevTools protocol and inject the same capture script) is in
-progress.
+shape.
+
+**Headless browser** (`tvpipe browser URL`) starts a Chromium-based browser
+of its own (a separate profile, headless unless `--visible`) and drives it
+over the DevTools protocol. Its viewport is the stream size, so the tab fills
+the frame. After every navigation the capture script is evaluated in the
+page as a user gesture, and the page shares its own tab
+(`--auto-accept-this-tab-capture`). The page may reach 127.0.0.1 because
+tvpipe bypasses its CSP and grants Chrome's Local Network Access
+permission. A navigation, reload or crash replaces the document; the share
+server's rejoin mode lets the next one continue the stream, and since the
+page clock is wall-clock time the timeline only has a gap. A keeper thread
+re-shares, reloads crashed pages, restarts a dead browser, and quits it
+and deletes the temporary profile at the end. Nothing is disguised: sites
+that refuse automated browsers do not work.
 
 The WebSocket, HTTP bits, base64 and the DevTools client are hand-rolled;
 the pages are static files embedded in the binary.
@@ -331,7 +343,9 @@ Everything is platform-neutral except these, each with no crate and every
   `session::play_with` and the fake receivers. Measurements:
   [`docs/measurements.md`](docs/measurements.md#windows-timer-resolution).
 - **Paths:** `cfg(target_os)` for the config directory and for the
-  well-known browser install paths (`src/browser/platform.rs`).
+  well-known browser install paths and the browsers' own profile
+  directories, which `tvpipe browser --profile` refuses
+  (`src/browser/platform.rs`).
 
 Other Windows differences (UDP `ConnectionReset`, `shutdown` not waking a
 blocked `recv`, PowerShell pipes) are handled in portable code; see
