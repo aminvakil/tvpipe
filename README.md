@@ -14,6 +14,24 @@ source. It can mirror files, URLs, capture devices, a built-in test pattern,
 or raw frames that a game writes to its stdin. It can also send to several
 receivers at once from a single encode.
 
+## Installing
+
+```sh
+curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh     # macOS, Linux
+```
+
+```powershell
+irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex           # Windows
+```
+
+The installers fetch the latest release from
+[GitHub Releases](https://github.com/mitsuhiko/tvpipe/releases), check its
+SHA-256 and put `tvpipe` in `~/.local/bin` (Windows:
+`%LOCALAPPDATA%\tvpipe\bin`, added to the user `PATH`).
+`TVPIPE_VERSION` picks a version, `TVPIPE_INSTALL_DIR` another directory.
+The release page also has the archives for manual download (macOS, static
+Linux and Windows binaries, x86_64 and ARM64).
+
 ## Building
 
 ```sh
