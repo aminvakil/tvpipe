@@ -178,7 +178,8 @@ For details see [`Architecture`](ARCHITECTURE.md) about the how and why.
 
 ## License
 
-`tvpipe` is Apache-2.0, except `src/airplay/fairplay/`, which is a port of
+`tvpipe` is Apache-2.0 ([`LICENSE`](LICENSE)), except
+`src/airplay/fairplay/`, which is a port of
 [doubletake](https://github.com/omarroth/doubletake) under
 LGPL-3.0-or-later. While that module is included, the distributed binary is
 under LGPL-3.0-or-later terms. See [`LICENSES/`](LICENSES).
