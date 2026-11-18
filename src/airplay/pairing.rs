@@ -412,13 +412,77 @@ pub fn pair_setup_pin<T: Transport>(
 /// Transient pair-setup (M1–M4 with PIN 3939). The caller enables the
 /// encrypted channel with the result right after.
 pub fn pair_setup_transient<T: Transport>(t: &mut T) -> Result<Shared> {
-    debug!("transient pair-setup: M1");
-    let m2 = parse_setup_m2(&t.post("/pair-setup", Hkp::Transient, &setup_m1(true))?)?;
-    let (m3, srp) = setup_m3(&m2, TRANSIENT_PIN)?;
-    debug!("transient pair-setup: M3");
-    let k = parse_setup_m4(&t.post("/pair-setup", Hkp::Transient, &m3)?, srp)?;
-    debug!("transient pair-setup: M4 ok");
-    Ok(Shared(k.to_vec()))
+    pair_setup_transient_for(t, false)
+}
+
+/// The empty SRP password some senders use for transient pairing (W7,
+/// spec `airplay-mirroring.md` Appendix A).
+pub const TRANSIENT_PIN_EMPTY: &str = "";
+
+fn transport_failure(e: &Error) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::Io | ErrorKind::Closed | ErrorKind::Timeout
+    )
+}
+
+/// Transient pair-setup with the receiver-family rules of the spec
+/// (`airplay-mirroring.md` Appendix A, added by W7):
+///
+/// - `X-Apple-HKP`: 4 for Apple receivers, 3 for legacy-preferring ones
+///   (`legacy_preferring`: no CoreUtils pairing bit, or bit 26/51); if
+///   the receiver rejects M1 (an error status or a TLV error in M2),
+///   retry once with the other value.
+/// - SRP password `3939`; if M4 fails authentication, retry once from M1
+///   with the empty password.
+///
+/// A receiver that accepts the first try sees exactly the old exchange.
+pub fn pair_setup_transient_for<T: Transport>(
+    t: &mut T,
+    legacy_preferring: bool,
+) -> Result<Shared> {
+    let hkps = if legacy_preferring {
+        [Hkp::Normal, Hkp::Transient]
+    } else {
+        [Hkp::Transient, Hkp::Normal]
+    };
+    let pins = [TRANSIENT_PIN, TRANSIENT_PIN_EMPTY];
+    let (mut hkp_i, mut pin_i) = (0, 0);
+    loop {
+        let hkp = hkps[hkp_i];
+        debug!("transient pair-setup: M1 (HKP {})", hkp.as_str());
+        let m2 = match t
+            .post("/pair-setup", hkp, &setup_m1(true))
+            .and_then(|b| parse_setup_m2(&b))
+        {
+            Ok(m2) => m2,
+            Err(e) if transport_failure(&e) || hkp_i == 1 => return Err(e),
+            Err(e) => {
+                debug!(
+                    "transient pair-setup: {e}; retrying with HKP {}",
+                    hkps[1].as_str()
+                );
+                hkp_i = 1;
+                continue;
+            }
+        };
+        let (m3, srp) = setup_m3(&m2, pins[pin_i])?;
+        debug!("transient pair-setup: M3");
+        match t
+            .post("/pair-setup", hkp, &m3)
+            .and_then(|b| parse_setup_m4(&b, srp))
+        {
+            Ok(k) => {
+                debug!("transient pair-setup: M4 ok");
+                return Ok(Shared(k.to_vec()));
+            }
+            Err(e) if e.kind() == ErrorKind::Auth && pin_i == 0 => {
+                debug!("transient pair-setup: {e}; retrying with the empty password");
+                pin_i = 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Pair-verify against a paired receiver. The caller enables the

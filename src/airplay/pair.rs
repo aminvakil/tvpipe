@@ -146,6 +146,27 @@ pub fn encrypt(mut client: RtspClient<TcpStream>, shared: &Shared) -> Result<Sec
 /// Connects and authenticates: pair-verify with `receiver`, else
 /// transient pair-setup.
 pub fn connect_with(addr: SocketAddr, identity: &Identity, auth: Auth) -> Result<Control> {
+    connect_auth(addr, identity, auth, false)
+}
+
+/// Whether discovery says the receiver prefers legacy pairing (no
+/// CoreUtils pairing bit, or bit 26/51): its transient pair-setup starts
+/// with `X-Apple-HKP: 3` (W7, spec `airplay-mirroring.md` Appendix A).
+fn legacy_preferring(target: &Target) -> bool {
+    target
+        .device
+        .as_ref()
+        .and_then(|d| d.airplay.as_ref().or(d.raop.as_ref()))
+        .and_then(|a| a.txt.features)
+        .is_some_and(crate::airplay::legacy_pair::is_candidate)
+}
+
+fn connect_auth(
+    addr: SocketAddr,
+    identity: &Identity,
+    auth: Auth,
+    legacy_preferring: bool,
+) -> Result<Control> {
     let mut client = open(addr)?;
     let shared = match &auth {
         Auth::Verified(r) => {
@@ -154,7 +175,7 @@ pub fn connect_with(addr: SocketAddr, identity: &Identity, auth: Auth) -> Result
         }
         Auth::Transient => {
             debug!("transient pair-setup with {addr}");
-            pairing::pair_setup_transient(&mut client)?
+            pairing::pair_setup_transient_for(&mut client, legacy_preferring)?
         }
     };
     let client = encrypt(client, &shared)?;
@@ -179,7 +200,13 @@ pub fn connect(target: &Target, store: &Store) -> Result<Control> {
     // Legacy raw pairings are verified by `airplay::legacy_pair` (W7).
     match found.filter(|r| !r.raw) {
         Some(r) => connect_with(target.addr, &store.identity, Auth::Verified(r.clone())),
-        None => connect_with(target.addr, &store.identity, Auth::Transient).map_err(|e| {
+        None => connect_auth(
+            target.addr,
+            &store.identity,
+            Auth::Transient,
+            legacy_preferring(target),
+        )
+        .map_err(|e| {
             if e.kind() == ErrorKind::Auth {
                 Error::auth(format!(
                     "{} requires pairing: run `streamlib pair {:?}` ({})",
@@ -418,6 +445,84 @@ mod tests {
                 "secure GET /info"
             ]
         );
+    }
+
+    fn setups(fake: &FakeReceiver) -> usize {
+        fake.log()
+            .iter()
+            .filter(|l| *l == "plain POST /pair-setup")
+            .count()
+    }
+
+    /// W7: transient HKP by receiver family, with one retry each for the
+    /// HKP value and the SRP password (spec airplay-mirroring Appendix A).
+    #[test]
+    fn transient_hkp_and_password_retries() {
+        let lg = || {
+            FakeReceiver::start(Config {
+                transient_hkp: "3".into(),
+                ..Config::default()
+            })
+        };
+        // Legacy-preferring receiver, HKP 3 first: the plain exchange.
+        let fake = lg();
+        let mut c = connect_auth(
+            fake.addr,
+            &Identity::generate().unwrap(),
+            Auth::Transient,
+            true,
+        )
+        .unwrap();
+        get_info(&mut c.client).unwrap();
+        assert_eq!(setups(&fake), 2);
+        // Apple order against it: HKP 4 is rejected at M1, HKP 3 works.
+        let fake = lg();
+        let mut c =
+            connect_with(fake.addr, &Identity::generate().unwrap(), Auth::Transient).unwrap();
+        get_info(&mut c.client).unwrap();
+        assert_eq!(setups(&fake), 3);
+        // Empty transient password: 3939 fails at M4, the retry works.
+        let fake = FakeReceiver::start(Config {
+            transient_pin: String::new(),
+            ..Config::default()
+        });
+        let mut c =
+            connect_with(fake.addr, &Identity::generate().unwrap(), Auth::Transient).unwrap();
+        get_info(&mut c.client).unwrap();
+        assert_eq!(setups(&fake), 4);
+        // Neither HKP accepted: an error after two M1 tries.
+        let fake = FakeReceiver::start(Config {
+            transient_hkp: "9".into(),
+            ..Config::default()
+        });
+        let err =
+            connect_with(fake.addr, &Identity::generate().unwrap(), Auth::Transient).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Auth, "{err}");
+        assert_eq!(setups(&fake), 2);
+    }
+
+    /// `connect` picks HKP 3 first from the discovered features.
+    #[test]
+    fn connect_uses_discovered_family() {
+        let fake = FakeReceiver::start(Config {
+            transient_hkp: "3".into(),
+            ..Config::default()
+        });
+        let mut dev = crate::net::device::tests::lan_devices()
+            .into_iter()
+            .find(|d| d.airplay.is_some())
+            .unwrap();
+        dev.airplay.as_mut().unwrap().txt.features = Some(1 << 7 | 1 << 26 | 1 << 48);
+        let t = Target {
+            addr: fake.addr,
+            device: Some(dev),
+        };
+        let path = temp_dir("pair-family").join(FILE_NAME);
+        let store = Store::open(&path).unwrap();
+        assert!(legacy_preferring(&t));
+        connect(&t, &store).unwrap();
+        assert_eq!(setups(&fake), 2);
+        assert!(!legacy_preferring(&target(&fake)));
     }
 
     #[test]

@@ -34,6 +34,10 @@ pub(crate) struct Config {
     pub id: Vec<u8>,
     pub seed: [u8; 32],
     pub name: String,
+    /// `X-Apple-HKP` accepted on transient pair-setup (Apple: "4").
+    pub transient_hkp: String,
+    /// SRP password of transient pair-setup.
+    pub transient_pin: String,
 }
 
 impl Default for Config {
@@ -44,6 +48,8 @@ impl Default for Config {
             id: b"AA:BB:CC:00:00:0A".to_vec(),
             seed: [7; 32],
             name: "Fake TV".into(),
+            transient_hkp: "4".into(),
+            transient_pin: TRANSIENT_PIN.into(),
         }
     }
 }
@@ -258,18 +264,23 @@ fn pair_setup(
     cfg: &Config,
 ) -> Result<Handled> {
     let tlv = Tlv8::decode(&req.body)?;
-    let transient_hkp = req.headers.get("x-apple-hkp") == Some("4");
+    let hkp = req.headers.get("x-apple-hkp").unwrap_or("");
     match tlv.state() {
         Some(1) => {
             let transient = tlv.get_u8(tag::FLAGS) == Some(FLAG_TRANSIENT);
-            if transient != transient_hkp {
+            let want = if transient {
+                cfg.transient_hkp.as_str()
+            } else {
+                "3"
+            };
+            if hkp != want {
                 return Ok((tlv_reply(req, tlv_error(2, errors::UNKNOWN)), None));
             }
             if transient && !cfg.allow_transient {
                 return Ok((tlv_reply(req, tlv_error(2, errors::UNAVAILABLE)), None));
             }
             let pin = if transient {
-                TRANSIENT_PIN
+                cfg.transient_pin.as_str()
             } else {
                 cfg.pin.as_str()
             };
