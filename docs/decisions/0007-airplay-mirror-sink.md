@@ -1,4 +1,4 @@
-# 0006: AirPlay mirror sink API and integration notes (W7)
+# 0007: AirPlay mirror sink API and integration notes (W7)
 
 Status: proposal for the lead. No frozen interface changes.
 
