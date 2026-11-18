@@ -287,7 +287,10 @@ fn status(request_id: u32, running: bool) -> Value {
 }
 
 fn control(conn: &mut ServerConn, state: &Mutex<State>, stop: &AtomicBool, opts: Options) {
-    let mut next_ssrc = 1000;
+    // Above the sender's ranges (audio 1..=50000, video 50001..=100000,
+    // picked at random): an answer reusing the sender's SSRC is rejected,
+    // which with 1001.. made about one audio stream in 25000 fail.
+    let mut next_ssrc = 200_000;
     while !stop.load(Ordering::Acquire) {
         let msg = match conn.recv() {
             Ok(m) => m,
