@@ -155,7 +155,7 @@ static PLAY_OPTS: &[Opt<PlayArg>] = &[
     Opt::new(PlayArg::Latency)
         .long("latency")
         .value("MS")
-        .help("Target playout delay in milliseconds"),
+        .help("Playout delay in ms, the same on every receiver (default: Cast 300, AirPlay automatic ~100-170)"),
     Opt::new(PlayArg::Size)
         .long("size")
         .value("WxH")

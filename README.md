@@ -93,7 +93,7 @@ Useful `play` options:
 
 | Option | Default | |
 |---|---|---|
-| `--latency MS` | receiver profile (≈100–200 ms) | target playout delay |
+| `--latency MS` | Cast 300 ms; AirPlay automatic (video 100, audio 170 ms); both 300 ms when mixed | playout delay, the same on every receiver (5–2000) |
 | `--size WxH`, `--fps N`, `--bitrate KBPS` | from the input and the receivers | output limits |
 | `--encoder` | `auto` | `builtin`, `x264`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `mf` |
 | `--no-audio` | | video only |

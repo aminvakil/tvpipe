@@ -70,8 +70,11 @@ const CAST_PORT: u16 = 8009;
 /// AirPlay control port (for `ADDR:7000` and `airplay:ADDR`).
 const AIRPLAY_PORT: u16 = 7000;
 /// Target playout delay without `--latency`. Cast needs room for a
-/// retransmission or two on Wi-Fi; 200 ms is openscreen's sender default.
-pub const DEFAULT_LATENCY_MS: u32 = 200;
+/// retransmission or two on Wi-Fi. openscreen's sender default is 200 ms,
+/// but a Google TV on Wi-Fi has feedback gaps of ~220 ms, which overflow
+/// the in-flight window a few times per 5 minutes at 200 ms (each costing
+/// up to a GOP); decision 0010. `--latency` goes lower on good networks.
+pub const DEFAULT_LATENCY_MS: u32 = 300;
 /// Largest default output (an input larger than this is scaled down).
 const DEFAULT_MAX_SIZE: Size = Size {
     width: 1920,
@@ -535,62 +538,109 @@ fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> R
 // ---------------------------------------------------------------------------
 // The session
 
-fn connect_all(
-    targets: &[Target],
+/// Connects one target (the tests substitute fakes).
+type Connector<'a> = &'a (dyn Fn(&Target, &CastOptions, &crate::airplay::session::MirrorOptions) -> Result<Box<dyn Sink>>
+         + Sync);
+
+fn connect_one(
+    t: &Target,
     opts: &CastOptions,
     mirror: &crate::airplay::session::MirrorOptions,
-) -> Result<Vec<Box<dyn Sink>>> {
-    let results: Vec<Result<Box<dyn Sink>>> = std::thread::scope(|s| {
-        let handles: Vec<_> = targets
-            .iter()
-            .map(|t| {
-                s.spawn(move || -> Result<Box<dyn Sink>> {
-                    match t {
-                        Target::Cast { addr, name } => {
-                            let sink = cast::connect(*addr, name, opts)?;
-                            Ok(Box::new(sink))
-                        }
-                        Target::AirPlay { addr, device, .. } => {
-                            let target = crate::airplay::pair::Target {
-                                addr: *addr,
-                                device: device.as_deref().cloned(),
-                            };
-                            let sink = crate::airplay::sink::connect_mirror(&target, mirror)?;
-                            Ok(Box::new(sink))
-                        }
-                    }
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| Err(Error::process("connect thread panicked")))
-            })
-            .collect()
-    });
-    let mut sinks = Vec::new();
+) -> Result<Box<dyn Sink>> {
+    match t {
+        Target::Cast { addr, name } => Ok(Box::new(cast::connect(*addr, name, opts)?)),
+        Target::AirPlay { addr, device, .. } => {
+            let target = crate::airplay::pair::Target {
+                addr: *addr,
+                device: device.as_deref().cloned(),
+            };
+            Ok(Box::new(crate::airplay::sink::connect_mirror(
+                &target, mirror,
+            )?))
+        }
+    }
+}
+
+fn target_name(t: &Target) -> &str {
+    match t {
+        Target::Cast { name, .. } | Target::AirPlay { name, .. } => name,
+    }
+}
+
+/// Keeps what worked: with several receivers, one that cannot be resolved
+/// or connected is logged and left out, and the session goes on with the
+/// others; it fails only when none is left (decision 0010).
+fn keep_working<T>(what: &str, results: Vec<(String, Result<T>)>) -> Result<Vec<T>> {
+    let total = results.len();
+    let mut ok = Vec::new();
     let mut first_err = None;
-    for (t, r) in targets.iter().zip(results) {
+    for (name, r) in results {
         match r {
-            Ok(s) => sinks.push(s),
+            Ok(v) => ok.push(v),
             Err(e) => {
-                let name = match t {
-                    Target::Cast { name, .. } | Target::AirPlay { name, .. } => name,
-                };
                 error!("{name}: {e}");
                 first_err.get_or_insert(e);
             }
         }
     }
     match first_err {
-        Some(e) => {
-            stop_all(sinks);
-            Err(e)
+        Some(e) if ok.is_empty() => Err(e),
+        Some(_) => {
+            warn!(
+                "{} of {total} receivers {what}; going on without the others",
+                ok.len()
+            );
+            Ok(ok)
         }
-        None => Ok(sinks),
+        None => Ok(ok),
     }
+}
+
+/// Resolves every `--to` in parallel (discovery browses for names).
+fn resolve_all(queries: &[String]) -> Result<Vec<Target>> {
+    let results = std::thread::scope(|s| {
+        let handles: Vec<_> = queries
+            .iter()
+            .map(|q| s.spawn(move || resolve_target(q)))
+            .collect();
+        queries
+            .iter()
+            .zip(handles)
+            .map(|(q, h)| {
+                let r = h
+                    .join()
+                    .unwrap_or_else(|_| Err(Error::process("resolve thread panicked")));
+                (q.clone(), r)
+            })
+            .collect()
+    });
+    keep_working("resolved", results)
+}
+
+/// Connects every target in parallel.
+fn connect_all(
+    targets: &[Target],
+    connect: Connector<'_>,
+    opts: &CastOptions,
+    mirror: &crate::airplay::session::MirrorOptions,
+) -> Result<Vec<Box<dyn Sink>>> {
+    let results: Vec<(String, Result<Box<dyn Sink>>)> = std::thread::scope(|s| {
+        let handles: Vec<_> = targets
+            .iter()
+            .map(|t| s.spawn(move || connect(t, opts, mirror)))
+            .collect();
+        targets
+            .iter()
+            .zip(handles)
+            .map(|(t, h)| {
+                let r = h
+                    .join()
+                    .unwrap_or_else(|_| Err(Error::process("connect thread panicked")));
+                (target_name(t).to_owned(), r)
+            })
+            .collect()
+    });
+    keep_working("connected", results)
 }
 
 fn stop_all(sinks: Vec<Box<dyn Sink>>) {
@@ -714,13 +764,6 @@ fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Resu
     Ok(builtin)
 }
 
-/// Connects every target (the tests substitute fakes).
-type Connector<'a> = &'a dyn Fn(
-    &[Target],
-    &CastOptions,
-    &crate::airplay::session::MirrorOptions,
-) -> Result<Vec<Box<dyn Sink>>>;
-
 /// The game's ends of our stdio (SLRW in, keyframe requests out).
 struct GameIo {
     stdin: Box<dyn std::io::Read + Send>,
@@ -738,16 +781,23 @@ fn play(opts: PlayOptions) -> Result<()> {
 }
 
 fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
-    play_with(opts, io, &connect_all)
-}
-
-fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()> {
     if !interrupt::install() {
         warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
     }
     if opts.input != InputSpec::Stdin {
         interrupt::watch_stdin();
     }
+    play_with(opts, io, &connect_one, interrupt::requested)
+}
+
+/// `play` with the connector and the stop request (Ctrl-C, SIGTERM, `q`)
+/// given: the tests use fakes and their own stop flag.
+fn play_with(
+    opts: PlayOptions,
+    io: GameIo,
+    connect: Connector<'_>,
+    stop: fn() -> bool,
+) -> Result<()> {
     let mut tools = Tools::new(opts.ffmpeg.as_deref());
 
     // 1. The input. A missing local file fails before any TV is touched.
@@ -829,11 +879,7 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
             }
         }
     }
-    let targets = opts
-        .to
-        .iter()
-        .map(|q| resolve_target(q))
-        .collect::<Result<Vec<_>>>()?;
+    let targets = resolve_all(&opts.to)?;
     // The built-in test pattern's beep: 44.1 kHz when AirPlay listens.
     let pattern_rate =
         builtin::pattern_sample_rate(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
@@ -851,13 +897,15 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
             cast_opts.audio_channels = f.channels;
         }
     }
+    let budget = shared_budget(opts.latency_ms, &targets);
+    cast_opts.latency_ms = budget.cast_ms;
     let mirror = crate::airplay::session::MirrorOptions {
-        latency_ms: opts.latency_ms,
+        latency_ms: budget.airplay_ms,
         audio,
         ..Default::default()
     };
-    let sinks = connect(&targets, &cast_opts, &mirror)?;
-    if interrupt::requested() {
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror)?;
+    if stop() {
         stop_all(sinks);
         return Ok(());
     }
@@ -895,7 +943,7 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
     let opened: Result<(Box<dyn Input>, u32)> = (|| match route {
         Route::Passthrough(path, plan) => {
             let realtime = opts.realtime.unwrap_or(true);
-            let i = PassthroughInput::open(&path, &plan, realtime, opts.looped)?;
+            let i = PassthroughInput::open_with(&path, &plan, realtime, opts.looped, stop)?;
             Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
         }
         Route::Encoded => {
@@ -917,7 +965,7 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
                 .raw_video
                 .clone()
                 .ok_or_else(|| Error::usage("--raw-video missing"))?;
-            let i = SlrwEncodedInput::open(
+            let i = SlrwEncodedInput::open_with(
                 io.stdin,
                 EncodedOptions {
                     video,
@@ -925,6 +973,7 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
                     audio_families: families,
                     back_channel: Some(io.stdout),
                 },
+                stop,
             )?;
             Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
         }
@@ -955,13 +1004,13 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
                 warn!("{w}");
             }
             let i = if opts.input == InputSpec::TestPattern {
-                BuiltinInput::test_pattern(out, pattern_rate, families, interrupt::requested)?
+                BuiltinInput::test_pattern(out, pattern_rate, families, stop)?
             } else {
                 let video_in = opts
                     .raw_video
                     .clone()
                     .ok_or_else(|| Error::usage("--raw-video missing"))?;
-                BuiltinInput::open_slrw(
+                BuiltinInput::open_slrw_with(
                     io.stdin,
                     BuiltinOptions {
                         video_in,
@@ -970,6 +1019,7 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
                         audio_families: families,
                         threads: 0,
                     },
+                    stop,
                 )?
             };
             Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
@@ -991,7 +1041,7 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
             );
             let (bin, probe) = tools.get()?;
             let (source, raw) = ffmpeg_source(&opts, &input, io.stdin)?;
-            let i = FfmpegInput::start(bin, probe, &source, &plan, raw)?;
+            let i = FfmpegInput::start_with(bin, probe, &source, &plan, raw, stop)?;
             Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
         }
     })();
@@ -1001,14 +1051,14 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
         Ok(v) => v,
         Err(e) => {
             stop_all(sinks);
-            if interrupt::requested() {
+            if stop() {
                 info!("stopped");
                 return Ok(());
             }
             return Err(e);
         }
     };
-    match stream(input, latency_ms, sinks) {
+    match stream(input, latency_ms, sinks, stop) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1016,6 +1066,65 @@ fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+/// `--latency` bounds (AirPlay accepts 5–2000 ms, Cast 1–5000 ms; the
+/// intersection keeps one budget valid for both).
+const MIN_LATENCY_MS: u32 = 5;
+const MAX_LATENCY_MS: u32 = 2000;
+
+/// The playout budget each family is set up with (decision 0010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Budget {
+    /// Cast target delay (audio and video).
+    cast_ms: u32,
+    /// AirPlay leads: `Some(L)` = video and audio lead L; `None` = the
+    /// automatic profile ("wireless": video 100 ms, audio 170 ms).
+    airplay_ms: Option<u32>,
+}
+
+/// One budget for every receiver (PLAN §5.3): `--latency L` is the
+/// delay from the shared capture instant to presentation on all of them.
+/// Without it, Cast uses [`DEFAULT_LATENCY_MS`] and AirPlay-only sessions
+/// keep the automatic profile; a session with both families gives
+/// AirPlay [`DEFAULT_LATENCY_MS`] as well, so the screens show a frame at
+/// the same time instead of 100 ms apart.
+fn shared_budget(user: Option<u32>, targets: &[Target]) -> Budget {
+    let cast = targets.iter().any(|t| matches!(t, Target::Cast { .. }));
+    let airplay = targets.iter().any(|t| matches!(t, Target::AirPlay { .. }));
+    let b = match user {
+        Some(l) => {
+            let c = l.clamp(MIN_LATENCY_MS, MAX_LATENCY_MS);
+            if c != l {
+                warn!("--latency {l} ms is out of range; using {c} ms");
+            }
+            Budget {
+                cast_ms: c,
+                airplay_ms: Some(c),
+            }
+        }
+        None if cast && airplay => Budget {
+            cast_ms: DEFAULT_LATENCY_MS,
+            airplay_ms: Some(DEFAULT_LATENCY_MS),
+        },
+        None => Budget {
+            cast_ms: DEFAULT_LATENCY_MS,
+            airplay_ms: None,
+        },
+    };
+    if targets.len() > 1 {
+        let ms = |v: u32| format!("{v} ms");
+        info!(
+            "{} receivers on one timeline; playout budget {}",
+            targets.len(),
+            match (cast, airplay, b.airplay_ms) {
+                (_, true, None) => "AirPlay automatic (video 100 ms, audio 170 ms)".to_owned(),
+                (_, true, Some(a)) => ms(a),
+                _ => ms(b.cast_ms),
+            }
+        );
+    }
+    b
 }
 
 /// The playout delay shared by all sinks: `--latency` or the default,
@@ -1062,6 +1171,7 @@ fn stream(
     mut input: Box<dyn Input>,
     latency_ms: u32,
     sinks: Vec<Box<dyn Sink>>,
+    stop: fn() -> bool,
 ) -> Result<EndReason> {
     let info = input.info().clone();
     let v = &info.video;
@@ -1090,7 +1200,7 @@ fn stream(
     // (the built-in encoder, games) start their clock with it, so nothing
     // piles up in the queues of sinks still in start().
     let ready = Instant::now();
-    if !fanout.wait_started(SINK_START_WAIT, interrupt::requested) && !interrupt::requested() {
+    if !fanout.wait_started(SINK_START_WAIT, stop) && !stop() {
         warn!("a receiver is slow to start; streaming anyway");
     }
     debug!("sinks started in {} ms", ready.elapsed().as_millis());
@@ -1098,7 +1208,7 @@ fn stream(
     let mut frames = [0u64; 2];
     let mut input_error = None;
     let end = loop {
-        if interrupt::requested() {
+        if stop() {
             break EndReason::Interrupted;
         }
         match input.next_frame() {
@@ -1113,9 +1223,9 @@ fn stream(
                     break EndReason::ReceiversGone;
                 }
             }
-            Ok(None) if interrupt::requested() => break EndReason::Interrupted,
+            Ok(None) if stop() => break EndReason::Interrupted,
             Ok(None) => break EndReason::Eof,
-            Err(e) if interrupt::requested() => {
+            Err(e) if stop() => {
                 debug!("input after stop request: {e}");
                 break EndReason::Interrupted;
             }
@@ -1174,6 +1284,9 @@ fn stream(
     }
     Ok(end)
 }
+
+#[cfg(test)]
+mod multi_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1279,7 +1392,7 @@ mod tests {
         assert_eq!(fit(0, 0, 1920, 1080), s(2, 2));
     }
 
-    fn opts() -> PlayOptions {
+    pub(super) fn opts() -> PlayOptions {
         PlayOptions {
             to: vec!["tv".into()],
             latency_ms: None,
@@ -1638,9 +1751,9 @@ mod tests {
 
     /// Ends the session after `left` video frames (the test pattern never
     /// ends by itself).
-    struct FinishAfter {
-        inner: Box<dyn Sink>,
-        left: usize,
+    pub(super) struct FinishAfter {
+        pub(super) inner: Box<dyn Sink>,
+        pub(super) left: usize,
     }
 
     impl Sink for FinishAfter {
@@ -1649,6 +1762,9 @@ mod tests {
         }
         fn capabilities(&self) -> &Capabilities {
             self.inner.capabilities()
+        }
+        fn set_clock(&mut self, clock: crate::media::clock::SessionClock) {
+            self.inner.set_clock(clock)
         }
         fn start(
             &mut self,
@@ -1679,38 +1795,50 @@ mod tests {
     fn fake_connector(
         fake: Option<&crate::airplay::fake_mirror::FakeMirror>,
         limit: Option<usize>,
-        targets: &[Target],
+        t: &Target,
         cast_opts: &CastOptions,
         mirror: &crate::airplay::session::MirrorOptions,
-    ) -> Result<Vec<Box<dyn Sink>>> {
-        let mut out: Vec<Box<dyn Sink>> = Vec::new();
-        for t in targets {
-            let sink: Box<dyn Sink> = match t {
-                Target::Cast { addr, name } => Box::new(cast::connect(*addr, name, cast_opts)?),
-                Target::AirPlay { .. } => {
-                    let fake = fake.expect("fake AirPlay receiver");
-                    let (addr, secret) = (fake.addr, fake.secret.clone());
-                    Box::new(crate::airplay::sink::connect_with(
-                        "fake".into(),
-                        mirror,
-                        || {
-                            let tcp = std::net::TcpStream::connect(addr).unwrap();
-                            Ok((
-                                crate::net::rtsp::RtspClient::new(tcp),
-                                addr,
-                                secret.clone(),
-                                true,
-                            ))
-                        },
-                    )?)
-                }
-            };
-            out.push(match limit {
-                Some(left) => Box::new(FinishAfter { inner: sink, left }),
-                None => sink,
-            });
-        }
-        Ok(out)
+    ) -> Result<Box<dyn Sink>> {
+        let sink: Box<dyn Sink> = match t {
+            Target::Cast { addr, name } => Box::new(cast::connect(*addr, name, cast_opts)?),
+            Target::AirPlay { .. } => {
+                let fake = fake.expect("fake AirPlay receiver");
+                fake_airplay(fake, "fake", mirror)?
+            }
+        };
+        Ok(match limit {
+            Some(left) => Box::new(FinishAfter { inner: sink, left }),
+            None => sink,
+        })
+    }
+
+    /// A mirror sink connected to `fake` (no pairing).
+    pub(super) fn fake_airplay(
+        fake: &crate::airplay::fake_mirror::FakeMirror,
+        name: &str,
+        mirror: &crate::airplay::session::MirrorOptions,
+    ) -> Result<Box<dyn Sink>> {
+        let (addr, secret) = (fake.addr, fake.secret.clone());
+        Ok(Box::new(crate::airplay::sink::connect_with(
+            name.into(),
+            mirror,
+            || {
+                let tcp = std::net::TcpStream::connect(addr)
+                    .map_err(|e| Error::io("fake airplay connect", e))?;
+                Ok((
+                    crate::net::rtsp::RtspClient::new(tcp),
+                    addr,
+                    secret.clone(),
+                    true,
+                ))
+            },
+        )?))
+    }
+
+    /// Never asks to stop (the tests must not touch the process-wide
+    /// Ctrl-C flag).
+    pub(super) fn never() -> bool {
+        false
     }
 
     /// Paced raw RGBA SLRW (like `slrw-gen`), 1 s at 30 fps with PCM.
@@ -1784,14 +1912,14 @@ mod tests {
     fn raw_slrw_to_cast_without_ffmpeg() {
         use crate::cast::fake_receiver::{FakeReceiver, Options};
         let rx = FakeReceiver::spawn(Options::default());
-        let connect =
-            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-                fake_connector(None, None, t, c, m)
-            };
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+            fake_connector(None, None, t, c, m)
+        };
         play_with(
             raw_opts(rx.addr.to_string(), 48_000),
             raw_game_io(48_000),
             &connect,
+            never,
         )
         .unwrap();
         let state = rx.shutdown();
@@ -1815,10 +1943,9 @@ mod tests {
     fn test_pattern_to_cast_builtin() {
         use crate::cast::fake_receiver::{FakeReceiver, Options};
         let rx = FakeReceiver::spawn(Options::default());
-        let connect =
-            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-                fake_connector(None, Some(20), t, c, m)
-            };
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+            fake_connector(None, Some(20), t, c, m)
+        };
         let o = PlayOptions {
             to: vec![rx.addr.to_string()],
             latency_ms: Some(100),
@@ -1833,7 +1960,7 @@ mod tests {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
         };
-        play_with(o, io, &connect).unwrap();
+        play_with(o, io, &connect, never).unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped, "STOP not received");
@@ -1849,12 +1976,17 @@ mod tests {
         use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
         // Raw SLRW, --encoder auto with a bogus ffmpeg.
         let fake = FakeMirror::start(Behaviour::default());
-        let connect =
-            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-                fake_connector(Some(&fake), None, t, c, m)
-            };
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+            fake_connector(Some(&fake), None, t, c, m)
+        };
         let to = format!("airplay:{}", fake.addr);
-        play_with(raw_opts(to.clone(), 44_100), raw_game_io(44_100), &connect).unwrap();
+        play_with(
+            raw_opts(to.clone(), 44_100),
+            raw_game_io(44_100),
+            &connect,
+            never,
+        )
+        .unwrap();
         {
             let r = fake.rec();
             assert!(r.teardown);
@@ -1870,10 +2002,9 @@ mod tests {
         }
         // The test pattern, built in because ffmpeg is missing.
         let fake = FakeMirror::start(Behaviour::default());
-        let connect =
-            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-                fake_connector(Some(&fake), Some(15), t, c, m)
-            };
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+            fake_connector(Some(&fake), Some(15), t, c, m)
+        };
         let o = PlayOptions {
             to: vec![format!("airplay:{}", fake.addr)],
             latency_ms: Some(100),
@@ -1884,7 +2015,7 @@ mod tests {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
         };
-        play_with(o, io, &connect).unwrap();
+        play_with(o, io, &connect, never).unwrap();
         let r = fake.rec();
         assert!(r.teardown);
         let frames = r.video.iter().filter(|p| p.kind == 0).count();
@@ -1955,7 +2086,13 @@ mod tests {
             arrivals: arrivals.clone(),
             left: 15,
         };
-        stream(Box::new(input), 0, vec![Box::new(sink)]).unwrap();
+        stream(
+            Box::new(input),
+            0,
+            vec![Box::new(sink)],
+            interrupt::requested,
+        )
+        .unwrap();
         let a = arrivals.lock().unwrap();
         assert_eq!(a.len(), 15);
         let (t0, p0) = a[0];
