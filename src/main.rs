@@ -30,6 +30,8 @@ fn main() -> ExitCode {
     } else {
         log::Level::Info
     });
+    // Fine-grained timed waits for pacing (Windows; decision 0011).
+    util::timer::raise_resolution();
     let rv = session::run(command);
     // A Ctrl-C/SIGTERM stop exits with 130 like other CLI tools, after the
     // receivers got their clean teardown.

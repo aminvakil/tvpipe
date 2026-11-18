@@ -42,7 +42,8 @@ in another on the same user-defined bridge network.
 
 ## Platform differences handled in the code
 
-- Ctrl-C: `src/util/interrupt.rs` (decision 0004), the only FFI.
+- Ctrl-C: `src/util/interrupt.rs` (decision 0004).
+- Timer resolution: `src/util/timer.rs` (decision 0011), Windows only.
 - Config directory: `src/airplay/credentials.rs` (`%APPDATA%\tvpipe`).
 - `ffmpeg.exe`/`ffprobe.exe`: `std::env::consts::EXE_SUFFIX` in
   `media::ffmpeg::find_in_path`.

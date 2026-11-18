@@ -798,6 +798,8 @@ fn play_with(
     connect: Connector<'_>,
     stop: fn() -> bool,
 ) -> Result<()> {
+    // Also here for the tests, which do not go through `main`.
+    crate::util::timer::raise_resolution();
     let mut tools = Tools::new(opts.ffmpeg.as_deref());
 
     // 1. The input. A missing local file fails before any TV is touched.
