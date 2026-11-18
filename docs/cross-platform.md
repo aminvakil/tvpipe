@@ -1,7 +1,7 @@
 # Cross-platform status
 
 What has been checked on which OS, and how to repeat it from a Mac.
-Last updated 2026-11-18 (branch `cross-platform`).
+Last updated 2026-11-18 (branch `windows-vm`: first runs on Windows).
 
 ## Matrix
 
@@ -11,12 +11,62 @@ Last updated 2026-11-18 (branch `cross-platform`).
 | Linux aarch64 (Docker, Debian 13) | yes | yes (clippy 1.100) | yes: ffmpeg 7.1, ffmpeg 8.1, no ffmpeg | `discover` against avahi on a Docker bridge; `scripts/check-pipeline.sh` |
 | Linux aarch64 (Docker, Ubuntu 24.04) | — | yes | yes (ffmpeg 6.1, the CI runner's) | — |
 | Linux x86_64 (Docker, emulated) | yes | yes | yes, except `rawin::ffmpeg_end_to_end` under emulation (emulated ffmpeg starts slowly: 24 of ≥25 frames) | — |
-| Windows x86_64 msvc | — | yes (cross, see below) | not run | not run |
-| Windows aarch64 msvc | — | yes (cross) | not run | not run |
+| Windows 11 ARM64, aarch64 msvc (Parallels VM, native) | — | yes (clippy 1.100) | yes, all 427 (ffmpeg 8.1 winarm64) | yes, see "Windows 11 ARM64" below |
+| Windows 11 ARM64, x86_64 msvc (emulated) | — | yes (cross) | yes, all 427 (native ARM64 ffmpeg) | `discover`, `debug-pipeline` |
 | Windows x86_64 gnu | — | yes (cross) | built, not run | `tvpipe.exe` links (UCRT, system DLLs only), not run |
 | MSRV 1.85 | — | `cargo check --all-targets` | — | — |
 
-No wine on the build machine, so nothing has run on Windows yet.
+No real x86_64 Windows machine yet; x86_64 ran under the ARM64 VM's
+emulation only.
+
+## Windows 11 ARM64 (verified 2026-11-18)
+
+Parallels VM "Windows 11", build 26200, 4 vCPUs, network mode *shared*
+(NAT, 10.211.55.3; the Mac is 10.211.55.2 on `bridge100`).
+
+| Item | Result |
+|---|---|
+| `cargo build`, `clippy --all-targets -D warnings`, `cargo test` | pass (427; ~15 s) |
+| `tvpipe --help`, `--version` | ok |
+| `tvpipe discover` | finds the LAN's AirPlay and Cast receivers through the NAT (Parallels forwards mDNS); TCP to a Cast TV on the LAN connects |
+| `debug-pipeline FILE` / `-- -f lavfi ...` | ok (H.264 + PCM + Opus) |
+| `test-pattern --to cast:10.211.55.2:8011` (openscreen `cast_receiver` on the Mac's `bridge100`) | streams; receiver plays the frames; wallclock overlay renders (ffmpeg prints a harmless Fontconfig warning) |
+| Ctrl-C (`CTRL_C_EVENT`) | handler runs, STOP sent, exit 130, ~0.3 s |
+| Ctrl-Break | same, exit 130 |
+| `q` + Enter on the console | clean stop, exit 0 |
+| SLRW raw RGBA via a `cmd` pipe and via `< file` | ok (binary-safe) |
+| SLRW encoded with `slrw-gen --exec` (keyframe back channel on stdout) | ok, keyframe request reaches the game |
+| SLRW through a Windows PowerShell 5.1 pipe | **corrupted** (PowerShell 5.1 re-encodes native pipes as text: `slrw: unknown record kind 10`); use `cmd`, PowerShell 7.4+, a file, or spawn tvpipe from the game |
+| Credentials | `%APPDATA%\tvpipe\credentials.txt` created on first use |
+
+Found and fixed on Windows:
+
+- `shutdown(Both)` from another thread does not wake a blocked `recv`
+  (it does on Linux/macOS): AirPlay `stop` waited the 30 s `/feedback`
+  timeout on a hung receiver; the event/MediaDataControl readers (no read
+  timeout) could hang `close` forever. Fixed with
+  `util::thread::join_until` (deadline joins).
+- Timed waits end on the 15.6 ms system tick (in the VM a 1 ms condvar
+  or socket timeout took ~25 ms, up to ~75 ms): Cast pacing went bursty
+  and two session tests flaked. Fixed with `util::timer` (decision 0011).
+
+Open:
+
+- One `STATUS_ACCESS_VIOLATION` of the test binary (`--nocapture`, fault
+  at address 0x150, module unknown) in ~30 full runs; not reproduced in
+  the next 26. If it recurs, enable WER LocalDumps and get a dump.
+- The suite has load-sensitive timing tests: a VM hiccup (a push 440 ms
+  late) failed `source_stall_keeps_audio_mapping` and
+  `encoded_slrw_to_cast_without_ffmpeg` once in 20 runs.
+- Parallels pauses the VM when idle ("Pause idle: on"); `prlctl exec`
+  then fails or hangs until `prlctl resume`.
+
+Software in the VM: Visual Studio 2022 Community with MSVC 14.44
+(ARM64 and x64 libraries) and rustup were already there; added LLVM
+23.1.6 (`LLVM-23.1.6-woa64.msi`, `C:\Program Files\LLVM`: ring needs
+clang for aarch64-pc-windows-msvc), ffmpeg 8.1 (BtbN
+`ffmpeg-n8.1-latest-winarm64-gpl-8.1.zip`, unpacked to `C:\tvp\ffmpeg`),
+and updated stable Rust 1.99.1 -> 1.100.0.
 
 ## Repeating it
 
@@ -25,6 +75,23 @@ Windows (from macOS or Linux, needs zig and the rustup targets):
 ```sh
 scripts/cross-check.sh            # clippy for both msvc targets, gnu .exe
 ```
+
+Windows in the Parallels VM (shared folder `Y:` = the Mac's home):
+
+```sh
+vm='Y:\Development\streamlib-windows\scripts\windows'
+prlctl exec "Windows 11" --current-user cmd /c "$vm\vm.cmd cargo test"
+prlctl exec "Windows 11" --current-user cmd /c \
+  "$vm\vm.cmd cargo test --target x86_64-pc-windows-msvc"
+```
+
+`vm.cmd` mirrors the worktree to `C:\tvp\src` and builds into
+`C:\tvp\target` (the shared folder is slow). `prlctl exec` runs without
+a console; `scripts/windows/console-event.ps1` starts tvpipe in a console
+of its own and sends it Ctrl-C, Ctrl-Break or `q` + Enter. A local Cast
+receiver for the VM: `cast_receiver -x -r 8011 ... bridge100` on the Mac
+(see `scripts/receivers/cast-receiver.sh`), then
+`tvpipe test-pattern --to cast:10.211.55.2:8011` in the VM.
 
 Linux in Docker (a `rust` image plus `apt-get install ffmpeg`):
 
@@ -55,7 +122,11 @@ in another on the same user-defined bridge network.
   and vector files parse with CRLF too.
 - Binary stdio: Rust does no newline translation; on Windows a console
   stdout rejects non-UTF-8 writes, but the SLRW back channel is only text
-  (`keyframe\n`) and SLRW input is always a pipe.
+  (`keyframe\n`) and SLRW input is always a pipe. Windows PowerShell 5.1
+  pipes are text and corrupt SLRW (see above).
+- A blocked socket read is not woken by `shutdown` from another thread
+  on Windows: threads that may block on a silent peer are joined with a
+  deadline (`util::thread::join_until`).
 
 ## Unverified on Windows
 
@@ -67,5 +138,7 @@ in another on the same user-defined bridge network.
 - Firewall: unicast mDNS replies to a multicast query are allowed by the
   default Windows Firewall rules (3 s window); inbound AirPlay timing
   requests may need the user to allow tvpipe once.
-- The console Ctrl-C handler and `q` + Enter on a real console.
-- The whole test suite.
+- AirPlay against a real receiver from Windows (only the fake in the
+  tests), and the firewall prompt for inbound timing requests.
+- A real Cast TV from Windows (reachable from the VM, not streamed to).
+- Native x86_64 Windows hardware.
