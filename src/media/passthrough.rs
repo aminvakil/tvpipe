@@ -812,6 +812,28 @@ impl Default for CheckOptions {
     }
 }
 
+/// The audio formats a sink's `start()` takes as input, which is not
+/// always what it advertises: the AirPlay sink lists ALAC (what goes on
+/// the wire) but takes 44.1 kHz s16le PCM and wraps it as verbatim ALAC
+/// (`airplay::sink`, and the session's ffmpeg plan does the same).
+pub fn sink_input_formats(c: &Capabilities) -> Vec<AudioFormat> {
+    c.audio_formats
+        .iter()
+        .map(|f| match (c.audio_family, f.codec) {
+            (AudioFamily::AirPlay, AudioCodec::Alac) => AudioFormat {
+                codec: AudioCodec::PcmS16le,
+                ..*f
+            },
+            _ => *f,
+        })
+        .collect()
+}
+
+/// Whether a sink's `start()` takes `fmt` (see [`sink_input_formats`]).
+pub fn sink_takes(c: &Capabilities, fmt: &AudioFormat) -> bool {
+    sink_input_formats(c).contains(fmt)
+}
+
 /// Decides whether `info` can go to every sink unchanged.
 pub fn check(
     info: &FileInfo,
@@ -913,7 +935,7 @@ pub fn check(
                     }
                     let refusing: Vec<&str> = of
                         .iter()
-                        .filter(|(_, c)| !c.accepts_audio(&fmt))
+                        .filter(|(_, c)| !sink_takes(c, &fmt))
                         .map(|(n, _)| *n)
                         .collect();
                     if refusing.is_empty() {
@@ -1086,9 +1108,18 @@ pub(crate) mod tests {
         assert!(ok("frag.mp4", &[("tv", &cast)]).is_ok());
         let e = ok("frag.mp4", &[("atv", &airplay)]).unwrap_err();
         assert!(e.to_string().contains("atv does not take Opus"), "{e}");
-        // ALAC 44.1 kHz from MOV and PCM to AirPlay.
-        assert!(ok("alac.mov", &[("atv", &airplay)]).is_ok());
-        assert!(ok("pcm.mov", &[("atv", &airplay)]).is_ok());
+        // The AirPlay sink takes 44.1 kHz PCM (it advertises ALAC, which it
+        // makes from PCM): an ALAC file needs decoding, 48 kHz PCM resampling.
+        let atv = caps(AudioFamily::AirPlay, &[(AudioCodec::Alac, 44_100, 2)]);
+        let e = ok("alac.mov", &[("atv", &atv)]).unwrap_err();
+        assert_eq!(e.to_string(), "atv does not take Alac 44100 Hz 2 ch audio");
+        let e = ok("pcm.mov", &[("atv", &atv)]).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "atv does not take PcmS16le 48000 Hz 2 ch audio"
+        );
+        let atv48 = caps(AudioFamily::AirPlay, &[(AudioCodec::Alac, 48_000, 2)]);
+        assert!(ok("pcm.mov", &[("atv", &atv48)]).is_ok());
         // Matroska from ffmpeg (no B-frames, ALAC first audio track).
         let info = probe(&fixture("live.mkv")).unwrap();
         assert_eq!(info.container, Container::Matroska);
@@ -1096,7 +1127,13 @@ pub(crate) mod tests {
         assert_eq!(info.keyframe_interval, Some(0.5));
         assert!(!info.reorders);
         assert_eq!(info.audio.as_ref().unwrap().codec, AudioCodec::Alac);
-        assert!(check(&info, &[("atv", &airplay)], CheckOptions::default()).is_ok());
+        let e = check(&info, &[("atv", &airplay)], CheckOptions::default()).unwrap_err();
+        assert!(e.to_string().contains("Alac 44100"), "{e}");
+        let no_audio = CheckOptions {
+            audio: false,
+            ..CheckOptions::default()
+        };
+        assert!(check(&info, &[("atv", &airplay)], no_audio).is_ok());
         // HEVC to an H.264-only receiver.
         let e = ok("hevc.mp4", &[("tv", &cast)]).unwrap_err();
         assert_eq!(e.to_string(), "tv does not take Hevc video");
@@ -1151,6 +1188,7 @@ pub(crate) mod tests {
     #[test]
     fn reorder_check_uses_sps_when_unscanned() {
         let mut info = probe(&fixture("live.mkv")).unwrap();
+        info.audio = None;
         let cast = caps(AudioFamily::AirPlay, &[(AudioCodec::Alac, 44_100, 2)]);
         assert!(check(&info, &[("a", &cast)], CheckOptions::default()).is_ok());
         info.sps.as_mut().unwrap().max_num_reorder_frames = Some(2);

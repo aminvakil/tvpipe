@@ -345,7 +345,46 @@ pub struct PassthroughInput {
     pass_end_ns: u128,
     last_video_pts: Option<u64>,
     pending: VecDeque<EncodedFrame>,
+    /// PCM audio is re-cut into AirPlay-sized frames.
+    pcm: Option<PcmFramer>,
     stop: StopFn,
+}
+
+/// Cuts PCM packets into fixed frames, keeping their sample timeline.
+struct PcmFramer {
+    bytes_per_sample: usize,
+    frame: usize,
+    buf: Vec<u8>,
+    pts: u64,
+}
+
+impl PcmFramer {
+    /// Adds a packet at `pts`; returns the complete frames. A gap (a
+    /// loop, a cut) flushes the partial frame first.
+    fn push(&mut self, pts: u64, data: &[u8]) -> Vec<(u64, Vec<u8>)> {
+        let mut out = Vec::new();
+        let buffered = (self.buf.len() / self.bytes_per_sample) as u64;
+        if self.buf.is_empty() || self.pts + buffered != pts {
+            out.extend(self.flush());
+            self.pts = pts;
+        }
+        self.buf.extend_from_slice(data);
+        let n = self.frame * self.bytes_per_sample;
+        while self.buf.len() >= n {
+            out.push((self.pts, self.buf.drain(..n).collect()));
+            self.pts += self.frame as u64;
+        }
+        out
+    }
+
+    fn flush(&mut self) -> Option<(u64, Vec<u8>)> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        let pts = self.pts;
+        self.pts += (self.buf.len() / self.bytes_per_sample) as u64;
+        Some((pts, std::mem::take(&mut self.buf)))
+    }
 }
 
 impl PassthroughInput {
@@ -366,8 +405,22 @@ impl PassthroughInput {
         let src = FileSource::open(path)?;
         let fi = src.info();
         let mut families = plan.audio_families.clone();
+        let mut pcm = None;
         let audio = match &fi.audio {
-            Some(a) => families.iter().map(|&f| (f, a.clone())).collect(),
+            Some(a) => {
+                let mut a = a.clone();
+                if a.codec == AudioCodec::PcmS16le && a.channels > 0 {
+                    // The only PCM taker is the AirPlay sink (352 frames).
+                    a.frame_samples = AIRPLAY_PCM_FRAME_SAMPLES;
+                    pcm = Some(PcmFramer {
+                        bytes_per_sample: a.channels as usize * 2,
+                        frame: AIRPLAY_PCM_FRAME_SAMPLES as usize,
+                        buf: Vec::new(),
+                        pts: 0,
+                    });
+                }
+                families.iter().map(|&f| (f, a.clone())).collect()
+            }
             None => {
                 families.clear();
                 Vec::new()
@@ -388,8 +441,18 @@ impl PassthroughInput {
             pass_end_ns: 0,
             last_video_pts: None,
             pending: VecDeque::new(),
+            pcm,
             stop,
         })
+    }
+
+    fn queue_audio(&mut self, frame: &EncodedFrame) {
+        for &family in &self.families {
+            self.pending.push_back(EncodedFrame {
+                track: TrackKind::Audio(family),
+                ..frame.clone()
+            });
+        }
     }
 
     fn rate(&self, kind: TrackKind) -> u32 {
@@ -453,6 +516,16 @@ impl Input for PassthroughInput {
                 return Ok(None);
             }
             let Some(ff) = self.next_file_frame()? else {
+                if let Some((pts, data)) = self.pcm.as_mut().and_then(PcmFramer::flush) {
+                    let f = EncodedFrame {
+                        track: TrackKind::Audio(AudioFamily::AirPlay),
+                        pts,
+                        keyframe: true,
+                        data: Arc::from(data),
+                    };
+                    self.queue_audio(&f);
+                    continue;
+                }
                 return Ok(None);
             };
             let kind = ff.frame.track;
@@ -493,11 +566,18 @@ impl Input for PassthroughInput {
             if kind == TrackKind::Video {
                 return Ok(Some(frame));
             }
-            for &family in &self.families {
-                self.pending.push_back(EncodedFrame {
-                    track: TrackKind::Audio(family),
-                    ..frame.clone()
-                });
+            match self.pcm.as_mut() {
+                Some(p) => {
+                    for (pts, data) in p.push(pts, &frame.data) {
+                        let f = EncodedFrame {
+                            pts,
+                            data: Arc::from(data),
+                            ..frame.clone()
+                        };
+                        self.queue_audio(&f);
+                    }
+                }
+                None => self.queue_audio(&frame),
             }
         }
     }
@@ -520,14 +600,42 @@ impl Input for PassthroughInput {
 // ---------------------------------------------------------------------------
 // SLRW with encoded H.264
 
-/// Which audio families an encoded-SLRW game's PCM can go to directly:
-/// `(family, frame_samples)` for every family whose sinks all accept
-/// `PcmS16le` at the game's rate and channels, plus a warning per family
-/// that cannot have audio.
+/// How one audio family gets an encoded-SLRW game's PCM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioOut {
+    /// s16le PCM cut into frames of this many samples (AirPlay: the sink
+    /// wraps them as verbatim ALAC).
+    Pcm { frame_samples: u32 },
+    /// Encoded in-process with `media::aacenc` (Cast).
+    AacLc { bitrate_bps: u32 },
+}
+
+/// Bitrate for in-process AAC (what the ffmpeg path uses for AAC too).
+pub const AAC_BITRATE_BPS: u32 = 128_000;
+
+/// The Cast audio offer for an encoded-SLRW game: AAC-LC at the game's
+/// rate and channels, when `aacenc` can encode that (`None`: offer the
+/// default; the check below then finds no match and warns).
+pub fn encoded_cast_audio(audio: Option<&RawAudioSpec>) -> Option<AudioFormat> {
+    let a = audio?;
+    let ok = a.sample_fmt == "s16le"
+        && crate::media::aacenc::Encoder::new(a.sample_rate, a.channels, AAC_BITRATE_BPS).is_ok();
+    ok.then_some(AudioFormat {
+        codec: AudioCodec::AacLc,
+        sample_rate: a.sample_rate,
+        channels: a.channels,
+    })
+}
+
+/// Which audio families an encoded-SLRW game's PCM can reach without
+/// ffmpeg: AirPlay as PCM when its sinks take the game's rate and
+/// channels, Cast as AAC-LC (`aacenc`) when its sinks negotiated AAC at
+/// them (see [`encoded_cast_audio`]); plus a warning per family that gets
+/// video only.
 pub fn encoded_audio_families(
     audio: Option<&RawAudioSpec>,
     sinks: &[(&str, &Capabilities)],
-) -> (Vec<(AudioFamily, u32)>, Vec<String>) {
+) -> (Vec<(AudioFamily, AudioOut)>, Vec<String>) {
     let mut out = Vec::new();
     let mut warnings = Vec::new();
     let Some(a) = audio else {
@@ -541,22 +649,31 @@ pub fn encoded_audio_families(
         if of.is_empty() {
             continue;
         }
-        let fmt = AudioFormat {
-            codec: AudioCodec::PcmS16le,
-            sample_rate: a.sample_rate,
-            channels: a.channels,
+        let (fmt, how) = match family {
+            AudioFamily::AirPlay => (
+                Some(AudioFormat {
+                    codec: AudioCodec::PcmS16le,
+                    sample_rate: a.sample_rate,
+                    channels: a.channels,
+                }),
+                AudioOut::Pcm {
+                    frame_samples: AIRPLAY_PCM_FRAME_SAMPLES,
+                },
+            ),
+            AudioFamily::Cast => (
+                encoded_cast_audio(Some(a)),
+                AudioOut::AacLc {
+                    bitrate_bps: AAC_BITRATE_BPS,
+                },
+            ),
         };
-        let ok = a.sample_fmt == "s16le" && of.iter().all(|(_, c)| c.accepts_audio(&fmt));
+        let ok = a.sample_fmt == "s16le"
+            && fmt.is_some_and(|f| of.iter().all(|(_, c)| passthrough::sink_takes(c, &f)));
         if ok {
-            let frame = match family {
-                AudioFamily::AirPlay => AIRPLAY_PCM_FRAME_SAMPLES,
-                AudioFamily::Cast => a.sample_rate / 100,
-            };
-            out.push((family, frame));
+            out.push((family, how));
         } else {
             warnings.push(format!(
-                "{:?} receivers cannot take the game's {} {} Hz {} ch audio without an \
-                 encoder; sending them video only",
+                "{:?} receivers cannot take the game's {} {} Hz {} ch audio; sending them video only",
                 family, a.sample_fmt, a.sample_rate, a.channels
             ));
         }
@@ -629,7 +746,7 @@ pub struct EncodedOptions {
     pub video: RawVideoSpec,
     pub audio: Option<RawAudioSpec>,
     /// From [`encoded_audio_families`].
-    pub audio_families: Vec<(AudioFamily, u32)>,
+    pub audio_families: Vec<(AudioFamily, AudioOut)>,
     /// Where keyframe requests go once the game enables them (stdout).
     pub back_channel: Option<Box<dyn Write + Send>>,
 }
@@ -642,10 +759,160 @@ pub struct SlrwEncodedInput {
     stop: StopFn,
 }
 
+/// One family's audio path for an encoded-SLRW game.
+struct FamilyAudio {
+    family: AudioFamily,
+    /// Samples per channel per frame.
+    frame: usize,
+    /// PCM not yet cut into frames, and the pts (sample ticks) of its
+    /// first sample.
+    pcm: Vec<u8>,
+    pcm_pts: Option<u64>,
+    aac: Option<AacState>,
+}
+
+struct AacState {
+    enc: crate::media::aacenc::Encoder,
+    /// pts of input frame 0 (moved on a resync).
+    base: i64,
+    /// Frames fed / access units produced so far.
+    fed: u64,
+    produced: u64,
+}
+
+impl FamilyAudio {
+    fn new(family: AudioFamily, how: AudioOut, a: &RawAudioSpec) -> Result<FamilyAudio> {
+        let (frame, aac) = match how {
+            AudioOut::Pcm { frame_samples } => (frame_samples.max(1) as usize, None),
+            AudioOut::AacLc { bitrate_bps } => (
+                crate::media::aacenc::FRAME_LEN,
+                Some(AacState {
+                    enc: crate::media::aacenc::Encoder::new(
+                        a.sample_rate,
+                        a.channels,
+                        bitrate_bps,
+                    )?,
+                    base: 0,
+                    fed: 0,
+                    produced: 0,
+                }),
+            ),
+        };
+        Ok(FamilyAudio {
+            family,
+            frame,
+            pcm: Vec::new(),
+            pcm_pts: None,
+            aac,
+        })
+    }
+
+    fn info(&self, a: &RawAudioSpec) -> AudioInfo {
+        match &self.aac {
+            Some(s) => AudioInfo {
+                codec: AudioCodec::AacLc,
+                sample_rate: a.sample_rate,
+                channels: a.channels,
+                frame_samples: crate::media::aacenc::FRAME_LEN as u32,
+                config: s.enc.audio_specific_config(),
+            },
+            None => AudioInfo {
+                codec: AudioCodec::PcmS16le,
+                sample_rate: a.sample_rate,
+                channels: a.channels,
+                frame_samples: self.frame as u32,
+                config: Vec::new(),
+            },
+        }
+    }
+
+    /// Adds PCM whose first sample is due at `expected` (sample ticks).
+    fn push(
+        &mut self,
+        payload: &[u8],
+        expected: u64,
+        bpf: usize,
+        tolerance: u64,
+        out: &mut VecDeque<EncodedFrame>,
+    ) -> Result<()> {
+        let buffered = (self.pcm.len() / bpf) as u64;
+        let resync = match self.pcm_pts {
+            Some(start) if (start + buffered).abs_diff(expected) <= tolerance => false,
+            Some(start) => {
+                debug!(
+                    "slrw: {:?} audio resync: expected {} got {} samples",
+                    self.family,
+                    start + buffered,
+                    expected
+                );
+                true
+            }
+            None => true,
+        };
+        if resync {
+            self.pcm.clear();
+            self.pcm_pts = Some(expected);
+            if let Some(s) = &mut self.aac {
+                s.base = expected as i64 - (s.fed * self.frame as u64) as i64;
+            }
+        }
+        self.pcm.extend_from_slice(payload);
+        let frame_bytes = self.frame * bpf;
+        while self.pcm.len() >= frame_bytes {
+            let chunk: Vec<u8> = self.pcm.drain(..frame_bytes).collect();
+            let pts = self.pcm_pts.unwrap_or(0);
+            self.pcm_pts = Some(pts + self.frame as u64);
+            match &mut self.aac {
+                None => out.push_back(self.frame_out(pts, chunk)),
+                Some(s) => {
+                    let samples: Vec<i16> = chunk
+                        .chunks_exact(2)
+                        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                        .collect();
+                    let au = s.enc.encode(&samples)?;
+                    s.fed += 1;
+                    self.emit_aac(au, out);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The access units still inside the AAC encoder (end of stream).
+    fn flush(&mut self, out: &mut VecDeque<EncodedFrame>) {
+        let units = match &mut self.aac {
+            Some(s) => s.enc.flush(),
+            None => return,
+        };
+        for au in units {
+            self.emit_aac(au, out);
+        }
+    }
+
+    fn emit_aac(&mut self, au: Vec<u8>, out: &mut VecDeque<EncodedFrame>) {
+        let Some(s) = &mut self.aac else { return };
+        // Access unit k holds input frame k - delay / frame.
+        let pts = s.base + (s.produced * self.frame as u64) as i64 - s.enc.delay_samples() as i64;
+        s.produced += 1;
+        if pts >= 0 {
+            out.push_back(self.frame_out(pts as u64, au));
+        }
+    }
+
+    fn frame_out(&self, pts: u64, data: Vec<u8>) -> EncodedFrame {
+        EncodedFrame {
+            track: TrackKind::Audio(self.family),
+            pts,
+            keyframe: true,
+            data: Arc::from(data),
+        }
+    }
+}
+
 struct EncodedState {
     video: RawVideoSpec,
     audio: Option<RawAudioSpec>,
-    families: Vec<(AudioFamily, u32)>,
+    families: Vec<FamilyAudio>,
     avcc: Option<Vec<u8>>,
     first_sps: Option<Vec<u8>>,
     started: bool,
@@ -654,10 +921,6 @@ struct EncodedState {
     bumped: bool,
     flag_mismatch: bool,
     dropped_before_key: u64,
-    /// PCM not yet cut into frames, and the pts (sample ticks) of its
-    /// first sample.
-    pcm: Vec<u8>,
-    pcm_pts: Option<u64>,
     out: VecDeque<EncodedFrame>,
     back_out: Option<Box<dyn Write + Send>>,
     back: Option<BackChannel>,
@@ -711,7 +974,7 @@ impl SlrwEncodedInput {
             st: EncodedState {
                 video: opts.video,
                 audio: opts.audio,
-                families: opts.audio_families,
+                families: Vec::new(),
                 avcc: None,
                 first_sps: None,
                 started: false,
@@ -720,8 +983,6 @@ impl SlrwEncodedInput {
                 bumped: false,
                 flag_mismatch: false,
                 dropped_before_key: 0,
-                pcm: Vec::new(),
-                pcm_pts: None,
                 out: VecDeque::new(),
                 back_out: opts.back_channel,
                 back: None,
@@ -729,8 +990,12 @@ impl SlrwEncodedInput {
             },
             stop,
         };
-        if me.st.audio.is_none() {
-            me.st.families.clear();
+        if let Some(a) = &me.st.audio {
+            if a.sample_fmt == "s16le" && a.channels > 0 {
+                for &(family, how) in &opts.audio_families {
+                    me.st.families.push(FamilyAudio::new(family, how, a)?);
+                }
+            }
         }
         while !me.st.started {
             if me.st.ended {
@@ -758,7 +1023,7 @@ impl SlrwEncodedInput {
                     return Ok(true);
                 }
                 Ok(Ok(None)) | Err(RecvTimeoutError::Disconnected) => {
-                    self.st.ended = true;
+                    self.st.end();
                     return Ok(true);
                 }
                 Ok(Err(e)) if e.kind() == io::ErrorKind::InvalidData => {
@@ -772,6 +1037,16 @@ impl SlrwEncodedInput {
 }
 
 impl EncodedState {
+    /// The game's stream ended: emit what the encoders still hold.
+    fn end(&mut self) {
+        if !self.ended {
+            self.ended = true;
+            for f in &mut self.families {
+                f.flush(&mut self.out);
+            }
+        }
+    }
+
     fn stream_info(&self) -> Result<StreamInfo> {
         let avcc = self
             .avcc
@@ -794,18 +1069,7 @@ impl EncodedState {
             Some(a) => self
                 .families
                 .iter()
-                .map(|&(family, frame_samples)| {
-                    (
-                        family,
-                        AudioInfo {
-                            codec: AudioCodec::PcmS16le,
-                            sample_rate: a.sample_rate,
-                            channels: a.channels,
-                            frame_samples,
-                            config: Vec::new(),
-                        },
-                    )
-                })
+                .map(|f| (f.family, f.info(a)))
                 .collect(),
             None => Vec::new(),
         };
@@ -853,7 +1117,7 @@ impl EncodedState {
 
     fn handle(&mut self, p: Packet) -> Result<()> {
         match p.kind {
-            Kind::End => self.ended = true,
+            Kind::End => self.end(),
             Kind::Video => {
                 return Err(Error::malformed(format!(
                     "slrw: raw video record in encoded mode (--raw-video ...:{}); \
@@ -989,38 +1253,9 @@ impl EncodedState {
         let rate = a.sample_rate as u128;
         let origin = *self.origin_us.get_or_insert(p.pts_us);
         let expected = (p.pts_us.saturating_sub(origin) as u128 * rate / 1_000_000) as u64;
-        let buffered = (self.pcm.len() / bpf) as u64;
         let tolerance = (AUDIO_RESYNC.as_micros() * rate / 1_000_000) as u64;
-        match self.pcm_pts {
-            Some(start) if (start + buffered).abs_diff(expected) <= tolerance => {}
-            Some(start) => {
-                debug!(
-                    "slrw: audio resync: expected {} got {} samples",
-                    start + buffered,
-                    expected
-                );
-                self.pcm.clear();
-                self.pcm_pts = Some(expected);
-            }
-            None => self.pcm_pts = Some(expected),
-        }
-        self.pcm.extend_from_slice(&p.payload);
-        // One frame size for all families (the first's); a family with a
-        // different size would need its own buffer.
-        let frame = self.families[0].1.max(1) as usize * bpf;
-        while self.pcm.len() >= frame {
-            let chunk: Vec<u8> = self.pcm.drain(..frame).collect();
-            let pts = self.pcm_pts.unwrap_or(0);
-            self.pcm_pts = Some(pts + (frame / bpf) as u64);
-            let data: Arc<[u8]> = Arc::from(chunk);
-            for &(family, _) in &self.families {
-                self.out.push_back(EncodedFrame {
-                    track: TrackKind::Audio(family),
-                    pts,
-                    keyframe: true,
-                    data: data.clone(),
-                });
-            }
+        for f in &mut self.families {
+            f.push(&p.payload, expected, bpf, tolerance, &mut self.out)?;
         }
         Ok(())
     }
@@ -1154,6 +1389,31 @@ mod tests {
         assert_eq!(airplay, cast);
         assert!(airplay > 90);
         Box::new(input).finish(true).unwrap();
+    }
+
+    #[test]
+    fn passthrough_pcm_in_airplay_frames() {
+        let plan = PassPlan {
+            audio_families: vec![AudioFamily::AirPlay],
+        };
+        let mut input =
+            PassthroughInput::open_with(&fixture("pcm.mov"), &plan, false, false, never).unwrap();
+        let a = input
+            .info()
+            .audio_for(AudioFamily::AirPlay)
+            .unwrap()
+            .clone();
+        assert_eq!((a.codec, a.frame_samples), (AudioCodec::PcmS16le, 352));
+        let audio: Vec<EncodedFrame> = drain(&mut input)
+            .into_iter()
+            .filter(|f| f.track != TrackKind::Video)
+            .collect();
+        let (last, full) = audio.split_last().unwrap();
+        assert!(full.iter().all(|f| f.data.len() == 352 * 4));
+        assert!(audio.windows(2).all(|w| w[1].pts - w[0].pts == 352));
+        let total: usize = audio.iter().map(|f| f.data.len() / 4).sum();
+        assert_eq!(total, 48_000);
+        assert!(last.data.len() <= 352 * 4);
     }
 
     #[test]
@@ -1313,7 +1573,20 @@ mod tests {
                 channels: 2,
                 sample_fmt: "s16le".into(),
             }),
-            audio_families: vec![(AudioFamily::AirPlay, AIRPLAY_PCM_FRAME_SAMPLES)],
+            audio_families: vec![
+                (
+                    AudioFamily::AirPlay,
+                    AudioOut::Pcm {
+                        frame_samples: AIRPLAY_PCM_FRAME_SAMPLES,
+                    },
+                ),
+                (
+                    AudioFamily::Cast,
+                    AudioOut::AacLc {
+                        bitrate_bps: AAC_BITRATE_BPS,
+                    },
+                ),
+            ],
             back_channel: back,
         }
     }
@@ -1359,7 +1632,12 @@ mod tests {
         assert_eq!(AvcConfig::parse(&info.video.avcc).unwrap().length_size, 4);
         let a = info.audio_for(AudioFamily::AirPlay).unwrap();
         assert_eq!((a.codec, a.frame_samples), (AudioCodec::PcmS16le, 352));
-        assert!(info.audio_for(AudioFamily::Cast).is_none());
+        let c = info.audio_for(AudioFamily::Cast).unwrap();
+        assert_eq!((c.codec, c.frame_samples), (AudioCodec::AacLc, 1024));
+        assert_eq!(
+            passthrough::parse_asc(&c.config).unwrap(),
+            (2, 44_100, 2, 1024)
+        );
         let frames = drain(&mut input);
         let video: Vec<&EncodedFrame> = frames
             .iter()
@@ -1380,8 +1658,20 @@ mod tests {
         }
         let audio: Vec<&EncodedFrame> = frames
             .iter()
-            .filter(|f| f.track != TrackKind::Video)
+            .filter(|f| f.track == TrackKind::Audio(AudioFamily::AirPlay))
             .collect();
+        // AAC for Cast: 44100 samples in 1024-sample units; the encoder's
+        // two units of delay are dropped at the start, flushed at the end.
+        let aac: Vec<&EncodedFrame> = frames
+            .iter()
+            .filter(|f| f.track == TrackKind::Audio(AudioFamily::Cast))
+            .collect();
+        assert_eq!(aac.len(), 30 * 1470 / 1024);
+        assert_eq!(aac[0].pts, 0);
+        assert!(aac.windows(2).all(|w| w[1].pts - w[0].pts == 1024));
+        assert!(aac
+            .iter()
+            .all(|f| !f.data.is_empty() && f.data.len() < 2000));
         assert_eq!(audio.len(), (30 * 1470) / 352);
         assert!(audio.iter().all(|f| f.data.len() == 352 * 4));
         assert!(audio.windows(2).all(|w| w[1].pts - w[0].pts == 352));
@@ -1478,16 +1768,45 @@ mod tests {
             channels: 2,
             sample_fmt: "s16le".into(),
         };
-        let ap = caps(AudioFamily::AirPlay, &[(AudioCodec::PcmS16le, 44_100, 2)]);
+        // The AirPlay sink advertises ALAC and takes PCM.
+        let ap = caps(AudioFamily::AirPlay, &[(AudioCodec::Alac, 44_100, 2)]);
         let cast = caps(AudioFamily::Cast, &[(AudioCodec::Opus, 48_000, 2)]);
         let (fams, warns) = encoded_audio_families(Some(&spec), &[("atv", &ap), ("tv", &cast)]);
-        assert_eq!(fams, [(AudioFamily::AirPlay, 352)]);
+        assert_eq!(
+            fams,
+            [(AudioFamily::AirPlay, AudioOut::Pcm { frame_samples: 352 })]
+        );
         assert_eq!(warns.len(), 1);
         assert!(
             warns[0].starts_with("Cast receivers cannot take"),
             "{}",
             warns[0]
         );
+        let cast_aac = caps(AudioFamily::Cast, &[(AudioCodec::AacLc, 44_100, 2)]);
+        let (fams, warns) = encoded_audio_families(Some(&spec), &[("tv", &cast_aac)]);
+        assert_eq!(
+            fams,
+            [(
+                AudioFamily::Cast,
+                AudioOut::AacLc {
+                    bitrate_bps: AAC_BITRATE_BPS
+                }
+            )]
+        );
+        assert!(warns.is_empty());
+        assert_eq!(
+            encoded_cast_audio(Some(&spec)),
+            Some(AudioFormat {
+                codec: AudioCodec::AacLc,
+                sample_rate: 44_100,
+                channels: 2
+            })
+        );
+        let odd = RawAudioSpec {
+            sample_rate: 44_000,
+            ..spec.clone()
+        };
+        assert_eq!(encoded_cast_audio(Some(&odd)), None);
         assert_eq!(encoded_audio_families(None, &[("atv", &ap)]).0, []);
     }
 
@@ -1703,7 +2022,20 @@ mod experiments {
             .ok()
             .map(|a| a.parse().unwrap());
         let families = if audio.is_some() {
-            vec![(AudioFamily::AirPlay, AIRPLAY_PCM_FRAME_SAMPLES)]
+            vec![
+                (
+                    AudioFamily::AirPlay,
+                    AudioOut::Pcm {
+                        frame_samples: AIRPLAY_PCM_FRAME_SAMPLES,
+                    },
+                ),
+                (
+                    AudioFamily::Cast,
+                    AudioOut::AacLc {
+                        bitrate_bps: AAC_BITRATE_BPS,
+                    },
+                ),
+            ]
         } else {
             vec![]
         };
