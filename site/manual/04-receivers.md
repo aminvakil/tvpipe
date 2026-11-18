@@ -40,7 +40,7 @@ TVs that speak AirPlay and Cast get Cast, unless you write `airplay:` before the
 | `192.168.1.20` | A Cast receiver at this address. |
 | `192.168.1.20:7000` | An AirPlay receiver at this address. |
 | `airplay:NAME`, `cast:NAME` | A name, with the protocol to use. |
-| `browser` | A browser tab on this computer. See [Playing to a browser](08-browser.md). |
+| `browser` | A browser tab on this computer. See [Playing to a browser](browser.md). |
 
 ## Several receivers
 
@@ -63,7 +63,7 @@ A TV where someone stopped mirroring on purpose stays off.
 ## Pairing with an Apple TV
 
 :::caution
-The pairing is a private key in `credentials.txt` in the [config directory](11-config.md). Do not share that file.
+The pairing is a private key in `credentials.txt` in the [config directory](config.md). Do not share that file.
 :::
 
 An Apple TV asks for a PIN the first time. `tvpipe pair` makes the TV show it and asks you to type it. `--pin` passes it directly.

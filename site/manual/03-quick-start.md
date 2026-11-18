@@ -43,6 +43,6 @@ Press `Ctrl-C`, or type `q` and press Enter. The TV leaves mirroring mode. A sec
 
 ## Next
 
-- [Send to two TVs](04-receivers.md) by repeating `--to`.
-- [Share a browser tab](06-share.md) instead of a file.
-- [Put a web page on the TV](07-web-page.md).
+- [Send to two TVs](receivers.md) by repeating `--to`.
+- [Share a browser tab](share.md) instead of a file.
+- [Put a web page on the TV](web-page.md).

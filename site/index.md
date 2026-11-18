@@ -7,7 +7,7 @@ title: tvpipe: video from your computer on the TV
 tvpipe puts video and sound from your computer on a TV. It plays files and URLs, mirrors cameras, browser tabs and web pages, and sends them to Apple TV, Chromecast and anything else that speaks AirPlay or Google Cast. It is one command line tool for macOS, Linux and Windows.
 
 :::buttons
-[Read the manual](manual/01-overview.md)
+[Read the manual](manual/overview.md)
 [Source on GitHub](https://github.com/mitsuhiko/tvpipe)
 :::
 

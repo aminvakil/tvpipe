@@ -66,7 +66,7 @@ The Linux binaries are static and run on any distribution.
 
 ## Uninstalling
 
-Delete the `tvpipe` binary and the [config directory](11-config.md).
+Delete the `tvpipe` binary and the [config directory](config.md).
 
 ## Building from source
 

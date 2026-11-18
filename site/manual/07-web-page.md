@@ -61,4 +61,4 @@ Firefox shows the page with its sound too. Its own speakers stay quiet while tvp
 
 ## Limitations
 
-Some sites refuse browsers that are controlled by a program. tvpipe does not hide that, so those sites do not work, and tvpipe reports their answer (401, 403 or 429). Video calls are an example. For those, open the call in your normal browser and present a [browser tab](08-browser.md) in it.
+Some sites refuse browsers that are controlled by a program. tvpipe does not hide that, so those sites do not work, and tvpipe reports their answer (401, 403 or 429). Video calls are an example. For those, open the call in your normal browser and present a [browser tab](browser.md) in it.

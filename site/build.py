@@ -41,7 +41,8 @@ Containers:
   :::figure CAPTION ... :::  raw HTML (an inline SVG) as a numbered figure
   :::index :::               the list of manual sections
 
-Inline: `code`, **bold**, *italic*, [links](x.md) (to the page's directory).
+Inline: `code`, **bold**, *italic*, [links](receivers.md) (a manual page by its
+slug, without the number, so renumbering does not break links).
 """
 
 import html
@@ -143,8 +144,10 @@ class Ctx:
             return href
         path, _, frag = href.partition("#")
         if path.endswith(".md"):
+            # A page by its slug: receivers.md (or 04-receivers.md) is manual/receivers/.
+            slug = re.sub(r"^\d\d-", "", Path(path).stem)
             name = Path(path).name
-            page = next((p for p in self.pages if p["file"] == name), None)
+            page = next((p for p in self.pages if p["slug"] == slug), None)
             if page is None and name != "index.md":
                 raise SystemExit(f"link to unknown page {href}")
             path = self.to(page["dir"] if page else "")

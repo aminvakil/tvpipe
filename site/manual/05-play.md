@@ -24,7 +24,7 @@ tvpipe reads files at playback speed. A live source already arrives at that spee
 ## Screens and cameras
 
 :::aside Tip
-For a single window or browser tab, [share](06-share.md) is simpler.
+For a single window or browser tab, [share](share.md) is simpler.
 :::
 
 Everything after `--` goes to ffmpeg as its input, so anything ffmpeg can capture works.
@@ -43,4 +43,4 @@ On macOS, `ffmpeg -f avfoundation -list_devices true -i ""` lists the screens an
 $ tvpipe play --to TV --size 1280x720 --fps 30 --bitrate 4000 movie.mp4
 ```
 
-By default tvpipe picks what the input and the TV support. These options set limits, they never make the picture larger. All options are in [Options](10-options.md).
+By default tvpipe picks what the input and the TV support. These options set limits, they never make the picture larger. All options are in [Options](options.md).
