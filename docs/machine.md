@@ -1,0 +1,123 @@
+# Machine interface (`--machine`)
+
+For programs that drive tvpipe: the Node SDK (`npm/tvpipe`), and anything
+else that can spawn a process and read lines. Protocol version **1**.
+Code: `src/machine.rs`, the events at their sources (`session.rs`,
+`session/rejoin.rs`, `media/fanout.rs`, `browser/player.rs`,
+`airplay/pair.rs`, `net/discover.rs`). Tests: `src/machine/tests.rs`,
+`tests/machine.rs` (the real binary).
+
+```sh
+tvpipe --machine test-pattern --to browser --port 0
+```
+
+`--machine` is a global flag (before the command). It changes only the
+stdio contract; the commands and their options stay the same:
+
+- **stdout**: events, one JSON object per line, nothing else.
+- **stdin**: SLRW records ([`slrw.md`](slrw.md)) with one more kind,
+  `command`. Writers start with the magic `SLRW` for every command.
+- **stderr**: only what happens before the flag is read (argument
+  errors from the parser, exit status 2) and panics. Logs are `log`
+  events.
+
+## Events
+
+Every event has a `type`; names are snake_case. Readers ignore types and
+fields they do not know: new ones do not change the protocol version.
+
+The first event is `hello`. A command ends with `end` (exit status 0) or
+`error` (exit status 1); `end` may be followed by `log` events and, when
+the session failed after the stream ran (every receiver failed, the input
+broke), by an `error`.
+
+| `type` | When | Fields |
+|---|---|---|
+| `hello` | first | `protocol` (1), `version`, `command` (`play` also for `preview`, `test-pattern`, `share`, `discover`, `pair`, `unpair`) |
+| `log` | each log line at the active level (`-v`: debug, `--debug`: trace) | `level` (`error`, `warn`, `info`, `debug`, `trace`), `module`, `message` |
+| `receiver` | a receiver changes state | `name`, `protocol` (`cast`, `airplay`, `browser`; on `connected`/`failed` while connecting), `state`, `error` and `code` (with `failed`, `lost`, `gave-up`) |
+| `player` | a `--to browser` page listens | `name`, `url` |
+| `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`) |
+| `share-page` | `share` without URL listens | `url` (open it, press Share) |
+| `connected` | the receivers are connected; the input opens next (SLRW is read from here on) | `receivers` (names) |
+| `started` | the input is open and the receivers started | `route` (`passthrough`, `ffmpeg`, `builtin`, `encoded`, `browser`), `video` (`codec`, `width`, `height`, `fps`), `audio` (list of `codec`, `sample_rate`, `channels`), `latency_ms` |
+| `keyframe` | a receiver needs an IDR (encoded SLRW with keyframe requests on, see below) | |
+| `stats` | every second while frames flow | `elapsed_ms`, `video_frames`, `audio_frames`, `receivers` (`name`, `pushed`, `dropped`, `dropped_full`, `dropped_waiting`) |
+| `devices` | `discover` (instead of the table or `--json`) | `devices`: the `discover --json` objects |
+| `pin-required` | `pair` needs the PIN the TV shows | `name`, `address` |
+| `paired` | `pair` succeeded and the pairing verified | `name`, `model`, `file` (the credentials file) |
+| `unpaired` | `unpair` forgot a pairing | `name`, `id` |
+| `end` | the command is over | `reason` (`eof`, `stopped`, `receivers-gone`, `error`; `done` for commands without a stream); with a stream also `receivers` (`name`, `end`: `stopped`/`ended`/`failed`, `error`, the stats fields) |
+| `error` | the command failed | `kind`, `code` (optional), `message`, `device` (optional) |
+
+Receiver states: `connected`, `failed` (could not resolve, connect or
+start, or failed mid-stream), `lost` (connection lost, reconnecting with
+`--reconnect`), `reconnected`, `gave-up` (reconnecting failed), `ended`
+(the receiver's user ended the session), `stopped` (tvpipe stopped it).
+With several receivers one that fails does not end the session.
+
+`kind` is one of `io`, `malformed`, `protocol`, `crypto`, `auth`,
+`unsupported`, `timeout`, `not-found`, `closed`, `process`, `usage`,
+`unimplemented`. `code` is stable and set where the case is known:
+
+| `code` | |
+|---|---|
+| `pairing-required` | an AirPlay receiver needs `pair` first; `device` is the name to pass to `pair` |
+| `no-receiver` | no receiver of that name was found; `device` is the name |
+| `input-not-found` | the input file does not exist |
+| `ffmpeg-missing` | the input needs ffmpeg and there is none |
+| `pin-missing` | `pair` asked for a PIN and stdin ended |
+| `bad-input` | stdin is not valid SLRW |
+
+A `receiver` event with `failed` carries the same `code` (e.g. one of
+several receivers needs pairing).
+
+## Commands
+
+In machine mode stdin always carries SLRW: the magic, then records. Kind
+**6 `command`** is added: `pts_us` is ignored, the payload is one UTF-8
+JSON object of at most 64 KiB.
+
+| Command | |
+|---|---|
+| `{"type":"stop"}` | stop now, without playing out what is queued; receivers get their TEARDOWN/STOP; exit status 0 |
+| `{"type":"pin","pin":"1234"}` | the answer to `pin-required` |
+
+Unknown commands are logged and ignored. Outside machine mode kind 6 is an
+error like any unknown kind.
+
+A thread reads stdin from the start, so commands work in every phase
+(discovery, connecting, `--wait-for-viewer`, streaming):
+
+- **SLRW input** (`play -`): media records go to the input once it opens
+  (after `connected`), through a short queue: a writer that outpaces the
+  encoder sees a full pipe. Records that arrive earlier are dropped (live
+  frames would be stale), except the last `h264-config` and the last
+  `control`, which reach the input first; if that `control` turned
+  keyframe requests on, a `keyframe` event follows at once (the keyframe
+  the writer sent before was dropped).
+- **EOF** (the parent closed the pipe, exited or crashed): with an open
+  SLRW input, the end of the stream (what is queued plays out, then
+  teardown, `reason` `eof`); otherwise a stop request. tvpipe never
+  outlives its parent, and the receivers still get a clean stop. An `end`
+  record before the input opened is a stop request too.
+- Without SLRW input, media records are ignored.
+- Bad framing (no magic, an unknown kind, an oversized or truncated record)
+  stops the session with an `error` (`code` `bad-input`).
+
+Commands share the pipe with media, so a `stop` waits behind at most the
+queue while the input consumes; a program should still kill tvpipe if it
+does not exit within a few seconds.
+
+## Keyframe requests
+
+The `keyframe\n` lines that encoded SLRW input writes to stdout
+([`slrw.md`](slrw.md#keyframe-back-channel)) become `keyframe` events. As
+without `--machine`, the writer turns them on with a `control` record.
+
+## Why stdin
+
+It is the one channel every OS has between a parent and its child: no
+port, no token, no fd passing, and its EOF tells tvpipe that the parent is
+gone. Signals are no option on Windows (a child without its own console
+cannot be sent Ctrl-C or Ctrl-Break by a library).

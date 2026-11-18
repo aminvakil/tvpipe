@@ -14,6 +14,7 @@ use crate::util::ratio::Ratio;
 enum Top {
     Verbose,
     Debug,
+    Machine,
     Discover,
     Pair,
     Unpair,
@@ -105,6 +106,9 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Opt::new(Top::Debug)
             .long("debug")
             .help("Print protocol traces (very verbose)"),
+        Opt::new(Top::Machine)
+            .long("machine")
+            .help("For programs: JSON events on stdout, commands on stdin (docs/machine.md)"),
     ])
     .commands(&[
         Cmd::new(Top::Discover, &DISCOVER),
@@ -416,6 +420,8 @@ static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")
 pub struct Global {
     pub verbose: bool,
     pub debug: bool,
+    /// `--machine`: the machine interface (`crate::machine`).
+    pub machine: bool,
 }
 
 /// Where the media comes from.
@@ -608,6 +614,21 @@ pub enum Command {
     DebugPipeline(PipelineOptions),
 }
 
+impl Command {
+    /// The subcommand's name (`preview` is `play`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Command::Discover { .. } => "discover",
+            Command::Pair { .. } => "pair",
+            Command::Unpair { .. } => "unpair",
+            Command::Play(_) => "play",
+            Command::TestPattern(_) => "test-pattern",
+            Command::Share(_) => "share",
+            Command::DebugPipeline(_) => "debug-pipeline",
+        }
+    }
+}
+
 /// Parses `std::env::args`; prints help/errors and exits on failure.
 pub fn parse_env() -> (Global, Command) {
     CLI.run(parse_top)
@@ -624,6 +645,7 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
         match arg {
             Top::Verbose => g.verbose = true,
             Top::Debug => g.debug = true,
+            Top::Machine => g.machine = true,
             Top::Discover => return Ok((g, parse_discover(p.subcommand(&DISCOVER))?)),
             Top::Pair => return Ok((g, parse_pair(p.subcommand(&PAIR))?)),
             Top::Unpair => return Ok((g, parse_unpair(p.subcommand(&UNPAIR))?)),
@@ -1233,6 +1255,15 @@ mod tests {
         assert!(parse_from(&["play", "--to", "tv", "--open", "x.mkv"]).is_err());
         assert!(parse_from(&["test-pattern", "--to", "tv", "--port", "1"]).is_err());
         assert!(play(&["preview", "--new-token"]).browser.new_token);
+    }
+
+    #[test]
+    fn machine_flag() {
+        let (g, cmd) = parse_from(&["--machine", "-v", "preview"]).unwrap();
+        assert!(g.machine && g.verbose);
+        assert_eq!(cmd.name(), "play");
+        let (g, _) = parse_from(&["discover"]).unwrap();
+        assert!(!g.machine);
     }
 
     #[test]

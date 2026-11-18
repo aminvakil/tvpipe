@@ -36,6 +36,7 @@ pub fn locate(explicit: Option<&Path>) -> Result<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     find_in_path("ffmpeg", &path).ok_or_else(|| {
         Error::not_found("ffmpeg not found in PATH (use --ffmpeg PATH or $TVPIPE_FFMPEG)")
+            .with_code("ffmpeg-missing")
     })
 }
 

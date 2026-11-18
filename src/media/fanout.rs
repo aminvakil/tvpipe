@@ -371,6 +371,7 @@ fn run_sink(
     shared.cond.notify_all();
     if let Err(e) = started {
         error!("{name}: start failed: {e}");
+        crate::machine::receiver(&name, None, "failed", Some(&e));
         let _ = sink.stop();
         return SinkEnd::Failed(e);
     }
@@ -452,6 +453,11 @@ fn run_sink(
         if matches!(end, SinkEnd::Stopped) {
             end = SinkEnd::Failed(e);
         }
+    }
+    match &end {
+        SinkEnd::Stopped => crate::machine::receiver(&name, None, "stopped", None),
+        SinkEnd::Finished => crate::machine::receiver(&name, None, "ended", None),
+        SinkEnd::Failed(e) => crate::machine::receiver(&name, None, "failed", Some(e)),
     }
     end
 }

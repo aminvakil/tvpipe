@@ -6,6 +6,7 @@ use std::time::Duration;
 use super::device::{self, Device};
 use super::iface;
 use super::mdns::{self, BrowseOptions, Cache};
+use crate::airplay::credentials::Store;
 use crate::airplay::discovery::format_features;
 use crate::codec::json::Value;
 use crate::error::Result;
@@ -52,8 +53,14 @@ fn browse(
 /// The `discover` command body.
 pub fn run(timeout: Duration, json: bool, interfaces: &[Ipv4Addr]) -> Result<()> {
     let devices = discover(timeout, interfaces)?;
+    let store = stored_pairings();
+    if crate::machine::enabled() {
+        let list = Value::array(devices.iter().map(|d| device_json(d, store.as_ref())));
+        crate::machine::emit(crate::machine::event("devices").with("devices", list));
+        return Ok(());
+    }
     let out = if json {
-        to_json(&devices)
+        to_json_with(&devices, store.as_ref())
     } else {
         to_table(&devices)
     };
@@ -132,11 +139,38 @@ pub fn to_table(devices: &[Device]) -> String {
 
 /// Machine-readable output: a JSON array of devices.
 pub fn to_json(devices: &[Device]) -> String {
-    let list = Value::array(devices.iter().map(device_json));
+    to_json_with(devices, None)
+}
+
+/// [`to_json`] with `paired` on AirPlay entries when the store is given.
+fn to_json_with(devices: &[Device], store: Option<&Store>) -> String {
+    let list = Value::array(devices.iter().map(|d| device_json(d, store)));
     format!("{list:#}\n")
 }
 
-fn device_json(d: &Device) -> Value {
+/// The AirPlay pairings, if the credentials file exists (discovery never
+/// creates it).
+fn stored_pairings() -> Option<Store> {
+    let path = crate::airplay::credentials::default_path().ok()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    Store::parse(&path, &text)
+        .map_err(|e| debug!("discover: {e}"))
+        .ok()
+}
+
+/// Whether `store` has a pairing for `d` (by key, device id or name).
+fn is_paired(d: &Device, store: &Store) -> bool {
+    let txt = d.airplay.as_ref().or(d.raop.as_ref()).map(|a| &a.txt);
+    let q = crate::airplay::credentials::Query {
+        public_key: txt.and_then(|t| t.pk.as_deref()),
+        device_id: txt.and_then(|t| t.deviceid.as_deref()),
+        names: d.names(),
+        addr: None,
+    };
+    store.find(&q).is_some()
+}
+
+fn device_json(d: &Device, store: Option<&Store>) -> Value {
     let mut v = Value::object()
         .with("name", d.name.as_str())
         .with(
@@ -157,7 +191,8 @@ fn device_json(d: &Device) -> Value {
             .with_opt("pk", t.pk.as_deref().map(hex::encode))
             .with("mirroring", t.supports_mirroring())
             .with("password", t.password_required())
-            .with("pin", t.pin_required());
+            .with("pin", t.pin_required())
+            .with_opt("paired", store.map(|s| is_paired(d, s)));
         v = v.with(key, o);
     }
     if let Some(c) = &d.cast {

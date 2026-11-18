@@ -49,7 +49,8 @@ pub fn request() {
 /// closed stdin never stops a session.
 pub fn watch_stdin() {
     let stdin = std::io::stdin();
-    if !stdin.is_terminal() {
+    // With --machine, stdin belongs to the machine interface's router.
+    if !stdin.is_terminal() || crate::machine::enabled() {
         return;
     }
     let spawned = std::thread::Builder::new()

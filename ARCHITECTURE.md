@@ -5,6 +5,8 @@ use it is in the [manual](https://mitsuhiko.github.io/tvpipe/manual/) (sources i
 detail lives in `docs/`:
 
 - [`slrw.md`](docs/slrw.md): the game input format.
+- [`machine.md`](docs/machine.md): `--machine`, the interface for
+  programs (the Node SDK).
 - [`share-protocol.md`](docs/share-protocol.md) and
   [`player-protocol.md`](docs/player-protocol.md): the browser pages.
 - [`measurements.md`](docs/measurements.md): latency and experiments.

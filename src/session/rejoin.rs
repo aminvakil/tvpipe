@@ -240,6 +240,7 @@ impl Rejoining {
             return;
         };
         info!("lost {} ({e}); reconnecting…", self.name);
+        crate::machine::receiver(&self.name, None, "lost", Some(&e));
         let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let worker = Worker {
@@ -276,6 +277,7 @@ impl Rejoining {
             Err(TryRecvError::Empty) => Ok(()),
             Ok(Outcome::Back(sink)) => {
                 info!("{} back after {secs:.1} s", self.name);
+                crate::machine::receiver(&self.name, None, "reconnected", None);
                 self.state = State::Live {
                     sink,
                     need_key: true,
@@ -285,10 +287,12 @@ impl Rejoining {
             Ok(Outcome::GaveUp(e)) => {
                 info!("gave up on {} after {secs:.1} s", self.name);
                 self.state = State::Gone;
-                Err(Error::new(
+                let e = Error::new(
                     e.kind(),
                     format!("gave up reconnecting after {secs:.1} s: {e}"),
-                ))
+                );
+                crate::machine::receiver(&self.name, None, "gave-up", Some(&e));
+                Err(e)
             }
             Ok(Outcome::Incompatible(e)) => {
                 error!(

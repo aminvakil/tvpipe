@@ -285,7 +285,7 @@ fn browse_rejoin(
             return Err(e);
         }
     };
-    let r = stream(Box::new(input), plan.latency_ms, sinks, stop);
+    let r = stream(Box::new(input), "browser", plan.latency_ms, sinks, stop);
     drop(source);
     match r {
         Ok(EndReason::Interrupted) => {

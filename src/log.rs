@@ -20,6 +20,17 @@ pub enum Level {
 }
 
 impl Level {
+    /// The level in `log` events (`--machine`).
+    pub fn id(self) -> &'static str {
+        match self {
+            Level::Error => "error",
+            Level::Warn => "warn",
+            Level::Info => "info",
+            Level::Debug => "debug",
+            Level::Trace => "trace",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Level::Error => "ERROR",
@@ -47,6 +58,15 @@ pub fn enabled(level: Level) -> bool {
 pub fn write(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
     let elapsed = START.get_or_init(Instant::now).elapsed();
     let module = module.strip_prefix("tvpipe::").unwrap_or(module);
+    if crate::machine::enabled() {
+        crate::machine::emit(
+            crate::machine::event("log")
+                .with("level", level.id())
+                .with("module", module)
+                .with("message", args.to_string()),
+        );
+        return;
+    }
     let mut err = std::io::stderr().lock();
     let _ = writeln!(
         err,

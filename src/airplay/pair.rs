@@ -214,6 +214,8 @@ pub fn connect(target: &Target, store: &Store) -> Result<Control> {
                     target.label(),
                     e.message()
                 ))
+                .with_code("pairing-required")
+                .with_device(target.label())
             } else {
                 e
             }
@@ -221,8 +223,17 @@ pub fn connect(target: &Target, store: &Store) -> Result<Control> {
     }
 }
 
-/// Reads the PIN from stdin after prompting on stderr.
-fn prompt_pin(label: &str) -> Result<String> {
+/// Reads the PIN from stdin after prompting on stderr; with `--machine`,
+/// a `pin-required` event and the router's `pin` command.
+fn prompt_pin(label: &str, addr: SocketAddr) -> Result<String> {
+    if let Some(router) = crate::machine::router() {
+        crate::machine::emit(
+            crate::machine::event("pin-required")
+                .with("name", label)
+                .with("address", addr.to_string()),
+        );
+        return router.wait_pin();
+    }
     eprint!("Enter the PIN shown on {label}: ");
     let _ = std::io::stderr().flush();
     let mut line = String::new();
@@ -294,7 +305,7 @@ pub fn pair(target: &str, pin: Option<&str>) -> Result<()> {
     let mut store = Store::open_default()?;
     let label = target.label();
     info!("pairing with {label} at {}", target.addr);
-    let record = pair_with(&target, &mut store, pin, || prompt_pin(&label))?;
+    let record = pair_with(&target, &mut store, pin, || prompt_pin(&label, target.addr))?;
     info!(
         "paired with {} (receiver id {}); credentials in {}",
         record.name,
@@ -306,6 +317,15 @@ pub fn pair(target: &str, pin: Option<&str>) -> Result<()> {
     let mut control = connect_with(target.addr, &store.identity, Auth::Verified(record))?;
     let info = get_info(&mut control.client)?;
     let caps = info.capabilities();
+    if crate::machine::enabled() {
+        crate::machine::emit(
+            crate::machine::event("paired")
+                .with("name", label.as_str())
+                .with_opt("model", info.model.as_deref())
+                .with("file", store.path().display().to_string()),
+        );
+        return Ok(());
+    }
     println!(
         "Paired with {} ({}), display {}x{}@{}",
         label,
@@ -322,7 +342,15 @@ pub fn unpair(target: &str) -> Result<()> {
     let mut store = Store::open_default()?;
     let removed = forget(&mut store, target, resolve)?;
     for r in &removed {
-        println!("Forgot pairing with {} ({})", r.name, r.id_display());
+        if crate::machine::enabled() {
+            crate::machine::emit(
+                crate::machine::event("unpaired")
+                    .with("name", r.name.as_str())
+                    .with("id", r.id_display()),
+            );
+        } else {
+            println!("Forgot pairing with {} ({})", r.name, r.id_display());
+        }
     }
     Ok(())
 }
@@ -628,7 +656,7 @@ mod hardware {
     fn hardware_pair() {
         let Some(t) = atv() else { return };
         let mut store = Store::open_default().unwrap();
-        let r = pair_with(&t, &mut store, None, || prompt_pin("the TV")).unwrap();
+        let r = pair_with(&t, &mut store, None, || prompt_pin("the TV", t.addr)).unwrap();
         eprintln!("paired: {} ({})", r.name, r.id_display());
     }
 

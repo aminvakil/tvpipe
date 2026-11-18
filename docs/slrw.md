@@ -37,6 +37,9 @@ write natively).
 | 4 | `h264-config` | encoded | `u8 format` then the decoder configuration |
 | 5 | `control` | encoded | `u32 flags` (little-endian) |
 
+- Kind 6 (`command`) exists only with `tvpipe --machine`
+  ([`machine.md`](machine.md)), which also turns keyframe requests into
+  JSON events.
 - Any other kind is an error. EOF on a record boundary ends the stream
   like an `end` record.
 - Audio records without `--raw-audio` are ignored.

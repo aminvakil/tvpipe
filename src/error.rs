@@ -43,6 +43,24 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// The kind's name in the machine interface (`docs/machine.md`).
+    pub fn id(self) -> &'static str {
+        match self {
+            ErrorKind::Io => "io",
+            ErrorKind::Malformed => "malformed",
+            ErrorKind::Protocol => "protocol",
+            ErrorKind::Crypto => "crypto",
+            ErrorKind::Auth => "auth",
+            ErrorKind::Unsupported => "unsupported",
+            ErrorKind::Timeout => "timeout",
+            ErrorKind::NotFound => "not-found",
+            ErrorKind::Closed => "closed",
+            ErrorKind::Process => "process",
+            ErrorKind::Usage => "usage",
+            ErrorKind::Unimplemented => "unimplemented",
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             ErrorKind::Io => "I/O error",
@@ -66,6 +84,11 @@ pub struct Error {
     kind: ErrorKind,
     msg: Cow<'static, str>,
     source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    /// A stable code for the machine interface (`docs/machine.md`), e.g.
+    /// `pairing-required`; set where the case is known.
+    code: Option<&'static str>,
+    /// The receiver the error is about (`--to` label), with `code`.
+    device: Option<String>,
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -76,7 +99,31 @@ impl Error {
             kind,
             msg: msg.into(),
             source: None,
+            code: None,
+            device: None,
         }
+    }
+
+    /// Sets the stable machine-interface code.
+    pub fn with_code(mut self, code: &'static str) -> Error {
+        self.code = Some(code);
+        self
+    }
+
+    /// Names the receiver the error is about.
+    pub fn with_device(mut self, device: impl Into<String>) -> Error {
+        self.device = Some(device.into());
+        self
+    }
+
+    /// The stable code, if one was set.
+    pub fn code(&self) -> Option<&'static str> {
+        self.code
+    }
+
+    /// The receiver the error is about, if known.
+    pub fn device(&self) -> Option<&str> {
+        self.device.as_deref()
     }
 
     /// Attaches an underlying cause.

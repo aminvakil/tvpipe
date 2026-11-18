@@ -42,6 +42,7 @@ use crate::cli::{
     BrowserOptions, Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size,
     BROWSER_TARGET,
 };
+use crate::codec::json::Value;
 use crate::error::{Error, Result};
 use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
@@ -230,8 +231,11 @@ fn resolve_target(query: &str) -> Result<Target> {
     if let Some(t) = address_target(forced, rest) {
         return Ok(t);
     }
-    let dev = crate::net::discover::resolve(rest, DISCOVER_TIMEOUT, &[])?
-        .ok_or_else(|| Error::not_found(format!("no receiver named {rest:?}")))?;
+    let dev = crate::net::discover::resolve(rest, DISCOVER_TIMEOUT, &[])?.ok_or_else(|| {
+        Error::not_found(format!("no receiver named {rest:?}"))
+            .with_code("no-receiver")
+            .with_device(rest)
+    })?;
     let t = device_target(&dev, forced)?;
     debug!("resolved {query:?} to {t:?}");
     Ok(t)
@@ -676,6 +680,9 @@ fn resolve_all(queries: &[String], rejoin: Option<&Rejoin>) -> Result<Vec<Target
                 let r = h
                     .join()
                     .unwrap_or_else(|_| Err(Error::process("resolve thread panicked")));
+                if let Err(e) = &r {
+                    crate::machine::receiver(q, None, "failed", Some(e));
+                }
                 (q.clone(), r)
             })
             .collect()
@@ -712,11 +719,34 @@ fn connect_all(
                 let r = h
                     .join()
                     .unwrap_or_else(|_| Err(Error::process("connect thread panicked")));
-                (target_name(t).to_owned(), r)
+                let name = target_name(t).to_owned();
+                match &r {
+                    Ok(_) => {
+                        crate::machine::receiver(&name, Some(target_protocol(t)), "connected", None)
+                    }
+                    Err(e) => {
+                        crate::machine::receiver(&name, Some(target_protocol(t)), "failed", Some(e))
+                    }
+                }
+                (name, r)
             })
             .collect()
     });
-    keep_working("connected", results)
+    let sinks = keep_working("connected", results)?;
+    crate::machine::emit(crate::machine::event("connected").with(
+        "receivers",
+        Value::array(sinks.iter().map(|s| s.name().to_owned())),
+    ));
+    Ok(sinks)
+}
+
+/// The receiver's protocol in machine-interface events.
+fn target_protocol(t: &Target) -> &'static str {
+    match t {
+        Target::Cast { .. } => "cast",
+        Target::AirPlay { .. } => "airplay",
+        Target::Browser(_) => "browser",
+    }
 }
 
 fn stop_all(sinks: Vec<Box<dyn Sink>>) {
@@ -841,8 +871,14 @@ fn play(opts: PlayOptions) -> Result<()> {
     play_io(
         opts,
         GameIo {
-            stdin: Box::new(std::io::stdin()),
-            stdout: Box::new(std::io::stdout()),
+            // With --machine, the stdin router hands SLRW over and
+            // keyframe requests become events.
+            stdin: crate::machine::stdin_reader(),
+            stdout: if crate::machine::enabled() {
+                Box::new(crate::machine::KeyframeEvents::new())
+            } else {
+                Box::new(std::io::stdout())
+            },
         },
     )
 }
@@ -886,10 +922,10 @@ fn play_rejoin(
     if let InputSpec::Path(p) = &opts.input {
         let looks_like_url = p.to_string_lossy().contains("://");
         if !looks_like_url && !Path::new(p).exists() {
-            return Err(Error::not_found(format!(
-                "{}: no such file",
-                Path::new(p).display()
-            )));
+            return Err(
+                Error::not_found(format!("{}: no such file", Path::new(p).display()))
+                    .with_code("input-not-found"),
+            );
         }
     }
     let encoded = opts
@@ -1024,6 +1060,12 @@ fn play_rejoin(
         },
         _ => Route::Ffmpeg,
     };
+    let route_name = match &route {
+        Route::Passthrough(..) => "passthrough",
+        Route::Encoded => "encoded",
+        Route::Builtin => "builtin",
+        Route::Ffmpeg => "ffmpeg",
+    };
     let opened: Result<(Box<dyn Input>, u32)> = (|| match route {
         Route::Passthrough(path, plan) => {
             let realtime = opts.realtime.unwrap_or(true);
@@ -1143,7 +1185,7 @@ fn play_rejoin(
             return Err(e);
         }
     };
-    match stream(input, latency_ms, sinks, stop) {
+    match stream(input, route_name, latency_ms, sinks, stop) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1249,6 +1291,7 @@ fn share_rejoin(
         "open {} in a browser and choose what to share (Ctrl-C to stop)",
         server.url()
     );
+    crate::machine::emit(crate::machine::event("share-page").with("url", server.url()));
     if opts.open {
         if let Err(e) = crate::browser::platform::open_url(server.url()) {
             warn!("--open: {e}");
@@ -1421,7 +1464,7 @@ fn share_rejoin(
             return Err(e);
         }
     };
-    match stream(Box::new(input), plan.latency_ms, sinks, stop) {
+    match stream(Box::new(input), "browser", plan.latency_ms, sinks, stop) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1646,6 +1689,7 @@ fn ffmpeg_source(
 /// are stopped on every path.
 fn stream(
     mut input: Box<dyn Input>,
+    route: &str,
     latency_ms: u32,
     sinks: Vec<Box<dyn Sink>>,
     stop: fn() -> bool,
@@ -1684,12 +1728,18 @@ fn stream(
         warn!("a receiver is slow to start; streaming anyway");
     }
     debug!("sinks started in {} ms", ready.elapsed().as_millis());
+    crate::machine::emit(started_event(route, &info, latency_ms));
     let t0 = Instant::now();
     let mut frames = [0u64; 2];
     let mut input_error = None;
+    let mut next_stats = t0 + STATS_INTERVAL;
     let end = loop {
         if stop() {
             break EndReason::Interrupted;
+        }
+        if crate::machine::enabled() && Instant::now() >= next_stats {
+            next_stats += STATS_INTERVAL;
+            crate::machine::emit(stats_event(t0.elapsed(), frames, &fanout.stats()));
         }
         match input.next_frame() {
             Ok(Some(f)) => {
@@ -1749,6 +1799,7 @@ fn stream(
             st.pushed, st.sink_dropped, st.dropped_full, st.dropped_waiting
         );
     }
+    crate::machine::emit(end_event(end, input_error.as_ref(), &ends, &stats));
     if let Some(e) = input_error {
         return Err(e);
     }
@@ -1763,6 +1814,100 @@ fn stream(
         ));
     }
     Ok(end)
+}
+
+/// How often `stats` events go out (`--machine`).
+const STATS_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The machine interface's `started` event.
+fn started_event(route: &str, info: &crate::media::source::StreamInfo, latency_ms: u32) -> Value {
+    let v = &info.video;
+    crate::machine::event("started")
+        .with("route", route)
+        .with(
+            "video",
+            Value::object()
+                .with(
+                    "codec",
+                    match v.codec {
+                        VideoCodec::H264 => "h264",
+                        VideoCodec::Hevc => "hevc",
+                    },
+                )
+                .with("width", v.width)
+                .with("height", v.height)
+                .with("fps", v.fps.as_f64()),
+        )
+        .with(
+            "audio",
+            Value::array(info.audio.iter().map(|(_, a)| {
+                let codec = match a.codec {
+                    AudioCodec::Alac => "alac",
+                    AudioCodec::AacLc => "aac-lc",
+                    AudioCodec::AacEld => "aac-eld",
+                    AudioCodec::Opus => "opus",
+                    AudioCodec::PcmS16le => "pcm-s16le",
+                };
+                Value::object()
+                    .with("codec", codec)
+                    .with("sample_rate", a.sample_rate)
+                    .with("channels", a.channels)
+            })),
+        )
+        .with("latency_ms", latency_ms)
+}
+
+fn sink_stats_json(name: &str, st: &crate::media::fanout::SinkStats) -> Value {
+    Value::object()
+        .with("name", name)
+        .with("pushed", st.pushed)
+        .with("dropped", st.sink_dropped)
+        .with("dropped_full", st.dropped_full)
+        .with("dropped_waiting", st.dropped_waiting)
+}
+
+/// The machine interface's `stats` event.
+fn stats_event(
+    elapsed: Duration,
+    frames: [u64; 2],
+    stats: &[(String, crate::media::fanout::SinkStats)],
+) -> Value {
+    crate::machine::event("stats")
+        .with("elapsed_ms", elapsed.as_millis() as u64)
+        .with("video_frames", frames[0])
+        .with("audio_frames", frames[1])
+        .with(
+            "receivers",
+            Value::array(stats.iter().map(|(n, st)| sink_stats_json(n, st))),
+        )
+}
+
+/// The machine interface's `end` event.
+fn end_event(
+    end: EndReason,
+    input_error: Option<&Error>,
+    ends: &[(String, SinkEnd)],
+    stats: &[(String, crate::media::fanout::SinkStats)],
+) -> Value {
+    let reason = match end {
+        _ if input_error.is_some() => "error",
+        EndReason::Eof => "eof",
+        EndReason::Interrupted => "stopped",
+        EndReason::ReceiversGone => "receivers-gone",
+    };
+    let receivers = ends.iter().zip(stats).map(|((name, how), (_, st))| {
+        let (state, error) = match how {
+            SinkEnd::Stopped => ("stopped", None),
+            SinkEnd::Finished => ("ended", None),
+            SinkEnd::Failed(e) => ("failed", Some(e.to_string())),
+        };
+        sink_stats_json(name, st)
+            .with("end", state)
+            .with_opt("error", error)
+    });
+    crate::machine::event("end")
+        .with("reason", reason)
+        .with("receivers", Value::array(receivers))
 }
 
 mod browse;
@@ -2727,6 +2872,7 @@ mod tests {
         };
         stream(
             Box::new(input),
+            "builtin",
             0,
             vec![Box::new(sink)],
             interrupt::requested,

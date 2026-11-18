@@ -519,6 +519,12 @@ impl Shared {
             queue.close();
         }
         info!("{}: a viewer connected (tab {id})", self.name);
+        crate::machine::emit(
+            crate::machine::event("viewer")
+                .with("name", self.name.as_str())
+                .with("tab", id)
+                .with("state", "connected"),
+        );
         let why = loop {
             if self.lock().shutdown {
                 break "tvpipe stopped".to_owned();
@@ -551,6 +557,12 @@ impl Shared {
             self.cv.notify_all();
             d
         };
+        crate::machine::emit(
+            crate::machine::event("viewer")
+                .with("name", self.name.as_str())
+                .with("tab", id)
+                .with("state", "disconnected"),
+        );
         info!(
             "{}: viewer left (tab {id}: {why}{})",
             self.name,
@@ -669,6 +681,11 @@ impl BrowserSink {
         *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
         let url = format!("http://127.0.0.1:{port}/?t={token}");
         info!("{}: open {url} to watch", opts.name);
+        crate::machine::emit(
+            crate::machine::event("player")
+                .with("name", opts.name.as_str())
+                .with("url", url.as_str()),
+        );
         if opts.open {
             if let Err(e) = crate::browser::platform::open_url(&url) {
                 warn!("{}: --open: {e}", opts.name);

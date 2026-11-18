@@ -1,0 +1,511 @@
+//! The machine interface (`--machine`, docs/machine.md): JSON events on
+//! stdout, commands on stdin, and stop when the parent goes away.
+//!
+//! - [`emit`] writes one event per line. Logs become `log` events
+//!   (`crate::log`), so stdout carries nothing else.
+//! - The stdin router ([`start_router`]) owns stdin from the start. It
+//!   reads SLRW records: `command` records (kind 6) are handled at once,
+//!   media records go to the SLRW input once it opened ([`stdin_reader`]),
+//!   and EOF stops the session (or ends an open SLRW input, which then
+//!   plays out its tail).
+//!
+//! Platform-neutral: std pipes only.
+
+use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+
+use crate::codec::json::Value;
+use crate::error::{Error, Result};
+use crate::media::slrw;
+
+/// The protocol version in `hello`. New fields and event types do not
+/// change it; incompatible changes do.
+pub const PROTOCOL: u32 = 1;
+
+/// Largest `command` payload.
+pub const MAX_COMMAND: u32 = 64 << 10;
+
+/// Records in flight between the router and the SLRW input (each record
+/// is two messages: the header and the payload).
+const FORWARD_QUEUE: usize = 16;
+
+static ENABLED: AtomicBool = AtomicBool::new(false);
+static END_SENT: AtomicBool = AtomicBool::new(false);
+
+/// Turns the machine interface on (`main`, before anything logs).
+pub fn enable() {
+    ENABLED.store(true, Ordering::SeqCst);
+}
+
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
+/// A new event object of `ty`.
+pub fn event(ty: &str) -> Value {
+    Value::object().with("type", ty)
+}
+
+/// Writes `event` as one line on stdout (nothing without `--machine`).
+/// A closed stdout is ignored: the parent stopped listening.
+pub fn emit(event: Value) {
+    if !enabled() {
+        return;
+    }
+    if event["type"].as_str() == Some("end") {
+        END_SENT.store(true, Ordering::SeqCst);
+    }
+    let line = event.to_json();
+    let mut out = io::stdout().lock();
+    let _ = out.write_all(line.as_bytes());
+    let _ = out.write_all(b"\n");
+    let _ = out.flush();
+}
+
+/// `hello`, the first event.
+pub fn hello(command: &str) {
+    emit(
+        event("hello")
+            .with("protocol", PROTOCOL)
+            .with("version", env!("CARGO_PKG_VERSION"))
+            .with("command", command),
+    );
+}
+
+/// `end`, unless the session already sent one (with its details).
+pub fn end_if_unsent(reason: &str) {
+    if !END_SENT.load(Ordering::SeqCst) {
+        emit(event("end").with("reason", reason));
+    }
+}
+
+/// `error`, the last event of a failed command.
+pub fn error_event(e: &Error) -> Value {
+    event("error")
+        .with("kind", e.kind().id())
+        .with_opt("code", e.code())
+        .with("message", e.to_string())
+        .with_opt("device", e.device())
+}
+
+/// The error's fields for a `receiver` event.
+fn with_error(v: Value, e: Option<&Error>) -> Value {
+    match e {
+        Some(e) => v.with("error", e.to_string()).with_opt("code", e.code()),
+        None => v,
+    }
+}
+
+/// A `receiver` state change.
+pub fn receiver(name: &str, protocol: Option<&str>, state: &str, error: Option<&Error>) {
+    if !enabled() {
+        return;
+    }
+    let v = event("receiver")
+        .with("name", name)
+        .with_opt("protocol", protocol)
+        .with("state", state);
+    emit(with_error(v, error));
+}
+
+/// The back channel of an encoded SLRW input in machine mode: each
+/// `keyframe` line becomes a `keyframe` event.
+pub struct KeyframeEvents {
+    line: Vec<u8>,
+}
+
+impl KeyframeEvents {
+    pub fn new() -> KeyframeEvents {
+        KeyframeEvents { line: Vec::new() }
+    }
+}
+
+impl Default for KeyframeEvents {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Write for KeyframeEvents {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        for &b in buf {
+            if b == b'\n' {
+                let word = String::from_utf8_lossy(&self.line).trim().to_owned();
+                self.line.clear();
+                if !word.is_empty() {
+                    emit(event(&word));
+                }
+            } else if self.line.len() < 256 {
+                self.line.push(b);
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The stdin router
+
+/// What the router does with media records.
+enum Mode {
+    /// Nobody reads them yet: dropped, except the last `h264-config` and
+    /// `control`, which go first once the input opens.
+    Holding {
+        config: Option<Vec<u8>>,
+        control: Option<Vec<u8>>,
+    },
+    /// The SLRW input reads them.
+    Forwarding(SyncSender<io::Result<Vec<u8>>>),
+    /// The input is gone, or stdin ended.
+    Closed,
+}
+
+/// What the router reports to the session.
+pub struct Hooks {
+    /// A stop request (`stop` command, EOF while no input reads, a
+    /// malformed stream).
+    pub stop: Box<dyn Fn() + Send + Sync>,
+    /// `keyframe` events (a test substitutes its own).
+    pub keyframe: Box<dyn Fn() + Send + Sync>,
+}
+
+struct Shared {
+    mode: Mutex<Mode>,
+    pins: Mutex<Option<Receiver<String>>>,
+    hooks: Hooks,
+    /// Why the stream was refused (reported as the command's error).
+    failure: Mutex<Option<String>>,
+}
+
+impl Shared {
+    fn mode(&self) -> MutexGuard<'_, Mode> {
+        self.mode.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The running router (one per process; tests make their own).
+#[derive(Clone)]
+pub struct Router(Arc<Shared>);
+
+static ROUTER: OnceLock<Router> = OnceLock::new();
+
+/// Starts the process's router on stdin (`main`, with `--machine`).
+pub fn start_router() {
+    let r = Router::spawn(
+        io::stdin(),
+        Hooks {
+            stop: Box::new(crate::util::interrupt::request),
+            keyframe: Box::new(|| emit(event("keyframe"))),
+        },
+    );
+    let _ = ROUTER.set(r);
+}
+
+/// The process's router, if `--machine` started one.
+pub fn router() -> Option<&'static Router> {
+    ROUTER.get()
+}
+
+/// The SLRW input's stdin: with the router, records reach it from the
+/// first read on; without, stdin itself.
+pub fn stdin_reader() -> Box<dyn Read + Send> {
+    match router() {
+        Some(r) => Box::new(r.reader()),
+        None => Box::new(io::stdin()),
+    }
+}
+
+/// Why the router refused the stream, if it did.
+pub fn failure() -> Option<Error> {
+    let r = router()?;
+    let msg =
+        r.0.failure
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()?;
+    Some(Error::malformed(msg).with_code("bad-input"))
+}
+
+impl Router {
+    /// Reads `input` on a thread of its own.
+    pub fn spawn(input: impl Read + Send + 'static, hooks: Hooks) -> Router {
+        let (pin_tx, pin_rx) = mpsc::channel();
+        let shared = Arc::new(Shared {
+            mode: Mutex::new(Mode::Holding {
+                config: None,
+                control: None,
+            }),
+            pins: Mutex::new(Some(pin_rx)),
+            hooks,
+            failure: Mutex::new(None),
+        });
+        let s = shared.clone();
+        let spawned = std::thread::Builder::new()
+            .name("machine-stdin".into())
+            .spawn(move || route(input, &s, pin_tx));
+        if let Err(e) = spawned {
+            // Without the router nothing would ever stop the session but
+            // a signal; better not to start.
+            error!("cannot read stdin: {e}");
+            (shared.hooks.stop)();
+        }
+        Router(shared)
+    }
+
+    /// A reader of the media records from now on. The first `read`
+    /// switches the router to forwarding.
+    pub fn reader(&self) -> ForwardReader {
+        ForwardReader {
+            router: self.clone(),
+            rx: None,
+            chunk: Vec::new(),
+            pos: 0,
+        }
+    }
+
+    /// Starts forwarding: the magic, the kept configuration and control
+    /// records, then whatever comes.
+    fn claim(&self) -> Receiver<io::Result<Vec<u8>>> {
+        let (tx, rx) = mpsc::sync_channel(FORWARD_QUEUE);
+        let mut mode = self.0.mode();
+        match std::mem::replace(&mut *mode, Mode::Closed) {
+            Mode::Holding { config, control } => {
+                let _ = tx.send(Ok(slrw::MAGIC.to_vec()));
+                let mut keyframes = false;
+                for rec in [control, config].into_iter().flatten() {
+                    if rec.first() == Some(&slrw::Kind::Control.code()) {
+                        keyframes = rec
+                            .get(13..17)
+                            .and_then(|b| b.try_into().ok())
+                            .map(u32::from_le_bytes)
+                            .is_some_and(|f| f & slrw::CONTROL_KEYFRAME_REQUESTS != 0);
+                    }
+                    let _ = tx.send(Ok(rec));
+                }
+                *mode = Mode::Forwarding(tx);
+                drop(mode);
+                if keyframes {
+                    // Keyframes sent before the input opened were dropped.
+                    (self.0.hooks.keyframe)();
+                }
+            }
+            // Claimed twice, or stdin already ended: an empty stream.
+            other => {
+                *mode = match other {
+                    Mode::Forwarding(_) => Mode::Closed,
+                    m => m,
+                };
+            }
+        }
+        rx
+    }
+
+    /// The next PIN from a `pin` command; an error once stdin ended.
+    pub fn wait_pin(&self) -> Result<String> {
+        let rx = self
+            .0
+            .pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .ok_or_else(|| Error::usage("the PIN was asked for already"))?;
+        let pin = rx
+            .recv()
+            .map_err(|_| Error::usage("no PIN entered (stdin closed)").with_code("pin-missing"));
+        *self.0.pins.lock().unwrap_or_else(|e| e.into_inner()) = Some(rx);
+        pin
+    }
+}
+
+/// A record as read: kind, the 13-byte header, the payload.
+type RawRecord = (u8, Vec<u8>, Vec<u8>);
+
+/// Reads one record: `None` at EOF on a record boundary.
+fn read_record(r: &mut impl Read) -> io::Result<Option<RawRecord>> {
+    let mut head = [0u8; 13];
+    if !fill(r, &mut head)? {
+        return Ok(None);
+    }
+    let kind = head[0];
+    let len = u32::from_le_bytes([head[9], head[10], head[11], head[12]]);
+    let max = match kind {
+        0 => 0,
+        6 => MAX_COMMAND,
+        5 => 4,
+        4 => slrw::MAX_CONFIG_PAYLOAD,
+        3 => slrw::MAX_H264_PAYLOAD,
+        1 | 2 => slrw::MAX_PAYLOAD,
+        k => return Err(invalid(format!("unknown record kind {k}"))),
+    };
+    if len > max {
+        return Err(invalid(format!(
+            "record of kind {kind} with {len} bytes exceeds {max}"
+        )));
+    }
+    let mut payload = vec![0u8; len as usize];
+    if len > 0 && !fill(r, &mut payload)? {
+        return Err(invalid("truncated record".into()));
+    }
+    Ok(Some((kind, head.to_vec(), payload)))
+}
+
+fn invalid(msg: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, format!("slrw: {msg}"))
+}
+
+/// Fills `buf`; `Ok(false)` at EOF before the first byte.
+fn fill(r: &mut impl Read, buf: &mut [u8]) -> io::Result<bool> {
+    let mut got = 0;
+    while got < buf.len() {
+        match r.read(&mut buf[got..]) {
+            Ok(0) if got == 0 => return Ok(false),
+            Ok(0) => return Err(invalid("truncated record".into())),
+            Ok(n) => got += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(true)
+}
+
+/// The router thread.
+fn route(mut input: impl Read, s: &Shared, pins: mpsc::Sender<String>) {
+    let end = (|| -> io::Result<()> {
+        let mut magic = [0u8; 4];
+        if !fill(&mut input, &mut magic)? {
+            return Ok(());
+        }
+        if &magic != slrw::MAGIC {
+            return Err(invalid("stdin must start with the SLRW magic".into()));
+        }
+        while let Some((kind, head, payload)) = read_record(&mut input)? {
+            if kind == 6 {
+                command(s, &payload, &pins);
+                continue;
+            }
+            forward(s, kind, head, payload);
+        }
+        Ok(())
+    })();
+    drop(pins);
+    let forwarding = {
+        let mut mode = s.mode();
+        match std::mem::replace(&mut *mode, Mode::Closed) {
+            Mode::Forwarding(tx) => {
+                if let Err(e) = &end {
+                    let _ = tx.send(Err(io::Error::new(e.kind(), e.to_string())));
+                }
+                true
+            }
+            _ => false,
+        }
+    };
+    if let Err(e) = end {
+        error!("stdin: {e}");
+        *s.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(e.to_string());
+        (s.hooks.stop)();
+    } else if !forwarding {
+        // The parent closed our stdin (or exited): nothing reads media,
+        // so this is the end of the session.
+        debug!("stdin closed; stopping");
+        (s.hooks.stop)();
+    }
+}
+
+/// A media record: held, forwarded or dropped.
+fn forward(s: &Shared, kind: u8, mut head: Vec<u8>, payload: Vec<u8>) {
+    let tx = {
+        let mut mode = s.mode();
+        match &mut *mode {
+            Mode::Holding { config, control } => {
+                if kind == slrw::Kind::End.code() {
+                    drop(mode);
+                    debug!("stdin: end of stream before the input opened; stopping");
+                    (s.hooks.stop)();
+                    return;
+                }
+                let keep = match kind {
+                    4 => Some(config),
+                    5 => Some(control),
+                    _ => None,
+                };
+                if let Some(slot) = keep {
+                    head.extend_from_slice(&payload);
+                    *slot = Some(head);
+                }
+                return;
+            }
+            Mode::Forwarding(tx) => tx.clone(),
+            Mode::Closed => return,
+        }
+    };
+    let sent = tx.send(Ok(head)).is_ok() && (payload.is_empty() || tx.send(Ok(payload)).is_ok());
+    if !sent {
+        // The input finished: from now on only commands matter.
+        *s.mode() = Mode::Closed;
+    }
+}
+
+fn command(s: &Shared, payload: &[u8], pins: &mpsc::Sender<String>) {
+    let text = String::from_utf8_lossy(payload);
+    let v = match crate::codec::json::parse(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("stdin: bad command: {e}");
+            return;
+        }
+    };
+    match v["type"].as_str() {
+        Some("stop") => {
+            debug!("stdin: stop");
+            (s.hooks.stop)();
+        }
+        Some("pin") => match v["pin"].as_str() {
+            Some(pin) => {
+                let _ = pins.send(pin.trim().to_owned());
+            }
+            None => warn!("stdin: pin command without a pin"),
+        },
+        other => warn!("stdin: unknown command {other:?}"),
+    }
+}
+
+/// The SLRW input's end of the router.
+pub struct ForwardReader {
+    router: Router,
+    rx: Option<Receiver<io::Result<Vec<u8>>>>,
+    chunk: Vec<u8>,
+    pos: usize,
+}
+
+impl Read for ForwardReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let rx = self.rx.get_or_insert_with(|| self.router.claim());
+        while self.pos >= self.chunk.len() {
+            match rx.recv() {
+                Ok(Ok(c)) => {
+                    self.chunk = c;
+                    self.pos = 0;
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = buf.len().min(self.chunk.len() - self.pos);
+        buf[..n].copy_from_slice(&self.chunk[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests;
