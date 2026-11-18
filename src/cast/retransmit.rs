@@ -6,11 +6,18 @@
 //! [`StreamSender`] does no I/O and takes the current time as an argument,
 //! so it is driven by the sink's threads and tested deterministically.
 //!
-//! Behaviour follows openscreen's `SenderImpl`:
+//! Behaviour follows openscreen's `SenderImpl`, except for the in-flight
+//! window:
 //!
 //! - At most [`MAX_UNACKED_FRAMES`] frame ids between the checkpoint and the
 //!   newest frame, and at most [`StreamSender::max_in_flight`] of media
-//!   duration in flight (2 × RTT clamped to [81.667 ms, ⅔ target delay]).
+//!   duration in flight: target delay + RTT / 2 (at least 81.667 ms), like
+//!   Chromium's `FrameSender::GetAllowedInFlightMediaDuration`. openscreen
+//!   uses 2 × RTT capped at ⅔ of the target delay, which drops frames on
+//!   Wi-Fi: a Google TV receiver (Sony XR, 2026-11-18) sends its feedback in
+//!   bursts with 80–220 ms gaps. A dropped video frame costs us a whole GOP
+//!   (no key frames on demand from ffmpeg), so we only drop once frames
+//!   would be late anyway.
 //! - NACKed packets are re-sent unless they were (re)sent less than one RTT
 //!   before the NACK arrived (the NACK is then likely stale).
 //! - When everything was sent but the receiver has not acknowledged the
@@ -222,10 +229,10 @@ impl StreamSender {
         crate::util::time::ticks_to_duration(ticks, self.cfg.rtp_timebase)
     }
 
-    /// The current in-flight window.
+    /// The current in-flight window: the target delay plus the time an ACK
+    /// takes to come back.
     pub fn max_in_flight(&self) -> Duration {
-        let cap = MIN_IN_FLIGHT.max(self.target_delay * 2 / 3);
-        (self.rtt * 2).clamp(MIN_IN_FLIGHT, cap)
+        (self.target_delay + self.rtt / 2).max(MIN_IN_FLIGHT)
     }
 
     /// Encrypts and queues a frame. `rtp_timestamp` is full-width and must
@@ -405,6 +412,17 @@ impl StreamSender {
             self.cfg.ssrc,
             self.last_enqueued,
         )?;
+        trace!(
+            "rtcp ssrc {}: checkpoint {:?} acks {:?} nacks {:?} pli {} report {:?} logs {} (last sent {})",
+            self.cfg.ssrc,
+            fb.checkpoint,
+            fb.received_frames,
+            fb.nacks,
+            fb.picture_loss,
+            fb.report.map(|r| (r.last_sr, r.delay_since_last_sr, r.cumulative_lost)),
+            fb.logs.len(),
+            self.last_enqueued
+        );
         let mut out = RtcpOutcome::default();
         if let Some(t) = fb.receiver_reference_ntp {
             // Drop stale packets the network reordered.
@@ -779,21 +797,23 @@ mod tests {
     #[test]
     fn limits_frames_in_flight() {
         let t0 = Instant::now();
-        let mut s = sender(400);
-        // Floor of 81.667 ms at 30 fps: frames 0..=2 fit (66.7 ms), the
-        // fourth would make 100 ms.
-        for i in 0..3 {
+        let mut s = sender(200);
+        // Target delay 200 ms, RTT unknown: frames 0..=6 fit (the seventh
+        // spans 200 ms), the eighth would make 233 ms.
+        for i in 0..7 {
             assert!(s.enqueue(&[0; 100], i == 0, i * FRAME_TICKS, t0).is_ok());
         }
         assert_eq!(
-            s.enqueue(&[0; 100], false, 3 * FRAME_TICKS, t0),
+            s.enqueue(&[0; 100], false, 7 * FRAME_TICKS, t0),
             Err(EnqueueError::MaxDurationInFlight)
         );
         assert_eq!(s.stats().dropped, 1);
-        // With a long RTT the window grows up to 2/3 of the target delay.
-        s.rtt = Duration::from_millis(500);
-        assert_eq!(s.max_in_flight(), Duration::from_nanos(266_666_666));
-        assert!(s.enqueue(&[0; 100], false, 3 * FRAME_TICKS, t0).is_ok());
+        // Half the RTT is added: with 100 ms, 250 ms fit.
+        s.rtt = Duration::from_millis(100);
+        assert_eq!(s.max_in_flight(), Duration::from_millis(250));
+        assert!(s.enqueue(&[0; 100], false, 7 * FRAME_TICKS, t0).is_ok());
+        // Tiny target delays keep the floor.
+        assert_eq!(sender(10).max_in_flight(), MIN_IN_FLIGHT);
 
         // The id span limit applies even with tiny durations.
         let mut s = sender(400);
