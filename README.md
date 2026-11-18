@@ -119,7 +119,8 @@ Brave; `--browser PATH` or `$TVPIPE_BROWSER` picks one), headless unless
 `--visible`, opens URL at exactly the stream's size (the TV's screen shape, at
 most 1920x1080 or `--size`) and shares that tab with its sound through the same
 path as `share`.  It never uses your browser profile: each run gets a temporary
-one, deleted afterwards, or `--profile DIR` keeps one (for logins).
+one, deleted afterwards (or by the next run if tvpipe was killed), or
+`--profile DIR` keeps one (for logins).
 
 If the page navigates or reloads, it shares again; if the page or the browser
 crashes, it is started again.  Closing the window (`--visible`) or Ctrl-C ends

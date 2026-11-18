@@ -63,6 +63,10 @@ Open:
 - `--visible` follows the screen's scaling (device scale 1.5 seen on a
   scaled display), so the capture is scaled to the stream.
 - A browser that tvpipe cannot clean up (tvpipe killed with SIGKILL)
-  keeps running with its temp profile; Ctrl-C reaches it too (same
-  process group), and a second Ctrl-C exits at once.
+  keeps running with its temp profile until the next `tvpipe browser`,
+  which sweeps it: every temp profile holds `tvpipe-owner` (pid, the port
+  of a loopback beacon answering a random nonce while its tvpipe runs);
+  without an answer the browser on it is quit through the DevTools
+  endpoint in its own `DevToolsActivePort` (the path holds that browser
+  instance's id) and the directory removed.
 - Not tried: Edge, Brave, Chromium, Linux, Windows; real TVs.

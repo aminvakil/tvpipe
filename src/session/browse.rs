@@ -37,6 +37,8 @@ pub(super) fn browse(opts: BrowseOptions) -> Result<()> {
     // Problems with the browser before any receiver is bothered.
     let bin = launch::find_browser(opts.browser.as_deref())?;
     debug!("browser: using {}", bin.display());
+    // Profiles (and browsers) a killed tvpipe left behind.
+    launch::sweep_stale_profiles();
     if !interrupt::install() {
         warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
     }

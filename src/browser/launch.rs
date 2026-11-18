@@ -6,6 +6,13 @@
 //! - [`Profile`]: the browser's own user-data directory: a fresh temp
 //!   directory (deleted on drop) or `--profile DIR` (kept, for logins).
 //!   Never the user's real browser profile.
+//! - [`sweep_stale_profiles`]: temp profiles a killed tvpipe left behind
+//!   (and the browsers still running on them). A temporary profile holds
+//!   `tvpipe-owner`: the port of a loopback "beacon" its tvpipe answers on
+//!   with a random nonce while it runs; no answer means its tvpipe is
+//!   gone. A browser still on such a profile is asked to quit through the
+//!   DevTools endpoint its own `DevToolsActivePort` names (the path holds
+//!   that browser instance's id, so no other browser can answer it).
 //! - [`Browser::launch`]: starts it with `--remote-debugging-port=0`,
 //!   reads the port from `DevToolsActivePort` in the profile, connects
 //!   [`Cdp`] to the browser endpoint. [`Browser::close`] (and drop) asks
@@ -17,9 +24,11 @@
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -113,27 +122,45 @@ fn app_bundle_executable(p: &Path) -> Option<PathBuf> {
     Some(p.join("Contents/MacOS").join(name))
 }
 
+/// Name prefix of temporary profiles (the only directories the sweep
+/// touches).
+const TEMP_PREFIX: &str = "tvpipe-browser-";
+/// In a temporary profile: `PID PORT NONCE` of its tvpipe's beacon.
+const OWNER_FILE: &str = "tvpipe-owner";
+/// A temporary profile without an owner file is left alone this long
+/// (its tvpipe may be creating it).
+const ORPHAN_AGE: Duration = Duration::from_secs(120);
+
 /// The browser's user-data directory.
 #[derive(Debug)]
 pub struct Profile {
     dir: PathBuf,
     temporary: bool,
+    beacon: Option<Beacon>,
 }
 
 impl Profile {
     /// A fresh directory under the system's temp directory, deleted when
     /// dropped.
     pub fn temporary() -> Result<Profile> {
-        let name = format!(
-            "tvpipe-browser-{}",
-            crate::util::hex::encode(&crate::crypto::ring::random_array::<6>()?)
-        );
-        let dir = std::env::temp_dir().join(name);
+        Profile::temporary_in(&std::env::temp_dir())
+    }
+
+    fn temporary_in(root: &Path) -> Result<Profile> {
+        let nonce = crate::util::hex::encode(&crate::crypto::ring::random_array::<16>()?);
+        let dir = root.join(format!("{TEMP_PREFIX}{}", &nonce[..12]));
         std::fs::create_dir(&dir).map_err(|e| Error::io(format!("create {}", dir.display()), e))?;
-        Ok(Profile {
+        let mut p = Profile {
             dir,
             temporary: true,
-        })
+            beacon: None,
+        };
+        let beacon = Beacon::start(nonce.clone())?;
+        let owner = format!("{} {} {nonce}\n", std::process::id(), beacon.port);
+        p.beacon = Some(beacon);
+        std::fs::write(p.dir.join(OWNER_FILE), owner)
+            .map_err(|e| Error::io(format!("write {}", p.dir.display()), e))?;
+        Ok(p)
     }
 
     /// `--profile DIR`: kept across runs (logins, cookies). Refuses the
@@ -148,6 +175,7 @@ impl Profile {
         Ok(Profile {
             dir,
             temporary: false,
+            beacon: None,
         })
     }
 
@@ -175,6 +203,7 @@ fn check_not_real(dir: &Path, real: &[PathBuf]) -> Result<()> {
 
 impl Drop for Profile {
     fn drop(&mut self) {
+        self.beacon = None;
         if !self.temporary {
             return;
         }
@@ -193,6 +222,222 @@ impl Drop for Profile {
             }
         }
     }
+}
+
+/// Answers connections on a loopback port with `nonce` while its
+/// tvpipe runs (see the module docs).
+#[derive(Debug)]
+struct Beacon {
+    port: u16,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Beacon {
+    fn start(nonce: String) -> Result<Beacon> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .map_err(|e| Error::io("bind the profile beacon", e))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| Error::io("profile beacon address", e))?
+            .port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let st = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("profile-beacon".into())
+            .spawn(move || {
+                for conn in listener.incoming() {
+                    if st.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    if let Ok(mut c) = conn {
+                        let _ = c.set_write_timeout(Some(Duration::from_secs(1)));
+                        let _ = c.write_all(nonce.as_bytes());
+                    }
+                }
+            })
+            .map_err(|e| Error::io("spawn the profile beacon", e))?;
+        Ok(Beacon {
+            port,
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Beacon {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wake the blocking accept.
+        let _ = TcpStream::connect_timeout(
+            &(Ipv4Addr::LOCALHOST, self.port).into(),
+            Duration::from_secs(1),
+        );
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Removes the temporary profiles in the system's temp directory whose
+/// tvpipe is gone (killed before it could clean up), after asking a
+/// browser still running on one to quit. Returns how many it removed.
+pub fn sweep_stale_profiles() -> usize {
+    sweep_in(&std::env::temp_dir(), ORPHAN_AGE)
+}
+
+fn sweep_in(root: &Path, orphan_age: Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for e in entries.flatten() {
+        if !e.file_name().to_string_lossy().starts_with(TEMP_PREFIX)
+            || !e.file_type().is_ok_and(|t| t.is_dir())
+        {
+            continue;
+        }
+        let dir = e.path();
+        let closed = match owner(&dir, orphan_age) {
+            Owner::Alive => continue,
+            // Made by a tvpipe without beacons (or being made): only
+            // removed when no browser runs on it.
+            Owner::Unknown if browser_answers(&dir) => continue,
+            Owner::Unknown => Ok(false),
+            Owner::Gone => close_stale_browser(&dir),
+        };
+        let closed = match closed {
+            Ok(closed) => closed,
+            Err(e) => {
+                warn!(
+                    "browser: {} was left by an earlier run, but its browser {e}; leaving it",
+                    dir.display()
+                );
+                continue;
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let gone = loop {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => break true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break true,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100))
+                }
+                Err(e) => {
+                    debug!("browser: cannot delete {}: {e}", dir.display());
+                    break false;
+                }
+            }
+        };
+        if gone {
+            removed += 1;
+            info!(
+                "browser: removed {} left by an earlier run{}",
+                dir.display(),
+                if closed {
+                    " (and quit its browser)"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+    removed
+}
+
+/// Whether the tvpipe that made a temporary profile still runs.
+#[derive(Debug, PartialEq, Eq)]
+enum Owner {
+    /// Its beacon answers (or the directory is being made).
+    Alive,
+    /// Its beacon does not answer, or the owner file is garbage.
+    Gone,
+    /// No owner file and older than the orphan age.
+    Unknown,
+}
+
+fn owner(dir: &Path, orphan_age: Duration) -> Owner {
+    let Ok(owner) = std::fs::read_to_string(dir.join(OWNER_FILE)) else {
+        let age = std::fs::metadata(dir)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
+        return if age.is_none_or(|a| a < orphan_age) {
+            Owner::Alive
+        } else {
+            Owner::Unknown
+        };
+    };
+    let mut f = owner.split_whitespace();
+    let (_pid, port, nonce) = (f.next(), f.next(), f.next());
+    match (port.and_then(|p| p.parse::<u16>().ok()), nonce) {
+        (Some(port), Some(nonce)) if beacon_answers(port, nonce) => Owner::Alive,
+        _ => Owner::Gone,
+    }
+}
+
+/// Whether a browser answers on the DevTools endpoint `dir` names.
+fn browser_answers(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("DevToolsActivePort"))
+        .ok()
+        .and_then(|s| parse_active_port(&s))
+        .is_some_and(|(port, path)| {
+            Cdp::connect(
+                &format!("ws://127.0.0.1:{port}{path}"),
+                Duration::from_secs(2),
+            )
+            .is_ok()
+        })
+}
+
+fn beacon_answers(port: u16, nonce: &str) -> bool {
+    let addr = (Ipv4Addr::LOCALHOST, port).into();
+    let Ok(mut c) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
+        return false;
+    };
+    let _ = c.set_read_timeout(Some(Duration::from_secs(1)));
+    let mut got = Vec::new();
+    let _ = Read::by_ref(&mut c).take(64).read_to_end(&mut got);
+    got == nonce.as_bytes()
+}
+
+/// Asks a browser still running on the stale profile `dir` to quit, by
+/// the DevTools endpoint in its `DevToolsActivePort`. `Ok(true)`: one
+/// quit; `Ok(false)`: none answers; an error: one answers but does not
+/// quit.
+fn close_stale_browser(dir: &Path) -> Result<bool> {
+    let Some((port, path)) = std::fs::read_to_string(dir.join("DevToolsActivePort"))
+        .ok()
+        .and_then(|s| parse_active_port(&s))
+    else {
+        return Ok(false);
+    };
+    let Ok(cdp) = Cdp::connect(
+        &format!("ws://127.0.0.1:{port}{path}"),
+        Duration::from_secs(2),
+    ) else {
+        return Ok(false);
+    };
+    let _ = cdp.call_timeout(
+        None,
+        "Browser.close",
+        Value::object(),
+        Duration::from_secs(2),
+    );
+    drop(cdp);
+    // Gone once its DevTools port refuses connections.
+    let deadline = Instant::now() + QUIT_TIMEOUT;
+    let addr = (Ipv4Addr::LOCALHOST, port).into();
+    while TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+        if Instant::now() >= deadline {
+            return Err(Error::timeout("does not quit"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Its helper processes follow it.
+    std::thread::sleep(Duration::from_millis(300));
+    Ok(true)
 }
 
 /// How to start the browser.
@@ -581,6 +826,129 @@ mod tests {
         drop(p);
         assert!(keep.is_dir());
         std::fs::remove_dir_all(&keep).unwrap();
+    }
+
+    #[test]
+    fn stale_profiles_are_swept() {
+        let root = std::env::temp_dir().join(format!("tvpipe-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let mk = |name: &str, owner: Option<String>| {
+            let d = root.join(name);
+            std::fs::create_dir(&d).unwrap();
+            if let Some(o) = owner {
+                std::fs::write(d.join(OWNER_FILE), o).unwrap();
+            }
+            d
+        };
+        // Its tvpipe runs.
+        let live = Profile::temporary_in(&root).unwrap();
+        let owner = std::fs::read_to_string(live.dir().join(OWNER_FILE)).unwrap();
+        assert!(
+            owner.starts_with(&format!("{} ", std::process::id())),
+            "{owner}"
+        );
+        // Its tvpipe was killed: no beacon, the directory and a
+        // DevToolsActivePort of a browser that is gone as well.
+        let mut dead = Profile::temporary_in(&root).unwrap();
+        dead.beacon = None;
+        dead.temporary = false;
+        let dead_dir = dead.dir().to_path_buf();
+        drop(dead);
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let gone_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        std::fs::write(
+            dead_dir.join("DevToolsActivePort"),
+            format!("{gone_port}\n/devtools/browser/x\n"),
+        )
+        .unwrap();
+        // Something else on the beacon's port (it does not say the nonce).
+        let other = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = other.local_addr().unwrap().port();
+        let squatted = mk(
+            &format!("{TEMP_PREFIX}squatted"),
+            Some(format!("1 {port} 00ff")),
+        );
+        let garbage = mk(&format!("{TEMP_PREFIX}garbage"), Some("x".into()));
+        // Being made (no owner file yet), and not ours.
+        let fresh = mk(&format!("{TEMP_PREFIX}fresh"), None);
+        let unrelated = mk("tvpipe-session-1", Some("1 1 1".into()));
+
+        assert_eq!(sweep_in(&root, ORPHAN_AGE), 3);
+        for d in [&dead_dir, &squatted, &garbage] {
+            assert!(!d.exists(), "{} was kept", d.display());
+        }
+        for d in [live.dir(), &fresh, &unrelated] {
+            assert!(d.exists(), "{} was removed", d.display());
+        }
+        // An old directory without an owner file goes too.
+        assert_eq!(sweep_in(&root, Duration::ZERO), 1);
+        assert!(!fresh.exists() && live.dir().exists());
+        drop(other);
+        let live_dir = live.dir().to_path_buf();
+        drop(live);
+        assert!(!live_dir.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A browser left running by a killed tvpipe is quit, its profile
+    /// removed (opt-in: TVPIPE_TEST_CHROME=/path/to/chrome).
+    #[test]
+    #[ignore]
+    fn chrome_left_by_a_killed_tvpipe_is_swept() {
+        let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
+            eprintln!("TVPIPE_TEST_CHROME not set");
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("tvpipe-sweep-chrome-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let mut profile = Profile::temporary_in(&root).unwrap();
+        let opts = LaunchOptions {
+            bin: bin.into(),
+            viewport: (640, 360),
+            visible: false,
+        };
+        let mut browser = Browser::launch(&opts, &profile).unwrap();
+        // tvpipe dies: nobody closes the browser or deletes the profile.
+        let mut child = browser.child.take().unwrap();
+        drop(browser);
+        profile.beacon = None;
+        profile.temporary = false;
+        let dir = profile.dir().to_path_buf();
+        drop(profile);
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the browser should still run"
+        );
+
+        // Without an owner file (a tvpipe from before the beacons) a
+        // profile with a running browser is left alone.
+        let owner = std::fs::read(dir.join(OWNER_FILE)).unwrap();
+        std::fs::remove_file(dir.join(OWNER_FILE)).unwrap();
+        assert_eq!(sweep_in(&root, Duration::ZERO), 0);
+        assert!(child.try_wait().unwrap().is_none());
+        std::fs::write(dir.join(OWNER_FILE), owner).unwrap();
+
+        assert_eq!(sweep_in(&root, ORPHAN_AGE), 1);
+        assert!(!dir.exists());
+        let status = child.try_wait().unwrap();
+        assert!(status.is_some(), "the browser still runs");
+        if !cfg!(windows) {
+            let out = Command::new("ps")
+                .args(["-A", "-o", "command="])
+                .output()
+                .unwrap();
+            let needle = dir.to_string_lossy().into_owned();
+            let left: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| l.contains(&needle))
+                .map(str::to_owned)
+                .collect();
+            assert!(left.is_empty(), "browser processes left: {left:#?}");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
