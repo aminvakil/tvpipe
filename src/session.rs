@@ -1970,8 +1970,9 @@ mod tests {
     }
 
     /// What a Cast receiver got of a track whose sink accepted `accepted`
-    /// frames: no more, and no holes (losses are retransmitted). Frames
-    /// still being paced out when STOP comes may be missing at the end.
+    /// frames: a prefix of them, from frame 0 without holes (losses are
+    /// retransmitted). Frames still being paced out when STOP comes may
+    /// be missing at the end.
     pub(super) fn assert_cast_frames(
         frames: &std::collections::BTreeMap<
             crate::cast::rtp::FrameId,
@@ -1980,6 +1981,7 @@ mod tests {
         accepted: u64,
     ) {
         assert!(!frames.is_empty());
+        assert_eq!(frames.keys().next(), Some(&0), "the first frame is missing");
         assert!(
             frames.len() as u64 <= accepted,
             "{} > {accepted}",

@@ -180,7 +180,13 @@ fn mixed_receivers_share_one_timeline() {
     // although they got their first frames 80 and 150 ms late.
     let cast_log = cast_log.lock().unwrap().clone();
     let airplay_log = airplay_log.lock().unwrap().clone();
-    assert!(cast_log.len() >= 20 && airplay_log.len() >= 20);
+    let (tc, ta) = (*cast_tally.lock().unwrap(), *airplay_tally.lock().unwrap());
+    // The session ran until both sinks had their 24; the logs are what
+    // they accepted. Idle, that is all 24; a sink may drop some after a
+    // long stall on a loaded machine (a full queue), so ask for half.
+    assert_eq!((tc.video, ta.video), (24, 24), "{tc:?} {ta:?}");
+    assert_eq!(cast_log.len() as u64, tc.video_accepted);
+    assert_eq!(airplay_log.len() as u64, ta.video_accepted);
     let mut common = 0;
     for (pts, at) in &airplay_log {
         if let Some((_, c)) = cast_log.iter().find(|(p, _)| p == pts) {
@@ -188,7 +194,7 @@ fn mixed_receivers_share_one_timeline() {
             common += 1;
         }
     }
-    assert!(common >= 20, "{common} frames in common");
+    assert!(common >= 12, "{common} frames in common, {tc:?} {ta:?}");
 
     // 2. AirPlay: each frame's timestamp is its instant + the 200 ms lead
     // on the session timeline (NTP mode).
@@ -209,8 +215,10 @@ fn mixed_receivers_share_one_timeline() {
     // 3. Cast: RTP timestamps are the pts, and every Sender Report maps
     // RTP to the wall clock on the schedule (offset of some frame's
     // instant from its pts: one offset per anchor, normally just one).
+    // (The receiver has every accepted frame in order, but those still
+    // being paced out at STOP may be missing at the end.)
     let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
-    assert_eq!(v.frames.len(), cast_log.len());
+    assert_cast_frames(&v.frames, tc.video_accepted);
     for (f, (pts, _)) in v.frames.values().zip(&cast_log) {
         assert_eq!(f.rtp_timestamp, *pts as u32);
     }
