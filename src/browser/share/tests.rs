@@ -115,7 +115,10 @@ fn run_page(ws_url: &str, script: PageScript) -> PageSeen {
         }
         cv.notify_all();
     });
-    let t0 = Instant::now();
+    // One clock for every fake page, like the real pages' wall clock
+    // (timeOrigin + now()).
+    static BASE: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let t0 = *BASE.get_or_init(Instant::now);
     let clock = move || 5_000_000 + t0.elapsed().as_micros() as u64;
     let hello = Value::object()
         .with("type", "hello")
@@ -457,6 +460,131 @@ fn ended_before_the_plan_lets_another_capture_take_over() {
         .start(&plan(160, 120, 30, false), input_opts(false), never)
         .unwrap();
     assert_eq!(drain(&mut input).len(), 5);
+    drop(input);
+    page.join().unwrap();
+}
+
+#[test]
+fn rejoin_mode_keeps_streaming_across_pages() {
+    let server = ShareServer::bind(0).unwrap();
+    server.set_rejoin(true);
+    server.configure(&config(&[]));
+    let handle = server.handle();
+    assert_eq!(handle.ws_url(), server.ws_url());
+    let url = server.ws_url();
+    let script = PageScript {
+        frames: 20,
+        audio: true,
+        send_ended: false,
+        ..PageScript::default()
+    };
+    let first = spawn_page(url.clone(), script.clone());
+    server.wait_capture(never).unwrap();
+    let mut input = server
+        .start(&plan(160, 96, 10, true), input_opts(true), never)
+        .unwrap();
+    let mut frames = Vec::new();
+    // The first page streams and closes (a navigation): the input waits.
+    let mut second = None;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut video = 0;
+    while video < 40 {
+        assert!(Instant::now() < deadline, "only {video} video frames");
+        let f = input.next_frame().unwrap().expect("the input ended");
+        if f.track == TrackKind::Video {
+            video += 1;
+        }
+        frames.push(f);
+        if video == 20 && second.is_none() {
+            // A new document of the same tab shares again, with another
+            // capture size: its plan is the same frame, its content placed.
+            second = Some(spawn_page(
+                url.clone(),
+                PageScript {
+                    capture: (320, 240),
+                    ..script.clone()
+                },
+            ));
+        }
+    }
+    handle.end("the browser was closed");
+    let rest = drain(&mut input);
+    frames.extend(rest);
+    let video: Vec<_> = frames
+        .iter()
+        .filter(|f| f.track == TrackKind::Video)
+        .collect();
+    assert_eq!(video.len(), 40);
+    assert!(
+        video[0].keyframe && video[20].keyframe,
+        "each page starts with an IDR"
+    );
+    assert!(
+        video.windows(2).all(|w| w[0].pts < w[1].pts),
+        "one timeline"
+    );
+    assert!(frames.iter().any(|f| f.track != TrackKind::Video));
+    drop(input);
+    let seen1 = first.join().unwrap();
+    let seen2 = second.unwrap().join().unwrap();
+    assert!(!seen1.busy && !seen2.busy);
+    let p2 = seen2.plan.unwrap();
+    assert_eq!(p2.get("width").unwrap().as_u32(), Some(160));
+    let content = p2.get("content").unwrap();
+    // 320x240 in 160x96: pillarboxed.
+    assert_eq!(content.get("height").unwrap().as_u32(), Some(96));
+    assert_eq!(content.get("width").unwrap().as_u32(), Some(128));
+}
+
+#[test]
+fn a_failed_source_ends_the_wait_and_the_input() {
+    let server = ShareServer::bind(0).unwrap();
+    server.set_rejoin(true);
+    server.configure(&config(&[]));
+    let handle = server.handle();
+    let h = handle.clone();
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        h.fail(Error::process("the browser died 4 times"));
+    });
+    assert!(server.wait_capture(never).is_none());
+    t.join().unwrap();
+    let e = server.failure().unwrap();
+    assert_eq!(e.kind(), ErrorKind::Process);
+    assert!(e.to_string().contains("died 4 times"));
+
+    // Mid-stream: the input fails with it.
+    let server = ShareServer::bind(0).unwrap();
+    server.set_rejoin(true);
+    server.configure(&config(&[]));
+    let handle = server.handle();
+    let page = spawn_page(
+        server.ws_url(),
+        PageScript {
+            frames: 10,
+            audio: false,
+            send_ended: false,
+            ..PageScript::default()
+        },
+    );
+    server.wait_capture(never).unwrap();
+    let mut input = server
+        .start(&plan(160, 96, 30, false), input_opts(false), never)
+        .unwrap();
+    let mut n = 0;
+    let err = loop {
+        match input.next_frame() {
+            Ok(Some(_)) => {
+                n += 1;
+                if n == 10 {
+                    handle.fail(Error::process("gave up"));
+                }
+            }
+            Ok(None) => panic!("ended instead of failing"),
+            Err(e) => break e,
+        }
+    };
+    assert!(err.to_string().contains("gave up"), "{err}");
     drop(input);
     page.join().unwrap();
 }

@@ -12,6 +12,14 @@
 //! H.264, PCM for AirPlay, `aacenc` AAC for Cast. Keyframe requests go
 //! back to the page as `keyframe` messages. The input ends when the share
 //! ends or the page goes away.
+//!
+//! With [`ShareServer::set_rejoin`] (the headless browser, W13) a source
+//! page that goes away mid-stream does not end the input: tvpipe's
+//! browser re-shares after a navigation, a reload or a crash, and the
+//! newest page that captures becomes the source and gets the same plan.
+//! The stream goes on with a gap; the page's clock is wall-clock time, so
+//! the timeline stays continuous. [`ShareHandle::fail`] ends it instead
+//! (the browser cannot be brought back).
 
 use std::net::{SocketAddr, TcpStream};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
@@ -55,6 +63,10 @@ enum Event {
     Stats(Value),
     Ended(String),
     Failed(Error),
+    /// Rejoin mode: the source page went away (why); another may come.
+    Detached(String),
+    /// Rejoin mode: page `id` captured and is the source now.
+    Attached(u64),
 }
 
 #[derive(Default)]
@@ -74,6 +86,12 @@ struct State {
     /// The plan went out: records flow to the input.
     streaming: bool,
     shutdown: bool,
+    /// A source page that goes away may be replaced (see the module docs).
+    rejoin: bool,
+    /// Why the source cannot come back ([`ShareHandle::fail`]).
+    failed: Option<(ErrorKind, String)>,
+    /// The source is gone for good, without an error ([`ShareHandle::end`]).
+    ended: bool,
 }
 
 struct Shared {
@@ -208,7 +226,26 @@ impl Shared {
                     }
                     Ok(PageMsg::Capture(info)) => {
                         let mut st = self.lock();
-                        if st.active.is_none() && !st.streaming {
+                        if st.rejoin && st.active != Some(id) {
+                            // The newest capture is the source (the old
+                            // page is navigating away).
+                            info!(
+                                "share: page {id} captures {}x{}{}",
+                                info.width,
+                                info.height,
+                                if info.audio { " with audio" } else { "" }
+                            );
+                            st.active = Some(id);
+                            st.capture = Some(info);
+                            st.clock = clock;
+                            self.cv.notify_all();
+                            if st.streaming {
+                                drop(st);
+                                if self.events.send(Event::Attached(id)).is_err() {
+                                    break "tvpipe stopped".to_owned();
+                                }
+                            }
+                        } else if st.active.is_none() && !st.streaming {
                             info!(
                                 "share: capturing {} {}x{}{}{}",
                                 info.surface.as_deref().unwrap_or("a surface"),
@@ -274,7 +311,11 @@ impl Shared {
         let mut st = self.lock();
         st.clients.retain(|(c, _)| *c != id);
         if st.active == Some(id) {
-            if st.streaming {
+            if st.streaming && st.rejoin {
+                st.active = None;
+                st.capture = None;
+                let _ = self.events.try_send(Event::Detached(why));
+            } else if st.streaming {
                 let _ = self.events.try_send(Event::Ended(why));
             } else {
                 // Not started yet: another capture may take its place.
@@ -340,6 +381,26 @@ impl ShareServer {
         })
     }
 
+    /// Keep streaming when the source page goes away, until another page
+    /// captures (see the module docs).
+    pub fn set_rejoin(&self, on: bool) {
+        self.shared.lock().rejoin = on;
+    }
+
+    /// A handle that can end the session from another thread.
+    pub fn handle(&self) -> ShareHandle {
+        ShareHandle(self.shared.clone())
+    }
+
+    /// Why [`ShareHandle::fail`] ended the session, if it did.
+    pub fn failure(&self) -> Option<Error> {
+        self.shared
+            .lock()
+            .failed
+            .as_ref()
+            .map(|(kind, msg)| Error::new(*kind, msg.clone()))
+    }
+
     /// The page's URL (with the token).
     pub fn url(&self) -> &str {
         &self.url
@@ -375,11 +436,12 @@ impl ShareServer {
         self.end_reason = reason.to_owned();
     }
 
-    /// Waits until a page starts a capture; `None` on a stop request.
+    /// Waits until a page starts a capture; `None` on a stop request (or
+    /// a [`failure`](Self::failure)).
     pub fn wait_capture(&self, stop: StopFn) -> Option<CaptureInfo> {
         let mut st = self.shared.lock();
         loop {
-            if stop() {
+            if stop() || st.failed.is_some() || st.ended {
                 return None;
             }
             if let Some(c) = &st.capture {
@@ -430,6 +492,7 @@ impl ShareServer {
         };
         let mut input = ShareInput {
             server: self,
+            plan: plan.clone(),
             sender,
             st,
             info: StreamInfo {
@@ -449,6 +512,8 @@ impl ShareServer {
             lag: Lag::default(),
             page_stats: None,
             agent,
+            last_video: None,
+            gap_since: None,
         };
         match input.first_keyframe() {
             Ok(()) => Ok(input),
@@ -496,6 +561,39 @@ impl Drop for ShareServer {
 
 /// A page's clock (µs) and when we read it.
 type PageClock = Option<(Instant, u64)>;
+
+/// Ends a share from another thread (the headless browser's keeper).
+#[derive(Clone)]
+pub struct ShareHandle(Arc<Shared>);
+
+impl ShareHandle {
+    /// The source cannot come back: the input fails with `e` (or the
+    /// wait for a capture ends; see [`ShareServer::failure`]).
+    pub fn fail(&self, e: Error) {
+        let mut st = self.0.lock();
+        if st.failed.is_none() {
+            st.failed = Some((e.kind(), e.message().to_owned()));
+        }
+        self.0.cv.notify_all();
+        drop(st);
+        let _ = self.0.events.try_send(Event::Failed(e));
+    }
+
+    /// The source is gone for good (the user closed the browser): the
+    /// input ends like a file, or the wait for a capture ends.
+    pub fn end(&self, reason: &str) {
+        let mut st = self.0.lock();
+        st.ended = true;
+        self.0.cv.notify_all();
+        drop(st);
+        let _ = self.0.events.try_send(Event::Ended(reason.to_owned()));
+    }
+
+    /// The WebSocket URL a capture script connects to.
+    pub fn ws_url(&self) -> String {
+        format!("ws://127.0.0.1:{}/ws?t={}", self.0.port, self.0.token)
+    }
+}
 
 /// The input side of [`ShareServer::start`].
 pub struct ShareInputOptions {
@@ -555,6 +653,8 @@ impl Lag {
 /// H.264 + PCM from the share page.
 pub struct ShareInput {
     server: ShareServer,
+    /// What every source page gets (rejoin mode: again for each).
+    plan: SharePlan,
     sender: Sender<TcpStream>,
     st: EncodedState,
     info: StreamInfo,
@@ -566,6 +666,10 @@ pub struct ShareInput {
     lag: Lag,
     page_stats: Option<Value>,
     agent: String,
+    /// When the last video record came, and since when there is none
+    /// (rejoin mode: the page went away).
+    last_video: Option<Instant>,
+    gap_since: Option<Instant>,
 }
 
 impl ShareInput {
@@ -616,10 +720,58 @@ impl ShareInput {
                 self.st.end();
             }
             Ok(Event::Failed(e)) => return Err(e),
-            Err(RecvTimeoutError::Timeout) => {}
+            Ok(Event::Detached(why)) => {
+                info!("share: the page stopped sharing ({why}); waiting for it to share again");
+                self.gap_since = self.last_video.or(Some(Instant::now()));
+            }
+            Ok(Event::Attached(id)) => self.attach(id)?,
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(e) = self.server.failure() {
+                    return Err(e);
+                }
+            }
             Err(RecvTimeoutError::Disconnected) => self.st.end(),
         }
         Ok(true)
+    }
+
+    /// Rejoin mode: page `id` captured; it gets the plan and is the
+    /// source from now on.
+    fn attach(&mut self, id: u64) -> Result<()> {
+        let (sender, clock, agent, capture) = {
+            let st = self.server.shared.lock();
+            if st.active != Some(id) {
+                // Already replaced by a newer page (its own event follows).
+                return Ok(());
+            }
+            let Some(sender) = st
+                .clients
+                .iter()
+                .find(|(c, _)| *c == id)
+                .map(|(_, s)| s.clone())
+            else {
+                return Ok(());
+            };
+            (sender, st.clock, st.agent.clone(), st.capture.clone())
+        };
+        let mut plan = self.plan.clone();
+        if let Some(c) = &capture {
+            plan.content = crate::browser::layout::place(
+                (c.width.max(1), c.height.max(1)),
+                (plan.width, plan.height),
+            );
+        }
+        if let Err(e) = sender.send_text(&plan.to_json()) {
+            debug!("share: page {id} went away before its plan: {e}");
+            return Ok(());
+        }
+        info!("share: page {id} shares again");
+        self.sender = sender;
+        self.clock = clock;
+        self.agent = agent;
+        // Its avcC says (it comes before its first chunk).
+        self.length_size = 4;
+        Ok(())
     }
 
     fn packet(&mut self, mut p: Packet) -> Result<()> {
@@ -628,10 +780,19 @@ impl ShareInput {
             // up) would only make the session's clock start that late.
             Kind::Audio if !self.st.started() => return Ok(()),
             Kind::H264Config if p.payload.first() == Some(&slrw::CONFIG_AVCC) => {
+                debug!("share: avcC {}", crate::util::hex::encode(&p.payload[1..]));
                 let cfg = h264::AvcConfig::parse(&p.payload[1..])?;
                 self.length_size = cfg.length_size as usize;
             }
             Kind::H264 => {
+                let now = Instant::now();
+                if let Some(since) = self.gap_since.take() {
+                    info!(
+                        "share: video again after a {} ms gap",
+                        now.duration_since(since).as_millis()
+                    );
+                }
+                self.last_video = Some(now);
                 if let Some((at, page_us)) = self.clock {
                     let page_now = page_us as f64 + at.elapsed().as_secs_f64() * 1e6;
                     self.lag.add((page_now - p.pts_us as f64) / 1000.0);
