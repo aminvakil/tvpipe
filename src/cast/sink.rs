@@ -13,12 +13,13 @@
 //! receiver ending the session. [`Sink::push`] only converts, encrypts and
 //! queues; it never waits for the network.
 //!
-//! Timing: the first frame pushed anchors a
-//! [`media::clock`](crate::media::clock) (its arrival instant ↔ its pts);
-//! every frame's reference time is derived from its pts on that clock, so audio and video
-//! stay in sync, and the receiver plays each frame at reference time +
-//! target delay. If frames arrive later than their reference time by more
-//! than [`MAX_LATENESS`] (a stalled encoder), the clock is moved forward.
+//! Timing: every frame's reference time is derived from its pts on the
+//! session's [`media::clock`](crate::media::clock) (handed over by the
+//! fanout with [`Sink::set_clock`], shared with the other receivers;
+//! decision 0010), so audio and video stay in sync, and the receiver plays
+//! each frame at reference time + target delay. Without a session clock
+//! the first frame pushed anchors a private one, moved forward when frames
+//! arrive more than [`MAX_LATENESS`] late (a stalled encoder).
 //!
 //! AAC-LC goes out ADTS-framed by default ([`AacFraming::Adts`]), one
 //! access unit per Cast frame, as Chromium's Cast sender does
@@ -51,7 +52,7 @@ use super::streaming::{
 use crate::codec::protobuf::CastMessage;
 use crate::crypto::ring::random_array;
 use crate::error::{Error, ErrorKind, Result};
-use crate::media::clock::MediaClock;
+use crate::media::clock::{SessionClock, SinkClock, Tolerance};
 use crate::types::{
     AudioCodec, AudioFamily, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus, TrackKind,
     VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
@@ -283,30 +284,20 @@ fn wait_for<T>(
     }
 }
 
-/// Maps media pts to reference instants (shared by audio and video) on a
-/// `media::clock`, anchored on the first frame. Early frames keep their
-/// pts-derived (future) reference time: ffmpeg delivers in bursts, and
-/// moving the anchor earlier would squeeze a burst's frames together.
-/// Frames more than [`MAX_LATENESS`] late (a stalled encoder) or far in the
-/// future (a jump in the input) re-anchor the clock to now.
-fn reference_time(clock: &MediaClock, pts: u64, rate: u32, now: Instant) -> Instant {
-    let max_early = Duration::from_secs(2);
-    let in_window = |late: i128| {
-        late <= MAX_LATENESS.as_nanos() as i128 && -late <= max_early.as_nanos() as i128
-    };
-    match (clock.lateness(pts, rate, now), clock.instant_for(pts, rate)) {
-        (Some(late), Some(t)) if in_window(late) => t,
-        (late, _) => {
-            if let Some(late) = late {
-                debug!(
-                    "cast: re-anchoring media clock ({} ms late)",
-                    late / 1_000_000
-                );
-            }
-            clock.reanchor_at(pts, rate, now);
-            now
-        }
-    }
+/// The private clock's rule (a sink used without a fanout): early frames
+/// keep their pts-derived (future) reference times (ffmpeg delivers in
+/// bursts); frames more than [`MAX_LATENESS`] late (a stalled encoder) or
+/// far in the future (a jump in the input) re-anchor it to now.
+const PRIVATE_CLOCK: Tolerance = Tolerance {
+    late: MAX_LATENESS,
+    early: Duration::from_secs(2),
+};
+
+/// Maps media pts to reference instants (shared by audio and video): on
+/// the session's clock (decision 0010) when the fanout handed one over,
+/// else on a private one anchored on the first frame ([`PRIVATE_CLOCK`]).
+fn reference_time(clock: &SinkClock, pts: u64, rate: u32, now: Instant) -> Instant {
+    clock.instant(pts, rate, now)
 }
 
 /// Instant → NTP mapping fixed at session start.
@@ -360,7 +351,7 @@ impl Track {
 struct MediaState {
     audio: Option<Track>,
     video: Option<Track>,
-    clock: MediaClock,
+    clock: SinkClock,
     /// Dropping video until the next key frame (start, or our own drop).
     video_needs_key: bool,
     /// Something changed; the sender thread should look again.
@@ -485,6 +476,8 @@ pub struct StreamingSink {
     control_stop: Arc<AtomicBool>,
     finished: Arc<AtomicBool>,
     media: Option<Media>,
+    /// The session's media clock (from the fanout), if any.
+    clock: Option<SessionClock>,
     stopped: bool,
 }
 
@@ -527,6 +520,7 @@ impl StreamingSink {
             control_stop,
             finished,
             media: None,
+            clock: None,
             stopped: false,
         })
     }
@@ -594,6 +588,10 @@ impl Sink for StreamingSink {
         &self.caps
     }
 
+    fn set_clock(&mut self, clock: SessionClock) {
+        self.clock = Some(clock);
+    }
+
     fn start(&mut self, video: &VideoInfo, audio: Option<&AudioInfo>) -> Result<()> {
         if self.media.is_some() {
             return Err(Error::protocol("cast: sink already started"));
@@ -653,7 +651,10 @@ impl Sink for StreamingSink {
             video: vsel
                 .map(|sel| self.make_track(&sel, VIDEO_CLOCK_RATE, packet_size))
                 .transpose()?,
-            clock: MediaClock::new(),
+            clock: self
+                .clock
+                .clone()
+                .map_or_else(|| SinkClock::private(PRIVATE_CLOCK), SinkClock::shared),
             video_needs_key: true,
             dirty: false,
             stopped: false,
@@ -1047,7 +1048,7 @@ mod tests {
 
     #[test]
     fn media_clock_anchors_and_reanchors() {
-        let c = MediaClock::new();
+        let c = SinkClock::private(PRIVATE_CLOCK);
         let r = |secs: f64, now| reference_time(&c, (secs * 90_000.0) as u64, 90_000, now);
         let t0 = Instant::now();
         assert_eq!(r(10.0, t0), t0);

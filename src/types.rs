@@ -186,6 +186,14 @@ pub trait Sink: Send {
     /// Valid after connect.
     fn capabilities(&self) -> &Capabilities;
 
+    /// The session's media clock (decision 0010), handed over by the
+    /// fanout before [`Sink::start`]: the sink maps pts to instants on it
+    /// instead of anchoring a clock of its own on the first frame it gets,
+    /// so every receiver shares one timeline. Wrappers must forward it.
+    fn set_clock(&mut self, clock: crate::media::clock::SessionClock) {
+        let _ = clock;
+    }
+
     /// Sets up the media streams. `audio` is the track of this sink's
     /// [`AudioFamily`], if any.
     fn start(&mut self, video: &VideoInfo, audio: Option<&AudioInfo>) -> Result<()>;

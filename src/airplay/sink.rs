@@ -17,9 +17,11 @@
 //! wrapped as verbatim ALAC, encrypted and sent at once (with a sync
 //! packet first and then every second).
 //!
-//! Timing: a shared [`MediaClock`] maps pts to capture instants (anchored
-//! on the first frame, re-anchored when frames are more than
-//! [`MAX_LATENESS`] late or [`MAX_EARLY`] early); the session timeline
+//! Timing: the session's [`MediaClock`] (handed over by the fanout with
+//! [`Sink::set_clock`], shared with the other receivers; decision 0010)
+//! maps pts to capture instants; without one, a private clock is anchored
+//! on the first frame and re-anchored when frames are more than
+//! [`MAX_LATENESS`] late or [`MAX_EARLY`] early. The session timeline
 //! (PTP via response headers, or NTP) maps those to receiver time.
 //!
 //! Sources: docs/spec/airplay-mirroring.md §4.8, §4.11, §4.13, §6, §7.4,
@@ -52,7 +54,7 @@ use crate::airplay::timing::{
     anchor_from_headers, fp_from_duration, fp_to_ns, ntp_clock, Timeline, NTP_EPOCH_OFFSET_FP,
 };
 use crate::error::{Error, Result};
-use crate::media::clock::MediaClock;
+use crate::media::clock::{SessionClock, SinkClock, Tolerance};
 use crate::media::h264::{self, AvcConfig};
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus,
@@ -152,6 +154,9 @@ impl Sink for AnyMirrorSink {
     fn capabilities(&self) -> &Capabilities {
         any!(self, s => s.capabilities())
     }
+    fn set_clock(&mut self, clock: SessionClock) {
+        any!(self, s => s.set_clock(clock))
+    }
     fn start(&mut self, video: &VideoInfo, audio: Option<&AudioInfo>) -> Result<()> {
         any!(self, s => s.start(video, audio))
     }
@@ -192,25 +197,17 @@ pub fn connect_with<S: ControlStream>(
     }
 }
 
-/// Maps pts to capture instants on the shared clock (like the Cast sink):
-/// early frames keep their future instants, frames far off re-anchor.
-fn capture_instant(clock: &MediaClock, pts: u64, rate: u32, now: Instant) -> Instant {
-    let ok = |late: i128| {
-        late <= MAX_LATENESS.as_nanos() as i128 && -late <= MAX_EARLY.as_nanos() as i128
-    };
-    match (clock.lateness(pts, rate, now), clock.instant_for(pts, rate)) {
-        (Some(late), Some(t)) if ok(late) => t,
-        (late, _) => {
-            if let Some(late) = late {
-                debug!(
-                    "airplay: re-anchoring media clock ({} ms late)",
-                    late / 1_000_000
-                );
-            }
-            clock.reanchor_at(pts, rate, now);
-            now
-        }
-    }
+/// The private clock's rule (a sink used without a fanout).
+const PRIVATE_CLOCK: Tolerance = Tolerance {
+    late: MAX_LATENESS,
+    early: MAX_EARLY,
+};
+
+/// Maps pts to capture instants (like the Cast sink): on the session's
+/// clock when there is one, else on the private one (early frames keep
+/// their future instants, frames far off re-anchor).
+fn capture_instant(clock: &SinkClock, pts: u64, rate: u32, now: Instant) -> Instant {
+    clock.instant(pts, rate, now)
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +496,7 @@ impl AudioState {
     fn push(
         &mut self,
         frame: &EncodedFrame,
-        clock: &MediaClock,
+        clock: &SinkClock,
         timeline: &Timeline,
     ) -> Result<SinkStatus> {
         let now = Instant::now();
@@ -640,7 +637,7 @@ impl Diag {
 
 struct Media {
     diag: Diag,
-    clock: MediaClock,
+    clock: SinkClock,
     video: VideoState,
     audio: Option<AudioState>,
     data_sock: TcpStream,
@@ -653,6 +650,8 @@ pub struct MirrorSink<S: ControlStream> {
     session: Session<S>,
     shared: Arc<Shared>,
     media: Option<Media>,
+    /// The session's media clock (from the fanout), if any.
+    clock: Option<SessionClock>,
     stopped: bool,
 }
 
@@ -711,6 +710,7 @@ impl<S: ControlStream> MirrorSink<S> {
                 need_key: AtomicBool::new(false),
             }),
             media: None,
+            clock: None,
             stopped: false,
         }
     }
@@ -879,7 +879,10 @@ impl<S: ControlStream> MirrorSink<S> {
         );
         self.media = Some(Media {
             diag: Diag::default(),
-            clock: MediaClock::new(),
+            clock: self
+                .clock
+                .clone()
+                .map_or_else(|| SinkClock::private(PRIVATE_CLOCK), SinkClock::shared),
             video: vstate,
             audio: astate,
             data_sock: data,
@@ -1073,6 +1076,10 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
 
     fn capabilities(&self) -> &Capabilities {
         &self.caps
+    }
+
+    fn set_clock(&mut self, clock: SessionClock) {
+        self.clock = Some(clock);
     }
 
     fn start(&mut self, video: &VideoInfo, audio: Option<&AudioInfo>) -> Result<()> {

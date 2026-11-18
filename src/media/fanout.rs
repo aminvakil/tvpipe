@@ -13,7 +13,15 @@
 //!   new non-key video is dropped until the next keyframe.
 //! - [`SinkStatus::Finished`] or an error removes the sink; the others go on.
 //!
-//! Sources: PLAN §3, §5.1 (no keyframes on demand: skip to the next IDR).
+//! Timing (decision 0010): the fanout owns the session's [`MediaClock`]
+//! and hands it to every sink ([`Sink::set_clock`]) before `start()`.
+//! Each frame is scheduled on it as it leaves the input
+//! ([`MediaClock::schedule`]: anchored on the first frame, re-anchored
+//! after a stall or a jump), before any per-sink queueing, so every
+//! receiver gets the same capture instant for the same frame.
+//!
+//! Sources: PLAN §3, §5.1 (no keyframes on demand: skip to the next IDR),
+//! §5.3 (one budget for every receiver).
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -21,8 +29,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
+use crate::media::clock::{MediaClock, SessionClock, Tolerance};
 use crate::media::source::StreamInfo;
-use crate::types::{AudioFamily, EncodedFrame, Sink, SinkStatus, TrackKind};
+use crate::types::{AudioFamily, EncodedFrame, Sink, SinkStatus, TrackKind, VIDEO_CLOCK_RATE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FanoutConfig {
@@ -66,8 +75,15 @@ pub enum SinkEnd {
     Failed(Error),
 }
 
+/// A queued frame with the instant the session scheduled it at.
+struct Queued {
+    frame: EncodedFrame,
+    /// `(rate, instant)`; `None` for audio of a family without a track.
+    at: Option<(u32, Instant)>,
+}
+
 struct State {
-    queue: VecDeque<EncodedFrame>,
+    queue: VecDeque<Queued>,
     bytes: usize,
     /// Drop non-key video until a keyframe is queued.
     waiting_for_key: bool,
@@ -106,6 +122,9 @@ struct Handle {
 pub struct Fanout {
     sinks: Vec<Handle>,
     config: FanoutConfig,
+    clock: Arc<MediaClock>,
+    /// Sample rate per audio family (for scheduling audio on the clock).
+    audio_rates: Vec<(AudioFamily, u32)>,
 }
 
 impl Fanout {
@@ -116,8 +135,11 @@ impl Fanout {
         info: &StreamInfo,
         config: FanoutConfig,
     ) -> Result<Fanout> {
+        let clock = Arc::new(MediaClock::new());
         let mut handles = Vec::with_capacity(sinks.len());
-        for sink in sinks {
+        for mut sink in sinks {
+            let view = SessionClock::new(clock.clone());
+            sink.set_clock(view.clone());
             let name = sink.name().to_owned();
             let family = sink.capabilities().audio_family;
             let shared = Arc::new(Shared {
@@ -140,7 +162,7 @@ impl Fanout {
             let thread = std::thread::Builder::new()
                 .name(format!("sink-{name}"))
                 .spawn(move || {
-                    let end = run_sink(sink, &video, audio.as_ref(), &thread_shared);
+                    let end = run_sink(sink, &video, audio.as_ref(), &thread_shared, &view);
                     let mut st = thread_shared.lock();
                     st.dead = true;
                     st.started = true;
@@ -161,11 +183,36 @@ impl Fanout {
         Ok(Fanout {
             sinks: handles,
             config,
+            clock,
+            audio_rates: info
+                .audio
+                .iter()
+                .map(|(f, a)| (*f, a.sample_rate.max(1)))
+                .collect(),
         })
+    }
+
+    /// The session's media clock (the one every sink was given).
+    pub fn clock(&self) -> &Arc<MediaClock> {
+        &self.clock
     }
 
     /// Queues a frame for every sink that takes it. Never blocks on sinks.
     pub fn push(&self, frame: &EncodedFrame) {
+        let rate = match frame.track {
+            TrackKind::Video => Some(VIDEO_CLOCK_RATE),
+            TrackKind::Audio(f) => self
+                .audio_rates
+                .iter()
+                .find(|(family, _)| *family == f)
+                .map(|(_, r)| *r),
+        };
+        let at = rate.map(|rate| {
+            let t = self
+                .clock
+                .schedule(frame.pts, rate, Instant::now(), Tolerance::DEFAULT);
+            (rate, t)
+        });
         for h in &self.sinks {
             if let TrackKind::Audio(f) = frame.track {
                 if f != h.family {
@@ -197,7 +244,10 @@ impl Fanout {
                 continue;
             }
             st.bytes += frame.data.len();
-            st.queue.push_back(frame.clone());
+            st.queue.push_back(Queued {
+                frame: frame.clone(),
+                at,
+            });
             drop(st);
             h.shared.cond.notify_one();
         }
@@ -313,6 +363,7 @@ fn run_sink(
     video: &crate::types::VideoInfo,
     audio: Option<&crate::types::AudioInfo>,
     shared: &Shared,
+    clock: &SessionClock,
 ) -> SinkEnd {
     let name = sink.name().to_owned();
     let started = sink.start(video, audio);
@@ -331,14 +382,16 @@ fn run_sink(
                 if st.closed && (st.abort || st.queue.is_empty()) {
                     break None;
                 }
-                if let Some(f) = st.queue.pop_front() {
-                    st.bytes -= f.data.len();
-                    break Some(f);
+                if let Some(q) = st.queue.pop_front() {
+                    st.bytes -= q.frame.data.len();
+                    break Some(q);
                 }
                 st = shared.cond.wait(st).unwrap_or_else(|e| e.into_inner());
             }
         };
-        let Some(frame) = frame else { break };
+        let Some(Queued { frame, at }) = frame else {
+            break;
+        };
         let wants_key = frame.track == TrackKind::Video && sink.wants_keyframe();
         if frame.track == TrackKind::Video {
             shared.lock().sink_wants_key = wants_key && !frame.keyframe;
@@ -354,7 +407,8 @@ fn run_sink(
                 let before = st.queue.len();
                 let mut removed = 0usize;
                 let mut seen_key = false;
-                st.queue.retain(|f| {
+                st.queue.retain(|q| {
+                    let f = &q.frame;
                     seen_key |= f.track == TrackKind::Video && f.keyframe;
                     let drop = !seen_key && f.track == TrackKind::Video;
                     if drop {
@@ -370,6 +424,9 @@ fn run_sink(
                 }
                 continue;
             }
+        }
+        if let Some((rate, t)) = at {
+            clock.pin(frame.pts, rate, t);
         }
         match sink.push(&frame) {
             Ok(SinkStatus::Accepted) => shared.lock().stats.pushed += 1,
@@ -412,6 +469,9 @@ mod tests {
         frames: Mutex<Vec<(TrackKind, u64, bool)>>,
         started_audio: Mutex<Option<AudioCodec>>,
         stopped: AtomicBool,
+        clock: Mutex<Option<SessionClock>>,
+        /// The clock was set before start().
+        clock_before_start: AtomicBool,
     }
 
     struct MockSink {
@@ -431,8 +491,13 @@ mod tests {
         fn capabilities(&self) -> &Capabilities {
             &self.caps
         }
+        fn set_clock(&mut self, clock: SessionClock) {
+            *self.log.clock.lock().unwrap() = Some(clock);
+        }
         fn start(&mut self, _v: &VideoInfo, a: Option<&AudioInfo>) -> Result<()> {
             *self.log.started_audio.lock().unwrap() = a.map(|a| a.codec);
+            let set = self.log.clock.lock().unwrap().is_some();
+            self.log.clock_before_start.store(set, Ordering::SeqCst);
             Ok(())
         }
         fn push(&mut self, f: &EncodedFrame) -> Result<SinkStatus> {
@@ -576,6 +641,36 @@ mod tests {
         );
         assert_eq!(*clog.started_audio.lock().unwrap(), Some(AudioCodec::Opus));
         assert!(alog.stopped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn every_sink_gets_the_session_clock() {
+        let (a, alog, _) = mock("airplay", AudioFamily::AirPlay);
+        let (c, clog, _) = mock("cast", AudioFamily::Cast);
+        let f = Fanout::new(
+            vec![Box::new(a), Box::new(c)],
+            &info(),
+            FanoutConfig::default(),
+        )
+        .unwrap();
+        let t0 = Instant::now();
+        f.push(&video(9_000, true));
+        let t1 = Instant::now();
+        // Audio of a family is scheduled at its rate: 48 kHz, 100 ms.
+        f.push(&audio(AudioFamily::Cast, 4_800));
+        f.push(&video(12_000, false));
+        let ends = f.close(true);
+        assert!(ends.iter().all(|(_, e)| matches!(e, SinkEnd::Stopped)));
+        for log in [&alog, &clog] {
+            assert!(log.clock_before_start.load(Ordering::SeqCst));
+        }
+        let ca = alog.clock.lock().unwrap().clone().unwrap();
+        let cc = clog.clock.lock().unwrap().clone().unwrap();
+        assert!(Arc::ptr_eq(ca.clock(), cc.clock()));
+        // Anchored when the first frame left the input.
+        let at = ca.instant_for(9_000, VIDEO_CLOCK_RATE).unwrap();
+        assert!(at >= t0 && at <= t1);
+        assert_eq!(ca.instant_for(4_800, 48_000), Some(at));
     }
 
     #[test]
