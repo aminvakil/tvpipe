@@ -209,7 +209,9 @@ pub enum Source {
         looped: bool,
     },
     /// User-given input arguments (they include `-i`). The first input's
-    /// first video and audio streams are used.
+    /// first video stream is used, and the first audio stream of the
+    /// first input, or of the last one when there are several (a screen
+    /// and a sound device: `-f x11grab -i :0 -f pulse -i default`).
     Args(Vec<OsString>),
     /// `testsrc2` plus a beeping sine; `clock` burns in the wallclock with
     /// `drawtext` when ffmpeg has it.
@@ -351,9 +353,10 @@ fn push_inputs(
                 return Err(Error::usage("ffmpeg input arguments must contain -i"));
             }
             a.extend(LOW_DELAY_INPUT).extend(args);
+            let inputs = args.iter().filter(|x| *x == "-i").count();
             Ok(InputMaps {
                 video: "0:v:0".into(),
-                audio: Some("0:a:0?".into()),
+                audio: Some(format!("{}:a:0?", inputs.saturating_sub(1))),
                 video_fps: None,
             })
         }
@@ -1131,6 +1134,39 @@ pub(crate) mod tests {
 
         let args = Source::Args(vec!["-f".into(), "lavfi".into()]);
         assert!(build(&args, Output::Copy, &probe(), "warning").is_err());
+
+        // Input args: sound from the first input, or from the last of
+        // several (a screen and a sound device).
+        let args = |a: &[&str]| Source::Args(a.iter().map(|x| x.into()).collect());
+        let one = joined(
+            &build(
+                &args(&["-f", "avfoundation", "-i", "1:0"]),
+                Output::Encode(&plan()),
+                &probe(),
+                "warning",
+            )
+            .unwrap(),
+        );
+        assert!(
+            one.contains("-map 0:v:0 ") && one.contains("-map 0:a:0? "),
+            "{one}"
+        );
+        let two = args(&[
+            "-f",
+            "x11grab",
+            "-i",
+            ":0",
+            "-f",
+            "pulse",
+            "-i",
+            "@DEFAULT_MONITOR@",
+        ]);
+        let two = joined(&build(&two, Output::Encode(&plan()), &probe(), "warning").unwrap());
+        assert!(
+            two.contains("-map 0:v:0 ") && two.contains("-map 1:a:0? "),
+            "{two}"
+        );
+        assert!(!two.contains("-map 0:a"), "{two}");
     }
 
     #[test]
