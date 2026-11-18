@@ -11,10 +11,9 @@ Confidence tags used below:
 
 - **[HW]** observed on the dev Apple TV 4K (AppleTV6,2, tvOS 26.6.1,
   `AirTunes/960.13.1`, "Livingroom (2)") on 2026-11-18 with a HAP pairing
-  made by streamlib (`X-Apple-HKP: 3`), FairPlay, PTP and ALAC audio. The
-  session was accepted end to end (all requests 200, data channel open,
-  receiver audio statistics reported); **nobody looked at the screen**, so
-  "picture/sound actually rendered" is not yet confirmed (§13).
+  made by streamlib (`X-Apple-HKP: 3`), FairPlay, PTP and ALAC audio. The session was accepted end to end (all requests 200, data channel open,
+receiver audio statistics reported), and on 2026-11-18 a person watching
+the TV confirmed picture and sound for three variants (§13).
 - **[REF]** what the reference sender does and what its authors report as
   working on real receivers; not re-verified here.
 - **[MODEL]** behaviour of a receiver family as modelled by the reference's
@@ -145,10 +144,13 @@ How they are used:
 | video `shk` / `shiv` | `K` / `eiv` (sent, not used for the ChaCha video key, §5.1) | `K` / `eiv` (CTR key and IV are derived from `shk`, §5.2) |
 | audio key | random 32-byte ChaCha key (not FairPlay) | AES-CBC key `K`, IV `eiv` |
 
-[HW] With the HAP profile the Apple TV also accepted the whole session with
-FairPlay skipped (shk/shiv then filled as in §5.3), but it closed the
-control connection instead of answering `TEARDOWN`; whether it renders
-video without FairPlay is unknown. Do FairPlay whenever feature 14 is set.
+[HW] With the HAP profile the dev Apple TV also played picture and sound
+with FairPlay skipped entirely (no `/fp-setup`; `shk`/`shiv` filled as in
+§5.3): with HAP pair-verify and ChaCha20-Poly1305 media, FairPlay was not
+required on that receiver (§13). Other receivers and other tvOS versions
+may differ, so still do FairPlay whenever feature 14 is set; a FairPlay
+failure on an HAP connection could fall back to continuing without it
+(untested policy).
 
 ### 2.3 Feature bits
 
@@ -577,7 +579,8 @@ feedback request is logged, not fatal.
 1. Stop media.
 2. `TEARDOWN <audio URI>`, no body (one request ends the whole session;
    the reference sends no per-stream TEARDOWN). Apple TV: 200 after
-   ~750 ms [HW]; it then closes the video data connection.
+   ~750 ms, or the control connection is closed without a response; both
+   end the session [HW]. It then closes the video data connection.
 3. Close the video data, event, MediaDataControl and UDP sockets.
 
 If setup fails after the first SETUP was accepted, release the receiver
@@ -1246,11 +1249,12 @@ Transcript of one accepted session (dev Apple TV, PTP, ALAC, 12 s; bodies in
 11. MediaDataControl `asyn raup` after ~8 s, `asyn rrmt` after ~10 s (0 lost
     packets).
 12. `TEARDOWN rtsp://…/<A>` → 200 after 711 ms; receiver closes the data
-    connection.
+    connection. (In later 20 s sessions it closed the control connection
+    instead of answering, §13.)
 
 Variants also accepted [HW]: NTP timing (receiver probed 3× during SETUP #1,
 then every ~3 s); no MediaDataControl + no redundancy + fixed 100 ms lead;
-FairPlay skipped (see §2.2 caveat).
+FairPlay skipped (§2.2, §13).
 
 ---
 
@@ -1272,19 +1276,39 @@ file are zeroed.
 
 ---
 
-## 13. Open points
+## 13. Observed results and open points
 
-1. **Rendering not confirmed.** All [HW] facts are protocol acceptance.
-   Someone has to watch and listen during a session (video picture, A/V
-   sync, ALAC verbatim audio audible) — ideally with streamlib's own W7
-   build, which settles it for good.
-2. Whether the Apple TV needs FairPlay at all in the HAP profile (§2.2).
-3. Whether sending the encoded size larger than the advertised 1280×720
-   canvas is rendered at full resolution or scaled (§2.6); the dev Apple
-   TV's HDMI output mode is unknown.
-4. Receiver families other than the Apple TV are models (§10); LG, Samsung,
+Observed on the dev Apple TV 4K (AppleTV6,2, tvOS 26.6.1,
+AirTunes/960.13.1), 2026-11-18 01:10–01:12, HAP pair-verify with
+streamlib's stored pairing, PTP, ChaCha20-Poly1305 video and audio, a
+1280×720 30 fps H.264 test pattern and a 440 Hz tone, 20 s per run. A
+person watching the TV reported **picture and sound in all three runs**:
+
+| Run | Variant | Picture | Sound |
+|---|---|---|---|
+| 1 | normal path: FairPlay, compressed ALAC, RFC 2198, MediaDataControl | yes | yes |
+| 2 | as 1, but **verbatim (uncompressed) ALAC** frames (§8.7) | yes | yes |
+| 3 | as 1, but **FairPlay skipped** (no `/fp-setup`) | yes | yes |
+
+So on this receiver FairPlay is not required with HAP pair-verify +
+ChaCha, and verbatim ALAC plays. Receiver statistics (`rrmt`) for each run:
+0 lost packets, ~60 late packets and ~16 glitches per 5 s report (likely
+the test harness's tone pacing; not investigated). In all three runs the
+Apple TV closed the control connection instead of answering `TEARDOWN`
+(earlier, shorter sessions got a 200 after ~750 ms, with and without
+FairPlay differing only by chance), so treat EOF after `TEARDOWN` as a
+completed teardown.
+
+Open:
+
+1. A/V sync was not measured; the test pattern had no sync marker.
+2. Whether a 1920×1080 stream sent to the advertised 1280×720 canvas is
+   shown at full resolution or scaled (§2.6); the Apple TV's HDMI output
+   mode is unknown.
+3. Receiver families other than the Apple TV are models (§10); LG, Samsung,
    Roku have not been observed here.
-5. Legacy pairing (Appendix A) is described from the reference only.
+4. Legacy pairing (Appendix A) is described from the reference only.
+5. Whether FairPlay is needed on other HAP receivers (§2.2).
 
 ---
 
