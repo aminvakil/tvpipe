@@ -50,6 +50,8 @@ from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
 INSTALLERS = ("install.sh", "install.ps1")
+# The colour theme switch (site.js), in the footer of every page.
+THEME = """<div class="theme" role="group" aria-label="Colour theme">  <button data-t="light" title="Light" aria-label="Light"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75"/><path d="M8 1.25v1.5M8 13.25v1.5M1.25 8h1.5M13.25 8h1.5M3.2 3.2l1.06 1.06M11.74 11.74l1.06 1.06M3.2 12.8l1.06-1.06M11.74 4.26l1.06-1.06"/></svg></button>  <button data-t="dark" title="Dark" aria-label="Dark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 0 1 5.8 2.4a6 6 0 1 0 7.8 7.8z"/></svg></button>  <button data-t="auto" title="Like the system" aria-label="Like the system"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path class="fill" d="M8 2.25a5.75 5.75 0 0 1 0 11.5z"/></svg></button></div>"""
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.M)
 
 
@@ -245,7 +247,7 @@ def render(lines, ctx):
             t = "<table><thead><tr>" + "".join(f"<th>{inline(h, ctx)}</th>" for h in head) + "</tr></thead><tbody>"
             for r in rows:
                 t += "<tr>" + "".join(f"<td>{inline(c, ctx)}</td>" for c in r) + "</tr>"
-            out.append(t + "</tbody></table>")
+            out.append('<div class="table">' + t + "</tbody></table></div>")
             i = j
             continue
 
@@ -456,7 +458,7 @@ def build(out):
                      for lbl, p in (("Previous", prev), ("Next", nxt)) if p)
         body = (f'<div class="shell"><nav class="side" id="nav" aria-label="Contents">{nav_html(pages, page)}</nav>'
                 f'<main>{main}<footer class="pf"><div>tvpipe Operations Manual<br>Revision {version} · Section {page["num"]} of {last}</div>'
-                f'<div class="pn">{pn}</div><div class="r">Apache-2.0<br>LGPL-3.0+ with FairPlay</div></footer></main></div>')
+                f'<div class="pn">{pn}</div><div class="r">{THEME}<span>Apache-2.0 · LGPL-3.0+ with FairPlay</span></div></footer></main></div>')
         crumb = f'Section {page["num"]}<span>{html.escape(page["title"])}</span>'
         title = ("" if i == 0 else page["title"] + " · ") + "tvpipe operations manual"
         (out / "manual" / page["out"]).write_text(layout(title, crumb, body, "../", version, "manual", source), encoding="utf-8")
@@ -464,8 +466,8 @@ def build(out):
     meta, lines = read_md(SITE / "index.md")
     ctx = Ctx("", None, [dict(p, out="manual/" + p["out"]) for p in pages])
     body = f'<main class="landing">{render(lines, ctx)}</main>'
-    body += (f'<footer class="lf"><div>tvpipe {version}</div>'
-             f'<div class="r">Apache-2.0 · LGPL-3.0+ with FairPlay</div></footer>')
+    body += (f'<footer class="lf"><div>tvpipe {version}<br>Apache-2.0 · LGPL-3.0+ with FairPlay</div>'
+             f'<div class="r">{THEME}</div></footer>')
     crumb = 'tvpipe<span>Low-latency mirroring</span>'
     (out / "index.html").write_text(layout(meta.get("title", "tvpipe"), crumb, body, "", version, "landing", source), encoding="utf-8")
     print(f"built {len(pages) + 1} pages into {out}")

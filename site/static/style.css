@@ -100,12 +100,18 @@ a.pair:hover span { color: var(--link); }
 .top .links { display: flex; gap: 22px; font-size: 13px; line-height: 1.3; }
 .top .links a { color: var(--ink); text-decoration: none; }
 .top .links a:hover { color: var(--link); }
-.theme { display: flex; gap: 2px; margin-top: -4px; }
-.theme button, .navbtn {
+.navbtn {
   font: 400 9.5px/1 var(--title); letter-spacing: .12em; text-transform: uppercase;
   background: none; border: 0; color: var(--ink-3); padding: 6px 7px; cursor: pointer; border-radius: 2px;
 }
-.theme button[aria-pressed="true"] { color: var(--ink); background: var(--panel); }
+/* the colour theme switch, in the footers: three icons */
+.theme { display: inline-flex; gap: 2px; padding: 2px; border-radius: 4px; background: var(--panel); }
+.theme button { display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 0; border-radius: 3px;
+                background: none; color: var(--ink-3); cursor: pointer; }
+.theme button:hover { color: var(--ink); }
+.theme button[aria-pressed="true"] { color: var(--ink); background: var(--bg); }
+.theme svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.theme svg .fill { fill: currentColor; stroke: none; }
 .navbtn { display: none; }
 body.landing .crumb, body.landing .navbtn { display: none !important; }
 body.manual .links a:first-child { display: none; }
@@ -170,7 +176,8 @@ pre .o { color: var(--ink-2); }
 pre .k { color: var(--link); }
 
 /* ---------- tables ---------- */
-table { width: 100%; border-collapse: collapse; margin: 0 0 1.4em; font-size: 14.5px; }
+.table { overflow-x: auto; margin: 0 0 1.4em; }
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
 th { text-align: left; font: 400 9.5px/1.5 var(--title); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
      padding: 0 16px 10px 0; border-bottom: 1px solid var(--rule); }
 td { padding: 11px 16px 11px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -215,6 +222,7 @@ figcaption .lbl { padding-top: 2px; }
 .steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
 .steps > li { counter-increment: s; display: grid; grid-template-columns: 56px 1fr; padding: 0 0 8px; }
 .steps > li::before { content: counter(s, decimal-leading-zero); font-size: 11px; line-height: 2.2; color: var(--accent); }
+.steps > li > div { min-width: 0; }
 .steps h3 { margin: 0 0 6px !important; }
 
 .index { display: grid; grid-template-columns: 1fr 1fr; column-gap: 32px; }
@@ -232,12 +240,14 @@ figcaption .lbl { padding-top: 2px; }
 .pf .pn a span { display: block; color: var(--ink-3); font-size: 11px; }
 .pf .pn a:hover { color: var(--link); }
 .pf .r, .lf .r { text-align: right; }
+.pf .r { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.lf { align-items: center; }
 
 /* ---------- landing ---------- */
 main.landing { max-width: 1040px; margin: 0 auto; padding: 96px var(--pad) 40px; }
-.landing h1 { margin: 0 0 40px; display: flex; align-items: center; gap: 28px; }
-.landing h1 svg { width: 92px; height: auto; flex: none; }
-.landing h1 span { font: 400 76px/1 var(--display); font-variation-settings: "SCAN" 30; letter-spacing: -.03em; }
+.landing h1 { margin: 0 0 40px; display: flex; align-items: center; gap: clamp(12px, 3.5vw, 28px); }
+.landing h1 svg { width: clamp(52px, 15vw, 92px); height: auto; flex: none; }
+.landing h1 span { font: 400 clamp(30px, 10vw, 76px)/1 var(--display); font-variation-settings: "SCAN" 30; letter-spacing: -.03em; }
 .landing h1 span b { font-weight: 400; color: var(--accent); }
 .landing > p:first-of-type { font-size: 25px; line-height: 1.5; font-weight: 300; margin: 0 0 32px; max-width: 34em; }
 .status { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: baseline; margin: 0 0 36px; font-size: 15.5px; color: var(--ink-2); }
@@ -275,9 +285,17 @@ main.landing { max-width: 1040px; margin: 0 auto; padding: 96px var(--pad) 40px;
   .features { grid-template-columns: 1fr 1fr; }
   figure .frame { padding: 14px; }
   main.landing { padding-top: 56px; }
-  .landing h1 svg { width: 64px; }
-  .landing h1 span { font-size: 52px; }
   .landing > p:first-of-type { font-size: 20px; }
+  .status { grid-template-columns: 1fr; gap: 6px; }
+  .feature, .row > *, .features > * { min-width: 0; }
+  /* long inline code may break instead of widening the page */
+  p code, li code, td code, dd code { white-space: normal; overflow-wrap: anywhere; }
+  .top .right { gap: 10px; }
+  .pf .r, .lf .r { align-items: flex-start; text-align: left; }
+  .pf .pn { margin: 16px 0; }
+}
+@media (max-width: 520px) {
+  body.manual .mark span { display: none; }
 }
 
 /* the landing's figure: picture left, caption beside it */

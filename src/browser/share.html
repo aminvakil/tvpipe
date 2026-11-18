@@ -42,7 +42,7 @@
   body { margin: 0; font: 400 15px/1.6 "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   .lbl { font: 400 9.5px/1.5 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
 
-  .top { display: grid; grid-template-columns: 1fr 1fr 1fr auto; column-gap: 32px; align-items: start;
+  .top { display: grid; grid-template-columns: 1fr 1fr 1fr; column-gap: 32px; align-items: start;
          max-width: 920px; margin: 0 auto; padding: 26px 32px 22px; border-bottom: 1px solid var(--rule); }
   .mark { display: flex; align-items: center; gap: 12px; }
   .mark svg { width: 34px; height: auto; }
@@ -50,10 +50,15 @@
   .mark span b { font-weight: 400; color: var(--accent); }
   .pair { font-size: 11px; line-height: 1.45; }
   .pair span { display: block; color: var(--ink-3); }
-  .theme { display: flex; gap: 2px; margin-top: -4px; }
-  .theme button { font: 400 9.5px/1 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase;
-                  background: none; border: 0; color: var(--ink-3); padding: 6px 7px; cursor: pointer; border-radius: 2px; }
-  .theme button[aria-pressed="true"] { color: var(--ink); background: var(--panel); }
+  .theme { display: inline-flex; gap: 2px; padding: 2px; border-radius: 4px; background: var(--panel); }
+  .theme button { display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 0; border-radius: 3px;
+                  background: none; color: var(--ink-3); cursor: pointer; }
+  .theme button:hover { color: var(--ink); }
+  .theme button[aria-pressed="true"] { color: var(--ink); background: var(--bg); }
+  .theme svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+  .theme svg .fill { fill: currentColor; stroke: none; }
+  footer { max-width: 920px; margin: 0 auto; padding: 22px 32px 40px; display: flex; justify-content: space-between; align-items: center;
+           border-top: 1px solid var(--rule); font-size: 11px; color: var(--ink-3); }
 
   main { max-width: 920px; margin: 0 auto; padding: 0 32px 64px; }
   .row { display: grid; grid-template-columns: 200px minmax(0, 1fr); column-gap: 40px; }
@@ -101,6 +106,7 @@
   @media (max-width: 720px) {
     .top { grid-template-columns: 1fr auto; padding: 18px 20px; }
     .top .pair { display: none; }
+    footer { padding: 18px 20px 32px; }
     main { padding: 0 20px 48px; }
     .row { grid-template-columns: 1fr; }
     .row > .meta { margin-bottom: 14px; }
@@ -132,9 +138,6 @@
   <div class="mark"><svg viewBox="0 0 560 520" aria-hidden="true"><use href="#logo"/></svg><span>tv<b>pipe</b></span></div>
   <div class="pair">tvpipe<span>Share</span></div>
   <div class="pair">Receivers<span id="receivers">–</span></div>
-  <div class="theme" role="group" aria-label="Colour theme">
-    <button data-t="light">Light</button><button data-t="dark">Dark</button><button data-t="auto">Auto</button>
-  </div>
 </header>
 
 <main>
@@ -170,6 +173,15 @@
     </details>
   </section>
 </main>
+
+<footer>
+  <span>tvpipe share · 127.0.0.1</span>
+  <div class="theme" role="group" aria-label="Colour theme">
+    <button data-t="light" title="Light" aria-label="Light"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75"/><path d="M8 1.25v1.5M8 13.25v1.5M1.25 8h1.5M13.25 8h1.5M3.2 3.2l1.06 1.06M11.74 11.74l1.06 1.06M3.2 12.8l1.06-1.06M11.74 4.26l1.06-1.06"/></svg></button>
+    <button data-t="dark" title="Dark" aria-label="Dark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 0 1 5.8 2.4a6 6 0 1 0 7.8 7.8z"/></svg></button>
+    <button data-t="auto" title="Like the system" aria-label="Like the system"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path class="fill" d="M8 2.25a5.75 5.75 0 0 1 0 11.5z"/></svg></button>
+  </div>
+</footer>
 <script src="/capture.js"></script>
 <script>
 (function () {
