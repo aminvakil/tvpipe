@@ -20,8 +20,9 @@
 //!   [`ErrorKind::Timeout`]; the receiver keeps partial frames buffered,
 //!   so calling `read_message` again continues where it stopped.
 //!
-//! No extensions (`permessage-deflate`) and no subprotocols are
-//! negotiated.
+//! No extensions (`permessage-deflate`) are negotiated; a client may
+//! offer subprotocols (`Sec-WebSocket-Protocol` in the extra headers) and
+//! accepts only one it offered. The server side negotiates none.
 //!
 //! Sources: RFC 6455.
 
@@ -246,7 +247,15 @@ pub fn client_handshake<S: Read + Write>(
     if h.get("sec-websocket-accept").map(str::trim) != Some(accept_key(&key).as_str()) {
         return Err(Error::protocol("websocket: wrong Sec-WebSocket-Accept"));
     }
-    if h.contains("sec-websocket-extensions") || h.contains("sec-websocket-protocol") {
+    // A subprotocol only if we offered it (`extra_headers` may carry one).
+    let offered = |p: &str| {
+        extra_headers.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("sec-websocket-protocol")
+                && v.split(',').any(|o| o.trim() == p.trim())
+        })
+    };
+    let protocol_ok = h.get("sec-websocket-protocol").is_none_or(offered);
+    if h.contains("sec-websocket-extensions") || !protocol_ok {
         return Err(Error::protocol(
             "websocket: server selected an extension or subprotocol we did not offer",
         ));

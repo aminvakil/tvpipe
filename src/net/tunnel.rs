@@ -33,8 +33,22 @@ pub trait Tunnel: Send {
 
 /// Starts a tunnel to `127.0.0.1:port`; returns once its URL works.
 /// `stop` aborts a slow first setup (Ctrl-C).
-pub fn start(_port: u16, _stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
-    Err(crate::error::Error::unsupported(
-        "--tunnel: this build has no tunnel provider",
-    ))
+pub fn start(port: u16, stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
+    Ok(Box::new(crate::net::opentunnel::OpenTunnel::start(
+        port, stop,
+    )?))
+}
+
+impl Tunnel for crate::net::opentunnel::OpenTunnel {
+    fn host(&self) -> &str {
+        crate::net::opentunnel::OpenTunnel::host(self)
+    }
+
+    fn name(&self) -> &'static str {
+        "OpenTunnel"
+    }
+
+    fn peer_lookup(&self) -> Option<PeerLookup> {
+        Some(crate::net::opentunnel::OpenTunnel::peer_lookup(self))
+    }
 }

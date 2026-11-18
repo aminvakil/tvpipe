@@ -55,10 +55,29 @@ await play("movie.mp4", { to: "Living Room" });
   headless browser of its own.
 - Sends to several receivers at once, on one timeline, and reconnects one
   that drops out.
-- Plays to a browser tab too: previews, OBS sources, video calls.
+- Plays to a browser tab too: previews, OBS sources, video calls; and on a
+  public link for people elsewhere, who can also share their screen to
+  your TV.
 - Takes raw or H.264 frames and sound from a game on stdin.
 - One self-contained binary for macOS, Linux and Windows, with its own mDNS,
   protocol stacks and H.264/AAC encoders.
+
+## Public links
+
+```sh
+tvpipe preview --tunnel                    # anyone with the link watches in a browser
+tvpipe share --to "Living Room" --tunnel   # someone elsewhere shares their screen to the TV
+```
+
+`--tunnel` also puts the browser player or the share page on a public
+https link through [OpenTunnel](https://opentunnel.xyz), with TLS ending in
+tvpipe (the relay cannot read the page or the stream). The link is new
+every run and has a token of its own; at most 4 viewers come in that way.
+A remote share shows up only after you answer `y` in the terminal
+(`--yes` skips the question), and its link lets people in for 60 minutes
+(`--tunnel-ttl`). The first use creates the machine's tunnel and
+certificate (about 15 s, once; kept in the config directory under
+`opentunnel/`). Details: [`docs/tunnels.md`](docs/tunnels.md).
 
 ## Manual
 
@@ -104,6 +123,10 @@ per-OS status are in [`docs/`](docs/), and the website's sources in
 [doubletake](https://github.com/omarroth/doubletake) under
 LGPL-3.0-or-later. While that module is included, the distributed binary is
 under LGPL-3.0-or-later terms.
+
+The root certificates in `src/net/roots/` (for the `--tunnel` service's
+HTTPS) are Mozilla's list from the CCADB, under CDLA-Permissive-2.0 (see
+[`LICENSES/CDLA-Permissive-2.0-ccadb.txt`](LICENSES/CDLA-Permissive-2.0-ccadb.txt)).
 
 Some H.264 encoder tables (`src/media/h264enc/tables.rs`) are transcribed
 from [openh264](https://github.com/cisco/openh264) (BSD-2-Clause), and the

@@ -117,6 +117,51 @@ pub fn ed25519_verify(public_key: &[u8], msg: &[u8], sig: &[u8]) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// ECDSA P-256 (the OpenTunnel prototype's certificate key, net::opentunnel)
+
+/// An ECDSA P-256 key pair for signing with SHA-256 (ASN.1 DER signatures).
+pub struct EcdsaP256 {
+    inner: signature::EcdsaKeyPair,
+}
+
+impl EcdsaP256 {
+    /// A fresh key as PKCS#8 (DER).
+    pub fn generate_pkcs8() -> Result<Vec<u8>> {
+        let doc = signature::EcdsaKeyPair::generate_pkcs8(
+            &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            &rand::SystemRandom::new(),
+        )
+        .map_err(|_| Error::crypto("ecdsa: key generation failed"))?;
+        Ok(doc.as_ref().to_vec())
+    }
+
+    pub fn from_pkcs8(der: &[u8]) -> Result<EcdsaP256> {
+        let inner = signature::EcdsaKeyPair::from_pkcs8(
+            &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            der,
+            &rand::SystemRandom::new(),
+        )
+        .map_err(|_| Error::crypto("ecdsa: not a P-256 PKCS#8 key"))?;
+        Ok(EcdsaP256 { inner })
+    }
+
+    /// The public key, uncompressed (`04 || x || y`, 65 bytes).
+    pub fn public_key(&self) -> Vec<u8> {
+        use ::ring::signature::KeyPair;
+        self.inner.public_key().as_ref().to_vec()
+    }
+
+    /// An ASN.1 DER ECDSA-SHA256 signature of `msg`.
+    pub fn sign(&self, msg: &[u8]) -> Result<Vec<u8>> {
+        let sig = self
+            .inner
+            .sign(&rand::SystemRandom::new(), msg)
+            .map_err(|_| Error::crypto("ecdsa: signing failed"))?;
+        Ok(sig.as_ref().to_vec())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // X25519
 
 pub const X25519_KEY_LEN: usize = 32;

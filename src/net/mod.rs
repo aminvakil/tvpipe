@@ -11,6 +11,7 @@ pub mod http;
 pub mod httpd;
 pub mod iface;
 pub mod mdns;
+pub mod opentunnel;
 pub mod rtsp;
 pub mod tunnel;
 pub mod websocket;
