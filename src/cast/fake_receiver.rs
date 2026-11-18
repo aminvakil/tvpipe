@@ -5,6 +5,12 @@
 //! optional PLI). Incoming RTP can be dropped at a configurable rate to
 //! exercise retransmission.
 //!
+//! It serves one session after another on the same address, so a sender
+//! that lost it can come back: [`FakeReceiver::drop_connection`] cuts the
+//! connection (no CLOSE, its streams go silent) like a TV that left the
+//! network, [`FakeReceiver::end_session`] ends the session the way a
+//! user stopping the cast on the TV does.
+//!
 //! Behaviour modelled on openscreen's receiver (`receiver_impl.cc`,
 //! `compound_rtcp_builder.cc`, `application_agent.cc`).
 
@@ -63,6 +69,12 @@ pub struct Stream {
     last_sr_at: Option<Instant>,
     feedback_count: u8,
     pub pli: bool,
+    /// Which connection (0, 1, ...) offered it.
+    pub session: usize,
+    /// Where its sender's packets come from.
+    peer: Option<SocketAddr>,
+    /// Its connection was cut: no more feedback.
+    silent: bool,
 }
 
 impl Stream {
@@ -176,6 +188,8 @@ pub struct State {
     pub stopped: bool,
     pub offer: Option<Value>,
     pub answer_port: u16,
+    /// Connections accepted so far.
+    pub sessions: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -201,7 +215,15 @@ pub struct FakeReceiver {
     pub addr: SocketAddr,
     pub state: Arc<Mutex<State>>,
     stop: Arc<AtomicBool>,
+    commands: Arc<Commands>,
     threads: Vec<JoinHandle<()>>,
+}
+
+/// What the tests ask the control thread to do to the current connection.
+#[derive(Default)]
+struct Commands {
+    cut: AtomicBool,
+    end: AtomicBool,
 }
 
 impl FakeReceiver {
@@ -219,15 +241,48 @@ impl FakeReceiver {
             ..State::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        let commands = Arc::new(Commands::default());
         let mut threads = Vec::new();
         {
             let state = state.clone();
             let stop = stop.clone();
+            let commands = commands.clone();
+            listener.set_nonblocking(true).unwrap();
             threads.push(std::thread::spawn(move || {
-                let (sock, _) = listener.accept().unwrap();
-                let mut conn = ServerConn::accept(sock);
-                conn.set_read_timeout(Duration::from_millis(100));
-                control(&mut conn, &state, &stop, opts);
+                let mut next_ssrc = 200_000;
+                while !stop.load(Ordering::Acquire) {
+                    let sock = match listener.accept() {
+                        Ok((sock, _)) => sock,
+                        Err(_) => {
+                            std::thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
+                    };
+                    let _ = sock.set_nonblocking(false);
+                    let session = {
+                        let mut st = state.lock().unwrap();
+                        st.sessions += 1;
+                        st.sessions - 1
+                    };
+                    commands.cut.store(false, Ordering::Release);
+                    commands.end.store(false, Ordering::Release);
+                    let mut conn = ServerConn::accept(sock);
+                    conn.set_read_timeout(Duration::from_millis(100));
+                    let ctx = Ctx {
+                        state: &state,
+                        stop: &stop,
+                        commands: &commands,
+                        session,
+                        opts,
+                    };
+                    control(&mut conn, &ctx, &mut next_ssrc);
+                    // Cut or closed: this session's streams go quiet.
+                    for s in state.lock().unwrap().streams.iter_mut() {
+                        if s.session == session {
+                            s.silent = true;
+                        }
+                    }
+                }
             }));
         }
         {
@@ -239,8 +294,23 @@ impl FakeReceiver {
             addr,
             state,
             stop,
+            commands,
             threads,
         }
+    }
+
+    /// Cuts the current connection without a CLOSE and silences its
+    /// streams, like a receiver that went off the network; the next
+    /// connection is served as a new session.
+    pub fn drop_connection(&self) {
+        self.commands.cut.store(true, Ordering::Release);
+    }
+
+    /// Ends the current session like a user stopping the cast on the
+    /// TV: CLOSE on the virtual connection and a RECEIVER_STATUS without
+    /// the mirroring app.
+    pub fn end_session(&self) {
+        self.commands.end.store(true, Ordering::Release);
     }
 
     /// Asks the receiver to send a PLI on the video stream.
@@ -289,16 +359,50 @@ fn status(request_id: u32, running: bool) -> Value {
         .with("status", Value::object().with("applications", apps))
 }
 
-fn control(conn: &mut ServerConn, state: &Mutex<State>, stop: &AtomicBool, opts: Options) {
-    // Above the sender's ranges (audio 1..=50000, video 50001..=100000,
-    // picked at random): an answer reusing the sender's SSRC is rejected,
-    // which with 1001.. made about one audio stream in 25000 fail.
-    let mut next_ssrc = 200_000;
-    while !stop.load(Ordering::Acquire) {
+/// One connection's context.
+struct Ctx<'a> {
+    state: &'a Mutex<State>,
+    stop: &'a AtomicBool,
+    commands: &'a Commands,
+    session: usize,
+    opts: Options,
+}
+
+/// Serves one connection until it closes or is cut. `next_ssrc` is
+/// above the sender's ranges (audio 1..=50000, video 50001..=100000,
+/// picked at random): an answer reusing the sender's SSRC is rejected,
+/// which with 1001.. made about one audio stream in 25000 fail.
+fn control(conn: &mut ServerConn, ctx: &Ctx<'_>, next_ssrc: &mut u32) {
+    let (state, opts) = (ctx.state, ctx.opts);
+    // The sender's virtual connection to the app (for `end_session`).
+    let mut sender_id: Option<String> = None;
+    while !ctx.stop.load(Ordering::Acquire) {
+        if ctx.commands.cut.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        if ctx.commands.end.swap(false, Ordering::AcqRel) {
+            if let Some(id) = &sender_id {
+                let _ = conn.send(&messages::close(TRANSPORT_ID, id));
+            }
+            let _ = conn.send(&CastMessage::json(
+                messages::PLATFORM_RECEIVER_ID,
+                "*",
+                messages::NS_RECEIVER,
+                &status(0, false),
+            ));
+        }
+        let t0 = Instant::now();
         let msg = match conn.recv() {
             Ok(m) => m,
             Err(e) if e.kind() == crate::error::ErrorKind::Timeout => continue,
-            Err(e) if e.kind() == crate::error::ErrorKind::Io => continue,
+            // Read timeouts; an error at once is a dead connection (EOF
+            // without close_notify, a reset).
+            Err(e) if e.kind() == crate::error::ErrorKind::Io => {
+                if t0.elapsed() < Duration::from_millis(20) {
+                    return;
+                }
+                continue;
+            }
             Err(_) => return,
         };
         let Ok(v) = msg.payload_json() else { continue };
@@ -306,6 +410,9 @@ fn control(conn: &mut ServerConn, state: &Mutex<State>, stop: &AtomicBool, opts:
         let rid = v["requestId"].as_u32().unwrap_or(0);
         match (msg.namespace.as_str(), ty) {
             (messages::NS_CONNECTION, "CONNECT") => {
+                if msg.destination_id == TRANSPORT_ID {
+                    sender_id = Some(msg.source_id.clone());
+                }
                 state
                     .lock()
                     .unwrap()
@@ -369,13 +476,13 @@ fn control(conn: &mut ServerConn, state: &Mutex<State>, stop: &AtomicBool, opts:
                         .unwrap()
                         .try_into()
                         .unwrap();
-                    next_ssrc += 1;
+                    *next_ssrc += 1;
                     idx.push(s["index"].as_u32().unwrap());
-                    ssrcs.push(next_ssrc);
+                    ssrcs.push(*next_ssrc);
                     st.streams.push(Stream {
                         codec,
                         sender_ssrc: s["ssrc"].as_u32().unwrap(),
-                        receiver_ssrc: next_ssrc,
+                        receiver_ssrc: *next_ssrc,
                         crypto: FrameCrypto::new(&key, &mask).unwrap(),
                         partial: BTreeMap::new(),
                         frames: BTreeMap::new(),
@@ -388,6 +495,9 @@ fn control(conn: &mut ServerConn, state: &Mutex<State>, stop: &AtomicBool, opts:
                         last_sr_at: None,
                         feedback_count: 0,
                         pli: false,
+                        session: ctx.session,
+                        peer: None,
+                        silent: false,
                     });
                 }
                 let answer = Value::object()
@@ -436,12 +546,10 @@ fn media(udp: &UdpSocket, state: &Mutex<State>, stop: &AtomicBool, opts: Options
     let clock = (Instant::now(), NtpTime::now());
     let mut buf = vec![0u8; 2048];
     let mut rng = opts.seed.max(1);
-    let mut peer: Option<SocketAddr> = None;
     let mut last_feedback = Instant::now();
     while !stop.load(Ordering::Acquire) {
         let mut send_now = false;
         if let Ok((n, from)) = udp.recv_from(&mut buf) {
-            peer = Some(from);
             let now = Instant::now();
             let pkt = &buf[..n];
             let mut st = state.lock().unwrap();
@@ -449,7 +557,12 @@ fn media(udp: &UdpSocket, state: &Mutex<State>, stop: &AtomicBool, opts: Options
                 let Some(author) = super::rtcp::author_ssrc(pkt) else {
                     continue;
                 };
-                if let Some(s) = st.streams.iter_mut().find(|s| s.sender_ssrc == author) {
+                if let Some(s) = st
+                    .streams
+                    .iter_mut()
+                    .find(|s| s.sender_ssrc == author && !s.silent)
+                {
+                    s.peer = Some(from);
                     if let Ok(Some(sr)) = SenderReport::parse(pkt, author) {
                         s.sender_reports.push(sr);
                         s.last_sr_at = Some(now);
@@ -460,7 +573,12 @@ fn media(udp: &UdpSocket, state: &Mutex<State>, stop: &AtomicBool, opts: Options
                 rng ^= rng >> 17;
                 rng ^= rng << 5;
                 let drop_it = (rng as f64 / u32::MAX as f64) < opts.loss;
-                if let Some(s) = st.streams.iter_mut().find(|s| s.sender_ssrc == p.ssrc) {
+                if let Some(s) = st
+                    .streams
+                    .iter_mut()
+                    .find(|s| s.sender_ssrc == p.ssrc && !s.silent)
+                {
+                    s.peer = Some(from);
                     if drop_it {
                         s.dropped += 1;
                     } else {
@@ -471,17 +589,16 @@ fn media(udp: &UdpSocket, state: &Mutex<State>, stop: &AtomicBool, opts: Options
             }
         }
         let now = Instant::now();
-        if (send_now || now - last_feedback >= Duration::from_millis(20)) && peer.is_some() {
+        if send_now || now - last_feedback >= Duration::from_millis(20) {
             last_feedback = now;
             let mut st = state.lock().unwrap();
             for s in st.streams.iter_mut() {
-                if s.sender_reports.is_empty() && s.highest == LEADER {
+                if s.silent || (s.sender_reports.is_empty() && s.highest == LEADER) {
                     continue;
                 }
+                let Some(p) = s.peer else { continue };
                 let fb = s.feedback(now, clock);
-                if let Some(p) = peer {
-                    let _ = udp.send_to(&fb, p);
-                }
+                let _ = udp.send_to(&fb, p);
             }
         }
     }

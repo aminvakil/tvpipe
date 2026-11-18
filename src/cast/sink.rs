@@ -69,6 +69,11 @@ pub const MAX_LATENESS: Duration = Duration::from_millis(100);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(20);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(5);
+/// Default [`CastOptions::feedback_timeout`]: receivers answer every
+/// frame with RTCP within a round trip, so this much silence while media
+/// goes out means the receiver is gone (it changed its address, left the
+/// network), not a Wi-Fi hiccup.
+pub const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How to connect and what to offer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +103,9 @@ pub struct CastOptions {
     /// Send media to this address instead of the receiver's ANSWERed
     /// port (a relay, e.g. the lossy one in the receiver loop test).
     pub media_relay: Option<SocketAddr>,
+    /// No RTCP for this long while RTP goes out: the receiver is lost
+    /// (`push` fails with [`ErrorKind::Timeout`]).
+    pub feedback_timeout: Duration,
 }
 
 impl Default for CastOptions {
@@ -117,6 +125,7 @@ impl Default for CastOptions {
             burst_bitrate: None,
             connect_timeout: Duration::from_secs(5),
             media_relay: None,
+            feedback_timeout: FEEDBACK_TIMEOUT,
         }
     }
 }
@@ -357,6 +366,9 @@ struct MediaState {
     /// Something changed; the sender thread should look again.
     dirty: bool,
     stopped: bool,
+    /// When the first RTP packet went out since the receiver's last RTCP
+    /// (`None`: nothing unanswered).
+    unanswered_since: Option<Instant>,
 }
 
 impl MediaState {
@@ -461,6 +473,27 @@ fn lock(state: &Mutex<MediaState>) -> MutexGuard<'_, MediaState> {
     state.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// Why the connection to the receiver is gone, when the receiver did not
+/// end the session itself (that is [`StreamingSink::finished`]): the
+/// control channel broke, UDP is unreachable, or feedback stopped.
+/// `push` reports it as an error, so the session may reconnect.
+#[derive(Default)]
+struct Lost(Mutex<Option<Error>>);
+
+impl Lost {
+    fn set(&self, e: Error) {
+        let mut l = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if l.is_none() {
+            debug!("cast: connection lost: {e}");
+            *l = Some(e);
+        }
+    }
+
+    fn take(&self) -> Option<Error> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+}
+
 /// The Cast Streaming sink.
 pub struct StreamingSink {
     name: String,
@@ -474,7 +507,12 @@ pub struct StreamingSink {
     control: Option<Control>,
     control_thread: Option<JoinHandle<()>>,
     control_stop: Arc<AtomicBool>,
+    /// The receiver ended the session (CLOSE, the app stopped).
     finished: Arc<AtomicBool>,
+    lost: Arc<Lost>,
+    /// `lost` was reported; later pushes fail as well.
+    gone: bool,
+    feedback_timeout: Duration,
     media: Option<Media>,
     /// The session's media clock (from the fanout), if any.
     clock: Option<SessionClock>,
@@ -492,15 +530,17 @@ impl StreamingSink {
         opts: &CastOptions,
     ) -> Result<StreamingSink> {
         let finished = Arc::new(AtomicBool::new(false));
+        let lost = Arc::new(Lost::default());
         let control_stop = Arc::new(AtomicBool::new(false));
         let control_tx = channel.sender();
         let thread = {
             let finished = finished.clone();
+            let lost = lost.clone();
             let stop = control_stop.clone();
             let transport = control.transport_id.clone();
             std::thread::Builder::new()
                 .name("cast-control".into())
-                .spawn(move || control_loop(channel, &transport, &stop, &finished))
+                .spawn(move || control_loop(channel, &transport, &stop, &finished, &lost))
                 .map_err(|e| Error::io("cast: spawn control thread", e))?
         };
         let video_bps = negotiated.video.as_ref().map_or(0, |v| v.offer.bit_rate);
@@ -519,6 +559,9 @@ impl StreamingSink {
             control_thread: Some(thread),
             control_stop,
             finished,
+            lost,
+            gone: false,
+            feedback_timeout: opts.feedback_timeout,
             media: None,
             clock: None,
             stopped: false,
@@ -658,6 +701,7 @@ impl Sink for StreamingSink {
             video_needs_key: true,
             dirty: false,
             stopped: false,
+            unanswered_since: None,
         };
         let state = Arc::new((Mutex::new(state), Condvar::new()));
         let burst = ((self.burst_bitrate as u64 / 8 / packet_size as u64)
@@ -671,11 +715,12 @@ impl Sink for StreamingSink {
         let mut threads = Vec::new();
         {
             let state = state.clone();
-            let finished = self.finished.clone();
+            let lost = self.lost.clone();
+            let timeout = self.feedback_timeout;
             threads.push(
                 std::thread::Builder::new()
                     .name("cast-send".into())
-                    .spawn(move || send_loop(&state, &send_sock, burst, ntp, &finished))
+                    .spawn(move || send_loop(&state, &send_sock, burst, ntp, &lost, timeout))
                     .map_err(|e| Error::io("cast: spawn sender", e))?,
             );
         }
@@ -705,6 +750,13 @@ impl Sink for StreamingSink {
     fn push(&mut self, frame: &EncodedFrame) -> Result<SinkStatus> {
         if self.finished.load(Ordering::Acquire) {
             return Ok(SinkStatus::Finished);
+        }
+        if let Some(e) = self.lost.take() {
+            self.gone = true;
+            return Err(e);
+        }
+        if self.gone {
+            return Err(Error::closed("cast: connection lost"));
         }
         let Some(media) = self.media.as_mut() else {
             return Err(Error::protocol("cast: push before start"));
@@ -830,7 +882,13 @@ impl Drop for StreamingSink {
     }
 }
 
-fn control_loop(mut channel: Channel, transport: &str, stop: &AtomicBool, finished: &AtomicBool) {
+fn control_loop(
+    mut channel: Channel,
+    transport: &str,
+    stop: &AtomicBool,
+    finished: &AtomicBool,
+    lost: &Lost,
+) {
     // Grace period after STOP so the receiver sees our messages before the
     // socket closes.
     let mut stop_seen: Option<Instant> = None;
@@ -865,10 +923,13 @@ fn control_loop(mut channel: Channel, transport: &str, stop: &AtomicBool, finish
                 }
             }
             Err(e) => {
-                if !stop.load(Ordering::Acquire) {
-                    info!("cast: control channel ended: {e}");
+                // Without a CLOSE first, the receiver did not end the
+                // session: the connection is lost (the TV went off the
+                // network or changed its address).
+                if !stop.load(Ordering::Acquire) && !finished.load(Ordering::Acquire) {
+                    debug!("cast: control channel ended: {e}");
+                    lost.set(Error::closed(format!("cast: control channel ended: {e}")));
                 }
-                finished.store(true, Ordering::Release);
                 break;
             }
         }
@@ -881,7 +942,8 @@ fn send_loop(
     sock: &UdpSocket,
     burst: usize,
     ntp: NtpClock,
-    finished: &AtomicBool,
+    lost: &Lost,
+    feedback_timeout: Duration,
 ) {
     let (m, cv) = state;
     let mut batch: Vec<Vec<u8>> = Vec::new();
@@ -898,12 +960,22 @@ fn send_loop(
         st.dirty = false;
         batch.clear();
         let mut more = false;
+        if let Some(t) = st.unanswered_since {
+            if now.duration_since(t) >= feedback_timeout {
+                lost.set(Error::timeout(format!(
+                    "cast: no feedback from the receiver for {} s",
+                    feedback_timeout.as_secs_f64()
+                )));
+                st.unanswered_since = None;
+            }
+        }
         if now >= last_burst + BURST_INTERVAL {
             for t in st.tracks() {
                 if let Some(sr) = t.sender.sender_report(now, |i| ntp.at(i)) {
                     batch.push(sr);
                 }
             }
+            let reports = batch.len();
             let mut budget = burst.saturating_sub(batch.len()).max(1);
             for t in st.tracks() {
                 while budget > 0 && t.sender.next_packet(now, &mut buf) {
@@ -911,6 +983,9 @@ fn send_loop(
                     budget -= 1;
                 }
                 more |= t.sender.has_pending();
+            }
+            if batch.len() > reports && st.unanswered_since.is_none() {
+                st.unanswered_since = Some(now);
             }
             if !batch.is_empty() {
                 last_burst = now;
@@ -952,8 +1027,7 @@ fn send_loop(
                             debug!("cast: UDP send failed ({send_errors}x): {e}");
                         }
                         if send_errors > 5000 {
-                            warn!("cast: receiver unreachable over UDP: {e}");
-                            finished.store(true, Ordering::Release);
+                            lost.set(Error::io("cast: receiver unreachable over UDP", e));
                         }
                     }
                 }
@@ -1013,6 +1087,13 @@ fn rtcp_loop(state: &(Mutex<MediaState>, Condvar), sock: &UdpSocket) {
         };
         let arrival = Instant::now();
         let mut st = lock(m);
+        if st
+            .tracks()
+            .any(|t| t.sender.config().receiver_ssrc == author)
+        {
+            // The receiver is there.
+            st.unanswered_since = None;
+        }
         let Some(track) = st
             .tracks()
             .find(|t| t.sender.config().receiver_ssrc == author)
@@ -1469,8 +1550,25 @@ mod tests {
         rx.shutdown();
     }
 
+    /// Streams video until `push` says something other than Accepted or
+    /// Dropped; returns that.
+    fn push_until_end(sink: &mut StreamingSink) -> Result<SinkStatus> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        for i in 1.. {
+            assert!(Instant::now() < deadline, "the sink never noticed");
+            match sink.push(&video_frame(i, 30)) {
+                Ok(SinkStatus::Accepted | SinkStatus::Dropped) => {}
+                other => return other,
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        unreachable!()
+    }
+
+    /// The user stops the cast on the TV: CLOSE and a status without the
+    /// app. The session is over (`Finished`), not lost.
     #[test]
-    fn receiver_stop_finishes_sink() {
+    fn receiver_ending_the_session_finishes_sink() {
         let rx = FakeReceiver::spawn(Default::default());
         let mut sink = connect(rx.addr, "fake", &opts()).unwrap();
         sink.start(&video_info(), None).unwrap();
@@ -1478,11 +1576,62 @@ mod tests {
             sink.push(&video_frame(0, 30)).unwrap(),
             SinkStatus::Accepted
         );
-        // The fake receiver goes away: the control channel closes.
-        rx.shutdown();
-        wait_until("finished", || {
-            sink.push(&video_frame(1, 30)).unwrap() == SinkStatus::Finished
-        });
+        rx.end_session();
+        assert_eq!(push_until_end(&mut sink).unwrap(), SinkStatus::Finished);
         sink.stop().unwrap();
+        rx.shutdown();
+    }
+
+    /// The connection breaks without a CLOSE (the TV left the network,
+    /// changed its address): `push` fails, so the session may reconnect.
+    #[test]
+    fn lost_connection_fails_sink() {
+        let rx = FakeReceiver::spawn(Default::default());
+        let mut sink = connect(rx.addr, "fake", &opts()).unwrap();
+        sink.start(&video_info(), None).unwrap();
+        assert_eq!(
+            sink.push(&video_frame(0, 30)).unwrap(),
+            SinkStatus::Accepted
+        );
+        rx.drop_connection();
+        let e = push_until_end(&mut sink).unwrap_err();
+        assert_eq!(e.kind(), ErrorKind::Closed, "{e}");
+        // And stays failed.
+        assert!(sink.push(&video_frame(99, 30)).is_err());
+        sink.stop().unwrap();
+        // The receiver serves the next connection as a new session.
+        let mut again = connect(rx.addr, "fake", &opts()).unwrap();
+        again.start(&video_info(), None).unwrap();
+        stream(&mut again, 1, 30);
+        wait_until("second session", || {
+            let st = rx.state.lock().unwrap();
+            st.streams
+                .iter()
+                .any(|s| s.session == 1 && s.codec == "h264" && s.checkpoint == 29)
+        });
+        again.stop().unwrap();
+        let state = rx.shutdown();
+        assert_eq!(state.lock().unwrap().sessions, 2);
+    }
+
+    /// RTP goes out and nothing comes back: lost after the feedback
+    /// timeout, although the control channel is fine.
+    #[test]
+    fn silent_receiver_fails_sink() {
+        let rx = FakeReceiver::spawn(Default::default());
+        let hole = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let o = CastOptions {
+            media_relay: Some(hole.local_addr().unwrap()),
+            feedback_timeout: Duration::from_millis(300),
+            ..opts()
+        };
+        let mut sink = connect(rx.addr, "fake", &o).unwrap();
+        sink.start(&video_info(), None).unwrap();
+        let t0 = Instant::now();
+        let e = push_until_end(&mut sink).unwrap_err();
+        assert_eq!(e.kind(), ErrorKind::Timeout, "{e}");
+        assert!(t0.elapsed() >= Duration::from_millis(300));
+        sink.stop().unwrap();
+        rx.shutdown();
     }
 }
