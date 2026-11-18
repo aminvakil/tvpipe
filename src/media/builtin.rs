@@ -865,6 +865,9 @@ pub(crate) mod tests {
         pub(crate) start: Option<Instant>,
         pub(crate) cur: Vec<u8>,
         pub(crate) pos: usize,
+        /// When each chunk was handed out (the reader asked for it and
+        /// it was due), in order.
+        pub(crate) handed: Arc<std::sync::Mutex<Vec<Instant>>>,
     }
 
     impl Paced {
@@ -874,6 +877,7 @@ pub(crate) mod tests {
                 start: None,
                 cur: Vec::new(),
                 pos: 0,
+                handed: Arc::default(),
             }
         }
     }
@@ -886,6 +890,7 @@ pub(crate) mod tests {
                     return Ok(0);
                 };
                 std::thread::sleep((start + due).saturating_duration_since(Instant::now()));
+                self.handed.lock().unwrap().push(Instant::now());
                 self.cur = chunk;
                 self.pos = 0;
             }
@@ -897,6 +902,8 @@ pub(crate) mod tests {
     }
 
     /// Raw RGBA at 60 fps (paced), with 800 samples of PCM per frame.
+    /// Chunk 0 is the stream header, chunk `i + 1` game frame `i` (its
+    /// video and audio record, both at pts `5 s + i * 16.667 ms`).
     pub(crate) fn raw_stream(frames: u64, w: u32, h: u32) -> Paced {
         let mut chunks = std::collections::VecDeque::new();
         let mut head = Vec::new();
@@ -1066,13 +1073,23 @@ pub(crate) mod tests {
     }
 
     /// Opens late (like a session whose sinks take a while to start) and
-    /// checks that no frame is ahead of its pts on the clock that starts
-    /// with the first `next_frame`: nothing generated or read before was
-    /// queued up (that would add the start-up time to the latency).
-    /// `first` is the first video pts. Returns the input's counts.
-    fn assert_on_schedule(mut input: BuiltinInput, frames: usize, first: u64) -> Counts {
+    /// checks that nothing generated or read before the first
+    /// `next_frame` was queued up (that would add the start-up time to the
+    /// latency) and that frames then come within [`latency_bound`] of
+    /// their pts on the clock that starts with it. `first` is the first
+    /// video pts. `game`: the raw SLRW stream's handed-out chunk times
+    /// ([`raw_stream`] layout); without it the source is the test pattern,
+    /// which only starts generating when the session pulls. Returns the
+    /// input's counts.
+    fn assert_on_schedule(
+        mut input: BuiltinInput,
+        frames: usize,
+        first: u64,
+        game: Option<&std::sync::Mutex<Vec<Instant>>>,
+    ) -> Counts {
         std::thread::sleep(Duration::from_millis(300));
         let go = Instant::now();
+        let mut opened = None;
         let mut video = Vec::new();
         let mut ended = false;
         while video.len() < frames {
@@ -1080,8 +1097,10 @@ pub(crate) mod tests {
                 ended = true;
                 break;
             };
+            // The gate opened inside the first call.
+            opened.get_or_insert_with(Instant::now);
             if f.track == TrackKind::Video {
-                video.push((go.elapsed(), f.pts));
+                video.push((Instant::now(), f.pts));
             }
         }
         let c = input.counts();
@@ -1093,15 +1112,84 @@ pub(crate) mod tests {
         }
         assert!(video.len() >= 2, "{c:?}");
         let late = latency_bound(&c);
-        assert!(video[0].0 < late, "{:?} {c:?}", video[0]);
+        assert!(video[0].0 - go < late, "{:?} {c:?}", video[0].0 - go);
         assert!(video[0].1 <= first, "{video:?}");
+        let due = |pts: u64| Duration::from_micros(pts * 1000 / 90);
+        match game {
+            None => {
+                // The pattern starts generating once the gate is open, in
+                // real time: no frame can be ahead of its pts.
+                for &(at, pts) in &video {
+                    assert!(
+                        at >= go + due(pts),
+                        "pts {:?} out at {:?}",
+                        due(pts),
+                        at - go
+                    );
+                }
+            }
+            Some(handed) => {
+                // The game sends in real time whether or not anyone reads,
+                // and the reader can lag behind it (a loaded machine), so
+                // timing alone cannot tell queued-up records from caught-up
+                // ones. Instead: media time starts with a record read
+                // while the gate opened. Records of a chunk are read after
+                // it is handed out and before the next one is, so the
+                // origin is at or after the last chunk handed out before
+                // `go` and at or before the first one handed out after
+                // `opened`.
+                let handed = handed.lock().unwrap().clone();
+                let opened = opened.unwrap();
+                // The first video kept is the first one after the gate
+                // (frame `c.early`); the origin is its record or the audio
+                // record before it.
+                let origin = c.early - video[0].1 / 1500;
+                let chunk = origin as usize + 1;
+                let before = handed.iter().rposition(|&t| t < go).unwrap_or(0);
+                let after = handed
+                    .iter()
+                    .position(|&t| t > opened)
+                    .unwrap_or(usize::MAX);
+                let ms = |t: Instant| {
+                    t.saturating_duration_since(go).as_secs_f64() * 1000.0
+                        - go.saturating_duration_since(t).as_secs_f64() * 1000.0
+                };
+                assert!(
+                    (before..=after).contains(&chunk),
+                    "media time starts at game frame {origin}, handed out at {:.1} ms; \
+                     chunks {before} and {after} at {:.1} and {:.1} ms (gate open at {:.1}) {c:?}",
+                    ms(handed[chunk]),
+                    ms(handed[before]),
+                    handed.get(after).map_or(f64::NAN, |&t| ms(t)),
+                    ms(opened),
+                );
+                // Every frame keeps the game's timing: frame `origin + n`
+                // has pts n frames, and leaves only after the game sent it.
+                for &(at, pts) in &video {
+                    let n = (pts as f64 / 1500.0).round() as u64;
+                    let want = n * 16_667 * 90 / 1000;
+                    assert!(
+                        pts.abs_diff(want) <= 1,
+                        "game frame {}: pts {pts}",
+                        origin + n
+                    );
+                    let sent = handed[chunk + n as usize];
+                    assert!(
+                        at >= sent,
+                        "game frame {} out {:?} before it was sent",
+                        origin + n,
+                        sent - at
+                    );
+                }
+            }
+        }
         for &(at, pts) in &video {
-            let due = Duration::from_micros(pts * 1000 / 90);
             assert!(
-                at + Duration::from_millis(40) >= due,
-                "frame with pts {due:?} out at {at:?}"
+                at - go < due(pts) + late,
+                "{:?} vs {:?}, {c:?}",
+                at - go,
+                due(pts)
             );
-            assert!(at < due + late, "{at:?} vs {due:?}, {c:?}");
         }
         Box::new(input).finish(false).unwrap();
         c
@@ -1119,7 +1207,7 @@ pub(crate) mod tests {
             gop: 30,
         };
         let input = BuiltinInput::test_pattern(out, 48_000, vec![], never).unwrap();
-        let c = assert_on_schedule(input, 15, 0);
+        let c = assert_on_schedule(input, 15, 0, None);
         // The pattern made nothing before the session pulled.
         assert_eq!(c.early, 0, "{c:?}");
     }
@@ -1149,10 +1237,12 @@ pub(crate) mod tests {
             threads: 1,
         };
         // 0.8 s of game frames, starting right away.
-        let input = BuiltinInput::open_slrw_with(raw_stream(48, 64, 36), opts, never).unwrap();
+        let game = raw_stream(48, 64, 36);
+        let handed = game.handed.clone();
+        let input = BuiltinInput::open_slrw_with(game, opts, never).unwrap();
         // Media time starts with this frame, or with the audio record of
         // the game frame before it (16.7 ms, 1500 ticks).
-        let c = assert_on_schedule(input, 20, 1500);
+        let c = assert_on_schedule(input, 20, 1500, Some(&handed));
         // What the game sent in the 300 ms before was read and dropped.
         assert!(c.early > 0, "{c:?}");
     }
