@@ -51,15 +51,22 @@ Matrix, to_i420, scale}`; `PixelFormat::from_name` takes ffmpeg names.
 - [x] Speed: report fps at 720p and 1080p in release; goal 720p60 /
       1080p30 real time on this machine with threads.
 
-Results (M5 Max, release, loaded machine, synthetic moving texture):
-720p ≈ 80 fps on 1 thread, 340 fps on 8; 1080p ≈ 37 fps on 1 thread,
-170–180 fps on 8. Quality (lavfi, 720p60, PSNR-Y): testsrc2 35.7 / 39.2 /
-44.8 dB at 2 / 4 / 8 Mbit/s, mandelbrot 27.7 / 32.3 / 36.5 dB — between
-x264 `ultrafast` and `veryfast` with `-profile baseline`.
+Results (M5 Max, release, machine shared with other jobs, synthetic
+moving texture): 720p ≈ 95 fps on 1 thread, 430 fps on 8; 1080p ≈ 33–40
+fps on 1 thread, 140–180 fps on 8 (≈ 6 ms per frame). Quality (lavfi
+720p60, rate control, PSNR-Y): testsrc2 36.9 / 39.9 / 45.4 dB and
+mandelbrot 31.7 / 34.1 / 37.5 dB at 2 / 4 / 8 Mbit/s, bitrate within 1%.
+For reference x264 `-profile baseline -tune zerolatency` on mandelbrot:
+ultrafast 28.8 / 31.2 dB, veryfast 30.6 / 33.3 dB at 2 / 4 Mbit/s; at
+fixed QP 30 we match veryfast on mandelbrot and trail it by ~0.3 dB on
+testsrc2. Decisions: SATD pre-selection, then SSD + λ·bits between
+inter, P_Skip, Intra_16x16 and Intra_4x4 when close.
 
-Left: P16x8/8x16/8x8 partitions; SIMD-friendlier deblocking; slices are
-not emitted before the whole picture is done; hardware tests on Apple TV
-and Chromecast.
+Left: P16x8/8x16/8x8 partitions (x264 shows little gain from p8x8 on
+this content); SIMD-friendlier deblocking and SATD (no `unsafe`/SIMD
+yet, autovectorisation only); slices are not emitted before the whole
+picture is done; hardware tests on Apple TV and Chromecast; wiring into
+`session.rs`/SLRW (lead).
 
 Clean room: ITU-T H.264, public papers/textbooks; openh264 (BSD-2) may be
 read with attribution; no x264 or ffmpeg encoder source (decision 0006).
