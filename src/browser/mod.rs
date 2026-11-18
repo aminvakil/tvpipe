@@ -9,6 +9,7 @@
 //! - [`platform`]: opening a URL with the OS's opener (the one place with
 //!   `cfg(target_os)` in this module, like a config path).
 
+pub mod layout;
 pub mod platform;
 pub mod protocol;
 pub mod share;

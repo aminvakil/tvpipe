@@ -250,6 +250,10 @@ pub struct Sps {
     pub max_num_reorder_frames: Option<u32>,
     /// VUI `max_dec_frame_buffering`, under the same conditions.
     pub max_dec_frame_buffering: Option<u32>,
+    /// VUI sample (pixel) aspect ratio, when `aspect_ratio_info_present_flag`
+    /// is set with a known or extended (`255`) `aspect_ratio_idc` (Table
+    /// E-1). `None`: unspecified, which receivers treat as square.
+    pub sar: Option<(u32, u32)>,
 }
 
 impl Sps {
@@ -416,8 +420,9 @@ pub fn parse_sps(nal: &[u8]) -> Result<Sps> {
         .map_err(|_| Error::malformed("h264 sps: width too large"))?;
     let height = u32::try_from(coded_h - crop_h)
         .map_err(|_| Error::malformed("h264 sps: height too large"))?;
+    let mut sar = None;
     let (fps, restriction) = if br.flag()? {
-        let fps = parse_vui_fps(&mut br)?;
+        let fps = parse_vui_fps(&mut br, &mut sar)?;
         // The rest of the VUI only adds information; a stream whose tail
         // we cannot read keeps its size and rate.
         (fps.0, parse_vui_tail(&mut br, fps.1).ok().flatten())
@@ -439,19 +444,48 @@ pub fn parse_sps(nal: &[u8]) -> Result<Sps> {
         fps,
         max_num_reorder_frames: restriction.map(|r| r.0),
         max_dec_frame_buffering: restriction.map(|r| r.1),
+        sar,
     })
 }
+
+/// `aspect_ratio_idc` 0..=16 (H.264 Table E-1); 0 is unspecified.
+const SAR_TABLE: [Option<(u32, u32)>; 17] = [
+    None,
+    Some((1, 1)),
+    Some((12, 11)),
+    Some((10, 11)),
+    Some((16, 11)),
+    Some((40, 33)),
+    Some((24, 11)),
+    Some((20, 11)),
+    Some((32, 11)),
+    Some((80, 33)),
+    Some((18, 11)),
+    Some((15, 11)),
+    Some((64, 33)),
+    Some((160, 99)),
+    Some((4, 3)),
+    Some((3, 2)),
+    Some((2, 1)),
+];
 
 /// Reads the VUI up to and including the timing info (H.264 E.1.1).
 /// Returns the frame rate and whether the reader stands right after the
 /// timing info (so [`parse_vui_tail`] can go on).
-fn parse_vui_fps(br: &mut BitReader<'_>) -> Result<(Option<Ratio>, bool)> {
+fn parse_vui_fps(
+    br: &mut BitReader<'_>,
+    sar: &mut Option<(u32, u32)>,
+) -> Result<(Option<Ratio>, bool)> {
     if br.flag()? {
         // aspect_ratio_info_present_flag
-        if br.u(8)? == 255 {
-            br.u(16)?;
-            br.u(16)?;
-        }
+        let idc = br.u(8)?;
+        *sar = if idc == 255 {
+            let w = br.u(16)?;
+            let h = br.u(16)?;
+            Some((w, h)).filter(|&(w, h)| w > 0 && h > 0)
+        } else {
+            SAR_TABLE.get(idc as usize).copied().flatten()
+        };
     }
     if br.flag()? {
         // overscan_info_present_flag
@@ -945,5 +979,23 @@ mod tests {
         assert!(parse_sps(&b.bytes()).is_err());
         assert!(AvcConfig::parse(&[2, 0, 0, 0]).is_err());
         assert!(AvcConfig::from_parameter_sets(vec![], vec![]).is_err());
+    }
+
+    #[test]
+    fn sample_aspect_ratio() {
+        // x264 SPS of 160x120 with setsar=4/3 (Table E-1 idc 14), 1/1
+        // (idc 1) and 33/20 (extended, idc 255); ffmpeg-generated.
+        for (hex, sar) in [
+            ("6764000bacd942847e5c3840000003004000000f03c50a6580", (4, 3)),
+            ("6764000bacd942847e5c0440000003004000000f03c50a6580", (1, 1)),
+            (
+                "6764000bacd942847e5ffc0084005040000003004000000f03c50a6580",
+                (33, 20),
+            ),
+        ] {
+            let sps = parse_sps(&crate::util::hex::decode(hex).unwrap()).unwrap();
+            assert_eq!((sps.width, sps.height), (160, 120));
+            assert_eq!(sps.sar, Some(sar), "{hex}");
+        }
     }
 }

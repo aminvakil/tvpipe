@@ -48,7 +48,7 @@ Page → tvpipe:
 | type | fields |
 |---|---|
 | `hello` | `version` (1), `clock` (the page's media clock, µs), `agent` (user agent), `features` (what the browser has; informational) |
-| `capture` | `width`, `height` (the track's settings), `fps` (or null), `audio` (bool: an audio track was shared), `surface` (`browser`/`window`/`monitor`), `label` |
+| `capture` | `width`, `height` (of the first frame; the track's settings if none comes within 1.5 s), `fps` (or null), `audio` (bool: an audio track was shared), `surface` (`browser`/`window`/`monitor`), `label` |
 | `stats` | `fps`, `sourceFps`, `kbps`, `audioKbps`, `encodeMs`, `dropped`, `repeated`, `keyRequests`, `queue`, `buffered`, `codec`, `width`, `height` (logged at `--debug`) |
 | `ended` | `reason` |
 | `log` | `level` (`error`/`warn`/`info`), `message` (shown in tvpipe's log) |
@@ -59,7 +59,7 @@ tvpipe → page:
 |---|---|
 | `config` | `version`, `fps` (what to ask getDisplayMedia for), `audio` (whether to ask for audio), `sampleRate`, `channels` (the PCM tvpipe wants), `receivers` (names) |
 | `status` | `state` (`waiting`, `connecting`, `streaming`), `message`, `receivers` |
-| `plan` | `width`, `height` (encode size: the page scales and letterboxes into it), `fps`, `bitrate` (bit/s), `keyInterval` (frames between IDRs), `audio` (`{sampleRate, channels}` or null: send no audio) |
+| `plan` | `width`, `height` (encode size), `content` (`{x, y, width, height}`: where the capture goes, black around it), `fps`, `bitrate` (bit/s), `keyInterval` (frames between IDRs), `audio` (`{sampleRate, channels}` or null: send no audio) |
 | `keyframe` | — make the next frame an IDR (soon: a still screen re-encodes its last frame) |
 | `busy` | — another page is the source |
 | `end` | `reason`: tvpipe stopped (Ctrl-C, receivers gone, an error) |
@@ -88,6 +88,30 @@ time 0 from the first record it keeps and times audio by its sample count
 The H.264 must have no B-frames (decode order = presentation order). The
 script asks for Constrained Baseline first (then Main, High), at the
 smallest level that fits the plan, with `latencyMode: "realtime"`.
+
+## Stream size and shape
+
+Receivers stretch what they get to fill their screen (a projector showed
+a 16:10 capture stretched to 16:9). So:
+
+- **Shape:** the stream has the receivers' screen shape: Cast from the
+  ANSWER's `display` (`aspectRatio`, else `dimensions`), AirPlay from the
+  SETUP canvas; a receiver that does not say counts as 16:9. With several
+  shapes, the most common wins (a tie: 16:9) and tvpipe warns that the
+  others stretch.
+- **Size:** the smallest frame of that shape that holds the capture at
+  1:1 (no upscaling), shrunk to the tightest receiver limit. Cast is
+  offered up to 1920x1080@60 (or `--size`/`--fps`/`--bitrate`), and its
+  ANSWER constraints narrow that; AirPlay's limit is its canvas.
+  `--size` sets the frame exactly. The frame rate is `--fps` or 30.
+- **Picture:** the capture is centered inside at its own aspect ratio
+  (`browser::layout::place`, the same arithmetic as `place` in
+  `capture.js`, checked against each other by the Chrome test); the page
+  draws it into an OffscreenCanvas of the output size. If the capture
+  changes size mid-stream (a resized window) the page recomputes the
+  rectangle; the stream's size never changes.
+- **Pixels:** square. Browsers' H.264 carries no sample aspect ratio (seen
+  in Chrome); tvpipe warns if a stream says otherwise.
 
 ## Encoder warm-up
 

@@ -32,6 +32,7 @@ use std::path::Path;
 use std::process::{Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::browser::layout;
 use crate::browser::protocol::{PageConfig, SharePlan};
 use crate::browser::share::{ShareInputOptions, ShareServer};
 use crate::cast::{self, CastOptions};
@@ -1078,6 +1079,52 @@ fn play_with(
 
 /// `share`'s frame rate without `--fps`.
 const SHARE_FPS: Ratio = Ratio::integer(30);
+/// The most `share` offers Cast without `--size`/`--fps`; the ANSWER may
+/// allow less.
+const SHARE_OFFER_SIZE: Size = Size {
+    width: 1920,
+    height: 1080,
+};
+const SHARE_OFFER_FPS: Ratio = Ratio::integer(60);
+
+/// What `share` offers Cast: upper bounds, not the stream's size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ShareOffer {
+    size: Size,
+    fps: Ratio,
+    bitrate_kbps: u32,
+}
+
+impl ShareOffer {
+    fn new(opts: &ShareOptions) -> ShareOffer {
+        let size = opts.size.unwrap_or(SHARE_OFFER_SIZE);
+        let fps = opts.fps.unwrap_or(SHARE_OFFER_FPS);
+        ShareOffer {
+            size,
+            fps,
+            bitrate_kbps: opts
+                .bitrate_kbps
+                .unwrap_or_else(|| default_bitrate(size, fps)),
+        }
+    }
+}
+
+/// "1920x1080@60, 12000 kbit/s": the tightest limits of all receivers.
+fn receiver_limits(caps: &[&Capabilities]) -> String {
+    let w = caps.iter().map(|c| c.max_width).min().unwrap_or(0);
+    let h = caps.iter().map(|c| c.max_height).min().unwrap_or(0);
+    let fps = caps
+        .iter()
+        .map(|c| c.max_fps)
+        .filter(|f| f.num > 0 && f.den > 0)
+        .reduce(ratio_min);
+    let kbps = caps.iter().filter_map(|c| c.max_bitrate_kbps).min();
+    format!(
+        "{w}x{h}{}{}",
+        fps.map(|f| format!("@{f}")).unwrap_or_default(),
+        kbps.map(|k| format!(", {k} kbit/s")).unwrap_or_default()
+    )
+}
 
 fn share(opts: ShareOptions) -> Result<()> {
     if !interrupt::install() {
@@ -1143,23 +1190,29 @@ fn share_with(
             "share: the capture has no audio (the browser's picker has a \"share audio\" option)"
         );
     }
-    let size = opts.size.unwrap_or_else(|| {
-        fit(
-            cap.width,
-            cap.height,
-            DEFAULT_MAX_SIZE.width,
-            DEFAULT_MAX_SIZE.height,
-        )
-    });
+    // Sizing: the stream is the capture's size (or --size), scaled down
+    // only as far as the receivers' real limits require. The Cast offer
+    // is therefore not the capture size but the most we would send
+    // (--size/--fps/--bitrate or 1920x1080@60), and the ANSWER's
+    // constraints narrow it; AirPlay's limit is the canvas from SETUP.
+    // `plan` then fits the capture's aspect into the tightest of them.
+    let offer = ShareOffer::new(&opts);
+    let fps = opts.fps.unwrap_or(SHARE_FPS);
     let d = Desired {
-        size,
+        size: opts.size.unwrap_or(Size {
+            width: cap.width.max(2),
+            height: cap.height.max(2),
+        }),
         fps,
-        bitrate_kbps: opts
-            .bitrate_kbps
-            .unwrap_or_else(|| default_bitrate(size, fps)),
+        // Without --bitrate: chosen from the planned size, below.
+        bitrate_kbps: opts.bitrate_kbps.unwrap_or(offer.bitrate_kbps),
         latency_ms: opts.latency_ms.unwrap_or(DEFAULT_LATENCY_MS),
     };
     let mut cast_opts = cast_options(&d, audio);
+    cast_opts.max_width = offer.size.width;
+    cast_opts.max_height = offer.size.height;
+    cast_opts.max_fps = offer.fps;
+    cast_opts.max_bitrate_kbps = offer.bitrate_kbps;
     if let Some(f) = input::encoded_cast_audio(Some(&pcm)).filter(|_| audio) {
         cast_opts.audio_codecs = vec![AudioCodec::AacLc];
         cast_opts.audio_sample_rate = f.sample_rate;
@@ -1183,7 +1236,49 @@ fn share_with(
     let caps: Vec<&Capabilities> = sinks.iter().map(|s| s.capabilities()).collect();
     let named: Vec<(&str, &Capabilities)> =
         sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
-    let planned = plan(&d, Encoder::Auto, &caps, false);
+    let limits = receiver_limits(&caps);
+    // The receivers' screen shape: the stream has it, the capture is
+    // centered inside (bars), since receivers stretch to fill.
+    let aspects: Vec<Option<(u32, u32)>> = caps.iter().map(|c| c.display_aspect).collect();
+    let aspect = layout::output_aspect(&aspects);
+    let mut shapes: Vec<(u32, u32)> = aspects
+        .iter()
+        .map(|a| a.unwrap_or(layout::DEFAULT_ASPECT))
+        .collect();
+    shapes.dedup();
+    if shapes.len() > 1 {
+        warn!(
+            "share: the receivers' screens differ in shape ({}); streaming {}:{}, the others stretch it",
+            shapes
+                .iter()
+                .map(|(w, h)| format!("{w}:{h}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            aspect.0,
+            aspect.1
+        );
+    }
+    let max = (
+        caps.iter().map(|c| c.max_width).min().unwrap_or(0),
+        caps.iter().map(|c| c.max_height).min().unwrap_or(0),
+    );
+    let d = Desired {
+        size: opts.size.unwrap_or_else(|| {
+            let (width, height) = layout::output_size((cap.width, cap.height), aspect, max);
+            Size { width, height }
+        }),
+        ..d
+    };
+    let planned = plan(&d, Encoder::Auto, &caps, false).map(|mut p| {
+        if opts.bitrate_kbps.is_none() {
+            let size = Size {
+                width: p.video.width,
+                height: p.video.height,
+            };
+            p.video.bitrate_kbps = p.video.bitrate_kbps.min(default_bitrate(size, p.video.fps));
+        }
+        p
+    });
     let (families, warnings) = if audio {
         input::encoded_audio_families(Some(&pcm), &named)
     } else {
@@ -1201,6 +1296,14 @@ fn share_with(
         warn!("{w}");
     }
     let page_audio = (!families.is_empty()).then_some((pcm.sample_rate, pcm.channels));
+    let content = layout::place(
+        (cap.width, cap.height),
+        (plan.video.width, plan.video.height),
+    );
+    info!(
+        "share: capture {}x{}, receivers allow {limits}, screen {}:{}; the capture fills {}x{} at +{}+{}",
+        cap.width, cap.height, aspect.0, aspect.1, content.width, content.height, content.x, content.y
+    );
     info!(
         "plan: {}x{}@{} {} kbit/s, keyframe every {} frames, {}, latency {} ms (encoded by the browser)",
         plan.video.width,
@@ -1222,6 +1325,7 @@ fn share_with(
         bitrate_bps: plan.video.bitrate_kbps as u64 * 1000,
         key_interval: plan.video.gop,
         audio: page_audio,
+        content,
     };
     let opened = server.start(
         &share_plan,
@@ -1496,6 +1600,7 @@ mod tests {
             max_bitrate_kbps: Some(kbps),
             min_latency_ms: None,
             preferred_latency_ms: Some(200),
+            display_aspect: None,
         }
     }
 

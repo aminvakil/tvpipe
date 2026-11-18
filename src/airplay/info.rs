@@ -280,6 +280,7 @@ impl Info {
             max_bitrate_kbps: None,
             min_latency_ms: latency,
             preferred_latency_ms: None,
+            display_aspect: None,
         }
     }
 }

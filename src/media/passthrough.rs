@@ -1017,6 +1017,7 @@ pub(crate) mod tests {
             max_bitrate_kbps: Some(10_000),
             min_latency_ms: None,
             preferred_latency_ms: None,
+            display_aspect: None,
         }
     }
 

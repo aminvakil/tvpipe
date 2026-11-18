@@ -687,6 +687,8 @@ impl<S: ControlStream> MirrorSink<S> {
             max_bitrate_kbps: Some(MAX_BITRATE_KBPS),
             min_latency_ms: None,
             preferred_latency_ms: Some(session.leads.video_ms),
+            // The canvas from SETUP is the screen's shape.
+            display_aspect: crate::types::aspect_of(c.width, c.height),
         };
         info!(
             "airplay: {name}: session ready ({}, {}x{}@{fps}, audio {:?})",

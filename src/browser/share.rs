@@ -588,6 +588,13 @@ impl ShareInput {
             }
         }
         self.info = self.st.stream_info()?;
+        if let Some(sar) = square_pixels(&self.info.video.avcc) {
+            warn!(
+                "share: the browser's H.264 says pixels are {}:{}, not square; \
+                 receivers may stretch the picture",
+                sar.0, sar.1
+            );
+        }
         Ok(())
     }
 
@@ -638,6 +645,14 @@ impl ShareInput {
         }
         self.st.handle(p)
     }
+}
+
+/// The sample aspect ratio of an avcC's SPS when it is not square
+/// (`None`: square or unspecified, which receivers treat as square).
+fn square_pixels(avcc: &[u8]) -> Option<(u32, u32)> {
+    let cfg = h264::AvcConfig::parse(avcc).ok()?;
+    let sps = h264::parse_sps(cfg.sps.first()?).ok()?;
+    sps.sar.filter(|&(w, h)| w != h)
 }
 
 /// An `h264` record payload (flags + AVCC with `n`-byte lengths) with

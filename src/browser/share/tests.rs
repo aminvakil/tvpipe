@@ -251,6 +251,12 @@ fn plan(w: u32, h: u32, key_interval: u32, audio: bool) -> SharePlan {
         bitrate_bps: 1_000_000,
         key_interval,
         audio: audio.then_some((48_000, 2)),
+        content: crate::browser::layout::Rect {
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+        },
     }
 }
 
@@ -524,6 +530,29 @@ fn browser_names() {
     assert_eq!(browser_name(firefox), "Firefox 133");
     assert_eq!(browser_name(edge), "Edg 131");
     assert_eq!(browser_name("curl/8"), "");
+}
+
+#[test]
+fn square_pixel_check() {
+    // The built-in encoder writes no aspect ratio: fine.
+    let enc = h264enc::Encoder::new(h264enc::Config {
+        width: 64,
+        height: 48,
+        ..h264enc::Config::default()
+    })
+    .unwrap();
+    assert_eq!(square_pixels(&enc.avcc()), None);
+    // An avcC around x264's SPS with SAR 4:3 (see h264's KATs) is flagged.
+    let sps =
+        crate::util::hex::decode("6764000bacd942847e5c3840000003004000000f03c50a6580").unwrap();
+    let cfg = h264::AvcConfig::from_parameter_sets(
+        vec![sps],
+        vec![vec![0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0]],
+    )
+    .unwrap()
+    .to_bytes()
+    .unwrap();
+    assert_eq!(square_pixels(&cfg), Some((4, 3)));
 }
 
 #[test]

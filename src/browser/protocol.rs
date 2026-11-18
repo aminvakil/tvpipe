@@ -192,6 +192,8 @@ pub struct SharePlan {
     pub key_interval: u32,
     /// PCM rate and channels, or no audio.
     pub audio: Option<(u32, u8)>,
+    /// Where the capture goes in the frame (the rest is black).
+    pub content: crate::browser::layout::Rect,
 }
 
 impl SharePlan {
@@ -211,6 +213,14 @@ impl SharePlan {
                         .with("channels", ch as i64),
                     None => Value::Null,
                 },
+            )
+            .with(
+                "content",
+                Value::object()
+                    .with("x", self.content.x)
+                    .with("y", self.content.y)
+                    .with("width", self.content.width)
+                    .with("height", self.content.height),
             )
             .to_json()
     }
@@ -330,10 +340,16 @@ mod tests {
             bitrate_bps: 4_000_000,
             key_interval: 15,
             audio: Some((44100, 2)),
+            content: crate::browser::layout::Rect {
+                x: 160,
+                y: 0,
+                width: 960,
+                height: 720,
+            },
         };
         assert_eq!(
             p.to_json(),
-            r#"{"type":"plan","width":1280,"height":720,"fps":30.0,"bitrate":4000000,"keyInterval":15,"audio":{"sampleRate":44100,"channels":2}}"#
+            r#"{"type":"plan","width":1280,"height":720,"fps":30.0,"bitrate":4000000,"keyInterval":15,"audio":{"sampleRate":44100,"channels":2},"content":{"x":160,"y":0,"width":960,"height":720}}"#
         );
         let c = PageConfig {
             fps: 30.0,

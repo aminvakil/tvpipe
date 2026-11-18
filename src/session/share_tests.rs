@@ -258,6 +258,7 @@ fn chrome(bin: &str, url: &str, dir: &std::path::Path) -> (std::process::Child, 
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).unwrap();
     let headless = std::env::var("TVPIPE_TEST_CHROME_HEADED").is_err();
+    let (vw, vh) = viewport();
     let mut cmd = std::process::Command::new(bin);
     if headless {
         cmd.arg("--headless=new");
@@ -270,7 +271,14 @@ fn chrome(bin: &str, url: &str, dir: &std::path::Path) -> (std::process::Child, 
             "--auto-accept-this-tab-capture",
             "--autoplay-policy=no-user-gesture-required",
         ])
-        .arg("--window-size=1280,720")
+        // A 1920x1080 viewport at scale 1 on a 1920x1080 screen (headless
+        // tab capture is clamped to the screen, 800x600 by default; the
+        // window has 87 px of chrome above the content).
+        .args([
+            format!("--window-size={vw},{}", vh + 87),
+            format!("--screen-info={{0,0 {vw}x{vh}}}"),
+            "--force-device-scale-factor=1".into(),
+        ])
         .arg(url)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -316,6 +324,18 @@ fn chrome(bin: &str, url: &str, dir: &std::path::Path) -> (std::process::Child, 
     )
     .unwrap();
     (child, Cdp { rx, tx, id: 0 })
+}
+
+/// TVPIPE_TEST_CHROME_VIEWPORT=WxH, default 1920x1080.
+fn viewport() -> (u32, u32) {
+    let v: Size = std::env::var("TVPIPE_TEST_CHROME_VIEWPORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(Size {
+            width: 1920,
+            height: 1080,
+        });
+    (v.width, v.height)
 }
 
 static CHROME_STOP: AtomicBool = AtomicBool::new(false);
@@ -383,6 +403,41 @@ fn chrome_share_to_fakes() {
             {
                 assert!(Instant::now() < deadline, "the page got no config");
                 std::thread::sleep(Duration::from_millis(100));
+            }
+            let geo = cdp.eval(
+                "JSON.stringify([innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio, screen.width, screen.height])",
+            );
+            report.lock().unwrap().push(format!("geometry: {geo}"));
+            // innerWidth, innerHeight, devicePixelRatio (window chrome
+            // height is assumed above).
+            let (vw, vh) = viewport();
+            assert!(
+                geo.as_str()
+                    .is_some_and(|g| g.starts_with(&format!("[{vw},{vh},"))),
+                "viewport is not {vw}x{vh}: {geo}"
+            );
+            assert!(
+                geo.as_str().is_some_and(|g| g.contains(",1,")),
+                "scale: {geo}"
+            );
+            // The page's letterbox arithmetic is the Rust one.
+            for (sw, sh, dw, dh) in [
+                (1920u32, 1200u32, 1920u32, 1080u32),
+                (800, 600, 1066, 600),
+                (1920, 800, 1440, 1080),
+                (333, 777, 1920, 1080),
+                (1919, 1201, 1280, 720),
+                (1, 99999, 2, 2),
+            ] {
+                let js = cdp.eval(&format!(
+                    "JSON.stringify(tvpipeCapture.place({sw}, {sh}, {dw}, {dh}))"
+                ));
+                let r = crate::browser::layout::place((sw, sh), (dw, dh));
+                let rust = format!(
+                    r#"{{"x":{},"y":{},"width":{},"height":{}}}"#,
+                    r.x, r.y, r.width, r.height
+                );
+                assert_eq!(js.as_str(), Some(rust.as_str()), "{sw}x{sh} in {dw}x{dh}");
             }
             // Something that moves and something that sounds.
             cdp.eval(
@@ -472,4 +527,95 @@ fn chrome_share_to_fakes() {
     }
     assert!(tc.video > secs * 10, "{tc:?}");
     assert!(ta.audio > 0 && tc.audio > 0, "{tc:?} {ta:?}");
+}
+
+/// Without --size, Cast is offered 1920x1080@60 (an upper bound, not the
+/// capture size). The stream has the screen's shape (16:9: the fake's
+/// ANSWER has no display info) and holds the capture centered at its own
+/// aspect, scaled down only to fit what the receiver allows (the fake's
+/// ANSWER constrains to 1280x720@30): never upscaled.
+#[test]
+fn stream_size_follows_capture_and_receiver_limits() {
+    // (capture, stream, picture inside it at x)
+    for (capture, want, picture) in [
+        ((2880, 2160), (1280, 720), (160, 960, 720)),
+        ((800, 600), (1066, 600), (132, 800, 600)),
+        ((1920, 1200), (1280, 720), (64, 1152, 720)),
+    ] {
+        let rx = FakeReceiver::spawn(CastFake::default());
+        let page = Page::default();
+        let script = PageScript {
+            frames: 3,
+            audio: false,
+            capture,
+            ..PageScript::default()
+        };
+        let o = ShareOptions {
+            no_audio: true,
+            ..share_opts(vec![rx.addr.to_string()])
+        };
+        share_with(o, &connect_one, never, &page_hook(&page, script)).unwrap();
+        let seen = joined(&page);
+        let plan = seen.plan.unwrap();
+        let size = (
+            plan.get("width").unwrap().as_u32().unwrap(),
+            plan.get("height").unwrap().as_u32().unwrap(),
+        );
+        assert_eq!(size, want, "capture {capture:?}");
+        let c = plan.get("content").unwrap();
+        let rect = |k: &str| c.get(k).unwrap().as_u32().unwrap();
+        assert_eq!(
+            (rect("x"), rect("y"), rect("width"), rect("height")),
+            (picture.0, 0, picture.1, picture.2),
+            "capture {capture:?}"
+        );
+        assert_eq!(plan.get("fps").unwrap().as_f64(), Some(30.0));
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        let offer = st.offer.as_ref().unwrap();
+        let video = offer["offer"]["supportedStreams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["type"].as_str() == Some("video_source"))
+            .unwrap()
+            .clone();
+        let res = &video["resolutions"].as_array().unwrap()[0];
+        assert_eq!(
+            (res["width"].as_u32(), res["height"].as_u32()),
+            (Some(1920), Some(1080)),
+            "{video:?}"
+        );
+        assert_eq!(video["maxFrameRate"].as_str(), Some("60"), "{video:?}");
+    }
+}
+
+#[test]
+fn share_offer_bounds() {
+    let o = share_opts(vec!["tv".into()]);
+    let offer = ShareOffer::new(&o);
+    assert_eq!(
+        (offer.size, offer.fps),
+        (
+            Size {
+                width: 1920,
+                height: 1080
+            },
+            Ratio::integer(60)
+        )
+    );
+    let o = ShareOptions {
+        size: Some(Size {
+            width: 1280,
+            height: 720,
+        }),
+        fps: Some(Ratio::integer(25)),
+        bitrate_kbps: Some(3000),
+        ..o
+    };
+    let offer = ShareOffer::new(&o);
+    assert_eq!(
+        (offer.size.width, offer.fps, offer.bitrate_kbps),
+        (1280, Ratio::integer(25), 3000)
+    );
 }

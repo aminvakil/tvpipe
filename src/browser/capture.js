@@ -30,6 +30,9 @@
   // this often, so receivers keep getting pictures and keyframes.
   var IDLE_REPEAT_MS = 250;
   var STATS_MS = 2000;
+  // How long the capture's size may wait for its first frame (a still
+  // window may deliver none for a while; then the track settings count).
+  var CAPTURE_WAIT_MS = 1500;
   // Encoder warm-up: keyframes later than this are discarded (and asked
   // for again) until one is on time, for at most WARMUP_MAX_MS.
   var WARMUP_LATE_MS = 150;
@@ -55,6 +58,26 @@
       if (fs <= LEVELS[i][1] && mbps <= LEVELS[i][2]) return LEVELS[i][0];
     }
     return 0x34;
+  }
+
+  // Where a sw x sh picture goes in a dw x dh frame: as large as fits at
+  // its own aspect ratio, centered, even values. Keep in step with
+  // `browser::layout::place` (tvpipe sends this for the planned size).
+  function place(sw, sh, dw, dh) {
+    var even = function (v) { return Math.max(2, v - (v % 2)); };
+    sw = Math.max(1, sw); sh = Math.max(1, sh); dw = Math.max(2, dw); dh = Math.max(2, dh);
+    var w, h;
+    if (sw * dh >= sh * dw) {
+      w = dw;
+      h = Math.floor((sh * dw + Math.floor(sw / 2)) / sw);
+    } else {
+      w = Math.floor((sw * dh + Math.floor(sh / 2)) / sh);
+      h = dh;
+    }
+    w = even(Math.min(w, dw));
+    h = even(Math.min(h, dh));
+    var x = Math.floor((dw - w) / 2), y = Math.floor((dh - h) / 2);
+    return { x: x - (x % 2), y: y - (y % 2), width: w, height: h };
   }
 
   // One SLRW record: u8 kind | u64le pts_us | u32le len | payload parts.
@@ -331,15 +354,33 @@
         if (t === vt || t.kind === 'video') self.stop('the share was stopped in the browser');
       });
     });
+    // The size tvpipe plans with is the first real frame's: track
+    // settings can report the constraint ceiling (e.g. the screen) rather
+    // than what the frames are. The settings are the fallback.
     var s = vt.getSettings ? vt.getSettings() : {};
-    var at = stream.getAudioTracks()[0];
-    this._send({
+    this.captureInfo = {
       type: 'capture',
       width: s.width || 0, height: s.height || 0, fps: s.frameRate || null,
-      audio: !!at, surface: s.displaySurface || null, label: vt.label || null
-    });
-    this._emit('capture', { settings: s, audio: !!at });
+      audio: !!stream.getAudioTracks()[0], surface: s.displaySurface || null, label: vt.label || null
+    };
+    this.frameUs = 1e6 / ((this.config && this.config.fps) || 30);
+    this._videoSource(vt);
+    this.timers.push(every(CAPTURE_WAIT_MS, function () { self._sendCapture(null); }));
     return Promise.resolve();
+  };
+
+  // Tells tvpipe what is being captured (once).
+  Capture.prototype._sendCapture = function (frame) {
+    if (this.captureSent || this.stopped) return;
+    var c = this.captureInfo;
+    if (frame) {
+      c.width = frame.displayWidth;
+      c.height = frame.displayHeight;
+    }
+    if (!c.width || !c.height) return;
+    this.captureSent = true;
+    this._send(c);
+    this._emit('capture', { settings: { width: c.width, height: c.height, frameRate: c.fps, displaySurface: c.surface }, audio: c.audio });
   };
 
   Capture.prototype._pickCodec = function (plan) {
@@ -372,7 +413,6 @@
       });
       self.encoder.configure(cfg);
       self._log('info', 'encoding ' + cfg.codec + ' ' + plan.width + 'x' + plan.height + '@' + plan.fps + ' ' + Math.round(plan.bitrate / 1000) + ' kbit/s');
-      self._videoSource(self.stream.getVideoTracks()[0]);
       self.timers.push(every(IDLE_REPEAT_MS / 2, function () { self._idle(); }));
       self.timers.push(every(STATS_MS, function () { self._reportStats(); }));
       return self._startAudio(plan).catch(function (e) {
@@ -422,9 +462,11 @@
 
   // A new source frame (owned by us from here on).
   Capture.prototype._frame = function (frame) {
-    if (this.stopped || !this.encoder) { frame.close(); return; }
+    if (this.stopped) { frame.close(); return; }
+    this._sendCapture(frame);
     if (this.lastFrame) this.lastFrame.close();
     this.lastFrame = frame;
+    if (!this.encoder) return;
     this.stats.source++;
     var t = clock();
     // Pace to the plan's frame rate (sources may deliver more).
@@ -457,10 +499,12 @@
     }
     var frame;
     try {
-      var w = src.displayWidth, h = src.displayHeight;
-      frame = (w === plan.width && h === plan.height)
+      var r = this._rect(src.displayWidth, src.displayHeight);
+      // Exactly the frame's size and position: no copy.
+      frame = (r.x === 0 && r.y === 0 && r.width === plan.width && r.height === plan.height &&
+               src.displayWidth === plan.width && src.displayHeight === plan.height)
         ? new VideoFrame(src, { timestamp: t })
-        : this._scaled(src, t);
+        : this._drawn(src, r, t);
     } catch (e) {
       this.stats.dropped++;
       return;
@@ -476,8 +520,19 @@
     this.stats.encoded++;
   };
 
-  // Scales (letterboxed) into the plan size through a canvas.
-  Capture.prototype._scaled = function (src, t) {
+  // Where a w x h source goes in the output: the plan's rectangle while
+  // the capture keeps the size tvpipe planned with, else recomputed (a
+  // resized window) the same way.
+  Capture.prototype._rect = function (w, h) {
+    var p = this.plan, c = this.captureInfo;
+    if (p.content && c && w === c.width && h === c.height) return p.content;
+    return place(w, h, p.width, p.height);
+  };
+
+  // Draws the source into an output-sized canvas at r, black around it
+  // (letterbox/pillarbox: receivers stretch what they get to their
+  // screen, so the frame has the screen's shape). GPU-side.
+  Capture.prototype._drawn = function (src, r, t) {
     var W = this.plan.width, H = this.plan.height;
     if (!this.canvas) {
       if (typeof global.OffscreenCanvas === 'function') {
@@ -491,16 +546,12 @@
       this.ctx2d.imageSmoothingEnabled = true;
       this.ctx2d.imageSmoothingQuality = 'high';
     }
-    var sw = src.displayWidth, sh = src.displayHeight;
-    var k = Math.min(W / sw, H / sh);
-    var dw = Math.round(sw * k), dh = Math.round(sh * k);
-    var dx = Math.floor((W - dw) / 2), dy = Math.floor((H - dh) / 2);
     var g = this.ctx2d;
-    if (dx > 0 || dy > 0) {
+    if (r.x > 0 || r.y > 0 || r.width < W || r.height < H) {
       g.fillStyle = '#000';
       g.fillRect(0, 0, W, H);
     }
-    g.drawImage(src, dx, dy, dw, dh);
+    g.drawImage(src, r.x, r.y, r.width, r.height);
     return new VideoFrame(this.canvas, { timestamp: t, alpha: 'discard' });
   };
 
@@ -647,6 +698,7 @@
   global.tvpipeCapture = {
     version: VERSION,
     features: Capture.features,
+    place: place,
     connect: function (url, opts) { return new Capture(url, opts); }
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

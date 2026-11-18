@@ -108,6 +108,26 @@ pub struct Capabilities {
     pub min_latency_ms: Option<u32>,
     /// The playout delay the receiver prefers, if it says.
     pub preferred_latency_ms: Option<u32>,
+    /// The shape of the receiver's screen, reduced (e.g. `(16, 9)`), if it
+    /// says: it stretches pictures of another shape to fill it, so senders
+    /// that choose their own frame size (`share`) match it and pad.
+    pub display_aspect: Option<(u32, u32)>,
+}
+
+/// `w:h` reduced (`(1920, 1080)` → `(16, 9)`); `None` for a zero side.
+pub fn aspect_of(w: u32, h: u32) -> Option<(u32, u32)> {
+    fn gcd(a: u32, b: u32) -> u32 {
+        if b == 0 {
+            a
+        } else {
+            gcd(b, a % b)
+        }
+    }
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let g = gcd(w, h);
+    Some((w / g, h / g))
 }
 
 /// Which encoder makes the video: one of ffmpeg's, or our own.
