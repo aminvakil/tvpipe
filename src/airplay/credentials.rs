@@ -17,6 +17,11 @@
 //! addr = 192.168.1.34:7000
 //! ```
 //!
+//! A receiver paired with the legacy raw (non-TLV) pair-setup (W7, spec
+//! `airplay-mirroring.md` Appendix A) additionally has `pairing = raw`;
+//! without that line a receiver is a HAP pairing, so older files load
+//! unchanged.
+//!
 //! Blocks are separated by blank lines; `#` starts a comment line. Unknown
 //! keys are ignored, so later versions can add fields. Saving writes a
 //! temporary file next to the store and renames it over the old one, with
@@ -129,6 +134,9 @@ pub struct Receiver {
     pub device_id: Option<String>,
     /// The last address we reached it at (`ip:port`).
     pub addr: Option<String>,
+    /// A legacy raw pairing (`pairing = raw`): `public_key` came from raw
+    /// pair-setup and `id` is ours (raw pairing has no receiver id).
+    pub raw: bool,
 }
 
 impl std::fmt::Debug for Receiver {
@@ -143,6 +151,7 @@ impl std::fmt::Debug for Receiver {
             .field("name", &self.name)
             .field("device_id", &self.device_id)
             .field("addr", &self.addr)
+            .field("raw", &self.raw)
             .finish()
     }
 }
@@ -314,6 +323,7 @@ impl Store {
                         name: block.get("name").unwrap_or_default().to_owned(),
                         device_id: opt("deviceid"),
                         addr: opt("addr"),
+                        raw: block.get("pairing") == Some("raw"),
                     });
                 }
                 other => {
@@ -351,6 +361,9 @@ impl Store {
             }
             if let Some(a) = &r.addr {
                 let _ = writeln!(out, "addr = {}", clean(a));
+            }
+            if r.raw {
+                out.push_str("pairing = raw\n");
             }
         }
         out
@@ -484,7 +497,36 @@ pub(crate) mod tests {
             name: format!("TV {n}"),
             device_id: Some(format!("AA:BB:CC:00:00:{n:02X}")),
             addr: Some(format!("192.168.1.{n}:7000")),
+            raw: false,
         }
+    }
+
+    /// A file written before `pairing = raw` existed loads as HAP
+    /// pairings and saves byte for byte the same.
+    #[test]
+    fn old_format_still_loads() {
+        let seed = "07".repeat(32);
+        let pk = "ab".repeat(32);
+        let old = format!(
+            "{HEADER}controller = 5B3C1A0E-0000-4000-8000-000000000001\nseed = {seed}\n\n\
+             receiver = 41413a4242\npk = {pk}\nname = Livingroom (2)\n\
+             deviceid = AA:BB:CC:00:00:0A\naddr = 192.168.1.34:7000\n"
+        );
+        let store = Store::parse(Path::new("old.txt"), &old).unwrap();
+        assert_eq!(store.receivers.len(), 1);
+        assert!(!store.receivers[0].raw);
+        assert_eq!(store.receivers[0].name, "Livingroom (2)");
+        assert_eq!(store.to_text(), old);
+        // A raw pairing round-trips its marker.
+        let mut store = store;
+        let mut r = receiver(9);
+        r.raw = true;
+        store.upsert(r.clone());
+        let text = store.to_text();
+        assert!(text.contains("pairing = raw\n"));
+        let again = Store::parse(Path::new("x"), &text).unwrap();
+        assert_eq!(again.receivers[1], r);
+        assert!(!again.receivers[0].raw);
     }
 
     #[test]

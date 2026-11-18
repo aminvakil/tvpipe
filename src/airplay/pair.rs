@@ -169,13 +169,15 @@ pub fn connect_with(addr: SocketAddr, identity: &Identity, auth: Auth) -> Result
 /// Connects to a resolved target with the credentials in `store`: stored
 /// pairing first, transient pair-setup otherwise.
 pub fn connect(target: &Target, store: &Store) -> Result<Control> {
-    match store.find(&target.query()).or_else(|| {
+    let found = store.find(&target.query()).or_else(|| {
         let ip = target.addr.ip().to_string();
         store.find(&Query {
             addr: Some(&ip),
             ..Query::default()
         })
-    }) {
+    });
+    // Legacy raw pairings are verified by `airplay::legacy_pair` (W7).
+    match found.filter(|r| !r.raw) {
         Some(r) => connect_with(target.addr, &store.identity, Auth::Verified(r.clone())),
         None => connect_with(target.addr, &store.identity, Auth::Transient).map_err(|e| {
             if e.kind() == ErrorKind::Auth {
@@ -252,6 +254,7 @@ pub fn pair_with(
         name,
         device_id,
         addr: Some(target.addr.to_string()),
+        raw: false,
     };
     store.upsert(record.clone());
     store.save()?;
