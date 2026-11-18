@@ -42,7 +42,9 @@ pub fn connect(source: &str, destination: &str) -> CastMessage {
         .with("connType", 0)
         .with("userAgent", USER_AGENT)
         .with("origin", Value::object())
-        .with("protocolVersionList", Value::array([0, 1, 2, 3]))
+        // No 1 and 2: those are the chunking versions, which we do not
+        // implement. 3 moves string payloads to payload_binary (handled).
+        .with("protocolVersionList", Value::array([0, 3]))
         .with(
             "senderInfo",
             Value::object()

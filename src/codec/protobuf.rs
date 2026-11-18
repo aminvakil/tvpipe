@@ -379,8 +379,11 @@ impl CastMessage {
         let destination_id = text(dest, "destination_id")?;
         let namespace = text(namespace, "namespace")?;
         let payload = match payload_type {
+            // CASTV2_1_3 ("binary payload over utf8") carries STRING
+            // payloads in payload_binary; real receivers use it once the
+            // sender lists version 3 in CONNECT's protocolVersionList.
             Some(PAYLOAD_STRING) => {
-                Payload::String(text(Some(utf8.unwrap_or(b"")), "payload_utf8")?)
+                Payload::String(text(Some(utf8.or(binary).unwrap_or(b"")), "payload_utf8")?)
             }
             Some(PAYLOAD_BINARY) => Payload::Binary(binary.unwrap_or(b"").to_vec()),
             Some(other) => {
@@ -543,5 +546,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn v1_3_string_payload_in_binary_field() {
+        // Captured from a Google TV (Sony XR) after CONNECT with
+        // protocolVersionList [0,1,2,3]: protocol_version 3, payload_type
+        // STRING, JSON in field 7.
+        let data = crate::util::hex::decode(
+            "0803120a72656365697665722d301a0873656e6465722d30222875726e3a782d636173743a\
+             636f6d2e676f6f676c652e636173742e74702e636f6e6e656374696f6e28003a287b227072\
+             6f746f636f6c56657273696f6e223a332c2274797065223a22434f4e4e4543544544227d",
+        )
+        .unwrap();
+        let m = CastMessage::decode(&data).unwrap();
+        assert_eq!(m.protocol_version, 3);
+        assert_eq!(
+            m.payload,
+            Payload::String(r#"{"protocolVersion":3,"type":"CONNECTED"}"#.into())
+        );
     }
 }
