@@ -89,7 +89,7 @@ pub struct Config {
     /// IDR interval in frames; 0 = only the first frame and on request.
     pub gop: u32,
     /// Worker threads = slices per picture (clamped to the macroblock
-    /// rows); 0 = available parallelism.
+    /// rows); 0 = automatic (up to 8, at least 4 macroblock rows each).
     pub threads: u32,
     pub color: ColorInfo,
     /// Fixed QP instead of rate control.
@@ -174,11 +174,14 @@ impl Encoder {
         };
         let sps = bits::nal_unit(3, 7, &sp.sps_rbsp());
         let pps = bits::nal_unit(3, 8, &headers::pps_rbsp());
+        // Automatic: up to 8 threads, each slice at least 4 macroblock
+        // rows (more slices cost bits: headers, broken prediction).
         let threads = match cfg.threads {
             0 => std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(1)
-                .min(16),
+                .min(8)
+                .min((mb_h as usize / 4).max(1)),
             n => n as usize,
         }
         .clamp(1, mb_h as usize);
