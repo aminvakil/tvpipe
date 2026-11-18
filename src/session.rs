@@ -67,6 +67,7 @@ pub fn run(cmd: Command) -> Result<()> {
         Command::Unpair { target } => crate::airplay::pair::unpair(&target),
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
         Command::Share(opts) => share(opts),
+        Command::Browse(opts) => browse::browse(opts),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
 }
@@ -1682,6 +1683,11 @@ fn stream(
     }
     Ok(end)
 }
+
+mod browse;
+
+#[cfg(test)]
+mod browse_tests;
 
 #[cfg(test)]
 mod multi_tests;

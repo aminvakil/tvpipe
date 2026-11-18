@@ -21,6 +21,7 @@ enum Top {
     TestPattern,
     Preview,
     Share,
+    Browser,
     DebugPipeline,
 }
 
@@ -77,6 +78,21 @@ enum ShareArg {
 }
 
 #[derive(Copy, Clone)]
+enum BrowseArg {
+    To,
+    Latency,
+    Size,
+    Fps,
+    Bitrate,
+    NoAudio,
+    Profile,
+    Visible,
+    Reload,
+    Browser,
+    Url,
+}
+
+#[derive(Copy, Clone)]
 enum PipelineArg {
     Raw,
     RawVideo,
@@ -105,6 +121,7 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::TestPattern, &TEST_PATTERN),
         Cmd::new(Top::Preview, &PREVIEW),
         Cmd::new(Top::Share, &SHARE),
+        Cmd::new(Top::Browser, &BROWSE),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -313,6 +330,57 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
          share ends the session.",
     );
 
+static BROWSE: Cli<BrowseArg> = Cli::new("browser")
+    .about("Mirror a web page: a browser of tvpipe's own opens URL and shares its tab")
+    .usage("URL --to NAME|ADDR [OPTIONS]")
+    .opts(&[
+        to(BrowseArg::To),
+        Opt::new(BrowseArg::Latency)
+            .long("latency")
+            .value("MS")
+            .help("Playout delay in ms, the same on every receiver"),
+        Opt::new(BrowseArg::Size)
+            .long("size")
+            .value("WxH")
+            .help("Page and video size (default: the receivers' screen shape, at most 1920x1080)"),
+        Opt::new(BrowseArg::Fps)
+            .long("fps")
+            .value("N")
+            .help("Output frame rate (default 30)"),
+        Opt::new(BrowseArg::Bitrate)
+            .long("bitrate")
+            .value("KBPS")
+            .help("Video bitrate in kbit/s"),
+        Opt::new(BrowseArg::NoAudio)
+            .long("no-audio")
+            .help("Do not send the page's sound"),
+        Opt::new(BrowseArg::Profile)
+            .long("profile")
+            .value("DIR")
+            .value_hint(ValueHint::DirPath)
+            .help("Keep the browser's profile (logins, cookies) in DIR (default: a temporary one)"),
+        Opt::new(BrowseArg::Visible)
+            .long("visible")
+            .help("Show the browser window instead of running headless (e.g. to log in)"),
+        Opt::new(BrowseArg::Reload)
+            .long("reload")
+            .value("MIN")
+            .help("Reload the page every MIN minutes"),
+        Opt::new(BrowseArg::Browser)
+            .long("browser")
+            .value("PATH")
+            .value_hint(ValueHint::ExecutablePath)
+            .help("Chromium-based browser to use (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
+    ])
+    .args(&[Pos::new(BrowseArg::Url, "URL")
+        .value_hint(ValueHint::Url)
+        .help("The page: http(s)://..., file://... or a local file")])
+    .after_help(
+        "The browser runs with a profile of its own (never yours), sized to the stream, and\n\
+         shares its tab with sound. It is started again if it crashes; Ctrl-C or 'q' stops.\n\
+         Sites that refuse automated browsers (e.g. Google Meet) do not work.",
+    );
+
 static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")
     .about("Run ffmpeg and the demuxer and print every frame")
     .usage("[OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)")
@@ -466,6 +534,22 @@ pub struct BrowserOptions {
     pub new_token: bool,
 }
 
+/// `tvpipe browser`.
+#[derive(Debug, Clone)]
+pub struct BrowseOptions {
+    pub url: String,
+    pub to: Vec<String>,
+    pub latency_ms: Option<u32>,
+    pub size: Option<Size>,
+    pub fps: Option<Ratio>,
+    pub bitrate_kbps: Option<u32>,
+    pub no_audio: bool,
+    pub profile: Option<PathBuf>,
+    pub visible: bool,
+    pub reload: Option<Duration>,
+    pub browser: Option<PathBuf>,
+}
+
 /// `tvpipe share`.
 #[derive(Debug, Clone)]
 pub struct ShareOptions {
@@ -506,6 +590,7 @@ pub enum Command {
     Play(PlayOptions),
     TestPattern(PlayOptions),
     Share(ShareOptions),
+    Browse(BrowseOptions),
     DebugPipeline(PipelineOptions),
 }
 
@@ -550,6 +635,7 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                 ))
             }
             Top::Share => return Ok((g, parse_share(p.subcommand(&SHARE))?)),
+            Top::Browser => return Ok((g, parse_browse(p.subcommand(&BROWSE))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -742,6 +828,49 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
     Ok(Command::Share(o))
 }
 
+fn parse_browse(mut p: Parser<BrowseArg>) -> Result<Command, Error> {
+    let mut o = BrowseOptions {
+        url: String::new(),
+        to: Vec::new(),
+        latency_ms: None,
+        size: None,
+        fps: None,
+        bitrate_kbps: None,
+        no_audio: false,
+        profile: None,
+        visible: false,
+        reload: None,
+        browser: None,
+    };
+    let mut url = None;
+    while let Some(arg) = p.param()? {
+        match arg {
+            BrowseArg::To => o.to.push(p.value()?),
+            BrowseArg::Latency => o.latency_ms = Some(p.value()?),
+            BrowseArg::Size => o.size = Some(p.value()?),
+            BrowseArg::Fps => o.fps = Some(p.value()?),
+            BrowseArg::Bitrate => o.bitrate_kbps = Some(p.value()?),
+            BrowseArg::NoAudio => o.no_audio = true,
+            BrowseArg::Profile => o.profile = Some(p.value()?),
+            BrowseArg::Visible => o.visible = true,
+            BrowseArg::Reload => {
+                let min: f64 = p.value()?;
+                if !(min.is_finite() && min > 0.0 && min <= 7.0 * 24.0 * 60.0) {
+                    return Err(p.error("--reload takes minutes (> 0)"));
+                }
+                o.reload = Some(Duration::from_secs_f64(min * 60.0));
+            }
+            BrowseArg::Browser => o.browser = Some(p.value()?),
+            BrowseArg::Url => url = Some(p.value::<String>()?),
+        }
+    }
+    o.url = url.ok_or_else(|| p.error("missing URL"))?;
+    if o.to.is_empty() {
+        return Err(p.error("at least one --to NAME|ADDR is required"));
+    }
+    Ok(Command::Browse(o))
+}
+
 fn parse_pipeline(mut p: Parser<PipelineArg>) -> Result<Command, Error> {
     let mut o = PipelineOptions {
         raw: false,
@@ -881,6 +1010,46 @@ mod tests {
         assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
         assert!(parse_from(&["share"]).is_err());
         assert!(parse_from(&["share", "--to", "tv", "--port", "70000"]).is_err());
+    }
+
+    #[test]
+    fn browse_options() {
+        let (_, cmd) = parse_from(&[
+            "browser",
+            "https://example.com/dash",
+            "--to",
+            "TV",
+            "--to",
+            "browser",
+            "--size",
+            "1280x720",
+            "--reload",
+            "0.5",
+            "--visible",
+            "--profile",
+            "/tmp/p",
+            "--browser",
+            "/opt/chrome",
+        ])
+        .unwrap();
+        let Command::Browse(o) = cmd else { panic!() };
+        assert_eq!(o.url, "https://example.com/dash");
+        assert_eq!(o.to, ["TV", "browser"]);
+        assert_eq!(o.reload, Some(Duration::from_secs(30)));
+        assert!(o.visible && !o.no_audio);
+        assert_eq!(o.profile.as_deref(), Some(std::path::Path::new("/tmp/p")));
+        assert_eq!(
+            o.browser.as_deref(),
+            Some(std::path::Path::new("/opt/chrome"))
+        );
+        assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
+        let (_, cmd) = parse_from(&["browser", "--to", "TV", "file:///tmp/x.html"]).unwrap();
+        let Command::Browse(o) = cmd else { panic!() };
+        assert_eq!((o.reload, o.visible, o.profile), (None, false, None));
+        assert!(parse_from(&["browser", "--to", "TV"]).is_err());
+        assert!(parse_from(&["browser", "https://example.com"]).is_err());
+        assert!(parse_from(&["browser", "https://x", "--to", "TV", "--reload", "0"]).is_err());
+        assert!(parse_from(&["browser", "https://x", "--to", "TV", "--reload", "-1"]).is_err());
     }
 
     #[test]
