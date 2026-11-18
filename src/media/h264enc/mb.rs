@@ -1251,8 +1251,8 @@ impl SliceEnc {
             }
         }
         if c.cbp_chroma != 0 {
-            for comp in 0..2 {
-                write_block(bw, &c.cdc[comp], -1);
+            for dc in &c.cdc {
+                write_block(bw, dc, -1);
             }
         }
         if c.cbp_chroma == 2 {

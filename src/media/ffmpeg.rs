@@ -280,13 +280,21 @@ const LOW_DELAY_INPUT: [&str; 2] = ["-flags", "low_delay"];
 /// arrival time, so dropped frames leave gaps instead of shifting the
 /// timeline. Raw audio is timed by its sample count instead (arrival
 /// times of TCP reads would jitter).
-const RAW_VIDEO_INPUT: [&str; 4] = [
+///
+/// `-probesize 32`: the format is given, so there is nothing to probe.
+/// ffmpeg 7.1 otherwise reads the raw audio socket for about a second
+/// while opening it; the video read meanwhile stalls, and its frames, all
+/// stamped on arrival in one burst, are dropped as duplicates (3 of 30
+/// frames survived on Debian 13's ffmpeg 7.1; ffmpeg 8 is unaffected).
+const RAW_VIDEO_INPUT: [&str; 6] = [
     "-use_wallclock_as_timestamps",
     "1",
+    "-probesize",
+    "32",
     "-thread_queue_size",
     "64",
 ];
-const RAW_AUDIO_INPUT: [&str; 2] = ["-thread_queue_size", "64"];
+const RAW_AUDIO_INPUT: [&str; 4] = ["-probesize", "32", "-thread_queue_size", "64"];
 
 /// `-re` for the next input, without ffmpeg's default initial burst
 /// (`-readrate_initial_burst`, 0.5 s since ffmpeg 6.1): a burst arrives
