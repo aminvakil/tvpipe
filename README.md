@@ -6,13 +6,20 @@
 
 `tvpipe` is a command line tool for low-latency mirroring of video and audio
 to **AirPlay** and **Google Cast** receivers (Apple TV, smart TVs,
-Chromecast / Google TV).
+Chromecast / Google TV) and browser tabs. It uses the real-time mirroring
+protocols of both ecosystems, not URL playback, so the picture on the TV is a
+fraction of a second behind the source.
 
-It uses the real-time mirroring protocols of both ecosystems, not URL
-playback, so the picture on the TV is a fraction of a second behind the
-source. It can mirror files, URLs, capture devices, a built-in test pattern,
-or raw frames that a game writes to its stdin. It can also send to several
-receivers at once from a single encode.
+**Website and manual: <https://mitsuhiko.github.io/tvpipe/>**
+
+```sh
+tvpipe discover                                        # find receivers
+tvpipe pair "Living Room"                              # Apple TV only, once
+tvpipe play --to "Living Room" movie.mp4               # a file or URL
+tvpipe play --to "Living Room" --to Kitchen movie.mp4  # two TVs, one encode
+tvpipe share --to Kitchen --open                       # a browser tab or the screen
+tvpipe share https://status.example.com --to Kitchen   # a web page
+```
 
 ## Installing
 
@@ -24,266 +31,83 @@ curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh     # macOS, Linux
 irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex           # Windows
 ```
 
-The installers fetch the latest release from
-[GitHub Releases](https://github.com/mitsuhiko/tvpipe/releases), check its
-SHA-256 and put `tvpipe` in `~/.local/bin` (Windows:
-`%LOCALAPPDATA%\tvpipe\bin`, added to the user `PATH`).
-`TVPIPE_VERSION` picks a version, `TVPIPE_INSTALL_DIR` another directory.
-The release page also has the archives for manual download (macOS, static
-Linux and Windows binaries, x86_64 and ARM64).
+Playing files, URLs and capture devices needs `ffmpeg` (and `ffprobe`); see
+[Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) for
+ffmpeg, the release archives and building from source.
 
-## Building
+## Features
 
-```sh
-cargo build --release        # → target/release/tvpipe
-```
+- Plays files and URLs, and mirrors cameras, capture cards and the screen
+  through ffmpeg; suitable MP4/MOV/MKV files are sent without re-encoding.
+- Shares a browser tab, window or screen, or puts a web page on the TV in a
+  headless browser of its own.
+- Sends to several receivers at once, on one timeline, and reconnects one
+  that drops out.
+- Plays to a browser tab too: previews, OBS sources, video calls.
+- Takes raw or H.264 frames and sound from a game on stdin.
+- One self-contained binary for macOS, Linux and Windows, with its own mDNS,
+  protocol stacks and H.264/AAC encoders.
 
-You need Rust 1.85 or newer and a C toolchain for `ring`. For general file
-and capture input, put `ffmpeg` (and `ffprobe`) in `PATH`, or pass
-`--ffmpeg PATH` or set `$TVPIPE_FFMPEG`.
+## Manual
 
-## Quick start
-
-```sh
-# 1. Find receivers
-tvpipe discover
-
-# 2. Apple TV only: pair once (the TV shows a PIN)
-tvpipe pair "Living Room"
-
-# 3. Mirror something
-tvpipe play --to "Living Room" movie.mp4
-```
-
-Press Ctrl-C, or `q` then Enter, to stop. Either way the receiver gets a
-proper teardown and leaves mirroring mode.
-
-## Usage
-
-```
-tvpipe discover [--timeout SECS] [--json] [--interface ADDR]
-tvpipe pair NAME|ADDR [--pin PIN]
-tvpipe unpair NAME|ADDR
-tvpipe play --to NAME|ADDR [--to ...] [OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)
-tvpipe test-pattern --to NAME|ADDR [OPTIONS]
-tvpipe share [URL] --to NAME|ADDR [--open] [OPTIONS]
-tvpipe preview [--open] [--port PORT] [OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]
-tvpipe debug-pipeline [OPTIONS] INPUT
-```
-
-Global flags: `-v` for debug logs, `--debug` for protocol traces. Run any
-command with `--help` to see all of its options.
-
-### Choosing receivers (`--to`)
-
-| Form | Meaning |
+| Page | Covers |
 |---|---|
-| `"Living Room"` / `liv` | discovered name, case-insensitive; a unique prefix is enough |
-| `192.168.1.20` | Cast on port 8009 (no discovery) |
-| `192.168.1.20:7000` | AirPlay on port 7000 (no discovery) |
-| `airplay:NAME` / `cast:NAME` | force a protocol (for TVs that speak both) |
-| `browser` | a player page in a browser tab on this computer (below) |
+| [Overview](https://mitsuhiko.github.io/tvpipe/manual/) | what tvpipe does and does not do |
+| [Quick start](https://mitsuhiko.github.io/tvpipe/manual/quick-start/) | find a TV, pair it, play a file |
+| [Receivers](https://mitsuhiko.github.io/tvpipe/manual/receivers/) | `discover`, `pair`, `unpair`, `--to` |
+| [Playing media](https://mitsuhiko.github.io/tvpipe/manual/play/) | files, URLs, cameras, the screen |
+| [Sharing a tab or screen](https://mitsuhiko.github.io/tvpipe/manual/share/) | `share` |
+| [A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/) | `share URL` |
+| [Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/) | `preview`, `--to browser`, OBS, video calls |
+| [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
+| [Options](https://mitsuhiko.github.io/tvpipe/manual/options/) | the streaming options and encoders |
+| [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
+| [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
+| [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | `test-pattern`, `--latency`, measuring |
 
-A device that advertises both protocols uses Cast unless you write
-`airplay:`. You can repeat `--to` to stream to several receivers at once.
+## Notes
 
-A receiver that drops out mid-stream (it left the Wi-Fi, or got a new
-address) is reconnected for up to `--reconnect SECS` (default 120, `0`
-turns it off) while the others keep playing: one given by name is looked
-up again, one given as an address is retried there. It comes back at the
-next keyframe, in step with the others. A receiver whose user stopped
-mirroring is left alone.
+<!-- Details the manual does not cover yet; drop each one once it does. -->
 
-### Inputs
-
-```sh
-# A file or URL
-tvpipe play --to TV movie.mkv
-tvpipe play --to TV --loop intro.mp4
-tvpipe play --to TV https://example.com/stream.m3u8
-
-# Any ffmpeg input after `--` (screen or camera capture)
-tvpipe play --to TV -- -f avfoundation -i 1:0         # macOS
-tvpipe play --to TV -- -f x11grab -i :0.0             # Linux
-tvpipe play --to TV -- -f gdigrab -i desktop          # Windows
-
-# Two receivers, one encode
-tvpipe play --to "Apple TV" --to "Chromecast" movie.mp4
-
-# Latency check: burned-in wallclock and frame counter, beep and flash every second
-tvpipe test-pattern --to TV
-
-# A browser tab, window or screen: open the printed URL, press Share
-tvpipe share --to TV --open
-```
-
-`share` serves a page on 127.0.0.1 that captures with the browser
-(`getDisplayMedia`) and encodes H.264 with WebCodecs (Chrome, Edge, Safari
-16.4+, Firefox 130+).  Tick "share audio" in Chrome's picker for sound.  The
-stream takes the TV's screen shape with the capture centered (black bars), at
-the capture's size up to what the TV allows.  Stopping the share or closing the
-page ends the session.  `--open` opens the page for you.
-
-### A Web Page On The TV (`share URL`)
-
-```sh
-# A dashboard on the TV, reloaded every 30 minutes
-tvpipe share https://status.example.com --to TV --reload 30
-
-# A page that needs a login: log in once in the window, keep the profile
-tvpipe share https://grafana.example.com --to TV --visible --profile ~/tvpipe-grafana
-tvpipe share https://grafana.example.com --to TV --profile ~/tvpipe-grafana
-
-# A local file, also in a browser tab here
-tvpipe share ./slides.html --to TV --to browser --open
-```
-
-With a URL, `share` starts a Chromium-based browser of its own (Chrome, Edge, Chromium or
-Brave; `--browser PATH` or `$TVPIPE_BROWSER` picks one), headless unless
-`--visible`, opens URL at exactly the stream's size (the TV's screen shape, at
-most 1920x1080 or `--size`) and shares that tab with its sound through the same
-path as `share`.  It never uses your browser profile: each run gets a temporary
-one, deleted afterwards (or by the next run if tvpipe was killed), or
-`--profile DIR` keeps one (for logins).
-
-If the page navigates or reloads, it shares again; if the page or the browser
-crashes, it is started again.  Closing the window (`--visible`) or Ctrl-C ends
-the session and quits the browser.  The start takes about a second, a reload
-or navigation leaves a gap of about half a second.  `--visible`, `--profile`,
-`--reload` and `--browser` only exist with a URL; without one there is no
-browser of tvpipe's.
-
-Sites that refuse automated browsers do not work: tvpipe does not hide that
-its browser is automated, and reports the site's 401/403/429.  Video calls are
-such a case (`docs/meet.md`): present a `--to browser` tab with the call's own
-UI instead.
-
-### Playing To A Browser (`--to browser`, `preview`)
-
-```sh
-# Preview a file, a capture or the test pattern (no INPUT) in a browser tab
-tvpipe preview --open movie.mp4
-tvpipe preview --open
-
-# A browser tab next to a TV, on the same timeline
-tvpipe play --to "Living Room" --to browser movie.mp4
-```
-
-`--to browser` is a receiver like a TV: tvpipe serves a player page on 127.0.0.1
-and prints its URL (`--open` opens it in the default browser).  The URL stays
-the same across runs (port 8765 unless `--port` says otherwise, and a token kept
-in the config directory), so an open tab or an OBS source picks up the next run
-by itself.  Use `--new-token` to change it, which locks out old URLs.
-
-If 8765 is taken, tvpipe warns and uses another port for that run.  The page
-decodes H.264 with WebCodecs and plays PCM with Web Audio (Chrome, Edge, Safari
-16.4+, Firefox 130+), in step with the other receivers.  Any number of tabs can
-watch and a tab that joins later starts synchronized.
-
-Without a tab, the stream runs anyway but you can use `--wait-for-viewer` to
-defer the start until a tab is open.  `preview` is short for `play --to
-browser`.
-
-On the page: double-click or `F` for fullscreen, `S` for statistics (delay,
-frame rate, drops, the wallclock of the shown frame).  The controls and the
-cursor hide when the mouse rests.  Browsers start audio only after a click:
-click the page once (the "Click for sound" button).
-
-- **OBS:** add the URL as a browser source with `&ui=0`; "Control audio
-  via OBS" routes its sound into the mix.
-- **Video calls:** present the tab in Meet, Zoom or Teams (share the tab
-  with its audio).
-
-Useful `play` options:
-
-| Option | Default | |
-|---|---|---|
-| `--reconnect SECS` | 120 s | how long a receiver that dropped out is reconnected (`0`: off; also `share`) |
-| `--latency MS` | Cast 300 ms; AirPlay automatic (video 100, audio 170 ms); both 300 ms when mixed; browser alone 100 ms | playout delay, the same on every receiver (5–2000) |
-| `--size WxH`, `--fps N`, `--bitrate KBPS` | from the input and the receivers | output limits |
-| `--encoder` | `auto` | `builtin`, `x264`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `mf` |
-| `--no-audio` | | video only |
-| `--loop` | | loop the input |
-| `--realtime` / `--no-realtime` | real time for files | pace the input |
-| `--open`, `--port PORT`, `--wait-for-viewer`, `--new-token` | port 8765 | the `--to browser` page |
-
-The `--to browser` options are the same for `play`, `test-pattern`,
-`preview` and `share`, and need `--to browser` (`share --open` without a URL
-also opens the share page).
-
-### When ffmpeg is used
-
-`tvpipe` avoids ffmpeg when it can:
-
-- **Passthrough:** an MP4/MOV/MKV file with H.264, no B-frames and a
-  keyframe at least every 4 s, at a size the receivers accept, is sent
-  unchanged. Nothing is re-encoded.
-- **Built-in encoders:** the test pattern always goes through the built-in
-  H.264 encoder (and the AAC encoder for Cast audio); naming an ffmpeg
-  encoder (`--encoder x264` etc.) streams ffmpeg's `testsrc2` instead. Raw
-  game frames use the built-in encoders when you pass `--encoder builtin`,
-  or when ffmpeg is not installed.
-- **Encoded game input:** a game that encodes H.264 itself never needs
-  ffmpeg for video.
-
-Every other input is transcoded by ffmpeg.  Run with `-v` to see which path was
-chosen and why.
-
-### Game input (SLRW)
-
-A game can spawn `tvpipe` and write frames to its stdin:
-
-```sh
-mygame | tvpipe play --to TV --raw-video 1920x1080@60:rgba --raw-audio 48000:2:s16le -
-```
-
-The stream starts with the 4-byte magic `SLRW`, followed by records:
-
-```
-u8 kind | u64le pts_us | u32le len | payload
-kind: 0 = end, 1 = raw video frame, 2 = interleaved PCM,
-      3 = H.264 access unit, 4 = H.264 config, 5 = control
-```
-
-- Raw pixel formats: `rgba`, `bgra`, `rgb0`, `bgr0`, `rgb24`, `bgr24`,
-  `nv12`, `yuv420p`.
-- Encoded H.264: use `--raw-video WxH@FPS:h264` and send kinds 3 and 4. If
-  the game also enables keyframe requests (kind 5), `tvpipe` writes the line
-  `keyframe` to its stdout whenever a receiver needs a new IDR.
-- `cargo run --example slrw-gen` is a working sample producer.
-- The full format is in [`docs/slrw.md`](docs/slrw.md).
-
-## Configuration
-
-AirPlay pairings are stored in `credentials.txt` in the config directory:
-
-- Linux and other Unix: `$XDG_CONFIG_HOME/tvpipe` (default `~/.config/tvpipe`)
-- macOS: `~/Library/Application Support/tvpipe`
-- Windows: `%APPDATA%\tvpipe`
-
-To use a different directory, set `TVPIPE_CONFIG_DIR`. The credentials file
-holds a private key, so do not share it. `player-token` next to it holds
-the browser player's URL token (`--new-token` replaces it).
+- **Installer:** `TVPIPE_VERSION` picks a version, `TVPIPE_INSTALL_DIR`
+  another directory. The installers check the archive against the release's
+  `SHA256SUMS`. The [releases](https://github.com/mitsuhiko/tvpipe/releases)
+  have macOS, static Linux and Windows binaries for x86_64 and ARM64.
+- **Config directory:** on Linux and other Unixes it is
+  `$XDG_CONFIG_HOME/tvpipe` (default `~/.config/tvpipe`).
+- **Pacing:** `--realtime` / `--no-realtime` paces the input in real time or
+  not (default: real time for files).
+- **`share URL`:** starting takes about a second, a reload or navigation
+  leaves a gap of about half a second. A temporary profile left behind by a
+  killed run is deleted by the next run. A site's 401/403/429 is reported.
+  `--visible`, `--profile`, `--reload` and `--browser` only exist with a URL.
+- **`--to browser` options** (`--open`, `--port`, `--wait-for-viewer`,
+  `--new-token`) are the same for `play`, `test-pattern`, `preview` and
+  `share`, and need `--to browser`; `share --open` without a URL opens the
+  share page instead.
 
 ## Development
 
 ```sh
+cargo build --release        # → target/release/tvpipe (Rust 1.85+, a C compiler)
 cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Tests that use the oracle (ffmpeg as a decoder) are skipped when ffmpeg is
-missing. Tests that need a receiver or hardware are behind `--ignored`.
-
-For details see [`Architecture`](ARCHITECTURE.md) about the how and why.
+Tests that use ffmpeg as an oracle are skipped without it; tests against
+real receivers or hardware run with `--ignored`. How and why tvpipe works is
+in [`ARCHITECTURE.md`](ARCHITECTURE.md); protocols, formats, measurements and
+per-OS status are in [`docs/`](docs/), and the website's sources in
+[`site/`](site/).
 
 ## License
 
-`tvpipe` is Apache-2.0 ([`LICENSE`](LICENSE)), except
-`src/airplay/fairplay/`, which is a port of
+`tvpipe`'s source is Apache-2.0 ([`LICENSE`](LICENSE)), except
+`src/airplay/fairplay/`, a port of
 [doubletake](https://github.com/omarroth/doubletake) under
 LGPL-3.0-or-later. While that module is included, the distributed binary is
-under LGPL-3.0-or-later terms. See [`LICENSES/`](LICENSES).
+under LGPL-3.0-or-later terms.
 
 Some H.264 encoder tables (`src/media/h264enc/tables.rs`) are transcribed
-from [openh264](https://github.com/cisco/openh264) (BSD-2-Clause, see
-[`LICENSES/BSD-2-Clause-openh264.txt`](LICENSES/BSD-2-Clause-openh264.txt)).
+from [openh264](https://github.com/cisco/openh264) (BSD-2-Clause), and the
+fonts in `src/browser/fonts/` (also used by the website) are under the SIL
+Open Font License 1.1. The license texts are in [`LICENSES/`](LICENSES).
