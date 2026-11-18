@@ -325,6 +325,7 @@ impl Encoder {
             refp: if idr { None } else { self.refp.as_ref() },
             hdr,
             tools: self.tools,
+            mv_limit: headers::mv_limit(self.sp.level_idc),
         };
         let mb_w = self.sp.mb_w as usize;
         let run = |s: &mut SliceEnc| {

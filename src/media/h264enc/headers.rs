@@ -11,6 +11,24 @@ use super::bits::BitWriter;
 /// log2(MaxFrameNum).
 pub const LOG2_MAX_FRAME_NUM: u32 = 8;
 
+/// Motion vectors are kept below 2^MV_LOG2_H quarter samples
+/// horizontally (512 px).
+pub const MV_LOG2_H: u32 = 11;
+
+/// Vertical limit (log2 of quarter samples): the level's range (Table
+/// A-1, MaxVmvR), at most 128 px.
+pub fn mv_log2_v(level_idc: u8) -> u32 {
+    match level_idc {
+        10 => 8,
+        _ => 9,
+    }
+}
+
+/// Largest |mv| component in quarter samples: [horizontal, vertical].
+pub fn mv_limit(level_idc: u8) -> [i32; 2] {
+    [(1 << MV_LOG2_H) - 4, (1 << mv_log2_v(level_idc)) - 4]
+}
+
 /// Colour description written into the VUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColorInfo {
@@ -139,8 +157,8 @@ impl SeqParams {
         w.flag(true); // motion_vectors_over_pic_boundaries_flag
         w.ue(0); // max_bytes_per_pic_denom
         w.ue(0); // max_bits_per_mb_denom
-        w.ue(11); // log2_max_mv_length_horizontal (±512 px is plenty)
-        w.ue(11); // log2_max_mv_length_vertical
+        w.ue(MV_LOG2_H); // log2_max_mv_length_horizontal
+        w.ue(mv_log2_v(self.level_idc)); // log2_max_mv_length_vertical
         w.ue(0); // max_num_reorder_frames: no reordering, output at once
         w.ue(1); // max_dec_frame_buffering
     }

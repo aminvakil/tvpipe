@@ -351,6 +351,19 @@ fn rate_control_hits_target() {
 }
 
 #[test]
+fn tiny_pictures() {
+    for (w, h) in [(2u32, 2u32), (18, 2), (2, 34)] {
+        let c = Config {
+            qp: None,
+            bitrate_kbps: 50,
+            threads: 4,
+            ..cfg(w, h, 0)
+        };
+        roundtrip(&format!("tiny{w}x{h}"), c, Tools::default(), 4, &[]);
+    }
+}
+
+#[test]
 fn rejects_bad_input() {
     assert!(Encoder::new(Config {
         width: 33,

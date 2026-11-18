@@ -60,6 +60,8 @@ pub struct FrameIn<'a> {
     pub refp: Option<&'a RefPic>,
     pub hdr: SliceHeader,
     pub tools: Tools,
+    /// Largest |mv| component (quarter samples), [x, y].
+    pub mv_limit: [i32; 2],
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -719,11 +721,13 @@ impl SliceEnc {
         cands: &[[i32; 2]],
         lambda: u32,
         tools: &Tools,
+        mv_limit: [i32; 2],
     ) -> ([i32; 2], u32) {
         let stride = r.y.stride;
+        let in_range = |m: [i32; 2]| m[0].abs() <= mv_limit[0] && m[1].abs() <= mv_limit[1];
         let cost_full = |m: [i32; 2]| -> u32 {
             let mq = [m[0] * 4, m[1] * 4];
-            if !r.luma_safe(x0, y0, mq) {
+            if !in_range(mq) || !r.luma_safe(x0, y0, mq) {
                 return u32::MAX;
             }
             let off =
@@ -757,7 +761,7 @@ impl SliceEnc {
         let mut bq = [best.0[0] * 4, best.0[1] * 4];
         let mut pred = [0u8; 256];
         let cost_sub = |m: [i32; 2], pred: &mut [u8; 256]| -> u32 {
-            if !r.luma_safe(x0, y0, m) {
+            if !in_range(m) || !r.luma_safe(x0, y0, m) {
                 return u32::MAX;
             }
             r.luma_pred_fast(x0, y0, m, pred);
@@ -905,7 +909,8 @@ impl SliceEnc {
                 cands.push(m);
             }
         }
-        let (mv, inter_cost) = self.motion_search(r, &src, x0, y0, mvp, &cands, lambda, &f.tools);
+        let (mv, inter_cost) =
+            self.motion_search(r, &src, x0, y0, mvp, &cands, lambda, &f.tools, f.mv_limit);
 
         // Intra alternative.
         let (mode16, cost16) = self.best_i16(&src, mx, my);
