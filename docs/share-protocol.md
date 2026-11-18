@@ -129,6 +129,28 @@ encoder while `WebSocket.bufferedAmount` exceeds 4 MiB or the encoder has
 more than 2 frames queued, so the stream stays decodable. Audio records
 are dropped above the same threshold.
 
+## Browsers
+
+| | Chrome / Edge | Safari 26 (macOS 26) | Firefox |
+|---|---|---|---|
+| getDisplayMedia offers | tabs, windows, screens | windows, screens (no tabs) | windows, screens |
+| Sound | tab audio (system audio on Windows) | none | none |
+| Video engine | page (MediaStreamTrackProcessor) | worker (track moved to a worker, MediaStreamTrackProcessor there) | page (`<video>` + VideoFrame) |
+| Tested | headless, CDP-driven, real tab capture | WebDriver, synthetic stream (picker needs a human) | not yet |
+
+- The engine runs in a worker whenever the browser can transfer the video
+  track to one (`postMessage(track, [track])` and MediaStreamTrackProcessor,
+  VideoEncoder, OffscreenCanvas in the worker): a worker is not throttled
+  while the share page is a background tab, which it is in Safari when the
+  user shares the Safari window and switches to the tab to show. The same
+  engine code runs on the page otherwise.
+- Safari/Firefox: the page asks for no audio (a refused constraint could
+  not be retried without a new click) and hints `displaySurface: "window"`,
+  and the page explains: share the Safari window (or the screen), then
+  switch to the tab; or drag the tab into its own window first.
+- Clocks are `performance.timeOrigin + performance.now()` so page and
+  worker timestamps agree.
+
 ## Capture script API (for W13)
 
 `capture.js` defines `globalThis.tvpipeCapture`:
@@ -139,6 +161,7 @@ const c = tvpipeCapture.connect(wsUrl, {
   selfBrowserSurface: 'include',   // default 'exclude' (the share page)
   localAudio: false,               // keep playing tab audio locally
   profiles: ['42E0', '4D40', '6400'],
+  worker: true,                    // false: keep the video engine on the page
 });
 c.on('config' | 'status' | 'plan' | 'capture' | 'stats' | 'log' | 'error' | 'end' | 'close' | 'open', fn);
 await c.captureDisplay();  // getDisplayMedia from the config, then share()

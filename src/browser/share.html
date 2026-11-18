@@ -24,6 +24,8 @@
   dt { color: var(--mute); } dd { margin: 0; font-variant-numeric: tabular-nums; }
   #log { color: var(--mute); font-size: 13px; white-space: pre-wrap; margin: 0; max-height: 160px; overflow: auto; }
   #log .error { color: var(--bad); }
+  .note { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(10,102,216,.08); }
+  .note ol { margin: 6px 0 0; padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -40,8 +42,9 @@
     <div class="row">
       <button id="share" disabled>Share…</button>
       <button id="stop" class="secondary" disabled>Stop</button>
-      <label><input type="checkbox" id="local"> keep tab audio playing here</label>
+      <label id="localLabel"><input type="checkbox" id="local"> keep tab audio playing here</label>
     </div>
+    <div id="howto" class="note" hidden></div>
   </div>
 
   <div class="card">
@@ -84,6 +87,21 @@
   if (!f.webcodecs) missing.push('WebCodecs (VideoEncoder)');
   if (missing.length) log('This browser lacks ' + missing.join(', ') + '.', 'error');
 
+  // Safari and Firefox share windows and screens, not tabs, and no sound.
+  var howto = $('howto');
+  if (!f.tabs) {
+    var name = f.family === 'safari' ? 'Safari' : f.family === 'firefox' ? 'Firefox' : 'This browser';
+    var sameApp = f.family === 'safari' || f.family === 'firefox';
+    howto.innerHTML = '<b>' + name + ' can share a window or the whole screen, but not a single tab, and no sound.</b>' +
+      (sameApp ? '<ol><li>Press <b>Share…</b> and choose this ' + name + ' window (or the screen).</li>' +
+        '<li>Switch the window to the tab you want on the TV. This page keeps streaming in the background.</li>' +
+        '<li>Come back to this tab and press <b>Stop</b>, or stop sharing from the menu bar.</li></ol>' +
+        'Tip: drag the tab into its own window and share that window, so this page stays out of the picture. ' +
+        'For a tab with sound, use Chrome or Edge.' : '');
+    howto.hidden = false;
+  }
+  if (!f.audio) $('localLabel').hidden = true;
+
   var ws = location.origin.replace(/^http/, 'ws') + '/ws' + location.search;
   var cap = tvpipeCapture.connect(ws, {});
   // For automation and debugging (the console, tests driving Chrome).
@@ -96,7 +114,8 @@
   cap.on('config', function (c) {
     receivers(c.receivers);
     if (!missing.length && !ended) $('share').disabled = false;
-    state('Ready', 'ok', 'Press Share and pick what to show' + (c.audio ? ' (tick "Share audio" for sound).' : '.'));
+    state('Ready', 'ok', 'Press Share and pick what to show' +
+      (c.audio && f.audio ? ' (keep "Also share tab audio" ticked for sound).' : '.'));
   });
   cap.on('status', function (s) {
     receivers(s.receivers);
@@ -118,7 +137,10 @@
       (c && (c.width !== p.width || c.height !== p.height) ? ' (picture ' + c.width + '×' + c.height + ', black bars)' : '');
   });
   cap.on('stats', function (s) {
-    $('codec').textContent = s.codec || '–';
+    // For automation (the browser tests read these).
+    window.tvpipeLastStats = s;
+    if (s.keyLatencyMs !== null && s.keyLatencyMs !== undefined) window.tvpipeKeyLatency = s.keyLatencyMs;
+    $('codec').textContent = (s.codec || '–') + (s.mode ? ' (' + (s.mode === 'worker' ? 'in a worker' : 'on the page') + ')' : '');
     $('fps').textContent = s.fps + ' (source ' + s.sourceFps + ')';
     $('kbps').textContent = s.kbps + ' kbit/s video' + (s.audioKbps ? ', ' + s.audioKbps + ' audio' : '');
     $('delay').textContent = s.encodeMs === null ? '–' : s.encodeMs + ' ms';

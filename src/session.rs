@@ -1581,6 +1581,9 @@ mod multi_tests;
 mod share_tests;
 
 #[cfg(test)]
+mod browser_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::media::ffmpeg::Output;
