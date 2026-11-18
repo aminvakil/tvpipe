@@ -20,6 +20,12 @@
 //! target delay. If frames arrive later than their reference time by more
 //! than [`MAX_LATENESS`] (a stalled encoder), the clock is moved forward.
 //!
+//! AAC-LC goes out ADTS-framed, one access unit per Cast frame, as
+//! Chromium's Cast sender does (`media/cast/encoding/audio_encoder.cc`,
+//! `AppleAacImpl`); openscreen's receiver has no AudioSpecificConfig and
+//! cannot decode raw access units (docs/ffmpeg-optional.md). Raw units
+//! (from ffmpeg's Matroska, passthrough, `aacenc`) get the header here.
+//!
 //! Sources: openscreen `cast/standalone_sender/looping_file_cast_agent.cc`
 //! (launch/connect/negotiate flow), `cast/streaming/sender_packet_router.cc`
 //! (burst pacing, RTCP priority), `cast/streaming/impl/sender_impl.cc`;
@@ -70,8 +76,15 @@ pub struct CastOptions {
     pub max_height: u32,
     pub max_fps: Ratio,
     pub max_bitrate_kbps: u32,
-    /// Offer audio (Opus, then AAC).
+    /// Offer audio: [`CastOptions::audio_codecs`] at
+    /// [`CastOptions::audio_sample_rate`] / [`CastOptions::audio_channels`].
     pub audio: bool,
+    /// Audio codecs to offer, preferred first (Opus or AAC-LC). Default:
+    /// Opus, then AAC. Offer only AAC when that is all the input has
+    /// (passthrough of an AAC file, `aacenc`); receivers tend to pick Opus.
+    pub audio_codecs: Vec<AudioCodec>,
+    pub audio_sample_rate: u32,
+    pub audio_channels: u8,
     /// Payload types 127/96 like Chrome (some Android TV receivers).
     pub android_rtp_hack: bool,
     /// Pacing rate; default `max(24 Mibit/s, 3 × video bitrate)`.
@@ -91,6 +104,9 @@ impl Default for CastOptions {
             max_fps: Ratio::new(60, 1),
             max_bitrate_kbps: 10_000,
             audio: true,
+            audio_codecs: vec![AudioCodec::Opus, AudioCodec::AacLc],
+            audio_sample_rate: 48_000,
+            audio_channels: 2,
             android_rtp_hack: false,
             burst_bitrate: None,
             connect_timeout: Duration::from_secs(5),
@@ -109,8 +125,8 @@ impl CastOptions {
         }
         let audio = |codec| AudioOptions {
             codec,
-            sample_rate: 48_000,
-            channels: 2,
+            sample_rate: self.audio_sample_rate,
+            channels: self.audio_channels,
             bit_rate: 128_000,
         };
         OfferOptions {
@@ -122,7 +138,11 @@ impl CastOptions {
                 resolutions,
             }),
             audio: if self.audio {
-                vec![audio(AudioCodec::Opus), audio(AudioCodec::AacLc)]
+                self.audio_codecs
+                    .iter()
+                    .filter(|c| matches!(c, AudioCodec::Opus | AudioCodec::AacLc))
+                    .map(|&c| audio(c))
+                    .collect()
             } else {
                 Vec::new()
             },
@@ -353,6 +373,71 @@ struct Media {
     threads: Vec<JoinHandle<()>>,
     avc: AvcConfig,
     scratch: Vec<u8>,
+    /// AAC: the ADTS header fields for raw access units.
+    adts: Option<Adts>,
+}
+
+/// The fixed part of an ADTS header (ISO/IEC 13818-7 §6.2): profile
+/// (object type - 1), sampling frequency index, channel configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Adts {
+    profile: u8,
+    freq_index: u8,
+    channels: u8,
+}
+
+impl Adts {
+    /// From the AudioSpecificConfig, else from the track's rate/channels.
+    fn new(info: &AudioInfo) -> Result<Adts> {
+        const RATES: [u32; 13] = [
+            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+        ];
+        let (aot, rate, channels) = match crate::media::passthrough::parse_asc(&info.config) {
+            Ok((aot, rate, ch, _)) => (aot, rate, ch),
+            Err(_) if info.config.is_empty() => (2, info.sample_rate, info.channels),
+            Err(e) => return Err(e),
+        };
+        let freq_index = RATES.iter().position(|&r| r == rate).ok_or_else(|| {
+            Error::unsupported(format!("cast: AAC at {rate} Hz has no ADTS index"))
+        })? as u8;
+        if !(1..=4).contains(&aot) || channels > 7 {
+            return Err(Error::unsupported(format!(
+                "cast: AAC object type {aot} with {channels} channels cannot be ADTS-framed"
+            )));
+        }
+        Ok(Adts {
+            profile: (aot - 1) as u8,
+            freq_index,
+            channels,
+        })
+    }
+
+    /// Whether `data` already starts with an ADTS header.
+    fn framed(data: &[u8]) -> bool {
+        data.len() >= 7 && data[0] == 0xff && data[1] & 0xf6 == 0xf0
+    }
+
+    /// `au` with a 7-byte header (MPEG-4, no CRC, buffer fullness 0x7FF).
+    fn wrap(&self, au: &[u8], out: &mut Vec<u8>) -> Result<()> {
+        let len = au.len() + 7;
+        if len >= 1 << 13 {
+            return Err(Error::unsupported(
+                "cast: AAC access unit too large for ADTS",
+            ));
+        }
+        out.clear();
+        out.extend_from_slice(&[
+            0xff,
+            0xf1,
+            (self.profile << 6) | (self.freq_index << 2) | (self.channels >> 2),
+            ((self.channels & 3) << 6) | (len >> 11) as u8,
+            (len >> 3) as u8,
+            (((len & 7) as u8) << 5) | 0x1f,
+            0xfc,
+        ]);
+        out.extend_from_slice(au);
+        Ok(())
+    }
 }
 
 fn lock(state: &Mutex<MediaState>) -> MutexGuard<'_, MediaState> {
@@ -490,6 +575,7 @@ impl Sink for StreamingSink {
             }
         }
         let avc = AvcConfig::parse(&video.avcc)?;
+        let mut adts = None;
         let asel = match (self.negotiated.audio.clone(), audio) {
             (Some(sel), Some(info)) => {
                 if Codec::from_audio(info.codec) != Some(sel.offer.codec) {
@@ -497,6 +583,9 @@ impl Sink for StreamingSink {
                         "cast: negotiated {:?} audio but the encode is {:?}",
                         sel.offer.codec, info.codec
                     )));
+                }
+                if sel.offer.codec == Codec::Aac {
+                    adts = Some(Adts::new(info)?);
                 }
                 Some((sel, info.sample_rate.max(1)))
             }
@@ -574,6 +663,7 @@ impl Sink for StreamingSink {
             threads,
             avc,
             scratch: Vec::new(),
+            adts,
         });
         Ok(())
     }
@@ -622,6 +712,13 @@ impl Sink for StreamingSink {
                 st.dirty = true;
             }
             TrackKind::Audio(AudioFamily::Cast) => {
+                let data = match &media.adts {
+                    Some(a) if !Adts::framed(&frame.data) => {
+                        a.wrap(&frame.data, &mut media.scratch)?;
+                        &media.scratch[..]
+                    }
+                    _ => &frame.data[..],
+                };
                 let mut st = lock(lock_ref);
                 let Some(rate) = st.audio.as_ref().map(|t| t.input_rate) else {
                     return Ok(SinkStatus::Dropped);
@@ -631,7 +728,7 @@ impl Sink for StreamingSink {
                     return Ok(SinkStatus::Dropped);
                 };
                 let rtp = track.rtp_timestamp(frame.pts);
-                if let Err(e) = track.sender.enqueue(&frame.data, true, rtp, reference) {
+                if let Err(e) = track.sender.enqueue(data, true, rtp, reference) {
                     trace!("cast: dropping audio frame: {e:?}");
                     return Ok(SinkStatus::Dropped);
                 }
@@ -978,6 +1075,99 @@ mod tests {
             o.video.unwrap().resolutions,
             vec![(3840, 2160), (1920, 1080), (1280, 720)]
         );
+        let o = CastOptions::default().offer_options();
+        let codecs: Vec<AudioCodec> = o.audio.iter().map(|a| a.codec).collect();
+        assert_eq!(codecs, [AudioCodec::Opus, AudioCodec::AacLc]);
+        let o = CastOptions {
+            audio_codecs: vec![AudioCodec::AacLc, AudioCodec::Alac],
+            audio_sample_rate: 44_100,
+            ..CastOptions::default()
+        }
+        .offer_options();
+        assert_eq!(o.audio.len(), 1);
+        assert_eq!(
+            (o.audio[0].codec, o.audio[0].sample_rate),
+            (AudioCodec::AacLc, 44_100)
+        );
+    }
+
+    #[test]
+    fn adts_headers() {
+        let info = |config: Vec<u8>| AudioInfo {
+            codec: AudioCodec::AacLc,
+            sample_rate: 44_100,
+            channels: 2,
+            frame_samples: 1024,
+            config,
+        };
+        // AAC-LC 48 kHz stereo (ASC 0x1190), 100-byte unit: frame length 107.
+        let a = Adts::new(&info(vec![0x11, 0x90])).unwrap();
+        let mut out = Vec::new();
+        a.wrap(&[0xaa; 100], &mut out).unwrap();
+        assert_eq!(&out[..7], [0xff, 0xf1, 0x4c, 0x80, 0x0d, 0x7f, 0xfc]);
+        assert_eq!(out.len(), 107);
+        assert!(Adts::framed(&out));
+        assert!(!Adts::framed(&[0xaa; 100]));
+        // No config: from the track (44.1 kHz: index 4).
+        let b = Adts::new(&info(Vec::new())).unwrap();
+        assert_eq!((b.profile, b.freq_index, b.channels), (1, 4, 2));
+        // AAC-ELD cannot be ADTS-framed.
+        assert!(Adts::new(&info(vec![0xf8, 0xe8, 0x50])).is_err());
+        assert!(a.wrap(&vec![0; 9000], &mut out).is_err());
+    }
+
+    /// AAC offered alone; raw units arrive ADTS-framed, framed ones as is.
+    #[test]
+    fn aac_only_offer_frames_adts() {
+        let rx = FakeReceiver::spawn(fake_receiver::Options::default());
+        let o = CastOptions {
+            audio_codecs: vec![AudioCodec::AacLc],
+            ..opts()
+        };
+        let mut sink = connect(rx.addr, "fake", &o).unwrap();
+        let caps = sink.capabilities().clone();
+        assert_eq!(caps.audio_formats[0].codec, AudioCodec::AacLc);
+        let ai = AudioInfo {
+            codec: AudioCodec::AacLc,
+            sample_rate: 48_000,
+            channels: 2,
+            frame_samples: 1024,
+            config: vec![0x11, 0x90],
+        };
+        sink.start(&video_info(), Some(&ai)).unwrap();
+        assert_eq!(
+            sink.push(&video_frame(0, 30)).unwrap(),
+            SinkStatus::Accepted
+        );
+        let raw = EncodedFrame {
+            track: TrackKind::Audio(AudioFamily::Cast),
+            pts: 0,
+            keyframe: true,
+            data: StdArc::from(vec![0x21u8; 50]),
+        };
+        assert_eq!(sink.push(&raw).unwrap(), SinkStatus::Accepted);
+        let mut framed = vec![0xff, 0xf1, 0x4c, 0x80, 0x07, 0x3f, 0xfc];
+        framed.extend([0x22u8; 50]);
+        let pre = EncodedFrame {
+            pts: 1024,
+            data: StdArc::from(framed.clone()),
+            ..raw.clone()
+        };
+        assert_eq!(sink.push(&pre).unwrap(), SinkStatus::Accepted);
+        wait_until("audio frames", || {
+            let st = rx.state.lock().unwrap();
+            st.streams
+                .iter()
+                .any(|s| s.codec == "aac" && s.frames.len() == 2)
+        });
+        sink.stop().unwrap();
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        let s = st.streams.iter().find(|s| s.codec == "aac").unwrap();
+        let first = &s.frames[&0].data;
+        assert_eq!(&first[..7], [0xff, 0xf1, 0x4c, 0x80, 0x07, 0x3f, 0xfc]);
+        assert_eq!(&first[7..], [0x21u8; 50]);
+        assert_eq!(s.frames[&1].data, framed);
     }
 
     use crate::cast::fake_receiver::{self, FakeReceiver};
