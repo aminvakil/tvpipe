@@ -287,6 +287,9 @@ main.landing { max-width: 1040px; margin: 0 auto; padding: 96px var(--pad) 40px;
   main.landing { padding-top: 56px; }
   .landing > p:first-of-type { font-size: 20px; }
   .status { grid-template-columns: 1fr; gap: 6px; }
+  /* the two buttons side by side, sharing the width */
+  .buttons { flex-wrap: nowrap; gap: 10px; }
+  .btn { flex: 1 1 0; min-width: 0; text-align: center; padding: 15px 8px; font-size: 9.5px; letter-spacing: .07em; white-space: nowrap; }
   .feature, .row > *, .features > * { min-width: 0; }
   /* long inline code may break instead of widening the page */
   p code, li code, td code, dd code { white-space: normal; overflow-wrap: anywhere; }
@@ -296,6 +299,9 @@ main.landing { max-width: 1040px; margin: 0 auto; padding: 96px var(--pad) 40px;
 }
 @media (max-width: 520px) {
   body.manual .mark span { display: none; }
+}
+@media (max-width: 370px) {
+  .btn { font-size: 8.5px; letter-spacing: .03em; padding: 14px 4px; }
 }
 
 /* the landing's figure: picture left, caption beside it */
