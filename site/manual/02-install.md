@@ -7,7 +7,25 @@ spec:
   Optional: ffmpeg, ffprobe
 ---
 
-tvpipe is a single binary. Build it from source; at runtime it needs nothing besides ffmpeg, and only for sources it cannot read itself.
+tvpipe is a single binary. Install a release or build it from source; at runtime it needs nothing besides ffmpeg, and only for sources it cannot read itself.
+
+## Installing a release
+
+:::aside Releases
+The binaries are also on [GitHub](https://github.com/mitsuhiko/tvpipe/releases).
+:::
+
+On macOS and Linux:
+
+```sh
+$ curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```text
+irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex
+```
 
 ## Building from source
 

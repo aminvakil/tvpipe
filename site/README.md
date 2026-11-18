@@ -15,6 +15,7 @@ python3 -m http.server -d site/_out    # look at it
 | `templates/layout.html` | the page shell: header, logo symbol, scripts |
 | `static/` | `style.css`, `site.js` (theme switch, navigation without reloads, CRT figure), the logo |
 | `../src/browser/fonts/` | the fonts, shared with tvpipe's share page (OFL-1.1, `LICENSES/OFL-1.1-fonts.txt`) |
+| `static/install.sh`, `static/install.ps1` | the installers, also copied to the site's root (`/install.sh`, `/install.ps1`) |
 | `shots/` | screenshots, made by `node site/screenshots.mjs` |
 | `build.py` | the generator: standard-library Python, its Markdown subset is described at the top |
 
@@ -28,3 +29,9 @@ containers for the manual's layout (`:::aside`, `:::caution`, `:::steps`,
 `tvpipe share --to browser`, opens their pages in headless Chrome and saves
 the PNGs in `shots/`. Rerun it when the player or the share page changes.
 Needs Node 22+ and Chrome.
+
+## Publishing
+
+`.github/workflows/site.yml` builds the site and deploys it to GitHub Pages
+(https://mitsuhiko.github.io/tvpipe/) on pushes to `main` that touch it, and
+on manual dispatch.

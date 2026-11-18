@@ -6,7 +6,8 @@
 Sources:
   site/index.md          the landing page
   site/manual/NN-*.md    the manual, one section per file, in file order
-  site/static/           CSS, JS and the logo, copied as is
+  site/static/           CSS, JS and the logo, copied as is; install.sh and
+                         install.ps1 are also copied to the site's root
   src/browser/fonts/     the fonts (shared with tvpipe's share page)
   site/shots/            screenshots (site/screenshots.mjs makes them)
 Output: site/_out/ (static files, open index.html or serve the directory).
@@ -48,6 +49,7 @@ import sys
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
+INSTALLERS = ("install.sh", "install.ps1")
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.M)
 
 
@@ -426,6 +428,11 @@ def build(out):
     shutil.copytree(SITE / "static", out / "static")
     # The fonts are the ones compiled into tvpipe for its share page.
     shutil.copytree(SITE.parent / "src" / "browser" / "fonts", out / "static" / "fonts")
+    # The installers live at the root, for the one-liners on the install page:
+    # curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
+    for name in INSTALLERS:
+        if (SITE / "static" / name).exists():
+            shutil.copy(SITE / "static" / name, out / name)
     if (SITE / "shots").exists():
         shutil.copytree(SITE / "shots", out / "shots")
 
