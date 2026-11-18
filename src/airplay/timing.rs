@@ -8,7 +8,7 @@
 //! `t0` anchors `R(t) = R0 + (t − t0)`. Every `/feedback` response
 //! re-anchors it, never backwards.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §3, §7.1–§7.4; vectors
+//! Sources: docs/airplay-mirroring.md §3, §7.1–§7.4; vectors
 //! tests/vectors/airplay-mirror/audio.txt (sync packet inputs),
 //! appletv-session.txt.
 

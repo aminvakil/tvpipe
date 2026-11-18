@@ -6,7 +6,7 @@
 //! - SETUP #3: `{streams: [video descriptor]}` (§4.7).
 //! - Media-first ordering: SETUP #2 carries the session dict too (§4.12).
 //!
-//! Sources: docs/spec/airplay-mirroring.md §4.1, §4.6, §4.7, §4.12;
+//! Sources: docs/airplay-mirroring.md §4.1, §4.6, §4.7, §4.12;
 //! vectors tests/vectors/airplay-mirror/setup.txt, appletv-session.txt.
 
 use crate::codec::bplist::{Dict, Plist};

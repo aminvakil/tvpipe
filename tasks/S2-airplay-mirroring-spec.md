@@ -1,6 +1,6 @@
 # S2 AirPlay mirroring spec (dirty room)
 
-Status: in progress. Owns `docs/spec/airplay-mirroring.md`,
+Status: in progress. Owns `docs/airplay-mirroring.md`,
 `docs/spec/data/**`, `tests/vectors/airplay-mirror/**`. **Never writes in
 `src/`.**
 

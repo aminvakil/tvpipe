@@ -4,7 +4,7 @@
 //! `200 OK`. HAP profile: encrypted like the control channel, with the
 //! Events keys (`airplay::keys::event_keys`).
 //!
-//! Sources: docs/spec/airplay-mirroring.md §4.2, §5.1, §9; vectors
+//! Sources: docs/airplay-mirroring.md §4.2, §5.1, §9; vectors
 //! tests/vectors/airplay-mirror/channels.txt ("event channel"),
 //! appletv-session.txt ("event channel command").
 

@@ -20,7 +20,7 @@
 //! HAP pairing feature bit, or a third-party bit) try raw pair-setup
 //! first, falling back to the HAP flow when that fails.
 //!
-//! Sources: docs/spec/airplay-mirroring.md Appendix A, §2.1, §2.2, §10;
+//! Sources: docs/airplay-mirroring.md Appendix A, §2.1, §2.2, §10;
 //! vectors tests/vectors/airplay-mirror/channels.txt.
 
 use std::net::{SocketAddr, TcpStream};

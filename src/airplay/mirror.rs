@@ -9,7 +9,7 @@
 //! 16.. type-specific (codec: f32le sizes; frame: timeline id at 40)
 //! ```
 //!
-//! Sources: docs/spec/airplay-mirroring.md §5.1, §5.2, §6.1–§6.4; vectors
+//! Sources: docs/airplay-mirroring.md §5.1, §5.2, §6.1–§6.4; vectors
 //! tests/vectors/airplay-mirror/video.txt, appletv-session.txt.
 
 use crate::crypto::modes::Ctr;

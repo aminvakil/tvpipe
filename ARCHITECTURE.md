@@ -10,8 +10,8 @@ detail lives in `docs/`:
 - [`cross-platform.md`](docs/cross-platform.md): what was checked on which
   OS.
 - [`meet.md`](docs/meet.md): presenting into video calls.
-- [`spec/`](docs/spec/) and [`cleanroom-log.md`](docs/cleanroom-log.md):
-  the clean-room AirPlay spec and its provenance.
+- [`airplay-mirroring.md`](docs/airplay-mirroring.md): the clean-room
+  AirPlay mirroring spec.
 
 ## Scope
 
@@ -49,7 +49,7 @@ As a result, the binary behaves the same on macOS, Linux and Windows and should 
 
 Formats and protocols are written by hand and tested against oracles. Only
 the hard cryptography comes from `ring`, and TLS from `rustls`. Any other
-dependency must be proposed in [`docs/deps.md`](docs/deps.md) first.
+dependency needs the human's approval first.
 
 ## Session Lifecycle
 
@@ -349,8 +349,7 @@ blocked `recv`, PowerShell pipes) are handled in portable code; see
   version can replace it. Nothing outside that directory may copy from it.
 - **Tainted sources.** doubletake, UxPlay, playfair and their derivatives
   are read only by a dirty-room spec writer and by the FairPlay porter.
-  The spec and its Q&A are in [`docs/spec/`](docs/spec/), and who saw what
-  is in [`docs/cleanroom-log.md`](docs/cleanroom-log.md).
+  The spec is [`docs/airplay-mirroring.md`](docs/airplay-mirroring.md).
 - **Encoders** were written from ITU-T H.264 and ISO/IEC 14496-3; some
   tables come from openh264 (BSD-2) with attribution.
 - **AirPlay mirroring** was implemented from a reviewed prose spec plus test

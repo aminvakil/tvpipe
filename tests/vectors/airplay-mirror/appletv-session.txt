@@ -1,6 +1,6 @@
 # A real mirroring session against the dev Apple TV 4K (AppleTV6,2, tvOS 26.6.1,
 # AirTunes/960.13.1), 2026-11-18, HAP pair-verify + FairPlay, PTP timing, ALAC audio.
-# See docs/spec/airplay-mirroring.md §11. Bodies were decoded, scrubbed (addresses,
+# See docs/airplay-mirroring.md §11. Bodies were decoded, scrubbed (addresses,
 # ids, names, pk, edid, ClockID) and re-encoded as binary plists, so bytes differ
 # from the wire; values are as received. request_bplist is what the sender sent
 # (key material zeroed).

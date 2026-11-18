@@ -47,7 +47,7 @@ Status: planning. Nothing is implemented yet.
 | Constraint | Consequence |
 |---|---|
 | Rust, single binary | `cargo build` produces `tvpipe`; `ffmpeg` is the only runtime requirement |
-| Minimal deps | Allowed: `argument`, `rustls` (ring backend, no default features), `ring`. Anything else needs a written justification in `docs/deps.md` |
+| Minimal deps | Allowed: `argument`, `rustls` (ring backend, no default features), `ring`. Anything else needs the human's approval |
 | No async runtime | `std::thread` + blocking sockets + channels. One thread per session/socket role |
 | Cross-platform | Only `std::net`, `std::process`, `std::fs`. mDNS is implemented by hand, without OS services |
 | Hand-rolled | AES (block, CTR, CBC), big-integer modpow for SRP, SRP-6a, mDNS/DNS, HTTP/RTSP, JSON, binary plist, TLV8, protobuf subset, Matroska demux, H.264 NAL/SPS parsing, RTP/RTCP, ALAC passthrough framing |
@@ -527,7 +527,7 @@ attribution).
 ### Clean-room procedure for FairPlay (and AirPlay mirroring specifics)
 
 1. **Dirty room (spec writer)** reads doubletake and playfair and writes
-   `docs/spec/fairplay.md` and `docs/spec/airplay-mirroring.md`:
+   `docs/spec/fairplay.md` and `docs/airplay-mirroring.md`:
    - Message formats, field offsets, data flow, and algorithm *structure*, in
      prose and math (for example "9-round AES-like network: per-round byte
      substitution from table S[r][i], 4×4 byte mixing via tables M[i][j],

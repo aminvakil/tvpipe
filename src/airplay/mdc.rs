@@ -10,7 +10,7 @@
 //! `rply`, 8 opaque bytes, 4-byte command, u64be token, u32be status)
 //! plus a bplist payload.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §4.6, §5.1, §8.10; vectors
+//! Sources: docs/airplay-mirroring.md §4.6, §5.1, §8.10; vectors
 //! tests/vectors/airplay-mirror/channels.txt ("MediaDataControl"),
 //! appletv-session.txt (raup/rrmt bodies).
 

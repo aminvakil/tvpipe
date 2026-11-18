@@ -4,7 +4,7 @@
 //!
 //! Byte layouts only; the sending loop is in `airplay::sink`.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §8.1–§8.7; RFC 3550 §5.1 (RTP
+//! Sources: docs/airplay-mirroring.md §8.1–§8.7; RFC 3550 §5.1 (RTP
 //! header); RFC 2198 §3 (redundant block headers); vectors
 //! tests/vectors/airplay-mirror/audio.txt, appletv-session.txt.
 

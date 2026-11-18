@@ -6,7 +6,7 @@ Status: in progress. Owns `src/airplay/{mirror,audio,timing,sink,session}.rs`
 `pair.rs`, which you may call but only change minimally with a note),
 `tests/vectors/airplay-mirror/**` (read; add more only in the same format).
 
-Clean room: implement ONLY from `docs/spec/airplay-mirroring.md`,
+Clean room: implement ONLY from `docs/airplay-mirroring.md`,
 `docs/spec/data/**`, `tests/vectors/airplay-mirror/**`, the existing
 `src/`, and permissive refs (pyatv, RFCs). Questions go to
 `docs/spec/QUESTIONS.md` (and to the lead); never look in the tainted

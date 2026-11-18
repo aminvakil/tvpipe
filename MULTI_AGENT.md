@@ -138,13 +138,12 @@ record the outcome in `ARCHITECTURE.md` (no separate decision records). Implemen
   `Sources: docs/spec/fairplay.md §4.2, vectors fairplay/m3.txt`. Tainted
   sources must never appear there.
 - **Dependency policy**: the only crates are `argument`, `rustls`, and `ring`.
-  A proposal for anything else goes in `docs/deps.md`, and the lead and human
-  decide.
+  Anything else needs the human's approval.
 - **Logs over guesses**: on hardware, agents ask the human to run
   `tvpipe --debug …` and attach the log or capture, instead of guessing
   at receiver behaviour.
 - **No silent spec gaps**: if a clean implementer needs a fact the spec lacks,
-  it files a question in `docs/spec/QUESTIONS.md`. The spec writer answers by
+  it asks the lead, who relays it to the spec writer. The spec writer answers by
   amending the spec. The implementer never goes to look in the tainted source
   itself.
 
@@ -158,8 +157,6 @@ record the outcome in `ARCHITECTURE.md` (no separate decision records). Implemen
   notes from reading tainted code, and is never committed to this repo.
 - The spec reviewer gates every spec change. Reviewed specs are committed by
   the reviewer, not the writer.
-- Keep a log (`docs/cleanroom-log.md`): which agent session had which role,
-  which inputs it saw, and what it produced.
 
 ## Human checkpoints
 

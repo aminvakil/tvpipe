@@ -2,8 +2,7 @@
 //! timing protocol, audio format, canvas, latency leads and the initial
 //! volume (spec §2.3–§2.7, §4.9, §8.9).
 //!
-//! Sources: docs/spec/airplay-mirroring.md §2.3–§2.7, §4.9, §8.9;
-//! docs/spec/data/airplay-mirroring.txt; vectors
+//! Sources: docs/airplay-mirroring.md §2.3–§2.7, §4.9, §8.9; vectors
 //! tests/vectors/airplay-mirror/appletv-session.txt (`/info` bodies).
 
 use crate::airplay::info::Info;

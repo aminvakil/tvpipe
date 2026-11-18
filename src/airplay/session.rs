@@ -9,7 +9,7 @@
 //! [`Session::start_video`] runs the video SETUP and the rest when the
 //! encoder's stream info is ready.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §2, §3, §4, §5.3, §7.2, §7.3,
+//! Sources: docs/airplay-mirroring.md §2, §3, §4, §5.3, §7.2, §7.3,
 //! §8.9; vectors tests/vectors/airplay-mirror/setup.txt,
 //! appletv-session.txt.
 

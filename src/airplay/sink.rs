@@ -24,7 +24,7 @@
 //! [`MAX_LATENESS`] late or [`MAX_EARLY`] early. The session timeline
 //! (PTP via response headers, or NTP) maps those to receiver time.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §4.8, §4.11, §4.13, §6, §7.4,
+//! Sources: docs/airplay-mirroring.md §4.8, §4.11, §4.13, §6, §7.4,
 //! §8.2–§8.8; PLAN §3, §5.3.
 
 use std::collections::VecDeque;

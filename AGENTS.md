@@ -8,8 +8,8 @@ workstream.
 - Rust, single binary crate. No async runtime: use `std::thread` and blocking
   I/O.
 - Dependencies: only `argument` (CLI), `rustls` (ring backend, no default
-  features), and `ring`. Do not add crates; propose them in `docs/deps.md`
-  instead.
+  features), and `ring`. Do not add crates without asking
+  the human first.
 - Hand-roll formats and simple algorithms (see PLAN §2/§9), each with
   known-answer tests or fixtures.
 - Never panic on data from the network or from ffmpeg. Return errors.

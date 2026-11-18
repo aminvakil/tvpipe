@@ -3,8 +3,7 @@
 Status: draft by the S2 spec writer (dirty room), 2026-11-18, awaiting
 review. Audience: the clean implementer of `airplay/{mirror,audio,timing,
 sink}.rs` (W7). Everything here is a wire fact or a behavioural rule; there
-is no reference code. Constants are collected in
-`docs/spec/data/airplay-mirroring.txt`, byte-exact examples in
+is no reference code. Byte-exact examples are in
 `tests/vectors/airplay-mirror/*.txt` (index in §12).
 
 Confidence tags used below:
@@ -155,7 +154,7 @@ failure on an HAP connection could fall back to continuing without it
 ### 2.3 Feature bits
 
 `features` from `/info` (64 bits; bits ≥ 64 come from `featuresEx` and are
-not needed). Bit numbers (also in the data file):
+not needed). Bit numbers:
 
 | Bit | Meaning for mirroring |
 |---|---|
@@ -1191,9 +1190,11 @@ glitch histograms) and `rrmt` (RTP statistics: `lostPackets`,
 type `rply`, bytes 8–15 of the request, the same command, the same token,
 status 0 (accepted) or 1 (payload not a valid report); no other status
 values are known. Vector: `channels.txt` "MediaDataControl". The
-dynamic-latency algorithm (when and by how much to step the audio lead
-along the ladders in the data file, driven by `raup` reports carrying a
-`LiveAdaptiveGlitchHistogram`) is **out of scope** for this spec; a sender
+audio lead steps along a ladder per profile (§2.7; the first value is the
+initial lead): normal 85, 81, 75, 71, 65 ms; wireless 170, 166, 160, 156,
+150 ms. The dynamic-latency algorithm (when and by how much to step, driven
+by `raup` reports carrying a `LiveAdaptiveGlitchHistogram`) is **out of
+scope** for this spec; a sender
 that connects this channel should keep its initial lead. Skipping this channel entirely is fine: the session keeps the
 initial lead [HW, a session without it was accepted]. The `rrmt` report is
 a cheap way to check that audio arrives.

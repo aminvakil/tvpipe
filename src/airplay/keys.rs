@@ -1,4 +1,4 @@
-//! Mirroring stream keys (spec `docs/spec/airplay-mirroring.md` §5).
+//! Mirroring stream keys (spec `docs/airplay-mirroring.md` §5).
 //!
 //! Two crypto profiles exist (§5.0). The **HAP profile** (every
 //! connection made by [`pair::connect`](crate::airplay::pair::connect))
@@ -12,7 +12,7 @@
 //! [`airplay::fairplay`](crate::airplay::fairplay), used only through its
 //! public API.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §2.2, §5, Appendix A; vectors
+//! Sources: docs/airplay-mirroring.md §2.2, §5, Appendix A; vectors
 //! tests/vectors/airplay-mirror/keys.txt, channels.txt.
 
 use crate::airplay::fairplay;

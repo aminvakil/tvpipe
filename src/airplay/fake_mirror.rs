@@ -4,7 +4,7 @@
 //! a video data port that decrypts what it gets, and audio RTP/RTCP
 //! sockets. Behaviour follows the Apple TV as the spec describes it.
 //!
-//! Sources: docs/spec/airplay-mirroring.md §4, §6, §8, §9, §11.
+//! Sources: docs/airplay-mirroring.md §4, §6, §8, §9, §11.
 
 #![cfg(test)]
 
