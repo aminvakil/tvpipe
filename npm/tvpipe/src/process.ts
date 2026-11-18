@@ -128,7 +128,7 @@ export class TvpipeProcess extends EventEmitter<{ event: [TvpipeEvent]; exit: [E
               code: "protocol-mismatch",
               message:
                 `tvpipe ${ev.version} speaks machine protocol ${ev.protocol}, this SDK ${PROTOCOL}; ` +
-                `install matching versions of tvpipe and its binary`,
+                `install matching versions of @tvpipe/sdk and its binary`,
             };
             this.kill();
           }

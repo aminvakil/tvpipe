@@ -1,4 +1,4 @@
-# tvpipe for Node
+# @tvpipe/sdk: tvpipe for Node
 
 Stream video and audio from Node to **Apple TV / AirPlay**, **Chromecast /
 Google Cast** and **browser tabs**, with low latency: files, URLs, web
@@ -6,7 +6,7 @@ pages, a test pattern, or frames your program draws (a canvas, raw RGBA,
 H.264 from WebCodecs) with sound.
 
 ```sh
-npm install tvpipe
+npm install @tvpipe/sdk
 ```
 
 It drives the [tvpipe](https://github.com/mitsuhiko/tvpipe) binary,
@@ -15,7 +15,7 @@ ARM64. You don't need to set anything up. Node 22 or newer. No runtime
 dependencies.
 
 ```js
-import { play } from "tvpipe";
+import { play } from "@tvpipe/sdk";
 
 const session = await play("movie.mp4");   // the only TV on the network
 await session.done;                         // until the end of the movie
@@ -24,7 +24,7 @@ await session.done;                         // until the end of the movie
 ## Receivers
 
 ```js
-import { discover } from "tvpipe";
+import { discover } from "@tvpipe/sdk";
 
 for (const d of await discover({ timeout: 3000 })) {
   console.log(d.name, d.protocols, d.model, d.paired);
@@ -48,7 +48,7 @@ If there are several, the error lists them.
 ## Files, URLs, the test pattern, web pages
 
 ```js
-import { play, testPattern, preview, share } from "tvpipe";
+import { play, testPattern, preview, share } from "@tvpipe/sdk";
 
 await play("movie.mkv", { to: "Living Room", loop: true });
 await play("https://example.com/live.m3u8", { to: ["Kitchen", "Office"] });
@@ -70,7 +70,7 @@ devices need [ffmpeg](https://ffmpeg.org) in `PATH` (or `ffmpeg:
 ## Frames from code
 
 ```js
-import { stream } from "tvpipe";
+import { stream } from "@tvpipe/sdk";
 
 const s = await stream({
   to: "Living Room",
@@ -140,7 +140,7 @@ It stops the TVs cleanly and exits.
 Some AirPlay receivers show a PIN the first time:
 
 ```js
-import { pair } from "tvpipe";
+import { pair } from "@tvpipe/sdk";
 
 await pair("Living Room", { onPin: async ({ name }) => await ask(`PIN shown on ${name}?`) });
 // or let a session pair when it needs to:
@@ -202,7 +202,9 @@ Linux binaries are static, so they also work on Alpine. If you install
 with `--omit=optional`, or copy a lockfile made on another platform, the
 binary is missing and you get a `binary-missing` error. To use a binary
 you built or installed yourself, set `TVPIPE_BINARY=/path/to/tvpipe` (or
-pass the `binary` option). `npx tvpipe ...` runs the command line tool.
+pass the `binary` option). The package also installs the command line tool:
+`npx tvpipe ...` in a project that depends on it, or `npx -p @tvpipe/sdk
+tvpipe ...` anywhere.
 
 ## License
 

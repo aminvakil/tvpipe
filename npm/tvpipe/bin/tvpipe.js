@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `npx tvpipe …`: runs the platform binary with this process's stdio.
+// `npx -p @tvpipe/sdk tvpipe …` (or `npx tvpipe` where it is installed): runs the platform binary with this process's stdio.
 import { spawn } from "node:child_process";
 
 import { resolveBinary } from "../dist/binary.js";

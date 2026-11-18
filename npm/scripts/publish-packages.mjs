@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Publishes the packages staged by build-packages.mjs, in order (the
-// platform packages first, `tvpipe` last). Versions already on the
+// platform packages first, `@tvpipe/sdk` last). Versions already on the
 // registry are skipped, so a rerun after a partial failure completes.
 //
 //   node npm/scripts/publish-packages.mjs [--out DIR] [--dry-run] [--provenance] [--tag TAG]

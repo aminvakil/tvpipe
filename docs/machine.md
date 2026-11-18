@@ -1,6 +1,6 @@
 # Machine interface (`--machine`)
 
-For programs that drive tvpipe: the Node SDK (`npm/tvpipe`), and anything
+For programs that drive tvpipe: the Node SDK (`@tvpipe/sdk`, source in `npm/tvpipe`), and anything
 else that can spawn a process and read lines. Protocol version **1**.
 Code: `src/machine.rs`, the events at their sources (`session.rs`,
 `session/rejoin.rs`, `media/fanout.rs`, `browser/player.rs`,

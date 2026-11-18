@@ -1,5 +1,5 @@
 {
-  "name": "tvpipe",
+  "name": "@tvpipe/sdk",
   "version": "0.1.2",
   "description": "Stream video and audio to AirPlay, Google Cast and browser tabs from Node: files, URLs, web pages, canvases and raw frames",
   "keywords": ["airplay", "chromecast", "google-cast", "apple-tv", "mirroring", "streaming", "canvas", "h264"],

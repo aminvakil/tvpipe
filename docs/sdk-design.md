@@ -1,8 +1,8 @@
-# Node SDK design (`tvpipe` on npm)
+# Node SDK design (`@tvpipe/sdk` on npm)
 
 Status: implemented (the decisions at the end). The machine interface's
 reference is [`machine.md`](machine.md); the SDK's user documentation is
-[`npm/tvpipe/README.md`](../npm/tvpipe/README.md). Goal: `npm install tvpipe` and stream to an Apple TV, a
+[`npm/tvpipe/README.md`](../npm/tvpipe/README.md). Goal: `npm install @tvpipe/sdk` and stream to an Apple TV, a
 Chromecast or a browser tab from Node without knowing about the binary:
 files, URLs, the test pattern, web pages, and frames a program makes itself
 (a canvas, raw RGBA, encoded H.264), with audio.
@@ -15,13 +15,13 @@ Three parts:
 2. **The TypeScript SDK** (`npm/tvpipe/`): spawns the binary, speaks the
    machine interface, offers a promise/event API. Zero runtime
    dependencies, erasable TypeScript only.
-3. **Packaging**: `tvpipe` plus six `@tvpipe/<os>-<cpu>` packages with
+3. **Packaging**: `@tvpipe/sdk` plus six `@tvpipe/<os>-<cpu>` packages with
    the binaries, published from `release.yml` in lockstep with the crate.
 
 ## 1. API
 
 ```ts
-import { discover, play, testPattern, preview, share, stream, pair } from "tvpipe";
+import { discover, play, testPattern, preview, share, stream, pair } from "@tvpipe/sdk";
 
 // Receivers on the network.
 const devices = await discover({ timeout: 3000 });
@@ -329,14 +329,15 @@ the input is consuming; when the input is wedged the SDK escalates.
 fallback (a different version would speak another protocol); `TVPIPE_BINARY=$(which tvpipe)`
 is the explicit way. The `hello` event checks the protocol.
 
-The main package also has a `bin` (`npx tvpipe …`), a small JS shim that
-runs the resolved binary with inherited stdio and its exit status.
+The main package also has a `bin` named `tvpipe` (`npx -p @tvpipe/sdk
+tvpipe …`), a small JS shim that runs the resolved binary with inherited
+stdio and its exit status.
 
 ## 5. Packaging
 
 ```
 npm/
-  tvpipe/                     the SDK (source of the `tvpipe` package)
+  tvpipe/                     the SDK (source of the `@tvpipe/sdk` package)
     package.json              type: module, engines node >= 22, exports, bin;
                               the version is the crate's (CI checks); the
                               optionalDependencies are added when staging
@@ -347,7 +348,7 @@ npm/
     examples/canvas-tone.ts
     README.md
   scripts/
-    build-packages.mjs        stage packages: npm/dist/tvpipe (built JS + .d.ts + src,
+    build-packages.mjs        stage packages: npm/dist/sdk (built JS + .d.ts + src,
                               optionalDependencies @tvpipe/* pinned to the version),
                               npm/dist/tvpipe-<os>-<cpu> (@tvpipe/<os>-<cpu>: the binary
                               from a release archive, or --local PATH, LICENSE files)
@@ -377,7 +378,7 @@ npm/
   `npm pack`s them, then:
   - tag push: `publish-packages.mjs --provenance`: `npm publish
     --provenance --access public` for the six platform packages first, then
-    `tvpipe`, authenticated by **npm trusted publishing** (OIDC; job
+    `@tvpipe/sdk`, authenticated by **npm trusted publishing** (OIDC; job
     permission `id-token: write`, npm ≥ 11.5.1, no token anywhere); an
     already published version is skipped so a rerun completes.
   - `workflow_dispatch` (dry run): `npm publish --dry-run` and the
@@ -387,7 +388,8 @@ npm/
   once by hand (trusted publishing can only be configured for packages
   that exist), then each got a trusted publisher: GitHub repository
   `mitsuhiko/tvpipe`, workflow `release.yml`, no environment
-  (`npm trust github <pkg> --repo mitsuhiko/tvpipe --file release.yml`).
+  (`npm trust github <pkg> --repo mitsuhiko/tvpipe --file release.yml
+  --allow-publish`; this needs the owner's 2FA, a token cannot do it).
 - **Releasing**: bump the version in `Cargo.toml`, `Cargo.lock` and
   `npm/tvpipe/package.json` together (CI fails when they differ), tag
   `vX.Y.Z`.
@@ -442,4 +444,6 @@ library) and a 440 Hz tone to `--to browser`, printing the player URL.
 5. `ci.yml` has an `sdk` job on Linux, macOS and Windows.
 6. Without `to`, sessions use the only receiver with video on the network;
    otherwise `no-receivers` or `ambiguous-receiver` (listing them).
-7. Package names: `tvpipe` (unscoped) and `@tvpipe/<os>-<cpu>`.
+7. Package names: `@tvpipe/sdk` and `@tvpipe/<os>-<cpu>`. npm refused the
+   unscoped `tvpipe` as too similar to the existing `unpipe`; the command
+   line shim keeps the name `tvpipe` (`npx -p @tvpipe/sdk tvpipe`).

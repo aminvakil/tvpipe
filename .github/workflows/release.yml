@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a tag vX.Y.Z builds the release archives and publishes a GitHub
-# Release with them, then the npm packages (`tvpipe` and the six
+# Release with them, then the npm packages (`@tvpipe/sdk` and the six
 # `@tvpipe/<os>-<cpu>` binary packages, see docs/sdk-design.md). Running the
 # workflow by hand (workflow_dispatch) is a dry run: it builds and packages
 # everything and keeps the archives, the checksums, the release notes and

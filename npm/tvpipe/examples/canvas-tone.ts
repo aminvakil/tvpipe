@@ -11,7 +11,7 @@
  * package by name, as an application would).
  */
 
-import { stream } from "tvpipe";
+import { stream } from "@tvpipe/sdk";
 
 const width = 640;
 const height = 360;

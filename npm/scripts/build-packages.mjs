@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stages the npm packages: `tvpipe` (the SDK) and `@tvpipe/<os>-<cpu>`
+// Stages the npm packages: `@tvpipe/sdk` (the SDK) and `@tvpipe/<os>-<cpu>`
 // (one binary each), all at the crate's version.
 //
 //   node npm/scripts/build-packages.mjs --artifacts DIR   # release archives (CI)
@@ -8,7 +8,7 @@
 // Options: --version X (default: Cargo.toml's), --out DIR (default npm/dist).
 // The SDK must be built first (`npm run build` in npm/tvpipe). Writes
 // OUT/packages.json: the package directories in publish order (the
-// platform packages first, `tvpipe` last).
+// platform packages first, `@tvpipe/sdk` last).
 
 import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -74,7 +74,7 @@ function platformPackage(platform, binary) {
   json(join(dir, "package.json"), {
     name,
     version,
-    description: `The tvpipe binary for ${platform} (used by the tvpipe package)`,
+    description: `The tvpipe binary for ${platform} (used by @tvpipe/sdk)`,
     homepage: "https://mitsuhiko.github.io/tvpipe/",
     repository,
     // The binary includes the LGPL FairPlay module (see LICENSES/).
@@ -87,7 +87,7 @@ function platformPackage(platform, binary) {
   writeFileSync(
     join(dir, "README.md"),
     `# ${name}\n\nThe [tvpipe](https://github.com/mitsuhiko/tvpipe) binary for ${platform}. ` +
-      `Install [\`tvpipe\`](https://www.npmjs.com/package/tvpipe) instead; it pulls in this ` +
+      `Install [\`@tvpipe/sdk\`](https://www.npmjs.com/package/@tvpipe/sdk) instead; it pulls in this ` +
       `package on ${platform}.\n`,
   );
   platforms.push({ name, dir, platform });
@@ -115,7 +115,7 @@ if (values.local) {
 
 // The SDK.
 if (!existsSync(join(sdk, "dist", "index.js"))) fail("npm/tvpipe/dist is missing: run `npm run build` in npm/tvpipe");
-const main = join(out, "tvpipe");
+const main = join(out, "sdk");
 mkdirSync(main);
 for (const f of ["dist", "src", "bin", "README.md"]) cpSync(join(sdk, f), join(main, f), { recursive: true });
 cpSync(join(repo, "LICENSE"), join(main, "LICENSE"));
@@ -127,6 +127,6 @@ delete pkg.devDependencies;
 pkg.optionalDependencies = Object.fromEntries(Object.values(TARGETS).map((p) => [`@tvpipe/${p}`, version]));
 json(join(main, "package.json"), pkg);
 
-const order = [...platforms.map((p) => ({ name: p.name, dir: p.dir })), { name: "tvpipe", dir: main }];
+const order = [...platforms.map((p) => ({ name: p.name, dir: p.dir })), { name: pkg.name, dir: main }];
 json(join(out, "packages.json"), order);
 for (const p of order) console.log(`${p.name}@${version}  ${p.dir}`);

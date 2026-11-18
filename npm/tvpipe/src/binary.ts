@@ -68,7 +68,7 @@ export function resolveBinary(options: BinaryOptions = {}): string {
       "binary-missing",
       `the tvpipe binary for ${platform} is not installed: npm did not install the optional ` +
         `dependency ${pkg} (installed with --omit=optional or --no-optional, or the lockfile ` +
-        `was made on another platform?). Reinstall tvpipe with optional dependencies, ` +
+        `was made on another platform?). Reinstall @tvpipe/sdk with optional dependencies, ` +
         `install ${pkg} explicitly, or set $${BINARY_ENV} to a tvpipe binary`,
       { cause },
     );

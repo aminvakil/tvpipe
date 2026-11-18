@@ -37,11 +37,11 @@ Playing files, URLs and capture devices needs `ffmpeg` (and `ffprobe`); see
 [Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) for
 ffmpeg, the release archives and building from source.
 
-From Node.js, `npm install tvpipe` installs an SDK and the binary for your
+From Node.js, `npm install @tvpipe/sdk` installs an SDK and the binary for your
 platform ([`npm/tvpipe`](npm/tvpipe/README.md)):
 
 ```js
-import { play } from "tvpipe";
+import { play } from "@tvpipe/sdk";
 await play("movie.mp4", { to: "Living Room" });
 ```
 
