@@ -718,9 +718,14 @@ pub fn encoded_audio_families(
         if ok {
             out.push((family, how));
         } else {
+            // By name: the browser shares the AirPlay family's PCM.
+            let names: Vec<&str> = of.iter().map(|(n, _)| *n).collect();
             warnings.push(format!(
-                "{:?} receivers cannot take the game's {} {} Hz {} ch audio; sending them video only",
-                family, a.sample_fmt, a.sample_rate, a.channels
+                "{} cannot take the game's {} {} Hz {} ch audio; sending video only",
+                names.join(", "),
+                a.sample_fmt,
+                a.sample_rate,
+                a.channels
             ));
         }
     }
@@ -1892,11 +1897,7 @@ pub(crate) mod tests {
             [(AudioFamily::AirPlay, AudioOut::Pcm { frame_samples: 352 })]
         );
         assert_eq!(warns.len(), 1);
-        assert!(
-            warns[0].starts_with("Cast receivers cannot take"),
-            "{}",
-            warns[0]
-        );
+        assert!(warns[0].starts_with("tv cannot take"), "{}", warns[0]);
         let cast_aac = caps(AudioFamily::Cast, &[(AudioCodec::AacLc, 44_100, 2)]);
         let (fams, warns) = encoded_audio_families(Some(&spec), &[("tv", &cast_aac)]);
         assert_eq!(

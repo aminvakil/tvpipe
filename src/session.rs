@@ -480,6 +480,19 @@ fn audio_plan(family: AudioFamily, f: AudioFormat) -> Option<AudioPlan> {
     })
 }
 
+/// "PCM 48000 Hz 2 ch": an audio track by its codec, not its family (the
+/// AirPlay family's PCM also feeds browsers).
+fn audio_label(codec: AudioCodec, sample_rate: u32, channels: u8) -> String {
+    let name = match codec {
+        AudioCodec::PcmS16le => "PCM",
+        AudioCodec::AacLc => "AAC-LC",
+        AudioCodec::AacEld => "AAC-ELD",
+        AudioCodec::Opus => "Opus",
+        AudioCodec::Alac => "ALAC",
+    };
+    format!("{name} {sample_rate} Hz {channels} ch")
+}
+
 /// The encode plan: `d` clamped by every sink's capabilities.
 fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> Result<EncodePlan> {
     if caps.is_empty() {
@@ -1059,7 +1072,7 @@ fn play_with(
         Route::Ffmpeg => {
             let plan = plan(&d, opts.encoder, &caps, audio)?;
             info!(
-                "plan: {}x{}@{} {} kbit/s, gop {}, audio {:?}, latency {} ms",
+                "plan: {}x{}@{} {} kbit/s, gop {}, audio {}, latency {} ms",
                 plan.video.width,
                 plan.video.height,
                 plan.video.fps,
@@ -1067,8 +1080,9 @@ fn play_with(
                 plan.video.gop,
                 plan.audio
                     .iter()
-                    .map(|a| format!("{:?} {:?} {} Hz", a.family, a.codec, a.sample_rate))
-                    .collect::<Vec<_>>(),
+                    .map(|a| audio_label(a.codec, a.sample_rate, a.channels))
+                    .reduce(|a, b| format!("{a}, {b}"))
+                    .unwrap_or_else(|| "none".into()),
                 plan.latency_ms
             );
             let (bin, probe) = tools.get()?;
@@ -1526,7 +1540,10 @@ fn stream(
         v.fps,
         info.audio
             .iter()
-            .map(|(f, a)| format!(", {f:?} audio {:?} {} Hz", a.codec, a.sample_rate))
+            .map(|(_, a)| format!(
+                ", audio {}",
+                audio_label(a.codec, a.sample_rate, a.channels)
+            ))
             .collect::<String>()
     );
     // On failure the sinks are dropped, which stops them.
