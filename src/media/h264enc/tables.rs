@@ -6,8 +6,9 @@
 //! (deblocking α, β, tC0), §8.5.9 (normAdjust4x4). The VLC tables were
 //! transcribed from openh264 `codec/encoder/core/src/encoder_data_tables.cpp`
 //! and the cbp mapping from `codec/decoder/core/src/decoder_data_tables.cpp`
-//! (Copyright (c) 2013, Cisco Systems, BSD-2-Clause) and checked against
-//! the standard by decoding with ffmpeg.
+//! (Copyright (c) 2013, Cisco Systems, BSD-2-Clause; license text in
+//! `LICENSES/BSD-2-Clause-openh264.txt`) and checked against the standard by
+//! decoding with ffmpeg.
 
 /// (code, length) pairs; `COEFF_TOKEN[class][total_coeff][trailing_ones]`
 /// with class 0: 0 ≤ nC < 2, 1: 2 ≤ nC < 4, 2: 4 ≤ nC < 8, 3: 8 ≤ nC,

@@ -183,3 +183,7 @@ For details see [`Architecture`](ARCHITECTURE.md) about the how and why.
 [doubletake](https://github.com/omarroth/doubletake) under
 LGPL-3.0-or-later. While that module is included, the distributed binary is
 under LGPL-3.0-or-later terms. See [`LICENSES/`](LICENSES).
+
+Some H.264 encoder tables (`src/media/h264enc/tables.rs`) are transcribed
+from [openh264](https://github.com/cisco/openh264) (BSD-2-Clause, see
+[`LICENSES/BSD-2-Clause-openh264.txt`](LICENSES/BSD-2-Clause-openh264.txt)).
