@@ -137,9 +137,10 @@ encoded SLRW over a localhost WebSocket, so it takes the same path
 (passthrough video, PCM or built-in AAC). Protocol:
 [`docs/share-protocol.md`](docs/share-protocol.md). Receivers stretch what
 they get to fill their screen, so sinks report their screen shape
-(`Capabilities::display_aspect`: Cast from the ANSWER's `display`, AirPlay
-from the SETUP canvas) and the page centers the capture in a frame of that
-shape.
+(`Capabilities::display_aspect`: Cast from the ANSWER's `display`, else
+16:9, AirPlay from the SETUP canvas; `None` for the browser player, which
+fits any shape) and the page centers the capture in a frame of that shape,
+or keeps the capture's shape when only browser players watch.
 
 **Headless browser** (`tvpipe browser URL`) starts a Chromium-based browser
 of its own (a separate profile, headless unless `--visible`) and drives it

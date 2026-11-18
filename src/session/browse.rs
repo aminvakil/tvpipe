@@ -136,7 +136,13 @@ pub(super) fn browse_with(
     let named: Vec<(&str, &Capabilities)> =
         sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
     let limits = receiver_limits(&caps);
-    let (aspect, max) = screen_shape(&caps);
+    // Only browser players: the page keeps BROWSE_SIZE's (or --size's)
+    // shape.
+    let (screen, max) = screen_shape(&caps);
+    let aspect = screen.unwrap_or_else(|| {
+        let s = opts.size.unwrap_or(BROWSE_SIZE);
+        crate::types::aspect_of(s.width, s.height).unwrap_or(layout::DEFAULT_ASPECT)
+    });
     let d = Desired {
         size: opts.size.unwrap_or_else(|| {
             let (width, height) =
@@ -164,8 +170,10 @@ pub(super) fn browse_with(
     }
     let viewport = (plan.video.width, plan.video.height);
     info!(
-        "browser: receivers allow {limits}, screen {}:{}; the page is {}x{}",
-        aspect.0, aspect.1, viewport.0, viewport.1
+        "browser: receivers allow {limits}, {}; the page is {}x{}",
+        screen_label(screen),
+        viewport.0,
+        viewport.1
     );
     let t0 = Instant::now();
     let source = match launch(&server, viewport) {

@@ -280,7 +280,8 @@ impl Info {
             max_bitrate_kbps: None,
             min_latency_ms: latency,
             preferred_latency_ms: None,
-            display_aspect: None,
+            // The screen's shape comes with the SETUP canvas.
+            display_aspect: Some(crate::types::DEFAULT_DISPLAY_ASPECT),
         }
     }
 }

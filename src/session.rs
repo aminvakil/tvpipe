@@ -1290,8 +1290,12 @@ fn share_with(
         sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
     let limits = receiver_limits(&caps);
     // The receivers' screen shape: the stream has it, the capture is
-    // centered inside (bars), since receivers stretch to fill.
-    let (aspect, max) = screen_shape(&caps);
+    // centered inside (bars), since receivers stretch to fill. Browser
+    // players alone take any shape: the capture's own (no bars).
+    let (screen, max) = screen_shape(&caps);
+    let aspect = screen
+        .or_else(|| crate::types::aspect_of(cap.width, cap.height))
+        .unwrap_or(layout::DEFAULT_ASPECT);
     let d = Desired {
         size: opts.size.unwrap_or_else(|| {
             let (width, height) = layout::output_size((cap.width, cap.height), aspect, max);
@@ -1322,8 +1326,14 @@ fn share_with(
         (plan.video.width, plan.video.height),
     );
     info!(
-        "share: capture {}x{}, receivers allow {limits}, screen {}:{}; the capture fills {}x{} at +{}+{}",
-        cap.width, cap.height, aspect.0, aspect.1, content.width, content.height, content.x, content.y
+        "share: capture {}x{}, receivers allow {limits}, {}; the capture fills {}x{} at +{}+{}",
+        cap.width,
+        cap.height,
+        screen_label(screen),
+        content.width,
+        content.height,
+        content.x,
+        content.y
     );
     info!(
         "plan: {}x{}@{} {} kbit/s, keyframe every {} frames, {}, latency {} ms (encoded by the browser)",
@@ -1400,16 +1410,15 @@ fn share_cast_options(
 }
 
 /// The stream's shape (the receivers' screens, which stretch what they
-/// get; a warning when they differ) and the tightest size limit.
-fn screen_shape(caps: &[&Capabilities]) -> ((u32, u32), (u32, u32)) {
+/// get; a warning when they differ; `None` when no receiver has a screen
+/// shape, only browser players) and the tightest size limit.
+fn screen_shape(caps: &[&Capabilities]) -> (Option<(u32, u32)>, (u32, u32)) {
     let aspects: Vec<Option<(u32, u32)>> = caps.iter().map(|c| c.display_aspect).collect();
     let aspect = layout::output_aspect(&aspects);
-    let mut shapes: Vec<(u32, u32)> = aspects
-        .iter()
-        .map(|a| a.unwrap_or(layout::DEFAULT_ASPECT))
-        .collect();
+    let mut shapes: Vec<(u32, u32)> = aspects.iter().flatten().copied().collect();
+    shapes.sort_unstable();
     shapes.dedup();
-    if shapes.len() > 1 {
+    if let (Some(aspect), true) = (aspect, shapes.len() > 1) {
         warn!(
             "share: the receivers' screens differ in shape ({}); streaming {}:{}, the others stretch it",
             shapes
@@ -1426,6 +1435,14 @@ fn screen_shape(caps: &[&Capabilities]) -> ((u32, u32), (u32, u32)) {
         caps.iter().map(|c| c.max_height).min().unwrap_or(0),
     );
     (aspect, max)
+}
+
+/// "screen 16:9", or "any shape" without screens.
+fn screen_label(screen: Option<(u32, u32)>) -> String {
+    match screen {
+        Some((w, h)) => format!("screen {w}:{h}"),
+        None => "any shape".into(),
+    }
 }
 
 /// The encode plan of a page-encoded stream: without `--bitrate`, the

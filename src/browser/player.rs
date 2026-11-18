@@ -179,7 +179,8 @@ pub fn capabilities(opts: &PlayerOptions) -> Capabilities {
         max_bitrate_kbps: None,
         min_latency_ms: None,
         preferred_latency_ms: Some(opts.latency_ms),
-        // A window of any shape: the page letterboxes.
+        // Any shape: the page fits the picture into its window, so
+        // `share`/`browser` with only browsers keep the source's shape.
         display_aspect: None,
     }
 }

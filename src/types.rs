@@ -109,11 +109,18 @@ pub struct Capabilities {
     pub min_latency_ms: Option<u32>,
     /// The playout delay the receiver prefers, if it says.
     pub preferred_latency_ms: Option<u32>,
-    /// The shape of the receiver's screen, reduced (e.g. `(16, 9)`), if it
-    /// says: it stretches pictures of another shape to fill it, so senders
-    /// that choose their own frame size (`share`) match it and pad.
+    /// The shape of the receiver's screen, reduced (e.g. `(16, 9)`): it
+    /// stretches pictures of another shape to fill it, so senders that
+    /// choose their own frame size (`share`, `browser`) match it and pad.
+    /// TVs that do not say report [`DEFAULT_DISPLAY_ASPECT`]. `None`: any
+    /// shape, the receiver fits the picture into its window itself (the
+    /// browser player).
     pub display_aspect: Option<(u32, u32)>,
 }
+
+/// The screen shape of a TV that does not say (TVs and projectors are
+/// 16:9).
+pub const DEFAULT_DISPLAY_ASPECT: (u32, u32) = (16, 9);
 
 /// `w:h` reduced (`(1920, 1080)` → `(16, 9)`); `None` for a zero side.
 pub fn aspect_of(w: u32, h: u32) -> Option<(u32, u32)> {

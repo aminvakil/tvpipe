@@ -109,9 +109,12 @@ a 16:10 capture stretched to 16:9). So:
 
 - **Shape:** the stream has the receivers' screen shape: Cast from the
   ANSWER's `display` (`aspectRatio`, else `dimensions`), AirPlay from the
-  SETUP canvas; a receiver that does not say counts as 16:9. With several
+  SETUP canvas; a TV that does not say counts as 16:9. With several
   shapes, the most common wins (a tie: 16:9) and tvpipe warns that the
-  others stretch.
+  others stretch. Browser players (`--to browser`) have no screen shape
+  (they fit any picture into their window): next to a TV they take its
+  shape, alone the stream keeps the capture's shape (no bars; `tvpipe
+  browser`: the page's, 16:9 or `--size`).
 - **Size:** the smallest frame of that shape that holds the capture at
   1:1 (no upscaling), shrunk to the tightest receiver limit. Cast is
   offered up to 1920x1080@60 (or `--size`/`--fps`/`--bitrate`), and its

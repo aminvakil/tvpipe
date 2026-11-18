@@ -23,30 +23,28 @@ pub struct Rect {
 
 /// The shape assumed for a receiver that does not say (TVs and
 /// projectors are 16:9).
-pub const DEFAULT_ASPECT: (u32, u32) = (16, 9);
+pub const DEFAULT_ASPECT: (u32, u32) = crate::types::DEFAULT_DISPLAY_ASPECT;
 
 fn even(v: u64) -> u32 {
     (v.max(2) & !1).min(u32::MAX as u64 - 1) as u32
 }
 
 /// The output's shape for several receivers: the most common display
-/// aspect (receivers that do not say count as 16:9); on a tie 16:9 if it
-/// is among the most common, else the first receiver's. The others
-/// stretch the picture.
-pub fn output_aspect(aspects: &[Option<(u32, u32)>]) -> (u32, u32) {
+/// aspect among those with a screen; on a tie 16:9 if it is among the
+/// most common, else the first receiver's. The others stretch the
+/// picture. `None` when no receiver has a screen shape (only browser
+/// players, `display_aspect: None`): the output keeps the source's shape.
+pub fn output_aspect(aspects: &[Option<(u32, u32)>]) -> Option<(u32, u32)> {
     let all: Vec<(u32, u32)> = aspects
         .iter()
-        .map(|a| a.filter(|&(w, h)| w > 0 && h > 0).unwrap_or(DEFAULT_ASPECT))
+        .filter_map(|a| a.filter(|&(w, h)| w > 0 && h > 0))
         .collect();
     let count = |a: (u32, u32)| all.iter().filter(|&&b| b == a).count();
-    let best = all.iter().map(|&a| count(a)).max().unwrap_or(0);
-    if best == 0 || count(DEFAULT_ASPECT) == best {
-        return DEFAULT_ASPECT;
+    let best = all.iter().map(|&a| count(a)).max()?;
+    if count(DEFAULT_ASPECT) == best {
+        return Some(DEFAULT_ASPECT);
     }
-    all.iter()
-        .copied()
-        .find(|&a| count(a) == best)
-        .unwrap_or(DEFAULT_ASPECT)
+    all.iter().copied().find(|&a| count(a) == best)
 }
 
 /// The output frame for a `capture` (width, height): the smallest frame
@@ -96,13 +94,17 @@ mod tests {
         assert_eq!(aspect_of(1920, 1200), Some((8, 5)));
         assert_eq!(aspect_of(1280, 0), None);
         let (wide, old) = (Some((16, 9)), Some((4, 3)));
-        assert_eq!(output_aspect(&[]), (16, 9));
-        assert_eq!(output_aspect(&[None]), (16, 9));
-        assert_eq!(output_aspect(&[old]), (4, 3));
-        assert_eq!(output_aspect(&[old, old, wide]), (4, 3));
-        // A tie: 16:9 (a receiver that does not say counts as 16:9).
-        assert_eq!(output_aspect(&[old, None]), (16, 9));
-        assert_eq!(output_aspect(&[Some((8, 5)), old]), (8, 5));
+        // No screens (only browser players): the source's shape.
+        assert_eq!(output_aspect(&[]), None);
+        assert_eq!(output_aspect(&[None, None]), None);
+        assert_eq!(output_aspect(&[Some((0, 9))]), None);
+        assert_eq!(output_aspect(&[old]), Some((4, 3)));
+        // A browser next to a TV: the TV's shape.
+        assert_eq!(output_aspect(&[None, old]), Some((4, 3)));
+        assert_eq!(output_aspect(&[old, old, wide]), Some((4, 3)));
+        // A tie: 16:9.
+        assert_eq!(output_aspect(&[old, wide, None]), Some((16, 9)));
+        assert_eq!(output_aspect(&[Some((8, 5)), old]), Some((8, 5)));
     }
 
     #[test]

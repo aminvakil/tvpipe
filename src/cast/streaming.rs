@@ -635,14 +635,19 @@ impl Negotiated {
             max_bitrate_kbps: max_bitrate,
             min_latency_ms: None,
             preferred_latency_ms: delay,
-            display_aspect: self.answer.display.as_ref().and_then(|d| {
-                d.aspect_ratio
-                    .and_then(|(a, b)| crate::types::aspect_of(a, b))
-                    .or_else(|| {
-                        d.dimensions
-                            .and_then(|(w, h, _)| crate::types::aspect_of(w, h))
-                    })
-            }),
+            display_aspect: self
+                .answer
+                .display
+                .as_ref()
+                .and_then(|d| {
+                    d.aspect_ratio
+                        .and_then(|(a, b)| crate::types::aspect_of(a, b))
+                        .or_else(|| {
+                            d.dimensions
+                                .and_then(|(w, h, _)| crate::types::aspect_of(w, h))
+                        })
+                })
+                .or(Some(crate::types::DEFAULT_DISPLAY_ASPECT)),
         }
     }
 }
@@ -789,7 +794,8 @@ mod tests {
         assert!(n.audio.is_none());
         let caps = n.capabilities();
         assert!(caps.audio_formats.is_empty());
-        assert_eq!(caps.display_aspect, None);
+        // A TV that does not say is 16:9.
+        assert_eq!(caps.display_aspect, Some((16, 9)));
         assert_eq!(caps.max_width, 1920);
 
         let bad = |s: &str| Answer::parse(&Value::parse(s).unwrap()).is_err();

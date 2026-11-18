@@ -286,3 +286,59 @@ fn share_offer_bounds() {
         (1280, Ratio::integer(25), 3000)
     );
 }
+
+/// Browser players take any shape: alone, the stream keeps the capture's
+/// (a Safari window of 1186x864 was pillarboxed to 1536x864 before);
+/// next to a TV, the TV's shape wins.
+#[test]
+fn browser_players_follow_the_capture() {
+    let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
+        match t {
+            Target::Browser(o) => {
+                let o = PlayerOptions {
+                    port: Some(0),
+                    ..(**o).clone()
+                };
+                Ok(Box::new(BrowserSink::bind(&o, never)?))
+            }
+            _ => connect_one(t, c, m),
+        }
+    };
+    let script = PageScript {
+        frames: 3,
+        audio: false,
+        capture: (1186, 864),
+        ..PageScript::default()
+    };
+    let content = |plan: &crate::codec::json::Value| {
+        let c = plan.get("content").unwrap();
+        let v = |k: &str| c.get(k).unwrap().as_u32().unwrap();
+        (v("x"), v("y"), v("width"), v("height"))
+    };
+    let size = |plan: &crate::codec::json::Value| {
+        let v = |k: &str| plan.get(k).unwrap().as_u32().unwrap();
+        (v("width"), v("height"))
+    };
+    let page = Page::default();
+    let o = ShareOptions {
+        no_audio: true,
+        ..share_opts(vec!["browser".into()])
+    };
+    share_with(o, &connect, never, &page_hook(&page, script.clone())).unwrap();
+    let plan = joined(&page).plan.unwrap();
+    assert_eq!(size(&plan), (1186, 864));
+    assert_eq!(content(&plan), (0, 0, 1186, 864));
+
+    // With a TV (16:9, at most 1280x720 by the fake's ANSWER).
+    let rx = FakeReceiver::spawn(CastFake::default());
+    let page = Page::default();
+    let o = ShareOptions {
+        no_audio: true,
+        ..share_opts(vec!["browser".into(), rx.addr.to_string()])
+    };
+    share_with(o, &connect, never, &page_hook(&page, script)).unwrap();
+    let plan = joined(&page).plan.unwrap();
+    assert_eq!(size(&plan), (1280, 720));
+    assert!(content(&plan).0 > 0, "{plan}");
+    rx.shutdown();
+}

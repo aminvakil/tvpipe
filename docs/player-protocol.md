@@ -122,8 +122,10 @@ plays the samples) at `pts_us + latency`.
   with Cast receivers → Cast's delay (300 ms); otherwise 100 ms (on
   loopback the delay only absorbs the input's burstiness and decoding;
   also the AirPlay automatic profile's video lead).
-- `display_aspect` is `None` and sizes up to 3840x2160@60 are offered:
-  the page letterboxes any shape.
+- `display_aspect` is `None` (any shape) and sizes up to 3840x2160@60
+  are offered: the page letterboxes any shape, so `share` and `browser`
+  with only browser players keep the source's shape; with TVs the TVs'
+  shape wins.
 
 ## Browsers
 
