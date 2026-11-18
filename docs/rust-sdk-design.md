@@ -1,6 +1,8 @@
 # Rust SDK design (`tvpipe` on crates.io)
 
-Status: proposal. Goal: a Rust game (or any Rust program) adds one
+Status: design agreed with the owner (decisions marked **Decided**; the
+list is in §10). Implementation starts after the Node SDK has landed.
+Goal: a Rust game (or any Rust program) adds one
 dependency and streams its own frames and sound to an Apple TV, a
 Chromecast or a browser tab:
 
@@ -18,7 +20,7 @@ loop {
 // drop(s): the TVs get their TEARDOWN/STOP
 ```
 
-**Decision (owner):** the Rust SDK is the tvpipe code itself, linked into
+**Decided:** the Rust SDK is the tvpipe code itself, linked into
 the program (an in-process library). It does not spawn or ship the
 `tvpipe` binary. The Node SDK (`docs/sdk-design.md` on the npm branch)
 keeps spawning the binary over the machine interface (`docs/machine.md`).
@@ -29,20 +31,21 @@ drift.
 Contents: 1. crate layout, 2. licensing and FairPlay, 3. features and
 dependencies, 4. what changes inside tvpipe, 5. the API, 6. recipes,
 7. the shared model with the Node SDK, 8. stability, 9. plan,
-10. open questions.
+10. decisions.
 
 ## 1. Crate layout
 
-Three packages in one workspace, one version for all:
+**Decided:** three packages under `crates/`, one virtual workspace at the
+root, one version for all:
 
 | Package (crates.io) | Path | Kind | License | Dependencies |
 |---|---|---|---|---|
-| `tvpipe` | repository root (`src/`) | library: discovery, pairing, AirPlay, Cast, browser player/share, encoders, sessions, the public API | Apache-2.0 | `ring`; `rustls` (optional) |
+| `tvpipe` | `crates/tvpipe/` | library: discovery, pairing, AirPlay, Cast, browser player/share, encoders, sessions, the public API | Apache-2.0 | `ring`; `rustls` (optional) |
 | `tvpipe-fairplay` | `crates/tvpipe-fairplay/` | library: the FairPlay SAP port (today `src/airplay/fairplay/`) | LGPL-3.0-or-later | `ring` |
 | `tvpipe-cli` | `crates/tvpipe-cli/` | binary `tvpipe`: argument parsing, Ctrl-C, `q`, `--machine` (events out, stdin router in) | Apache-2.0 (the built binary: LGPL terms, as today) | `tvpipe` (all features + `fairplay`), `argument` |
 
-All three names are free on crates.io (checked 2026-11-18; nothing
-published or reserved).
+**Decided:** these names. All three were free on crates.io on 2026-11-18;
+they are not reserved ahead of the first release.
 
 **Why the library keeps the name `tvpipe`.** `tvpipe::stream(...)` is
 what a user writes, the npm SDK is `tvpipe` too, and the binary is
@@ -50,13 +53,29 @@ distributed through GitHub releases and the installers, not `cargo
 install`. `cargo install tvpipe-cli` still gives `tvpipe` (`[[bin]] name
 = "tvpipe"`).
 
-**Why the library stays at the root.** Almost all code (and every path
-in ARCHITECTURE.md, `docs/` and commit `Sources:` lines, plus
-`tests/vectors/` read through `CARGO_MANIFEST_DIR`) stays where it is.
-What moves: `cli.rs`, `main.rs`, `util/interrupt.rs`, the stdin router half
-of `machine.rs`, and the tests that need the real binary
-(`tests/machine.rs`, `CARGO_BIN_EXE_tvpipe`) to `crates/tvpipe-cli/`;
-FairPlay to `crates/tvpipe-fairplay/`.
+**The move.** The root `Cargo.toml` becomes a virtual workspace
+(`members = ["crates/*"]`, `workspace.package` with the version, edition,
+MSRV; `Cargo.lock` stays at the root).
+
+- `src/` → `crates/tvpipe/src/`, with `tests/vectors/`, `tests/fixtures/`
+  and `examples/` → `crates/tvpipe/` (they are read through
+  `CARGO_MANIFEST_DIR`, so the tests keep working; big fixtures are
+  `exclude`d from the published package).
+- `cli.rs`, `main.rs`, `util/interrupt.rs`, the stdin-router half of
+  `machine.rs`, and the tests that need the real binary
+  (`tests/machine.rs`, `CARGO_BIN_EXE_tvpipe`) → `crates/tvpipe-cli/`.
+- `src/airplay/fairplay/` → `crates/tvpipe-fairplay/src/`.
+- One `git mv` commit per step, so `git log --follow` and blame survive;
+  a separate commit updates the paths in ARCHITECTURE.md, `docs/`, the
+  manual and AGENTS.md (old commits' `Sources:` lines stay as history).
+- Each crate directory carries the license texts it needs (cargo packages
+  only the crate directory): `LICENSE` (Apache-2.0) and the openh264/OFL
+  notices in `crates/tvpipe`, the LGPL text in `crates/tvpipe-fairplay`.
+  The root `LICENSE`/`LICENSES/` stay for the repository and the release
+  archives.
+- `cargo build --release` at the root still yields `target/release/tvpipe`
+  (a virtual workspace builds every member); `release.yml` names it
+  explicitly with `-p tvpipe-cli`.
 
 **Why not one package with lib + bin.** Considered and rejected:
 
@@ -66,7 +85,7 @@ FairPlay to `crates/tvpipe-fairplay/`.
   and the package's `license` field has to say LGPL even for games that
   never enable FairPlay, which license checkers flag.
 - Separate packages let the CLI depend on the library exactly as a game
-  does, which is what keeps the public API honest (§4.4).
+  does, which is what keeps the public API honest (§4.2).
 
 **Why not split further** (`tvpipe-h264enc`, `tvpipe-mdns`, …): every
 split is another public semver surface. Features (§3) give games the
@@ -89,9 +108,9 @@ opt-level = 3
 opt-level = 3
 ```
 
-(the same as many games already do for image or audio crates), and the
-library logs a warning once when it runs unoptimized
-(`cfg!(debug_assertions)` is the closest signal).
+(the same as many games already do for image or audio crates). An
+unoptimized build shows in `Stats` (encode time per frame) and as a
+`warn` log line for programs that installed a logger (§5.9).
 
 ## 2. Licensing and FairPlay
 
@@ -138,7 +157,8 @@ From `docs/airplay-mirroring.md` §2.2 and §5:
    `crypto/aes.rs` (Apache-2.0 code may be included in an LGPL crate) or
    through a one-method trait `tvpipe` implements. Copy is simpler; the
    AES file is stable and tested.
-3. **The library's default features are LGPL-free.** `fairplay` is opt-in.
+3. **Decided: the library's default features are LGPL-free.** `fairplay`
+   is opt-in.
    The CLI enables it; the released binary stays under LGPL terms as
    today.
 4. **Without `fairplay`** AirPlay runs the HAP profile with the §5.3
@@ -159,10 +179,11 @@ From `docs/airplay-mirroring.md` §2.2 and §5:
    | default (no `fairplay`) | Apache-2.0 code only | Apache-2.0 notice; the third-party notices in `LICENSES/` (openh264 tables BSD-2-Clause, OFL fonts with `player`/`share`, CDLA roots with `tunnel`) |
    | `fairplay` | LGPL-3.0-or-later code linked statically | the above, plus LGPLv3: license texts, notice, and relinkability (your object files or source) |
 
-   plus a `deny.toml` snippet (`[licenses] allow = ["Apache-2.0", …]`, no
-   LGPL) so a game's CI fails if some dependency turns `fairplay` on
-   (Cargo unifies features across the graph). Not legal advice; the
-   owner may want counsel to read the table once.
+   plus a one-line check a game can put in its own CI, since Cargo
+   unifies features across the graph and any dependency can turn
+   `fairplay` on: `cargo tree -e normal --prefix none --format "{p} {l}"
+   | grep LGPL` must print nothing (the same check as ours, §3). Not
+   legal advice; the owner may want counsel to read the table once.
 
 ### Ways to have FairPlay without linking it (later, if hardware says so)
 
@@ -177,13 +198,16 @@ From `docs/airplay-mirroring.md` §2.2 and §5:
   linking FairPlay into a replaceable `.dll`/`.so`/`.dylib` meets
   §4(d)(1). A natural fit if a C ABI is ever built, not a reason to
   build one.
-- **The CLI as a subprocess**: Rust programs that want FairPlay and
-  crash isolation can still spawn `tvpipe --machine` like the Node SDK,
-  using `tvpipe::slrw` and `tvpipe::Event::from_json` from the library
-  (with `default-features = false`, a few hundred lines of code).
-  Documented as a recipe, not a second SDK.
+- **The CLI as a subprocess** (**Decided: kept as a documented
+  recipe**): Rust programs that want FairPlay and crash isolation can
+  spawn `tvpipe --machine` like the Node SDK, using `tvpipe::slrw` and
+  `tvpipe::Event::from_json` from the library (with
+  `default-features = false`, a few hundred lines of code). A recipe in
+  the crate docs, not a second SDK.
 
 ## 3. Features and dependencies
+
+**Decided:** the defaults below (`airplay`, `cast`, `player`, `h264`).
 
 | Feature | Default | Brings | Needs |
 |---|---|---|---|
@@ -214,10 +238,24 @@ encoder takes `default-features = false, features = ["airplay"]` (no
   sets `CREATE_NO_WINDOW` through std's `CommandExt::creation_flags`, a
   `cfg(windows)` line that joins the platform list in ARCHITECTURE.md.
 - **CI** builds and tests each feature on its own and the default set
-  (a loop over `cargo test --no-default-features --features X`, no new
-  tool), plus `cargo deny`-style check that the default tree has no LGPL
-  package (`cargo metadata` + a script, or `cargo deny` as a CI tool if
-  the owner approves the tool).
+  (a loop over `cargo test -p tvpipe --no-default-features --features X`,
+  no new tool).
+- **License check (decided: the simplest thing, no `cargo deny`)**: a CI
+  step, a few lines of shell:
+
+  ```sh
+  # The library's own license field is LGPL-free …
+  grep -qx 'license = "Apache-2.0"' crates/tvpipe/Cargo.toml
+  # … and so is its default dependency tree,
+  ! cargo tree -p tvpipe -e normal --prefix none --format '{p} {l}' | grep LGPL
+  # while `fairplay` really pulls the LGPL crate in (the check can fail).
+  cargo tree -p tvpipe -e normal --features fairplay --prefix none --format '{p} {l}' | grep -q LGPL
+  ```
+
+  `cargo tree`'s `{l}` prints each package's license field (checked: it
+  lists `ring v0.17.14 Apache-2.0 AND ISC` and so on today), so this
+  needs nothing beyond cargo. `cargo deny` would add advisories and
+  duplicate-version checks we do not need with three dependencies.
 - **Size**: features remove whole modules (the player's embedded pages
   and fonts, the CDP client, the demuxers), so code that is off is not
   compiled, not just not linked.
@@ -236,9 +274,9 @@ against fake receivers. What makes it a CLI today is process-wide state.
 | `StopFn = fn() -> bool` (33 uses), wired to `interrupt::requested` | a `Stop` token (`Arc` of an atomic flag plus a condvar for waits) per session; `play_with`'s injected stop is already the seam |
 | `util/interrupt.rs` (SIGINT/SIGTERM, console handler, `q`) | CLI only; the library never installs signal handlers or reads stdin |
 | `machine::emit`, `machine::receiver`, … (statics) | an `Events` handle (cloneable sender) passed down through the session (connect, rejoin, fanout stats, player, share, pairing); the CLI's `--machine` turns it into JSON lines |
-| `log.rs`: a static level and stderr | the macros stay; output goes to a global handler, `tvpipe::set_logger(fn)`, default: none. The CLI installs stderr or `log` events. Per-session routing is not worth threading a context through every module |
+| `log.rs`: a static level and stderr | off by default, a global handler the program may install (§5.9); the CLI installs stderr or `log` events |
 | stdin SLRW (`GameIo`), `keyframe\n` on stdout | `Stream`'s writers feed a `PacketSource` over a channel; keyframe requests are a flag the game reads (§5.4). The CLI's stdin router becomes an SLRW reader calling the same `Stream` methods |
-| `credentials::config_dir()` from env vars | `Options::config_dir`; default: the CLI's directory, so a TV paired with `tvpipe pair` works in every program and the reverse (§10) |
+| `credentials::config_dir()` from env vars, one `credentials.txt` | a `Storage` per program, by default in its own directory; the CLI's, a directory, memory or the program's own storage on request (§5.8) |
 | `timer::raise_resolution()` (Windows, `timeBeginPeriod(1)`) | stays, called when a session starts; documented, since it is process-wide (games usually do it anyway) |
 | `std::process::exit`, printing tables | CLI only |
 
@@ -307,7 +345,7 @@ Options::new()
     .reconnect(Duration::from_secs(120))
     .encoder_threads(4)
     .player(PlayerOptions::new().port(0).open(false))   // the browser receiver
-    .config_dir(path)                  // pairings; default: the CLI's
+    .storage(Storage::app("com.example.mygame"))   // pairings, §5.8
     .on_pin(|req| ask_user(req))       // pair on demand when a TV needs it
     .on_event(|e| …)                   // optional, see 5.5
 ```
@@ -343,16 +381,20 @@ pub struct Frame<'a> { pub data: &'a [u8], pub stride: usize, pub bottom_up: boo
 // For NV12/YUV420P: Frame::planes(&[(&[u8], stride); N])
 ```
 
-- **Copies.** `write_video` converts the borrowed pixels straight into the
-  encoder's YUV 4:2:0 planes (a pooled buffer, no allocation per frame),
-  on the caller's thread, then queues the planes. That is one pass over
-  the game's memory and no RGBA copy; it costs the game thread the
-  conversion (a few ms at 1080p, to measure) in exchange for no copy. An
-  option `convert_on_encoder_thread()` copies the RGBA instead (a memcpy
-  on the game thread, conversion later), for games whose main thread is
-  the bottleneck. NV12/YUV420P with any strides go in without
-  conversion. Strides and `bottom_up` mean wgpu and GL readbacks are
-  never repacked by the game.
+- **Copies (decided: conversion on the encoder thread by default).**
+  `write_video` copies the borrowed pixels into a pooled buffer (no
+  allocation per frame; strides and `bottom_up` are resolved in that
+  copy, so wgpu and GL readbacks are never repacked by the game) and
+  queues it; the encoder thread converts to YUV 4:2:0 and encodes. The
+  game thread pays one memcpy (about 0.3 ms for 720p RGBA, to measure
+  per OS). `Options::convert_on_caller()` converts the borrowed pixels
+  straight into the encoder's planes on the caller's thread instead:
+  no RGBA copy and less memory traffic, but the conversion's time (a few
+  ms at 1080p, to measure) lands in the game's frame. NV12/YUV420P with
+  any strides are copied as planes, without conversion, either way.
+  `Stream::frame_buffer()` lends a pooled buffer to fill directly (a
+  readback that writes into it skips even the memcpy) and
+  `submit(buffer, pts)` queues it.
 - **Backpressure.** Live, not lossless: the encoder holds at most 2 raw
   frames (today's `VIDEO_QUEUE`); a frame that finds the queue full is
   dropped and `Written::Dropped` returned, counted in `stats()`. Frames
@@ -403,8 +445,8 @@ pub enum Event {
     Paired(Paired),
     End(EndInfo),
     Error(ErrorInfo),
-    Log(LogLine),                 // only with Options::log_events(level)
 }
+// Log lines are not events; see 5.9 (the CLI turns them into `log` events).
 ```
 
 Three ways to consume them, all optional:
@@ -455,6 +497,84 @@ match p.state() {
 
 With `Options::on_pin`, `stream`/`play` pair a receiver that reports
 `pairing-required` and connect it again, like the Node SDK.
+
+### 5.8 Storage: pairings and the player token
+
+**Decided:** a program keeps its pairings in its own place by default;
+sharing the CLI's is an option, and the program may store them itself.
+
+What is stored: the AirPlay controller identity (an Ed25519 seed and a
+UUID, made once) and one block per paired receiver, today's
+`credentials.txt` text format (versioned by its keys, unknown keys
+ignored); and, for a fixed player port, the player page's token. Both
+are secrets (the seed lets anyone act as this program towards the TVs).
+
+```rust
+pub struct Storage { /* Arc inside: Clone, shared by every session */ }
+
+impl Storage {
+    /// Default: the program's own directory. `id` names it, e.g. "com.example.mygame".
+    fn app(id: &str) -> Storage;
+    /// The CLI's directory (`TVPIPE_CONFIG_DIR` honoured): pair once with
+    /// `tvpipe pair`, use it everywhere, and the other way round.
+    fn cli() -> Storage;
+    fn dir(path: impl Into<PathBuf>) -> Storage;
+    /// Nothing on disk. `export()` gives the text to persist,
+    /// `memory_from(text)` restores it.
+    fn memory() -> Storage;
+    fn memory_from(text: &str) -> Result<Storage>;
+    fn export(&self) -> String;
+    /// The program's own storage (a keychain, a save game, a cloud profile).
+    fn custom(backend: impl StorageBackend) -> Storage;
+    /// Called after every change (pair, unpair, a new identity), e.g. to
+    /// persist `export()` from `memory()`.
+    fn on_change(self, f: impl Fn(&Storage) + Send + Sync + 'static) -> Storage;
+}
+
+pub trait StorageBackend: Send + Sync + 'static {
+    /// The item's text, or None if it was never saved.
+    fn load(&self, item: &str) -> io::Result<Option<String>>;
+    fn save(&self, item: &str, text: &str) -> io::Result<()>;
+}
+// Items: "credentials" and "player-token". Closures work too:
+// Storage::custom(storage_fn(|item| load(item), |item, text| save(item, text)))
+```
+
+- **Default** (`Options` without `storage`): `Storage::app` with the
+  executable's file stem as the id. Directories (`cfg(target_os)` for
+  paths only, as allowed): `~/Library/Application Support/<id>/tvpipe/`,
+  `$XDG_CONFIG_HOME/<id>/tvpipe/` (or `~/.config/…`),
+  `%APPDATA%\<id>\tvpipe\`. The docs tell programs to pass a real id.
+- The library ignores `TVPIPE_CONFIG_DIR` except in `Storage::cli()`; the
+  CLI uses `Storage::cli()`.
+- Files are written as today: a temporary file and a rename, mode 0600 on
+  unix. Directory stores re-read before each change, so the CLI and a
+  program sharing `cli()` do not lose each other's pairings.
+- `discover()` marks devices `paired` from the store in `Options`.
+
+### 5.9 Logging
+
+**Decided:** off by default, global, zero cost when unset.
+
+```rust
+tvpipe::log::set_logger(Level::Info, |r: &tvpipe::log::Record| {
+    eprintln!("{} {}: {}", r.level, r.module, r.message)
+});
+tvpipe::log::set_level(Level::Debug);    // later changes
+```
+
+- One static atomic holds the maximum level, `Off` until a logger is
+  set. The `warn!`/`debug!`/… macros compare against it first, so with
+  no logger a log line is one relaxed load and a branch; the message is
+  never formatted (`format_args!` is only evaluated past the check).
+- The handler is a `&'static dyn Fn(&Record) + Send + Sync` behind a
+  `OnceLock` (set once, like the `log` crate; a second `set_logger` is
+  an error). It is called on whatever tvpipe thread logs, so it must be
+  quick; it never runs on the game's thread unless the game calls into
+  tvpipe.
+- The library never writes to stdout or stderr.
+- The CLI installs its own: stderr lines as today, or `log` events with
+  `--machine` (`Record::to_json()`, covered by the vectors in §7).
 
 ## 6. Recipes (in the crate docs, not dependencies)
 
@@ -552,17 +672,19 @@ The single source of truth is the library's types:
 - **SLRW**: `tvpipe::slrw` (public: writer and reader, the format of
   `docs/slrw.md`), used by the CLI's stdin, the share page and the player;
   `examples/slrw-gen.rs` drops its `#[path]` include and uses it.
-- **Golden vectors** for the Node SDK, generated from Rust:
-  - `tests/vectors/machine/events.txt` (the project's `key = value` vector
-    format): one block per event variant and interesting case (`name`,
-    `json`). A Rust test builds each from a function with an exhaustive
+- **Golden vectors** for the Node SDK, generated from Rust, under
+  `crates/tvpipe/tests/vectors/`:
+  - `machine/events.txt` (the project's `key = value` vector
+    format): one block per event variant, per log record shape and per
+    interesting case (`name`, `json`). A Rust test builds each from a function with an exhaustive
     `match` over `Event`, so a new variant does not compile until it has
     a vector, and compares with the file (`TVPIPE_BLESS=1` rewrites it).
-  - `tests/vectors/machine/sessions/*.txt`: event sequences recorded from
+  - `machine/sessions/*.txt`: event sequences recorded from
     `tvpipe-cli`'s machine tests (ports and tokens scrubbed), with the
     expected outcome (`connected`, `error pairing-required`, `end eof`).
-  - `tests/vectors/slrw/records.txt`: writer calls and their bytes.
-  - The Node tests (`npm/tvpipe/test/`, run from the repository) parse
+  - `slrw/records.txt`: writer calls and their bytes.
+  - The Node tests (`npm/tvpipe/test/`, run from the repository, reading
+    `../../crates/tvpipe/tests/vectors/`) parse
     every event vector, check that the set of `type`s equals the TS
     union's (a TS constant list), replay the session transcripts through
     a stub binary, and compare their SLRW encoder's bytes.
@@ -590,10 +712,18 @@ The single source of truth is the library's types:
 - **Versions in lockstep**: `tvpipe`, `tvpipe-fairplay`, `tvpipe-cli` and
   the npm packages share `workspace.package.version`. While 0.x, a
   breaking change to the public API bumps the minor (0.1 → 0.2); CLI-only
-  changes and new features are patches. `cargo-semver-checks` (a CI
-  tool, if approved) or a reviewed public-API dump (`cargo doc` JSON is
-  unstable; a hand-kept `tests/public-api.txt` updated by a test is the
-  dependency-free option) makes breaks visible in review.
+  changes and new features are patches.
+- **Catching breaks (decided: the simplest thing).** The public API lives
+  in a few files (`crates/tvpipe/src/api/`, re-exported from `lib.rs`;
+  everything else `pub(crate)`), so a break is a diff there and shows in
+  review. `cargo-semver-checks` is **not worth it at 0.x yet**: it
+  compares against the last version on crates.io, so it does nothing
+  before the first publish; with `#[non_exhaustive]` everywhere and a
+  small surface, the breaks it would catch are the ones review already
+  sees; and every 0.x minor may break anyway. Revisit when the crate has
+  outside users who pin `0.y` (a break slipping into a patch release
+  hurts them), or at 1.0. It would then be one CI step with the
+  prebuilt tool, no dependency.
 - **Machine protocol** keeps its own integer (`hello.protocol` = 1);
   additive event changes do not bump it (same rule as `#[non_exhaustive]`).
 - **MSRV** stays 1.85 for all crates.
@@ -609,18 +739,22 @@ The machine interface lands first (npm branch), because its event names
 become the Rust enum names. Then, each step green on its own:
 
 1. **De-globalize, no API yet**: `Stop` tokens instead of `StopFn`, an
-   `Events` handle instead of `machine::emit`, logs through a handler,
-   the SLRW stdin input as a channel-fed `PacketSource`, config dir as a
-   parameter. Behaviour and tests unchanged; the session tests stop
-   needing a process.
+   `Events` handle instead of `machine::emit`, logging off unless a
+   handler is set (§5.9), the SLRW stdin input as a channel-fed
+   `PacketSource`, a storage handle instead of `config_dir()` (§5.8).
+   Behaviour and tests unchanged; the session tests stop needing a
+   process.
 2. **FairPlay crate**: `crates/tvpipe-fairplay` with the bytes-only API;
    `fp_setup` and the stream-key derivation rewritten from the spec in
    `tvpipe`; the `fairplay` feature; the no-FairPlay HAP path with
    `fairplay-required`; fake-receiver tests both ways.
-3. **Workspace and features**: `crates/tvpipe-cli` (cli.rs, main.rs,
-   interrupt, the router, the binary tests), feature gates (§3), CI
+3. **Workspace and features**: the moves of §1 (`crates/tvpipe`,
+   `crates/tvpipe-cli`, `crates/tvpipe-fairplay`; `git mv` commits, then
+   one commit for the paths in the docs), feature gates (§3), the CI
    feature loop and license check, release build of `-p tvpipe-cli`.
-   AGENTS.md's "single binary crate" rule is rewritten.
+   AGENTS.md's "single binary crate" rule and its commit check (`cargo
+   clippy --workspace --all-targets`, `cargo test --workspace`) are
+   rewritten.
 4. **Public API** (§5) and the CLI rebuilt on it (§4.2); `Event::to_json`
    drives `--machine`; vectors for the Node SDK (§7).
 5. **Hardware**: AirPlay without FairPlay on the matrix (§2), a game
@@ -633,27 +767,27 @@ become the Rust enum names. Then, each step green on its own:
 Later, on demand: clean-room FairPlay; a C ABI (`tvpipe-capi`) for
 engines in other languages; a standalone encoder crate.
 
-## 10. Open questions for the owner
+## 10. Decisions
 
-1. **Names**: library `tvpipe`, binary package `tvpipe-cli`, FairPlay
-   `tvpipe-fairplay`? Reserve them on crates.io now (an empty 0.0.0
-   publish), before someone else does?
-2. **Layout**: library at the repository root (paths stay) with
-   `crates/tvpipe-cli` and `crates/tvpipe-fairplay`, vs. everything under
-   `crates/`?
-3. **FairPlay off by default** in the library (LGPL-free defaults), with
-   AirPlay to HAP receivers running without it, knowing it is verified on
-   one Apple TV only? Or on by default with a loud license note?
-4. **Shared pairings**: the library uses the CLI's config directory by
-   default (pair once, works everywhere), or each program its own?
-5. **Feature defaults**: `airplay`, `cast`, `player`, `h264` on;
-   `share`, `headless`, `tunnel`, `files`, `ffmpeg`, `fairplay` off.
-   Should `files`/`ffmpeg` be on for non-game users of `play`?
-6. **Dev tools in CI**: `cargo deny` and `cargo-semver-checks` as CI
-   tools (not dependencies), or the hand-rolled checks?
-7. **Logging**: a global handler (proposed) vs. a per-session one (needs a
-   context through every module)?
-8. **Conversion on the game thread** by default (no copy, costs the
-   game's frame time) vs. a copy and conversion on the encoder thread?
-9. **The subprocess recipe** for Rust programs that need FairPlay: worth
-   documenting, or leave Rust users on the library only?
+Decided with the owner (2026-11-18):
+
+| # | Question | Decision |
+|---|---|---|
+| 0 | Subprocess or library | In-process library; the Rust SDK ships no binary. The Node SDK keeps the binary. |
+| 1 | Names | `tvpipe` (library), `tvpipe-cli` (binary `tvpipe`), `tvpipe-fairplay`. Not reserved ahead of the first release. |
+| 2 | Layout | Everything under `crates/`: `crates/tvpipe`, `crates/tvpipe-fairplay`, `crates/tvpipe-cli`; a virtual workspace at the root (§1). |
+| 3 | FairPlay | Off by default; the library's default features are LGPL-free (§2). |
+| 4 | Pairings | Each program its own directory by default; `Storage::cli()` to share the CLI's; `memory()`/`export()` and `custom()` for programs that store them themselves (§5.8). |
+| 5 | Feature defaults | `airplay`, `cast`, `player`, `h264` on; `fairplay`, `share`, `headless`, `tunnel`, `files`, `ffmpeg` off (§3). |
+| 6 | CI tools | The simplest checks: the manifest's license field and `cargo tree` for licenses, no `cargo deny`; no `cargo-semver-checks` at 0.x (§3, §8). |
+| 7 | Logging | A global handler, off and zero cost by default; the CLI installs its own (§5.9). |
+| 8 | Pixel conversion | On the encoder thread by default (a memcpy on the game thread); `convert_on_caller()` as an option (§5.3). |
+| 9 | Subprocess recipe | Kept, documented in the crate docs (§2). |
+
+Still open, to settle while implementing (no owner input needed unless
+they turn out otherwise):
+
+- Whether AirPlay without FairPlay holds beyond the dev Apple TV (§2,
+  plan step 5); if not, which of the "without linking" ways to take.
+- The macOS Local Network and Windows firewall prompts for a game (§6.6).
+- The memcpy and conversion costs per OS that back decision 8.
