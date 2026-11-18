@@ -120,6 +120,10 @@ pub struct FileInfo {
     pub video_kbps: Option<u32>,
     /// Peak video bitrate over one-second windows of the probed prefix.
     pub peak_video_kbps: Option<u32>,
+    /// Longest gap between video keyframes in the probed prefix, in
+    /// seconds (receivers recover from loss only at keyframes). When the
+    /// prefix had a single keyframe, its length.
+    pub keyframe_interval: Option<f64>,
 }
 
 /// A frame from a [`FileSource`].
@@ -130,6 +134,10 @@ pub struct FileFrame {
     pub frame: EncodedFrame,
     /// Media duration of the frame in its pts ticks, if known.
     pub duration: u64,
+    /// Decode time in the same ticks (MP4; equal to the pts for
+    /// Matroska, which does not store it). Can be negative before the
+    /// shift to zero: then 0.
+    pub dts: u64,
 }
 
 enum Inner {
@@ -285,6 +293,7 @@ fn next_mp4(m: &mut Mp4State) -> Result<Next> {
     if pts < 0 {
         return Ok(Next::Negative);
     }
+    let dts = ticks(to_ns(s.dts, scale) - m.origin_ns, rate).max(0) as u64;
     let duration = ticks(to_ns(s.duration as i64, scale), rate).max(0) as u64;
     let (keyframe, data) = if kind == TrackKind::Video {
         let data = avcc4(s.data, m.length_size)?;
@@ -301,6 +310,7 @@ fn next_mp4(m: &mut Mp4State) -> Result<Next> {
             data: Arc::from(data),
         },
         duration,
+        dts,
     }))
 }
 
@@ -310,6 +320,7 @@ fn next_mkv(r: &mut MediaReader<BufReader<File>>) -> Result<Next> {
     };
     match f.frame.track {
         TrackKind::Video | TrackKind::Audio(AudioFamily::AirPlay) => Ok(Next::Frame(FileFrame {
+            dts: f.frame.pts,
             frame: f.frame,
             duration: 0,
         })),
@@ -617,6 +628,7 @@ fn open_mp4(file: File) -> Result<(Inner, FileInfo)> {
         duration,
         video_kbps,
         peak_video_kbps: None,
+        keyframe_interval: None,
     };
     let state = Mp4State {
         video_id: v.id,
@@ -656,6 +668,7 @@ fn open_mkv(file: File) -> Result<(Inner, FileInfo)> {
         duration: None,
         video_kbps: None,
         peak_video_kbps: None,
+        keyframe_interval: None,
     };
     Ok((Inner::Mkv(reader), info))
 }
@@ -676,6 +689,8 @@ pub fn probe(path: &Path) -> Result<FileInfo> {
     let mut peak_bytes = 0usize;
     let mut frames = 0;
     let mut opus_samples = None;
+    let mut last_key: Option<u64> = None;
+    let mut max_key_gap = 0u64;
     while frames < PROBE_MAX_FRAMES {
         let Some(f) = src.next_frame()? else { break };
         frames += 1;
@@ -688,6 +703,12 @@ pub fn probe(path: &Path) -> Result<FileInfo> {
                 last_video_pts = Some(last_video_pts.map_or(fr.pts, |l| l.max(fr.pts)));
                 first_pts.get_or_insert(fr.pts);
                 last_pts = last_pts.max(fr.pts);
+                if fr.keyframe {
+                    if let Some(k) = last_key {
+                        max_key_gap = max_key_gap.max(fr.pts.saturating_sub(k));
+                    }
+                    last_key = Some(fr.pts);
+                }
                 video_bytes += fr.data.len() as u64;
                 window.push_back((fr.pts, fr.data.len()));
                 window_bytes += fr.data.len();
@@ -728,6 +749,12 @@ pub fn probe(path: &Path) -> Result<FileInfo> {
         }
     }
     let span = last_pts.saturating_sub(first_pts.unwrap_or(0)) as f64 / 90_000.0;
+    if let Some(k) = last_key {
+        // The tail after the last keyframe counts too.
+        let tail = last_pts.saturating_sub(k);
+        let gap = max_key_gap.max(tail) as f64 / 90_000.0;
+        info.keyframe_interval = Some(gap);
+    }
     if span >= 1.0 {
         peak_bytes = peak_bytes.max(1);
         info.peak_video_kbps = Some((peak_bytes as f64 * 8.0 / 1000.0).round() as u32);
@@ -759,20 +786,28 @@ pub struct PassPlan {
 }
 
 /// Options for [`check`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CheckOptions {
     /// The user wants audio (no `--no-audio`).
     pub audio: bool,
     /// Accept B-frame reordering (frames are sent in decode order). Off
     /// until the receivers are known to cope (docs/ffmpeg-optional.md).
     pub allow_reordering: bool,
+    /// Longest keyframe interval (seconds) we accept: after a loss or a
+    /// queue overflow a receiver shows nothing until the next keyframe.
+    pub max_keyframe_interval: f64,
 }
+
+/// Default for [`CheckOptions::max_keyframe_interval`]. Below the probe
+/// length, so a file with a single keyframe in its first seconds fails.
+pub const MAX_KEYFRAME_INTERVAL: f64 = 4.0;
 
 impl Default for CheckOptions {
     fn default() -> CheckOptions {
         CheckOptions {
             audio: true,
             allow_reordering: false,
+            max_keyframe_interval: MAX_KEYFRAME_INTERVAL,
         }
     }
 }
@@ -829,6 +864,14 @@ pub fn check(
     }
     if v.fps.num == 0 || v.fps.den == 0 {
         reasons.push("the frame rate is unknown".into());
+    }
+    if let Some(gap) = info.keyframe_interval {
+        if gap > opts.max_keyframe_interval {
+            reasons.push(format!(
+                "keyframes are {gap:.1} s apart (at most {:.0} s, receivers recover only at keyframes)",
+                opts.max_keyframe_interval
+            ));
+        }
     }
     for (name, c) in sinks {
         if !c.video_codecs.contains(&v.codec) {
@@ -1049,6 +1092,8 @@ pub(crate) mod tests {
         // Matroska from ffmpeg (no B-frames, ALAC first audio track).
         let info = probe(&fixture("live.mkv")).unwrap();
         assert_eq!(info.container, Container::Matroska);
+        // GOP 15 at 30 fps.
+        assert_eq!(info.keyframe_interval, Some(0.5));
         assert!(!info.reorders);
         assert_eq!(info.audio.as_ref().unwrap().codec, AudioCodec::Alac);
         assert!(check(&info, &[("atv", &airplay)], CheckOptions::default()).is_ok());
