@@ -1504,7 +1504,7 @@ mod tests {
         });
         let mut sink = connect(&fake, &MirrorOptions::default());
         sink.start(&video_info(), Some(&audio_info())).unwrap();
-        stream(&mut sink, 10);
+        let late = stream_with_stall(&mut sink, 10, None).late;
         wait_for("audio", || fake.rec().audio.len() >= 5);
         sink.stop().unwrap();
         let r = fake.rec();
@@ -1513,10 +1513,20 @@ mod tests {
         let first = (0..20u64)
             .find(|&src| alac_verbatim(&pcm(src), 2).unwrap() == r.audio[0].2)
             .expect("ALAC payload of a pushed frame");
+        assert_eq!(r.audio[0].1, 352);
         for (k, (seq, ts, payload)) in r.audio.iter().take(5).enumerate() {
             assert_eq!(*seq as usize, k + 1);
-            assert_eq!(*ts, 352 * (k as u32 + 1));
             assert_eq!(*payload, alac_verbatim(&pcm(first + k as u64), 2).unwrap());
+            if k > 0 {
+                // 352 apart, unless a push came so late (a loaded machine)
+                // that the clock re-anchored: then the RTP time has a gap.
+                let step = ts.wrapping_sub(r.audio[k - 1].1);
+                if late < MAX_LATENESS / 2 {
+                    assert_eq!(step, 352, "{late:?}");
+                } else {
+                    assert!((352..1 << 20).contains(&step), "{step} {late:?}");
+                }
+            }
         }
     }
 
