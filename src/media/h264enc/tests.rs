@@ -744,7 +744,7 @@ fn bench_fixed_qp() {
             ps += psnr(&f.y, &enc.recon().unwrap().y);
         }
         eprintln!(
-            "{src} qp {qp}: {:.1} dB {:.0} kbps",
+            "{src} qp {qp}: {:.2} dB {:.0} kbps",
             ps / 120.0,
             bytes as f64 * 8.0 / 2.0 / 1000.0
         );

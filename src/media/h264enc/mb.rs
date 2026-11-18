@@ -821,32 +821,17 @@ impl SliceEnc {
                 lv[b] = w;
             }
         }
-        // Drop 8x8 blocks that only carry a couple of isolated ±1 levels:
-        // they cost more bits than they are worth.
         for b8 in 0..4 {
             let (ox, oy) = ((b8 % 2) * 2, (b8 / 2) * 2);
-            let blocks = [
+            let coded = [
                 oy * 4 + ox,
                 oy * 4 + ox + 1,
                 (oy + 1) * 4 + ox,
                 (oy + 1) * 4 + ox + 1,
-            ];
-            let mut score = 0;
-            for &b in &blocks {
-                for &l in &lv[b] {
-                    score += match l.abs() {
-                        0 => 0,
-                        1 => 1,
-                        _ => 99,
-                    };
-                }
-            }
-            if score <= 3 {
-                for &b in &blocks {
-                    lv[b] = [0; 16];
-                    c.nz[b] = 0;
-                }
-            } else if score > 0 {
+            ]
+            .iter()
+            .any(|&b| c.nz[b] > 0);
+            if coded {
                 c.cbp_luma |= 1 << b8;
             }
         }
@@ -934,7 +919,7 @@ impl SliceEnc {
 
         // Intra alternative.
         let (mode16, cost16) = self.best_i16(&src, mx, my);
-        let intra_bias = (lambda * 24) / 16;
+        let intra_bias = (lambda * 8) / 16;
         if cost16.saturating_add(intra_bias) < inter_cost {
             return Some(self.code_intra(
                 &src,
