@@ -64,6 +64,7 @@ tvpipe pair NAME|ADDR [--pin PIN]
 tvpipe unpair NAME|ADDR
 tvpipe play --to NAME|ADDR [--to ...] [OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)
 tvpipe test-pattern --to NAME|ADDR [OPTIONS]
+tvpipe share --to NAME|ADDR [--open] [--port PORT] [OPTIONS]
 tvpipe debug-pipeline [OPTIONS] INPUT
 ```
 
@@ -100,7 +101,18 @@ tvpipe play --to "Apple TV" --to "Chromecast" movie.mp4
 
 # Latency check: burned-in wallclock and frame counter, beep and flash every second
 tvpipe test-pattern --to TV
+
+# A browser tab, window or screen: open the printed URL, press Share
+tvpipe share --to TV --open
 ```
+
+`share` serves a page on 127.0.0.1 that captures with the browser
+(`getDisplayMedia`) and encodes H.264 with WebCodecs (Chrome, Edge, Safari
+16.4+, Firefox 130+); no ffmpeg involved. Tick "share audio" in Chrome's
+picker for sound. The stream takes the TV's screen shape with the capture
+centered (black bars), at the capture's size up to what the TV allows.
+Stopping the share or closing the page ends the session. Protocol:
+`docs/share-protocol.md`.
 
 Useful `play` options:
 
