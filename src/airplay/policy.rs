@@ -200,7 +200,11 @@ impl Leads {
         audio_ms: 170,
     };
 
-    /// An explicit user latency (clamped to 5–2000 ms) or the normal profile.
+    /// An explicit user latency (clamped to 5–2000 ms), else the wireless
+    /// profile. §2.7 allows either profile without a route query; the
+    /// dev Apple TV reported ~1 audio glitch per second with the normal
+    /// profile's 85 ms audio lead (its MediaDataControl `rrmt` reports,
+    /// `RenderDeadlineMinMs` slightly negative) and none at 170 ms.
     pub fn new(explicit_ms: Option<u32>) -> Leads {
         match explicit_ms {
             Some(l) => {
@@ -210,7 +214,7 @@ impl Leads {
                     audio_ms: l,
                 }
             }
-            None => Leads::NORMAL,
+            None => Leads::WIRELESS,
         }
     }
 
@@ -462,7 +466,8 @@ mod tests {
 
     #[test]
     fn leads() {
-        assert_eq!(Leads::new(None).audio_samples(), 3748);
+        assert_eq!(Leads::NORMAL.audio_samples(), 3748);
+        assert_eq!(Leads::new(None), Leads::WIRELESS);
         assert_eq!(Leads::WIRELESS.audio_samples(), 7497);
         assert_eq!(ms_to_samples(100), 4410);
         assert_eq!(ms_to_samples(75), 3307);
