@@ -237,6 +237,13 @@ impl BrowseOptions {
 /// Browses until the timeout, or until `done` returns true for the cache
 /// (checked after every received packet).
 pub fn browse(opts: &BrowseOptions, mut done: impl FnMut(&Cache) -> bool) -> Result<Cache> {
+    #[cfg(test)]
+    if !opts.target.ip().is_loopback() && !live_network_allowed() {
+        return Err(Error::unsupported(format!(
+            "mdns: unit tests do not query {} (set {LIVE_MDNS_ENV}=1 to browse the real network)",
+            opts.target
+        )));
+    }
     let deadline = Instant::now() + opts.timeout;
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>();
@@ -335,6 +342,18 @@ pub fn browse(opts: &BrowseOptions, mut done: impl FnMut(&Cache) -> bool) -> Res
         let _ = r.join();
     }
     result.map(|()| cache)
+}
+
+/// Lets tests browse the real network: the hardware tests (`TVPIPE_ATV`
+/// may be a name) or [`LIVE_MDNS_ENV`].
+#[cfg(test)]
+const LIVE_MDNS_ENV: &str = "TVPIPE_LIVE_MDNS";
+
+#[cfg(test)]
+fn live_network_allowed() -> bool {
+    [LIVE_MDNS_ENV, "TVPIPE_ATV"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|v| !v.is_empty()))
 }
 
 fn open_socket(local: Ipv4Addr) -> Result<UdpSocket> {
@@ -516,6 +535,22 @@ mod tests {
         msg.flags = FLAG_QR | 3;
         cache.insert(SRC, &msg);
         assert!(cache.records().is_empty());
+    }
+
+    /// Unit tests cannot query the real network by accident.
+    #[test]
+    fn browse_refuses_the_real_network() {
+        if live_network_allowed() {
+            return;
+        }
+        let opts = BrowseOptions {
+            services: vec![n("_tvpipe-test._tcp.local")],
+            interfaces: vec![Ipv4Addr::UNSPECIFIED],
+            timeout: Duration::from_secs(5),
+            target: BrowseOptions::MDNS,
+        };
+        let e = browse(&opts, |_| false).unwrap_err();
+        assert!(e.to_string().contains(LIVE_MDNS_ENV), "{e}");
     }
 
     /// End to end over loopback: a fake responder answers the PTR query
