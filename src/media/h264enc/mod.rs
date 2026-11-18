@@ -28,6 +28,12 @@ pub mod transform;
 #[cfg(test)]
 mod tests;
 
+/// ffmpeg for oracle tests elsewhere in `media`.
+#[cfg(test)]
+pub(crate) fn test_ffmpeg() -> Option<std::path::PathBuf> {
+    tests::ffmpeg()
+}
+
 use crate::error::{Error, Result};
 use crate::media::convert::Yuv420Frame;
 use crate::media::h264::AvcConfig;
