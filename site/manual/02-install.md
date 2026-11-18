@@ -47,7 +47,7 @@ Run the installer again to update. To install a specific version:
 $ curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | TVPIPE_VERSION=0.1.0 sh
 ```
 
-```text
+```powershell
 PS> $env:TVPIPE_VERSION = "0.1.0"; irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex
 ```
 

@@ -57,12 +57,6 @@ INSTALLERS = ("install.sh", "install.ps1")
 SOURCE = "https://github.com/mitsuhiko/tvpipe"
 LICENSE = SOURCE + "/blob/main/LICENSE"
 FOOTER_NOTE = f'tvpipe is open source. <a href="{LICENSE}">License</a>'
-# The install commands; site.js shows the visitor's platform first.
-INSTALL = """<div class="install" data-install>
-<div class="tabs" role="tablist"><button role="tab" data-os="unix" aria-selected="true">macOS and Linux</button><button role="tab" data-os="windows" aria-selected="false">Windows</button></div>
-<pre data-os="unix"><code><span class="p">$ </span>curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh</code><button class="copy" aria-label="Copy">Copy</button></pre>
-<pre data-os="windows" hidden><code><span class="p">PS&gt; </span>irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex</code><button class="copy" aria-label="Copy">Copy</button></pre>
-</div>"""
 # The colour theme switch (site.js), in the footer of every page.
 THEME = """<div class="theme" role="group" aria-label="Colour theme">  <button data-t="light" title="Light" aria-label="Light"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75"/><path d="M8 1.25v1.5M8 13.25v1.5M1.25 8h1.5M13.25 8h1.5M3.2 3.2l1.06 1.06M11.74 11.74l1.06 1.06M3.2 12.8l1.06-1.06M11.74 4.26l1.06-1.06"/></svg></button>  <button data-t="dark" title="Dark" aria-label="Dark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 0 1 5.8 2.4a6 6 0 1 0 7.8 7.8z"/></svg></button>  <button data-t="auto" title="Like the system" aria-label="Like the system"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path class="fill" d="M8 2.25a5.75 5.75 0 0 1 0 11.5z"/></svg></button></div>"""
 
@@ -93,26 +87,82 @@ def inline(text, ctx):
 
 # ---------------------------------------------------------------- code
 
-RUST_KW = r"\b(fn|let|mut|impl|as|use|pub|struct|enum|match|if|else|for|in|return|loop|while)\b"
+# Build-time syntax highlighting: a token regex per language, the first
+# alternative that matches wins. Classes: k keyword, s string, n number or
+# type, c comment, f flag, v variable, p prompt, o output, x command.
+
+def _rules(*rules):
+    return re.compile("|".join(f"(?P<{name}>{rx})" for name, rx in rules), re.M)
+
+
+RUST = _rules(
+    ("c", r"//[^\n]*|/\*[\s\S]*?\*/"),
+    ("s", r'b?"(?:\\.|[^"\\])*"|' + r"'(?:\\.|[^\\'])'"),
+    ("c2", r"#!?\[[^\]\n]*\]"),
+    ("k", r"\b(?:as|async|await|break|const|continue|crate|dyn|else|enum|extern|false|fn|for|if|impl|in|let|loop|match|mod|move|mut|pub|ref|return|self|Self|static|struct|super|trait|true|type|unsafe|use|where|while)\b|\b[a-z_][a-z0-9_]*!"),
+    ("n", r"\b(?:u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize|f32|f64|bool|char|str)\b|\b[A-Z][A-Za-z0-9_]*\b|\b0x[0-9a-fA-F_]+\b|\b\d[\d_]*(?:\.\d+)?\b"),
+)
+JS = _rules(
+    ("c", r"//[^\n]*|/\*[\s\S]*?\*/"),
+    ("s", r'"(?:\\.|[^"\\\n])*"|' + r"'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`"),
+    ("k", r"\b(?:as|async|await|break|case|catch|class|const|continue|default|delete|do|else|export|extends|false|finally|for|from|function|if|import|in|instanceof|interface|let|new|null|of|return|static|super|switch|this|throw|true|try|type|typeof|undefined|using|var|void|while|yield)\b"),
+    ("n", r"\b[A-Z][A-Za-z0-9_]*\b|\b\d[\d_]*(?:\.\d+)?\b"),
+)
+SHELL = _rules(
+    ("s", r'"(?:\\.|[^"\\])*"|' + r"'[^']*'"),
+    ("c", r"(?<=\s)#[^\n]*"),
+    ("v", r"\$\{[^}\n]*\}|\$env:\w+|\$\w+|\b[A-Z][A-Z0-9_]*(?==)"),
+    ("f", r"(?<![\w-])--?[A-Za-z][\w-]*"),
+)
+LANGS = {"rust": RUST, "js": JS, "javascript": JS, "ts": JS, "typescript": JS,
+         "sh": SHELL, "shell": SHELL, "console": SHELL, "powershell": SHELL}
+PROMPTS = ("$ ", "PS> ")
+
+
+def highlight(rules, code):
+    out, pos = [], 0
+    for m in rules.finditer(code):
+        out.append(html.escape(code[pos:m.start()], quote=False))
+        out.append(f'<span class="{m.lastgroup[0]}">{html.escape(m.group(), quote=False)}</span>')
+        pos = m.end()
+    out.append(html.escape(code[pos:], quote=False))
+    return "".join(out)
+
+
+def shell_line(line, rules=SHELL):
+    """A command line: the prompt, the command in bold, the rest highlighted.
+    Lines without a prompt are a command's output, or a comment."""
+    prompt = next((p for p in PROMPTS if line.startswith(p)), None)
+    if prompt is None:
+        if line.startswith("#"):
+            return f'<span class="c">{html.escape(line, quote=False)}</span>'
+        return f'<span class="o">{html.escape(line, quote=False)}</span>' if line.strip() else ""
+    rest = line[len(prompt):]
+    word, _, tail = rest.partition(" ")
+    return (f'<span class="p">{html.escape(prompt, quote=False)}</span>'
+            f'<span class="x">{html.escape(word, quote=False)}</span>'
+            + (" " + highlight(rules, tail) if tail or rest.endswith(" ") else ""))
 
 
 def code_block(lang, lines):
-    out = []
-    for line in lines:
-        e = html.escape(line, quote=False)
-        if lang in ("sh", "console", "shell"):
-            if line.startswith("$ "):
-                e = '<span class="p">$ </span>' + e[2:]
-            elif line.startswith("#"):
-                e = f'<span class="c">{e}</span>'
-            elif line.strip():
-                e = f'<span class="o">{e}</span>'
-        elif lang == "rust":
-            e = re.sub(RUST_KW, r'<span class="k">\1</span>', e)
-            e = re.sub(r"(//.*)$", r'<span class="c">\1</span>', e)
-        out.append(e)
+    rules = LANGS.get(lang)
+    if rules is SHELL:
+        body = "\n".join(shell_line(line) for line in lines)
+    elif rules is not None:
+        body = highlight(rules, "\n".join(lines))
+    else:
+        body = html.escape("\n".join(lines), quote=False)
     cls = f' class="lang-{lang}"' if lang else ""
-    return f"<pre{cls}><code>" + "\n".join(out) + "</code></pre>"
+    return f"<pre{cls}><code>{body}</code></pre>"
+
+
+# The install commands; site.js shows the visitor's platform first.
+def install_html():
+    return ("""<div class="install" data-install>
+<div class="tabs" role="tablist"><button role="tab" data-os="unix" aria-selected="true">macOS and Linux</button><button role="tab" data-os="windows" aria-selected="false">Windows</button></div>
+<pre data-os="unix"><code>""" + shell_line("$ curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
+<pre data-os="windows" hidden><code>""" + shell_line("PS> irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
+</div>""")
 
 
 # ---------------------------------------------------------------- blocks
@@ -352,7 +402,7 @@ def container(kind, arg, body, ctx):
             f'<a class="btn{" primary" if n == 0 else ""}" href="{html.escape(ctx.href(h))}">{html.escape(t)}</a>'
             for n, (t, h) in enumerate(links)) + "</div>"
     if kind == "install":
-        return INSTALL
+        return install_html()
     if kind == "figure":
         return figure('<div class="frame">' + "\n".join(body) + "</div>", arg, ctx)
     if kind == "index":

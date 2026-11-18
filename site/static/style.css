@@ -22,6 +22,9 @@
   --logo-ink: #172B46;
   --logo-screen: #FFFFFF;
   --sel: rgba(232, 116, 59, .22);
+  --hl-k: #B5501C;
+  --hl-s: #2F6B4F;
+  --hl-n: #2B5A93;
 
   --display: "Sixtyfour", ui-monospace, monospace;
   --title: "Michroma", "IBM Plex Sans", sans-serif;
@@ -46,6 +49,9 @@
   --logo-ink: #E8ECF2;
   --logo-screen: #0D1828;
   --sel: rgba(232, 116, 59, .35);
+  --hl-k: #F0915F;
+  --hl-s: #9CCFAE;
+  --hl-n: #93BCEB;
 }
 @media (prefers-color-scheme: dark) {
   :root[data-theme="auto"] {
@@ -61,6 +67,9 @@
     --logo-ink: #E8ECF2;
     --logo-screen: #0D1828;
     --sel: rgba(232, 116, 59, .35);
+  --hl-k: #F0915F;
+  --hl-s: #9CCFAE;
+  --hl-n: #93BCEB;
   }
 }
 
@@ -172,10 +181,15 @@ pre {
   font: 400 13.5px/1.7 var(--mono); color: var(--ink);
 }
 pre code { background: none; padding: 0; font: inherit; white-space: pre; }
+/* syntax highlighting (build.py): keywords orange, strings green, numbers
+   and types blue, comments and output muted */
+pre .k { color: var(--hl-k); }
+pre .s { color: var(--hl-s); }
+pre .n, pre .v, pre .f { color: var(--hl-n); }
 pre .c { color: var(--ink-3); }
 pre .p { color: var(--accent); user-select: none; }
+pre .x { font-weight: 500; }
 pre .o { color: var(--ink-2); }
-pre .k { color: var(--link); }
 
 /* ---------- tables ---------- */
 .table { overflow-x: auto; margin: 0 0 1.4em; }
