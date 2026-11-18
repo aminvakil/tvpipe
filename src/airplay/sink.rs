@@ -38,6 +38,7 @@ use crate::airplay::audio::{
     SAMPLE_RATE,
 };
 use crate::airplay::keys;
+use crate::airplay::legacy_pair::{self, Connected};
 use crate::airplay::mirror::{self, avcc_record, codec_header, frame_payload, VideoCipher};
 use crate::airplay::pair::{self, SecureClient};
 use crate::airplay::policy::{self, bit};
@@ -86,19 +87,81 @@ pub type SecureMirrorSink = MirrorSink<SecureStream<TcpStream>>;
 /// Connects to an AirPlay receiver for mirroring: pair-verify (stored
 /// credentials, else transient), FairPlay, session setup. Falls back from
 /// PTP to NTP on a fresh connection when PTP fails (§2.5).
-pub fn connect_mirror(target: &pair::Target, opts: &MirrorOptions) -> Result<SecureMirrorSink> {
-    let store = crate::airplay::credentials::Store::open_default()?;
-    connect_with(target.label(), opts, || {
-        let control = pair::connect(target, &store)?;
-        let secret = control.shared.secret().to_vec();
-        let client: SecureClient = control.client;
-        Ok((client, control.addr, secret, true))
-    })
+pub fn connect_mirror(target: &pair::Target, opts: &MirrorOptions) -> Result<AnyMirrorSink> {
+    let mut store = crate::airplay::credentials::Store::open_default()?;
+    let name = target.label();
+    match legacy_pair::connect(target, &mut store)? {
+        Connected::Hap(control) => {
+            let mut first = Some(*control);
+            connect_with(name, opts, || {
+                let control = match first.take() {
+                    Some(c) => c,
+                    None => pair::connect(target, &store)?,
+                };
+                let secret = control.shared.secret().to_vec();
+                let client: SecureClient = control.client;
+                Ok((client, control.addr, secret, true))
+            })
+            .map(AnyMirrorSink::Hap)
+        }
+        Connected::Legacy {
+            client,
+            addr,
+            secret,
+        } => {
+            warn!("airplay: {name}: legacy profile (untested on hardware)");
+            let mut first = Some((client, addr, secret));
+            connect_with(name, opts, || match first.take() {
+                Some((client, addr, secret)) => Ok((client, addr, secret, false)),
+                // The legacy profile never uses PTP, so there is no retry.
+                None => Err(Error::protocol("airplay: legacy session cannot be retried")),
+            })
+            .map(AnyMirrorSink::Legacy)
+        }
+    }
+}
+
+/// A mirroring sink of either crypto profile.
+pub enum AnyMirrorSink {
+    /// Encrypted control channel (HAP pair-verify).
+    Hap(SecureMirrorSink),
+    /// Plaintext control channel (legacy raw pair-verify).
+    Legacy(MirrorSink<TcpStream>),
+}
+
+macro_rules! any {
+    ($self:ident, $s:ident => $e:expr) => {
+        match $self {
+            AnyMirrorSink::Hap($s) => $e,
+            AnyMirrorSink::Legacy($s) => $e,
+        }
+    };
+}
+
+impl Sink for AnyMirrorSink {
+    fn name(&self) -> &str {
+        any!(self, s => s.name())
+    }
+    fn capabilities(&self) -> &Capabilities {
+        any!(self, s => s.capabilities())
+    }
+    fn start(&mut self, video: &VideoInfo, audio: Option<&AudioInfo>) -> Result<()> {
+        any!(self, s => s.start(video, audio))
+    }
+    fn push(&mut self, frame: &EncodedFrame) -> Result<SinkStatus> {
+        any!(self, s => s.push(frame))
+    }
+    fn wants_keyframe(&self) -> bool {
+        any!(self, s => s.wants_keyframe())
+    }
+    fn stop(&mut self) -> Result<()> {
+        any!(self, s => s.stop())
+    }
 }
 
 /// A fresh authenticated control connection: client, peer, shared
 /// secret, HAP profile.
-pub type Connected<S> = (crate::net::rtsp::RtspClient<S>, SocketAddr, Vec<u8>, bool);
+pub type Fresh<S> = (crate::net::rtsp::RtspClient<S>, SocketAddr, Vec<u8>, bool);
 
 /// [`connect_mirror`] over any connector: establishes the session, and
 /// when PTP fails tears it down and retries once with NTP on a new
@@ -106,7 +169,7 @@ pub type Connected<S> = (crate::net::rtsp::RtspClient<S>, SocketAddr, Vec<u8>, b
 pub fn connect_with<S: ControlStream>(
     name: String,
     opts: &MirrorOptions,
-    mut connect: impl FnMut() -> Result<Connected<S>>,
+    mut connect: impl FnMut() -> Result<Fresh<S>>,
 ) -> Result<MirrorSink<S>> {
     let mut opts = opts.clone();
     loop {

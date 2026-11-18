@@ -47,11 +47,18 @@ let sink = connect_mirror(&airplay::pair::Target { addr, device }, &opts)?;
 
 ## Known gaps
 
-- Only the HAP profile is reachable (`pair::connect` always does HAP). The
-  legacy ciphers (AES-CTR video, AES-CBC audio, legacy pair-verify keys)
-  exist with vector tests but raw pairing (spec Appendix A) is not wired.
+- Legacy raw pairing (spec Appendix A, `airplay::legacy_pair`) and the
+  legacy media profile (plaintext control/events, AES-CTR video, AES-CBC
+  audio, NTP) are implemented and loop-tested only: **untested on
+  hardware**. `connect_mirror` returns `AnyMirrorSink` (HAP or legacy).
+  HAP stays the default: stored HAP pairings and non-candidates go through
+  `pair::connect` unchanged; only unpaired candidates (no HAP pairing bit,
+  or third-party bit 26/51 in the TXT features) try raw pair-setup first
+  and fall back to HAP. Raw pairings are stored with `pairing = raw`
+  (older credential files load unchanged). A legacy session without
+  FairPlay fails at `start` (open spec question).
 - No MediaDataControl channel, no HTTP Digest (password receivers), no
-  AAC-ELD, no HEVC. `forceKeyFrame` events are logged only (ffmpeg cannot
-  be asked for an IDR).
+  AAC-ELD, no HEVC. `forceKeyFrame` makes `wants_keyframe()` true until
+  the next IDR (the fanout skips to it; ffmpeg cannot be asked for one).
 - The audio and video SETUPs are split by the encoder start-up (~0.1 s
   here): connect does SETUP #2, `start` does SETUP #3.

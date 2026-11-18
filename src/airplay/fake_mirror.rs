@@ -70,6 +70,8 @@ pub struct Behaviour {
     /// Legacy profile with these FairPlay keys (`K`, `eiv`): plaintext
     /// events, AES-CTR video, AES-CBC audio.
     pub legacy: Option<([u8; 16], [u8; 16])>,
+    /// Answer raw (legacy) pair-setup/verify with this Ed25519 seed.
+    pub raw_pairing: Option<[u8; 32]>,
 }
 
 impl Default for Behaviour {
@@ -83,6 +85,7 @@ impl Default for Behaviour {
             no_timing_headers: false,
             stall_data: false,
             legacy: None,
+            raw_pairing: None,
         }
     }
 }
@@ -100,10 +103,12 @@ struct Ctx {
     audio_key: Mutex<Option<[u8; 32]>>,
     session: AtomicBool,
     close_data: Arc<AtomicBool>,
+    raw: Mutex<Option<crate::airplay::legacy_pair::fake::RawReceiver>>,
 }
 
 impl FakeMirror {
     pub fn start(behaviour: Behaviour) -> FakeMirror {
+        let behaviour_raw = behaviour.raw_pairing;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let secret: Vec<u8> = (0x40u8..0x60).collect();
@@ -115,6 +120,7 @@ impl FakeMirror {
             audio_key: Mutex::new(None),
             session: AtomicBool::new(false),
             close_data: Arc::new(AtomicBool::new(false)),
+            raw: Mutex::new(behaviour_raw.map(crate::airplay::legacy_pair::fake::RawReceiver::new)),
         });
         thread::spawn(move || {
             for stream in listener.incoming() {
@@ -220,6 +226,24 @@ fn handle(req: &Request, ctx: &Arc<Ctx>) -> Response {
             Some(Plist::dict().with("streams", Plist::array(Vec::<Plist>::new()))),
         ),
         "TEARDOWN" | "SET_PARAMETER" => reply(req, 200, None),
+        "POST" if req.target == "/pair-setup" || req.target == "/pair-verify" => {
+            let mut raw = ctx.raw.lock().unwrap();
+            let out = raw.as_mut().and_then(|r| {
+                if req.target == "/pair-setup" {
+                    r.setup(&req.body)
+                } else {
+                    r.verify(&req.body)
+                }
+            });
+            match out {
+                Some(body) => {
+                    let mut r = reply(req, 200, None);
+                    r.body = body;
+                    r
+                }
+                None => reply(req, 470, None),
+            }
+        }
         "SETUP" => {
             let body = Plist::from_bytes(&req.body).unwrap();
             ctx.rec.lock().unwrap().setup_bodies.push(body.clone());

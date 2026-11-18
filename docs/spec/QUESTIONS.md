@@ -38,3 +38,17 @@ accepted it at protocol level.
    would carry the jitter; the reference samples t = now and extrapolates
    rtp_now instead. Compute T from the current clock mapping when building
    the packet. Spec: §8.5.
+
+## W7 legacy profile (Appendix A, §5), 2026-11-18
+
+4. Appendix A: do raw `/pair-setup` and `/pair-verify` requests carry
+   `X-Apple-HKP: 3`? The header lists for raw requests do not mention it,
+   while the first paragraph says such receivers "use `X-Apple-HKP: 3`".
+   [Not sent.]
+5. Appendix A: "try TLV8 transient pair-setup with HKP 3": streamlib's
+   existing transient pair-setup sends `X-Apple-HKP: 4`. Which is right
+   for third-party receivers? [Unchanged: the HAP fallback is W5's
+   `pair::connect`.]
+6. §5.0/§5.2/§5.3: legacy profile **without** FairPlay (feature 14
+   absent): is video sent in the clear, or AES-CTR keyed from the random
+   `shk` we put in the video SETUP? [Session start fails with an error.]
