@@ -692,3 +692,30 @@ fn reframes_short_lengths() {
     );
     assert!(reframe(&[1, 0, 9, 0x65], 2).is_err());
 }
+
+#[test]
+fn silent_sound_is_noted_once() {
+    let stats = |kbps: f64, peak: Option<f64>| {
+        let v = Value::object().with("audioKbps", kbps);
+        match peak {
+            Some(p) => v.with("audioPeak", p),
+            None => v,
+        }
+    };
+    let mut s = Sound::default();
+    for _ in 0..SILENT_REPORTS - 1 {
+        assert!(!s.stats(&stats(1536.0, Some(0.0))));
+    }
+    // No sound flowing, or an older page without the field: not counted.
+    assert!(!s.stats(&stats(0.0, Some(0.0))));
+    assert!(!s.stats(&stats(1536.0, None)));
+    assert!(s.stats(&stats(1536.0, Some(0.0))));
+    assert!(!s.stats(&stats(1536.0, Some(0.0))));
+
+    // Sound heard once: silence later is fine.
+    let mut s = Sound::default();
+    assert!(!s.stats(&stats(1536.0, Some(0.25))));
+    for _ in 0..2 * SILENT_REPORTS {
+        assert!(!s.stats(&stats(1536.0, Some(0.0))));
+    }
+}

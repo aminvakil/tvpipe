@@ -15,6 +15,8 @@
 //
 // opts: preferCurrentTab, selfBrowserSurface ('exclude' by default),
 // localAudio (keep playing captured tab audio locally; default false),
+// surface (the picker's preselected kind: 'monitor', 'window', 'browser'),
+// windowAudio (a window's sound: 'window' (its app), 'system', 'exclude'),
 // profiles (H.264 profile order, e.g. ['42E0', '4D40', '6400']),
 // worker (false: keep the video engine on the page).
 //
@@ -510,6 +512,7 @@
     this.stopped = false;
     this.codec = '';
     this.audioBytes = 0;
+    this.audioPeak = 0;
     this.audioDropped = 0;
     this.audioSince = L.clock();
     this.ws = new WebSocket(url);
@@ -621,6 +624,7 @@
     // sound: suggest a window, and do not ask for audio (a refused
     // constraint could not be retried without a new click).
     if (!f.tabs) video.displaySurface = 'window';
+    if (o.surface) video.displaySurface = o.surface;
     var audio = cfg.audio && f.audio ? {
       echoCancellation: false, noiseSuppression: false, autoGainControl: false,
       channelCount: { ideal: 2 },
@@ -631,6 +635,7 @@
       c.selfBrowserSurface = o.selfBrowserSurface || 'exclude';
       c.surfaceSwitching = 'include';
       c.systemAudio = 'include';
+      if (o.windowAudio) c.windowAudio = o.windowAudio;
       if (o.preferCurrentTab) c.preferCurrentTab = true;
     }
     for (var k in (extra || {})) c[k] = extra[k];
@@ -671,7 +676,7 @@
     var self = this;
     var at = stream.getAudioTracks()[0];
     if (at) at.addEventListener('ended', function () { self._log('info', 'the shared audio ended'); });
-    vt.addEventListener('ended', function () { self.stop('the share was stopped in the browser'); });
+    vt.addEventListener('ended', function () { self._stoppedInBrowser(); });
     // The size tvpipe plans with is the first real frame's: track
     // settings can report the constraint ceiling (e.g. the screen) rather
     // than what the frames are. The settings are the fallback.
@@ -799,7 +804,7 @@
       case 'codec': this.codec = m.codec; break;
       case 'log': this._log(m.level, m.message); break;
       case 'fail': this._fail(m.message); break;
-      case 'ended': this.stop('the share was stopped in the browser'); break;
+      case 'ended': this._stoppedInBrowser(); break;
       case 'stats': this._stats(m); break;
     }
   };
@@ -855,6 +860,14 @@
         if (self.stopped || self.ws.readyState !== 1 || !self.sentKey) return;
         var pcm = new Uint8Array(e.data);
         var dur = pcm.length / (2 * ch) / rate * 1e6;
+        // The loudest sample since the last stats (silent system audio is
+        // how a missing permission shows on macOS).
+        var smp = new Int16Array(e.data), peak = self.audioPeak;
+        for (var i = 0; i < smp.length; i++) {
+          var a = smp[i] < 0 ? -smp[i] : smp[i];
+          if (a > peak) peak = a;
+        }
+        self.audioPeak = peak;
         if (self.ws.bufferedAmount > MAX_BUFFERED) { self.audioDropped++; return; }
         self.ws.send(L.record(L.KIND_AUDIO, L.clock() - dur, [pcm]));
         self.audioBytes += pcm.length;
@@ -895,7 +908,9 @@
     var secs = (L.clock() - this.audioSince) / 1e6;
     v.audioKbps = secs > 0 ? Math.round(this.audioBytes * 8 / secs / 1000) : 0;
     v.audioDropped = this.audioDropped;
+    v.audioPeak = Math.round((this.audioPeak || 0) / 32.767) / 1000;
     v.mode = this.mode;
+    this.audioPeak = 0;
     this.audioBytes = 0;
     this.audioDropped = 0;
     this.audioSince = L.clock();
@@ -904,6 +919,13 @@
   };
 
   // Ends the share: tells tvpipe, stops the capture.
+  // The user stopped the capture in the browser (its "Stop sharing" bar,
+  // or the captured window closed).
+  Capture.prototype._stoppedInBrowser = function () {
+    if (!this.stopped) this.stoppedInBrowser = true;
+    this.stop('the share was stopped in the browser');
+  };
+
   Capture.prototype.stop = function (reason) {
     if (this.stopped) return;
     this._send({ type: 'ended', reason: reason || 'the page stopped sharing' });

@@ -33,12 +33,13 @@ broke), by an `error`.
 
 | `type` | When | Fields |
 |---|---|---|
-| `hello` | first | `protocol` (1), `version`, `command` (`play` also for `preview`, `test-pattern`, `share`, `discover`, `pair`, `unpair`) |
+| `hello` | first | `protocol` (1), `version`, `command` (`play` also for `preview`, `test-pattern`, `share`, `screen`, `discover`, `pair`, `unpair`) |
 | `log` | each log line at the active level (`-v`: debug, `--debug`: trace) | `level` (`error`, `warn`, `info`, `debug`, `trace`), `module`, `message` |
 | `receiver` | a receiver changes state | `name`, `protocol` (`cast`, `airplay`, `browser`; on `connected`/`failed` while connecting), `state`, `error` and `code` (with `failed`, `lost`, `gave-up`) |
 | `player` | a `--to browser` page listens | `name`, `url` |
 | `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`) |
 | `share-page` | `share` without URL listens | `url` (open it, press Share) |
+| `capture` | `share`, `share URL` or `screen`: the browser started sharing | `surface` (`monitor`, `window`, `browser`), `label`, `width`, `height` (the capture's), `audio` (it has sound) |
 | `connected` | the receivers are connected; the input opens next (SLRW is read from here on) | `receivers` (names) |
 | `started` | the input is open and the receivers started | `route` (`passthrough`, `ffmpeg`, `builtin`, `encoded`, `browser`), `video` (`codec`, `width`, `height`, `fps`), `audio` (list of `codec`, `sample_rate`, `channels`), `latency_ms` |
 | `keyframe` | a receiver needs an IDR (encoded SLRW with keyframe requests on, see below) | |

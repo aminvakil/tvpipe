@@ -44,6 +44,9 @@ use crate::net::websocket::{self, close_code, Message, Role, Sender};
 use crate::types::{AudioFamily, EncodedFrame};
 
 pub const PAGE_HTML: &str = include_str!("share.html");
+/// The page `tvpipe screen`'s browser shows: capture.js and a line of
+/// text; tvpipe starts the capture in it (`browser::screen`).
+pub const SCREEN_HTML: &str = include_str!("screen.html");
 /// The capture script: self-contained, also injected into pages by the
 /// headless-browser mode (W13).
 pub const CAPTURE_JS: &str = include_str!("capture.js");
@@ -158,6 +161,12 @@ impl Shared {
                 "OK",
                 "text/html; charset=utf-8",
                 PAGE_HTML.as_bytes().to_vec(),
+            )),
+            "/screen" => Reply::Response(httpd::response(
+                200,
+                "OK",
+                "text/html; charset=utf-8",
+                SCREEN_HTML.as_bytes().to_vec(),
             )),
             "/ws" if websocket::is_upgrade(req) => match websocket::server_response(req) {
                 Ok(resp) => {
@@ -416,6 +425,14 @@ impl ShareServer {
         )
     }
 
+    /// The page `tvpipe screen`'s browser opens (with the token).
+    pub fn screen_url(&self) -> String {
+        format!(
+            "http://127.0.0.1:{}/screen?t={}",
+            self.shared.port, self.shared.token
+        )
+    }
+
     /// Tells pages what to capture (sent now and to every later page).
     pub fn configure(&self, config: &PageConfig) {
         let text = config.to_json();
@@ -513,6 +530,7 @@ impl ShareServer {
             clock,
             lag: Lag::default(),
             page_stats: None,
+            sound: Sound::default(),
             agent,
             last_video: None,
             gap_since: None,
@@ -561,6 +579,53 @@ impl Drop for ShareServer {
     }
 }
 
+/// Whether the page's sound was ever more than silence: a capture whose
+/// sound stays digital silence is noted once (on macOS that is how a
+/// browser without the "System Audio Recording" permission sounds).
+#[derive(Debug, Default)]
+struct Sound {
+    /// Stats reports with sound flowing, all of it silence.
+    silent: u32,
+    heard: bool,
+    noted: bool,
+}
+
+/// Silent stats reports (2 s each) before the note.
+const SILENT_REPORTS: u32 = 5;
+
+impl Sound {
+    /// Takes a page `stats` message; `true` when the note goes out now.
+    fn stats(&mut self, v: &Value) -> bool {
+        let flowing = v.get("audioKbps").and_then(Value::as_f64).unwrap_or(0.0) > 0.0;
+        let Some(peak) = v.get("audioPeak").and_then(Value::as_f64) else {
+            return false;
+        };
+        if !flowing || self.heard || self.noted {
+            return false;
+        }
+        if peak > 0.0 {
+            self.heard = true;
+            return false;
+        }
+        self.silent += 1;
+        if self.silent < SILENT_REPORTS {
+            return false;
+        }
+        self.noted = true;
+        info!(
+            "share: the captured sound has been silent for {} s (nothing playing?{})",
+            SILENT_REPORTS * 2,
+            if cfg!(target_os = "macos") {
+                " On macOS the browser needs the System Audio Recording permission: \
+                 System Settings > Privacy & Security > Screen & System Audio Recording"
+            } else {
+                ""
+            }
+        );
+        true
+    }
+}
+
 /// A page's clock (µs) and when we read it.
 type PageClock = Option<(Instant, u64)>;
 
@@ -594,6 +659,12 @@ impl ShareHandle {
     /// The WebSocket URL a capture script connects to.
     pub fn ws_url(&self) -> String {
         format!("ws://127.0.0.1:{}/ws?t={}", self.0.port, self.0.token)
+    }
+
+    /// Whether pages get their `config` at once (the session knows what
+    /// to capture).
+    pub fn configured(&self) -> bool {
+        self.0.lock().config.is_some()
     }
 }
 
@@ -667,6 +738,7 @@ pub struct ShareInput {
     clock: PageClock,
     lag: Lag,
     page_stats: Option<Value>,
+    sound: Sound,
     agent: String,
     /// When the last video record came, and since when there is none
     /// (rejoin mode: the page went away).
@@ -714,6 +786,7 @@ impl ShareInput {
             Ok(Event::Packet(p)) => self.packet(p)?,
             Ok(Event::Stats(v)) => {
                 trace!("share: page stats {v}");
+                self.sound.stats(&v);
                 self.page_stats = Some(v);
             }
             Ok(Event::Ended(reason)) => {

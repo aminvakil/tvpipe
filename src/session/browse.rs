@@ -56,6 +56,7 @@ pub(super) fn browse(opts: ShareOptions) -> Result<()> {
                     bin: bin.clone(),
                     viewport,
                     visible: o.visible,
+                    screen: None,
                 },
                 profile: o.profile.clone(),
                 reload: o.reload,
@@ -210,6 +211,7 @@ fn browse_rejoin(
             None => Ok(()),
         };
     };
+    capture_event(&cap);
     debug!(
         "browser: the page shares {} ms after the start",
         t0.elapsed().as_millis()

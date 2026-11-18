@@ -1107,7 +1107,7 @@ mod tests {
         // `(function (wsUrl) {...})` called with a JSON string.
         let s = START_JS.trim();
         assert!(s.ends_with("})"), "{}", &s[s.len() - 20..]);
-        assert!(s.contains("(function (wsUrl)"));
+        assert!(s.contains("(function (wsUrl, opts)"));
         assert!(s.contains("preferCurrentTab: true"));
     }
 }

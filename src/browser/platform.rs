@@ -1,10 +1,12 @@
 //! The OS-specific bits of the browser modes (`cfg(target_os)` is allowed
 //! here, like a config path): which command opens a URL, where
-//! Chromium-based browsers and Firefox are installed, and where their own
-//! profiles live (which `tvpipe share URL` never uses).
+//! Chromium-based browsers and Firefox are installed, where their own
+//! profiles live (which `tvpipe share URL` never uses), and how `tvpipe
+//! screen` starts the browser on macOS (as an app of its own:
+//! [`own_app_command`]).
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::error::{Error, Result};
@@ -230,4 +232,115 @@ pub fn default_profile_dirs(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathB
         }
     }
     out
+}
+
+/// The `.app` bundle `bin` is the executable of
+/// (`X.app/Contents/MacOS/NAME` → `X.app`).
+pub fn app_bundle_of(bin: &Path) -> Option<PathBuf> {
+    let macos = bin.parent()?;
+    let contents = macos.parent()?;
+    let app = contents.parent()?;
+    let is_app = app
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("app"));
+    (macos.file_name()? == "MacOS" && contents.file_name()? == "Contents" && is_app)
+        .then(|| app.to_path_buf())
+}
+
+/// `open -n [-g] -a APP --stderr FILE --args ARGS...`: starts a new
+/// instance of the app bundle as an app of its own.
+pub fn open_app_args(
+    app: &Path,
+    args: &[OsString],
+    background: bool,
+    stderr: &Path,
+) -> Vec<OsString> {
+    let mut a: Vec<OsString> = vec!["-n".into()];
+    if background {
+        a.push("-g".into());
+    }
+    a.extend(["-a".into(), app.into(), "--stderr".into(), stderr.into()]);
+    a.push("--args".into());
+    a.extend(args.iter().cloned());
+    a
+}
+
+/// macOS: the command that starts the browser `bin` through LaunchServices
+/// (`open`), for `tvpipe screen`. macOS attributes a process's screen and
+/// system-audio recording to its "responsible" app: a browser started
+/// directly is the terminal's child, so the terminal would need the
+/// permissions, and without the terminal's "System Audio Recording"
+/// permission Chrome's system audio is silent. Started by `open`, the
+/// browser asks for and keeps the permissions itself, as when the user
+/// starts it. `None` on other systems, or when `bin` is not in an app
+/// bundle (it is then started directly).
+pub fn own_app_command(
+    bin: &Path,
+    args: &[OsString],
+    background: bool,
+    stderr: &Path,
+) -> Option<Command> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let app = app_bundle_of(bin)?;
+    let mut c = Command::new("open");
+    c.args(open_app_args(&app, args, background, stderr));
+    Some(c)
+}
+
+/// Kills process `pid` (a browser started by [`own_app_command`] that does
+/// not quit; it is no child of ours).
+pub fn kill_pid(pid: u32) {
+    if cfg!(unix) {
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_bundles() {
+        let chrome = Path::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+        assert_eq!(
+            app_bundle_of(chrome),
+            Some(PathBuf::from("/Applications/Google Chrome.app"))
+        );
+        assert_eq!(app_bundle_of(Path::new("/usr/bin/chromium")), None);
+        assert_eq!(app_bundle_of(Path::new("Google Chrome")), None);
+        assert_eq!(
+            app_bundle_of(Path::new("/x/Chromium.app/Contents/Resources/chromium")),
+            None
+        );
+        let a: Vec<String> = open_app_args(
+            Path::new("/A/Chrome.app"),
+            &["--x=1".into(), "about:blank".into()],
+            true,
+            Path::new("/p/stderr.log"),
+        )
+        .into_iter()
+        .map(|s| s.into_string().unwrap())
+        .collect();
+        assert_eq!(
+            a,
+            [
+                "-n",
+                "-g",
+                "-a",
+                "/A/Chrome.app",
+                "--stderr",
+                "/p/stderr.log",
+                "--args",
+                "--x=1",
+                "about:blank"
+            ]
+        );
+    }
 }

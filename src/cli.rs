@@ -22,6 +22,7 @@ enum Top {
     TestPattern,
     Preview,
     Share,
+    Screen,
     DebugPipeline,
 }
 
@@ -87,6 +88,27 @@ enum ShareArg {
 }
 
 #[derive(Copy, Clone)]
+enum ScreenArg {
+    To,
+    Reconnect,
+    Latency,
+    Size,
+    Fps,
+    Bitrate,
+    NoAudio,
+    Display,
+    Window,
+    Pick,
+    Engine,
+    Browser,
+    Ffmpeg,
+    Port,
+    Open,
+    WaitForViewer,
+    NewToken,
+}
+
+#[derive(Copy, Clone)]
 enum PipelineArg {
     Raw,
     RawVideo,
@@ -118,6 +140,7 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::TestPattern, &TEST_PATTERN),
         Cmd::new(Top::Preview, &PREVIEW),
         Cmd::new(Top::Share, &SHARE),
+        Cmd::new(Top::Screen, &SCREEN),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -399,6 +422,66 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
          automated browsers (e.g. Google Meet) do not work.",
     );
 
+static SCREEN: Cli<ScreenArg> = Cli::new("screen")
+    .about("Mirror a screen or a window, with the computer's sound")
+    .usage("--to NAME|ADDR [--display N | --window TITLE | --pick] [OPTIONS]")
+    .opts(&[
+        to(ScreenArg::To),
+        reconnect(ScreenArg::Reconnect),
+        Opt::new(ScreenArg::Latency)
+            .long("latency")
+            .value("MS")
+            .help("Playout delay in ms, the same on every receiver"),
+        Opt::new(ScreenArg::Size)
+            .long("size")
+            .value("WxH")
+            .help("Output video size (default: the screen's, within the receivers' limits)"),
+        Opt::new(ScreenArg::Fps)
+            .long("fps")
+            .value("N")
+            .help("Output frame rate (default 30)"),
+        Opt::new(ScreenArg::Bitrate)
+            .long("bitrate")
+            .value("KBPS")
+            .help("Video bitrate in kbit/s"),
+        Opt::new(ScreenArg::NoAudio)
+            .long("no-audio")
+            .help("Do not send sound"),
+        Opt::new(ScreenArg::Display)
+            .long("display")
+            .value("N|NAME")
+            .help("The screen: 1 (the main one, the default), 2, ...; or a part of its name in the browser's picker"),
+        Opt::new(ScreenArg::Window)
+            .long("window")
+            .value("TITLE")
+            .help("Share the window whose title contains TITLE (case matters)"),
+        Opt::new(ScreenArg::Pick)
+            .long("pick")
+            .help("Choose the screen or window in the browser's picker"),
+        Opt::new(ScreenArg::Engine)
+            .long("engine")
+            .value("browser|ffmpeg")
+            .help("Capture with a Chromium-based browser (default when one is installed) or with ffmpeg"),
+        Opt::new(ScreenArg::Browser)
+            .long("browser")
+            .value("PATH")
+            .value_hint(ValueHint::ExecutablePath)
+            .help("The Chromium-based browser (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
+        ffmpeg_path(ScreenArg::Ffmpeg),
+        player_port(ScreenArg::Port),
+        player_open(ScreenArg::Open),
+        wait_for_viewer(ScreenArg::WaitForViewer),
+        new_token(ScreenArg::NewToken),
+    ])
+    .after_help(
+        "tvpipe starts a Chromium-based browser of its own (a separate profile, a small\n\
+         window it minimizes) whose page captures the screen or window with the computer's\n\
+         sound and encodes it. The browser needs the system's permission to record the\n\
+         screen (macOS: Privacy & Security > Screen & System Audio Recording). Stop with\n\
+         Ctrl-C, 'q' or the browser's \"Stop sharing\". --engine ffmpeg captures with\n\
+         ffmpeg instead: no sound on macOS and Windows, no --window on macOS.",
+    );
+
 static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")
     .about("Run ffmpeg and the demuxer and print every frame")
     .usage("[OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)")
@@ -575,6 +658,44 @@ pub struct ShareOptions {
     pub page: Option<PageOptions>,
 }
 
+/// `tvpipe screen`.
+#[derive(Debug, Clone, Default)]
+pub struct ScreenOptions {
+    /// The streaming options (`page` is `None`; `open` is the player's).
+    pub share: ShareOptions,
+    pub target: ScreenTarget,
+    /// `None`: the browser when one is installed, else ffmpeg.
+    pub engine: Option<ScreenEngine>,
+    pub browser: Option<PathBuf>,
+    pub ffmpeg: Option<PathBuf>,
+}
+
+/// What `tvpipe screen` shares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScreenTarget {
+    /// `--display N` (1 is the main screen, the default).
+    Display(u32),
+    /// `--display NAME`: a part of the screen's name in the picker.
+    DisplayNamed(String),
+    /// `--window TITLE`: a part of the window's title.
+    Window(String),
+    /// `--pick`: the user chooses in the browser's picker.
+    Pick,
+}
+
+impl Default for ScreenTarget {
+    fn default() -> Self {
+        ScreenTarget::Display(1)
+    }
+}
+
+/// How `tvpipe screen` captures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenEngine {
+    Browser,
+    Ffmpeg,
+}
+
 /// `share URL`: the page and tvpipe's browser.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PageOptions {
@@ -611,6 +732,7 @@ pub enum Command {
     Play(PlayOptions),
     TestPattern(PlayOptions),
     Share(ShareOptions),
+    Screen(ScreenOptions),
     DebugPipeline(PipelineOptions),
 }
 
@@ -624,6 +746,7 @@ impl Command {
             Command::Play(_) => "play",
             Command::TestPattern(_) => "test-pattern",
             Command::Share(_) => "share",
+            Command::Screen(_) => "screen",
             Command::DebugPipeline(_) => "debug-pipeline",
         }
     }
@@ -671,6 +794,7 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                 ))
             }
             Top::Share => return Ok((g, parse_share(p.subcommand(&SHARE))?)),
+            Top::Screen => return Ok((g, parse_screen(p.subcommand(&SCREEN))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -893,6 +1017,93 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
     Ok(Command::Share(o))
 }
 
+fn parse_screen(mut p: Parser<ScreenArg>) -> Result<Command, Error> {
+    let mut o = ScreenOptions {
+        share: ShareOptions {
+            reconnect: DEFAULT_RECONNECT,
+            ..ShareOptions::default()
+        },
+        ..ScreenOptions::default()
+    };
+    let mut targets = 0;
+    while let Some(arg) = p.param()? {
+        let s = &mut o.share;
+        match arg {
+            ScreenArg::To => s.to.push(p.value()?),
+            ScreenArg::Reconnect => s.reconnect = reconnect_secs(&mut p)?,
+            ScreenArg::Latency => s.latency_ms = Some(p.value()?),
+            ScreenArg::Size => s.size = Some(p.value()?),
+            ScreenArg::Fps => s.fps = Some(p.value()?),
+            ScreenArg::Bitrate => s.bitrate_kbps = Some(p.value()?),
+            ScreenArg::NoAudio => s.no_audio = true,
+            ScreenArg::Open => s.open = true,
+            ScreenArg::Port => s.player.port = Some(p.value()?),
+            ScreenArg::WaitForViewer => s.player.wait_for_viewer = true,
+            ScreenArg::NewToken => s.player.new_token = true,
+            ScreenArg::Display => {
+                targets += 1;
+                let v: String = p.value()?;
+                o.target = match v.trim().parse::<u32>() {
+                    Ok(0) => return Err(p.error("--display counts from 1 (the main screen)")),
+                    Ok(n) => ScreenTarget::Display(n),
+                    Err(_) if v.trim().is_empty() => {
+                        return Err(p.error("--display takes a number or a name"))
+                    }
+                    Err(_) => ScreenTarget::DisplayNamed(v),
+                };
+            }
+            ScreenArg::Window => {
+                targets += 1;
+                let v: String = p.value()?;
+                if v.trim().is_empty() {
+                    return Err(p.error("--window takes (a part of) the window's title"));
+                }
+                o.target = ScreenTarget::Window(v);
+            }
+            ScreenArg::Pick => {
+                targets += 1;
+                o.target = ScreenTarget::Pick;
+            }
+            ScreenArg::Engine => {
+                let v: String = p.value()?;
+                o.engine = Some(match v.to_ascii_lowercase().as_str() {
+                    "browser" | "chrome" => ScreenEngine::Browser,
+                    "ffmpeg" => ScreenEngine::Ffmpeg,
+                    _ => return Err(p.error("--engine is browser or ffmpeg")),
+                });
+            }
+            ScreenArg::Browser => o.browser = Some(p.value()?),
+            ScreenArg::Ffmpeg => o.ffmpeg = Some(p.value()?),
+        }
+    }
+    if o.share.to.is_empty() {
+        return Err(p.error("at least one --to NAME|ADDR is required"));
+    }
+    if targets > 1 {
+        return Err(p.error("give one of --display, --window and --pick"));
+    }
+    let browser_opts = BrowserOptions {
+        open: o.share.open,
+        ..o.share.player.clone()
+    };
+    if !has_browser_target(&o.share.to) && browser_opts != BrowserOptions::default() {
+        return Err(p.error(PLAYER_ONLY));
+    }
+    match o.engine {
+        Some(ScreenEngine::Ffmpeg) if o.browser.is_some() => {
+            return Err(p.error("--browser is for --engine browser"));
+        }
+        Some(ScreenEngine::Ffmpeg) if o.target == ScreenTarget::Pick => {
+            return Err(p.error("--pick needs the browser (--engine browser)"));
+        }
+        Some(ScreenEngine::Browser) if o.ffmpeg.is_some() => {
+            return Err(p.error("--ffmpeg is for --engine ffmpeg"));
+        }
+        _ => {}
+    }
+    Ok(Command::Screen(o))
+}
+
 fn parse_pipeline(mut p: Parser<PipelineArg>) -> Result<Command, Error> {
     let mut o = PipelineOptions {
         raw: false,
@@ -1032,6 +1243,82 @@ mod tests {
         assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
         assert!(parse_from(&["share"]).is_err());
         assert!(parse_from(&["share", "https://x"]).is_err());
+    }
+
+    #[test]
+    fn screen_options() {
+        let screen = |args: &[&str]| {
+            let mut a = vec!["screen", "--to", "TV"];
+            a.extend_from_slice(args);
+            match parse_from(&a).map(|(_, c)| c) {
+                Ok(Command::Screen(o)) => Ok(o),
+                Ok(_) => panic!("not screen"),
+                Err(e) => Err(e.to_string()),
+            }
+        };
+        let o = screen(&[]).unwrap();
+        assert_eq!(o.target, ScreenTarget::Display(1));
+        assert_eq!(o.engine, None);
+        assert_eq!(o.share.to, ["TV"]);
+        assert_eq!(o.share.reconnect, DEFAULT_RECONNECT);
+        assert!(o.share.page.is_none());
+        assert_eq!(
+            screen(&["--display", "2"]).unwrap().target,
+            ScreenTarget::Display(2)
+        );
+        assert_eq!(
+            screen(&["--display", "Bildschirm 2"]).unwrap().target,
+            ScreenTarget::DisplayNamed("Bildschirm 2".into())
+        );
+        assert!(screen(&["--display", "0"]).unwrap_err().contains("from 1"));
+        assert_eq!(
+            screen(&["--window", "Keynote"]).unwrap().target,
+            ScreenTarget::Window("Keynote".into())
+        );
+        assert!(screen(&["--window", " "]).is_err());
+        assert_eq!(screen(&["--pick"]).unwrap().target, ScreenTarget::Pick);
+        assert!(screen(&["--pick", "--window", "x"])
+            .unwrap_err()
+            .contains("one of"));
+        let o = screen(&[
+            "--engine",
+            "ffmpeg",
+            "--ffmpeg",
+            "/opt/ffmpeg",
+            "--fps",
+            "60",
+            "--size",
+            "1280x720",
+            "--no-audio",
+            "--latency",
+            "200",
+            "--bitrate",
+            "4000",
+        ])
+        .unwrap();
+        assert_eq!(o.engine, Some(ScreenEngine::Ffmpeg));
+        assert_eq!(o.ffmpeg, Some(PathBuf::from("/opt/ffmpeg")));
+        assert!(o.share.no_audio);
+        assert_eq!(o.share.fps, Some(Ratio::integer(60)));
+        assert_eq!(o.share.latency_ms, Some(200));
+        assert_eq!(o.share.bitrate_kbps, Some(4000));
+        assert_eq!(
+            screen(&["--engine", "browser", "--browser", "/x/chrome"])
+                .unwrap()
+                .browser,
+            Some(PathBuf::from("/x/chrome"))
+        );
+        assert!(screen(&["--engine", "vlc"]).is_err());
+        assert!(screen(&["--engine", "ffmpeg", "--pick"]).is_err());
+        assert!(screen(&["--engine", "ffmpeg", "--browser", "x"]).is_err());
+        assert!(screen(&["--engine", "browser", "--ffmpeg", "x"]).is_err());
+        // The player's options only with --to browser.
+        assert!(screen(&["--open"]).unwrap_err().contains("--to browser"));
+        let o = parse_from(&["screen", "--to", "browser", "--open", "--port", "0"]).unwrap();
+        let Command::Screen(o) = o.1 else { panic!() };
+        assert!(o.share.open);
+        assert_eq!(o.share.player.port, Some(0));
+        assert!(parse_from(&["screen"]).is_err());
     }
 
     #[test]

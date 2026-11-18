@@ -545,6 +545,18 @@ pub struct LaunchOptions {
     pub viewport: (u32, u32),
     /// A normal window instead of `--headless=new`.
     pub visible: bool,
+    /// `tvpipe screen`: a normal window whose page captures the desktop.
+    pub screen: Option<ScreenLaunch>,
+}
+
+/// How `tvpipe screen` starts the browser (`browser::screen`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScreenLaunch {
+    /// Switches that answer the screen picker (`--auto-select-...`).
+    pub switches: Vec<String>,
+    /// Leave the window behind the others (macOS: `open -g`); the picker
+    /// is answered by a switch.
+    pub background: bool,
 }
 
 impl LaunchOptions {
@@ -603,6 +615,9 @@ pub fn firefox_user_js() -> String {
 pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
     if opts.engine() == Engine::Firefox {
         return firefox_args(opts, dir);
+    }
+    if let Some(screen) = &opts.screen {
+        return screen_args(opts.viewport, screen, dir);
     }
     let (w, h) = opts.viewport;
     let mut a: Vec<OsString> = Vec::new();
@@ -664,10 +679,50 @@ fn firefox_args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
     a
 }
 
+/// The command line of `tvpipe screen`'s browser: a small normal window
+/// (desktop capture needs a real one, and getDisplayMedia a visible tab),
+/// the picker answered by `screen.switches`, system audio ticked.
+fn screen_args(window: (u32, u32), screen: &ScreenLaunch, dir: &Path) -> Vec<OsString> {
+    let mut dir_arg = OsString::from("--user-data-dir=");
+    dir_arg.push(dir);
+    let mut a: Vec<OsString> = vec![dir_arg];
+    for s in [
+        "--remote-debugging-port=0",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--use-mock-keychain",
+        "--password-store=basic",
+        // The capture page keeps capturing and encoding once its window
+        // is minimized.
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
+        // The picker's "Also share system audio" ticked (when it is
+        // answered by a switch, nobody can tick it). The underscore is
+        // Chrome's spelling.
+        "--system-audio-capture-default_checked",
+        // Linux: system audio through PulseAudio/PipeWire's monitor of the
+        // output (off by default in Chrome).
+        "--enable-features=PulseaudioLoopbackForScreenShare",
+        // English source names ("Screen 2") for --display N (not on macOS,
+        // where the system language decides).
+        "--lang=en-US",
+    ] {
+        a.push(s.into());
+    }
+    a.extend(screen.switches.iter().map(OsString::from));
+    a.push(format!("--window-size={},{}", window.0, window.1).into());
+    a.push("about:blank".into());
+    a
+}
+
 /// A running browser and its DevTools (Firefox: WebDriver BiDi)
 /// connection.
 pub struct Browser {
     child: Option<Child>,
+    /// Started as an app of its own (macOS `tvpipe screen`): no child of
+    /// ours.
+    detached: Option<Detached>,
     cdp: Cdp,
     pub engine: Engine,
     /// The product (`Chrome/157.0...`, `HeadlessChrome/...`,
@@ -675,6 +730,16 @@ pub struct Browser {
     pub product: String,
     pub user_agent: String,
     stderr: Arc<Mutex<VecDeque<String>>>,
+}
+
+/// A browser started through `platform::own_app_command`.
+struct Detached {
+    /// Its process (from DevTools), to kill it if it does not quit.
+    pid: Option<u32>,
+    /// Its DevTools port: open while it runs.
+    port: u16,
+    /// Where `open` sends its stderr.
+    stderr: PathBuf,
 }
 
 impl Browser {
@@ -698,8 +763,17 @@ impl Browser {
             opts.bin.display(),
             profile.dir().display()
         );
+        let argv = args(opts, profile.dir());
+        let stderr_file = profile.dir().join("tvpipe-stderr.log");
+        if let Some(mut open) = opts
+            .screen
+            .as_ref()
+            .and_then(|s| platform::own_app_command(&opts.bin, &argv, s.background, &stderr_file))
+        {
+            return Browser::launch_detached(&mut open, &port_file, stderr_file);
+        }
         let mut child = Command::new(&opts.bin)
-            .args(args(opts, profile.dir()))
+            .args(argv)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -772,27 +846,106 @@ impl Browser {
         };
         let mut b = Browser {
             child: Some(child),
+            detached: None,
             cdp,
             engine,
             product: String::new(),
             user_agent: String::new(),
             stderr,
         };
-        match engine {
+        b.identify(port)?;
+        Ok(b)
+    }
+
+    /// Reads the product and user agent (Firefox: in a new BiDi session).
+    fn identify(&mut self, port: u16) -> Result<()> {
+        match self.engine {
             Engine::Chromium => {
-                let v = b.cdp.call(None, "Browser.getVersion", Value::object())?;
+                let v = self.cdp.call(None, "Browser.getVersion", Value::object())?;
                 let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
-                b.product = s("product");
-                b.user_agent = s("userAgent");
-                debug!("browser: {} on DevTools port {port}", b.product);
+                self.product = s("product");
+                self.user_agent = s("userAgent");
+                debug!("browser: {} on DevTools port {port}", self.product);
             }
             Engine::Firefox => {
-                let info = bidi::new_session(&b.cdp)?;
-                b.product = info.product;
-                b.user_agent = info.user_agent;
-                debug!("browser: {} on WebDriver BiDi port {port}", b.product);
+                let info = bidi::new_session(&self.cdp)?;
+                self.product = info.product;
+                self.user_agent = info.user_agent;
+                debug!("browser: {} on WebDriver BiDi port {port}", self.product);
             }
         }
+        Ok(())
+    }
+
+    /// Starts the browser with `open` (it is no child of ours) and
+    /// connects to it.
+    fn launch_detached(open: &mut Command, port_file: &Path, stderr: PathBuf) -> Result<Browser> {
+        debug!("browser: starting it as an app of its own: {open:?}");
+        let status = open
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::io("run open", e))?;
+        if !status.status.success() {
+            return Err(Error::process(format!(
+                "open could not start the browser ({}): {}",
+                status.status,
+                String::from_utf8_lossy(&status.stderr).trim()
+            )));
+        }
+        let deadline = Instant::now() + START_TIMEOUT;
+        let (port, path) = loop {
+            if let Some(p) = std::fs::read_to_string(port_file)
+                .ok()
+                .and_then(|s| parse_active_port(&s))
+            {
+                break p;
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::timeout(format!(
+                    "the browser did not open its DevTools port within {} s{}",
+                    START_TIMEOUT.as_secs(),
+                    last_line_of(&stderr)
+                        .map(|l| format!(": {l}"))
+                        .unwrap_or_default()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let url = format!("ws://127.0.0.1:{port}{path}");
+        let cdp = Cdp::connect(&url, Duration::from_secs(10))?;
+        let mut b = Browser {
+            child: None,
+            detached: Some(Detached {
+                pid: None,
+                port,
+                stderr,
+            }),
+            cdp,
+            engine: Engine::Chromium,
+            product: String::new(),
+            user_agent: String::new(),
+            stderr: Arc::default(),
+        };
+        // Its process id, to kill it should it not quit.
+        let pid = b
+            .cdp
+            .call(None, "SystemInfo.getProcessInfo", Value::object())
+            .ok()
+            .and_then(|v| {
+                v.get("processInfo")?
+                    .as_array()?
+                    .iter()
+                    .find(|p| p.get("type").and_then(Value::as_str) == Some("browser"))?
+                    .get("id")?
+                    .as_u64()
+            })
+            .and_then(|p| u32::try_from(p).ok());
+        if let Some(d) = &mut b.detached {
+            d.pid = pid;
+        }
+        b.identify(port)?;
         Ok(b)
     }
 
@@ -809,12 +962,24 @@ impl Browser {
 
     /// The last line the browser wrote to stderr.
     pub fn last_error_line(&self) -> Option<String> {
+        if let Some(d) = &self.detached {
+            return last_line_of(&d.stderr);
+        }
         let t = self.stderr.lock().unwrap_or_else(|e| e.into_inner());
         t.iter().rev().find(|l| !l.trim().is_empty()).cloned()
     }
 
+    /// Whether the browser runs as an app of its own (no exit status).
+    pub fn is_detached(&self) -> bool {
+        self.detached.is_some()
+    }
+
     /// Asks the browser to quit, waits for it, kills it if it does not.
     pub fn close(&mut self) {
+        if let Some(d) = self.detached.take() {
+            close_detached(&self.cdp, &d);
+            return;
+        }
         let Some(mut child) = self.child.take() else {
             return;
         };
@@ -850,6 +1015,45 @@ impl Drop for Browser {
 fn kill(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Quits a browser that is no child of ours: `Browser.close`, then waits
+/// for its DevTools port to close, then kills its process.
+fn close_detached(cdp: &Cdp, d: &Detached) {
+    let addr = (Ipv4Addr::LOCALHOST, d.port).into();
+    let running = || TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok();
+    if !running() {
+        return;
+    }
+    let _ = cdp.call_timeout(
+        None,
+        "Browser.close",
+        Value::object(),
+        Duration::from_secs(2),
+    );
+    let deadline = Instant::now() + QUIT_TIMEOUT;
+    while running() {
+        if Instant::now() >= deadline {
+            warn!("browser: did not quit; killing it");
+            if let Some(pid) = d.pid {
+                platform::kill_pid(pid);
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    debug!("browser: quit");
+    // Its helper processes follow it.
+    std::thread::sleep(Duration::from_millis(300));
+}
+
+/// The last non-empty line of a log file.
+fn last_line_of(path: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(path).ok()?;
+    s.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_owned())
 }
 
 /// `DevToolsActivePort`: the port on the first line, the browser
@@ -1247,6 +1451,7 @@ mod tests {
             bin: bin.into(),
             viewport: (640, 360),
             visible: false,
+            screen: None,
         };
         let mut browser = Browser::launch(&opts, &profile).unwrap();
         // tvpipe dies: nobody closes the browser or deletes the profile.
@@ -1295,6 +1500,7 @@ mod tests {
             bin: "chrome".into(),
             viewport: (1280, 720),
             visible: false,
+            screen: None,
         };
         let a: Vec<String> = args(&o, Path::new("/tmp/p"))
             .into_iter()

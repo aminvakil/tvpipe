@@ -70,6 +70,7 @@ pub fn run(cmd: Command) -> Result<()> {
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts),
         Command::Share(opts) => share(opts),
+        Command::Screen(opts) => screen::screen(opts),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
 }
@@ -1257,10 +1258,36 @@ fn share(opts: ShareOptions) -> Result<()> {
         opts,
         &connect_one,
         interrupt::requested,
-        &|_| {},
+        &|_| Ok(Box::new(())),
         Some(&rejoin),
+        ShareKind::Page,
     )
 }
+
+/// `capture` (`--machine`): what the page shares.
+fn capture_event(cap: &crate::browser::protocol::CaptureInfo) {
+    crate::machine::emit(
+        crate::machine::event("capture")
+            .with_opt("surface", cap.surface.as_deref())
+            .with_opt("label", cap.label.as_deref())
+            .with("width", cap.width)
+            .with("height", cap.height)
+            .with("audio", cap.audio),
+    );
+}
+
+/// What feeds a share: the user's page (`share`) or tvpipe's browser
+/// capturing the screen (`screen`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShareKind {
+    Page,
+    Screen,
+}
+
+/// Starts the page source once the share server listens; the guard
+/// stops it when dropped (a fake page in the tests, tvpipe's browser
+/// for `screen`).
+type ShareSource<'a> = &'a dyn Fn(&ShareServer) -> Result<Box<dyn std::any::Any>>;
 
 /// `share` with the connector and stop request given, and a hook that
 /// sees the server once it listens (the tests start a fake page there).
@@ -1274,34 +1301,42 @@ fn share_with(
     stop: fn() -> bool,
     on_listening: &dyn Fn(&ShareServer),
 ) -> Result<()> {
-    share_rejoin(opts, connect, stop, on_listening, None)
+    let source = |server: &ShareServer| -> Result<Box<dyn std::any::Any>> {
+        on_listening(server);
+        Ok(Box::new(()))
+    };
+    share_rejoin(opts, connect, stop, &source, None, ShareKind::Page)
 }
 
-/// `share_with` with the reconnect hooks.
+/// `share_with` with the reconnect hooks and the source.
 fn share_rejoin(
     opts: ShareOptions,
     connect: Connector<'_>,
     stop: fn() -> bool,
-    on_listening: &dyn Fn(&ShareServer),
+    source: ShareSource<'_>,
     rejoin: Option<&Rejoin>,
+    kind: ShareKind,
 ) -> Result<()> {
     crate::util::timer::raise_resolution();
     let mut server = ShareServer::bind(0)?;
-    info!(
-        "open {} in a browser and choose what to share (Ctrl-C to stop)",
-        server.url()
-    );
-    crate::machine::emit(crate::machine::event("share-page").with("url", server.url()));
-    if opts.open {
-        if let Err(e) = crate::browser::platform::open_url(server.url()) {
-            warn!("--open: {e}");
+    if kind == ShareKind::Page {
+        info!(
+            "open {} in a browser and choose what to share (Ctrl-C to stop)",
+            server.url()
+        );
+        crate::machine::emit(crate::machine::event("share-page").with("url", server.url()));
+        if opts.open {
+            if let Err(e) = crate::browser::platform::open_url(server.url()) {
+                warn!("--open: {e}");
+            }
         }
     }
-    on_listening(&server);
     let fail = |server: &mut ShareServer, e: Error| {
         server.set_end_reason(&e.to_string());
         e
     };
+    // Stopped (a browser quits) when this function returns.
+    let _source = source(&server).map_err(|e| fail(&mut server, e))?;
     let mut targets = resolve_all(&opts.to, rejoin).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     // One PCM stream for both families: 44.1 kHz when AirPlay listens.
@@ -1322,14 +1357,24 @@ fn share_rejoin(
     });
     server.set_status("waiting", "Press Share and pick what to show.", &names);
     let Some(cap) = server.wait_capture(stop) else {
-        return Ok(());
+        return match server.failure() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        };
     };
+    capture_event(&cap);
     let audio = !opts.no_audio && cap.audio;
     if !opts.no_audio && !cap.audio {
-        info!(
-            "share: the capture has no audio (Chrome/Edge: tick \"Also share tab audio\" in \
-             the picker; Safari and Firefox cannot share sound)"
-        );
+        match kind {
+            ShareKind::Page => info!(
+                "share: the capture has no audio (Chrome/Edge: tick \"Also share tab audio\" \
+                 in the picker; Safari and Firefox cannot share sound)"
+            ),
+            ShareKind::Screen => warn!(
+                "screen: the browser captures no sound here (docs/screen.md: what each system \
+                 allows); streaming the picture only"
+            ),
+        }
     }
     // Sizing: the stream is the capture's size (or --size), scaled down
     // only as far as the receivers' real limits require. The Cast offer
@@ -1912,6 +1957,7 @@ fn end_event(
 
 mod browse;
 mod rejoin;
+mod screen;
 
 use rejoin::Rejoin;
 
@@ -1926,6 +1972,9 @@ mod rejoin_tests;
 
 #[cfg(test)]
 mod share_tests;
+
+#[cfg(test)]
+mod screen_tests;
 
 #[cfg(test)]
 mod browser_tests;

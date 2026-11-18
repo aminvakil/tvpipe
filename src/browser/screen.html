@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tvpipe screen</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 24px 28px; font: 15px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+  h1 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
+  p { margin: 0 0 8px; opacity: .75; }
+  #state { opacity: 1; }
+  #state.bad { color: #C0392B; }
+</style>
+</head>
+<body>
+<h1>tvpipe screen</h1>
+<p id="state">Starting the capture…</p>
+<p>tvpipe started this browser to capture the screen or a window. It closes
+it when you stop tvpipe (Ctrl-C) or stop sharing.</p>
+<script src="/capture.js"></script>
+<script>
+  // tvpipe starts the capture (browser/headless.js) and keeps its state in
+  // globalThis.__tvpipe; this only shows it.
+  (function () {
+    var el = document.getElementById('state');
+    var text = {
+      connecting: 'Connecting to tvpipe…',
+      capturing: 'Choosing what to share…',
+      sharing: 'Sharing. This window may be minimized.'
+    };
+    setInterval(function () {
+      var s = globalThis.__tvpipe;
+      if (!s) return;
+      el.className = s.state === 'ended' ? 'bad' : '';
+      el.textContent = s.state === 'ended' ? 'Stopped: ' + (s.error || 'the share ended')
+        : (text[s.state] || s.state);
+    }, 500);
+  })();
+</script>
+</body>
+</html>
