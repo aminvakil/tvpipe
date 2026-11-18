@@ -1749,14 +1749,41 @@ mod tests {
             .all(|l| l.is_empty() || l == b"keyframe"));
     }
 
-    /// Ends the session after `left` video frames (the test pattern never
-    /// ends by itself).
-    pub(super) struct FinishAfter {
-        pub(super) inner: Box<dyn Sink>,
-        pub(super) left: usize,
+    /// What a sink did with the frames the session gave it, per track.
+    #[derive(Debug, Default, Clone, Copy)]
+    pub(super) struct Tally {
+        pub(super) video: u64,
+        pub(super) video_accepted: u64,
+        pub(super) audio: u64,
+        pub(super) audio_accepted: u64,
     }
 
-    impl Sink for FinishAfter {
+    pub(super) type SharedTally = std::sync::Arc<std::sync::Mutex<Tally>>;
+
+    /// Counts what the wrapped sink accepts; with `left`, ends the session
+    /// after that many video frames (the test pattern never ends by
+    /// itself).
+    pub(super) struct Tallied {
+        pub(super) inner: Box<dyn Sink>,
+        pub(super) left: Option<usize>,
+        pub(super) tally: SharedTally,
+    }
+
+    impl Tallied {
+        pub(super) fn boxed(
+            inner: Box<dyn Sink>,
+            left: Option<usize>,
+            tally: &SharedTally,
+        ) -> Box<dyn Sink> {
+            Box::new(Tallied {
+                inner,
+                left,
+                tally: tally.clone(),
+            })
+        }
+    }
+
+    impl Sink for Tallied {
         fn name(&self) -> &str {
             self.inner.name()
         }
@@ -1774,13 +1801,25 @@ mod tests {
             self.inner.start(v, a)
         }
         fn push(&mut self, f: &crate::types::EncodedFrame) -> Result<crate::types::SinkStatus> {
-            if f.track == TrackKind::Video {
-                if self.left == 0 {
-                    return Ok(crate::types::SinkStatus::Finished);
+            let video = f.track == TrackKind::Video;
+            if video {
+                match &mut self.left {
+                    Some(0) => return Ok(crate::types::SinkStatus::Finished),
+                    Some(left) => *left -= 1,
+                    None => {}
                 }
-                self.left -= 1;
             }
-            self.inner.push(f)
+            let status = self.inner.push(f)?;
+            let accepted = (status == crate::types::SinkStatus::Accepted) as u64;
+            let mut t = self.tally.lock().unwrap();
+            if video {
+                t.video += 1;
+                t.video_accepted += accepted;
+            } else {
+                t.audio += 1;
+                t.audio_accepted += accepted;
+            }
+            Ok(status)
         }
         fn wants_keyframe(&self) -> bool {
             self.inner.wants_keyframe()
@@ -1791,10 +1830,12 @@ mod tests {
     }
 
     /// Cast targets as usual, AirPlay ones to a fake mirror receiver
-    /// (which skips pairing); each sink ends after `limit` video frames.
+    /// (which skips pairing); each sink ends after `limit` video frames
+    /// and counts into `tally`.
     fn fake_connector(
         fake: Option<&crate::airplay::fake_mirror::FakeMirror>,
         limit: Option<usize>,
+        tally: &SharedTally,
         t: &Target,
         cast_opts: &CastOptions,
         mirror: &crate::airplay::session::MirrorOptions,
@@ -1806,10 +1847,7 @@ mod tests {
                 fake_airplay(fake, "fake", mirror)?
             }
         };
-        Ok(match limit {
-            Some(left) => Box::new(FinishAfter { inner: sink, left }),
-            None => sink,
-        })
+        Ok(Tallied::boxed(sink, limit, tally))
     }
 
     /// A mirror sink connected to `fake` (no pairing).
@@ -1908,12 +1946,67 @@ mod tests {
         );
     }
 
+    /// Every game frame of [`raw_game_io`] is accounted for by the
+    /// built-in input. How many the encoder drops while busy depends on
+    /// machine load, and the first record may come before the session
+    /// pulls.
+    fn assert_all_frames_accounted(c: &builtin::Counts) {
+        assert_eq!(c.frames, 30, "{c:?}");
+        assert_eq!(c.rate, 0, "{c:?}");
+        assert_eq!(c.early + c.busy + c.encoded, 30, "{c:?}");
+        assert!(c.encoded >= 1, "{c:?}");
+    }
+
+    /// The PCM frames of `frame_samples` the game's records after the
+    /// first `early` (whose video was dropped before the start) make; the
+    /// gate may open between a record's video and its audio.
+    fn audio_frames(
+        c: &builtin::Counts,
+        record_samples: u64,
+        frame_samples: u64,
+    ) -> std::ops::RangeInclusive<u64> {
+        (30 - c.early) * record_samples / frame_samples
+            ..=(31 - c.early) * record_samples / frame_samples + 1
+    }
+
+    /// What a Cast receiver got of a track whose sink accepted `accepted`
+    /// frames: no more, and no holes (losses are retransmitted). Frames
+    /// still being paced out when STOP comes may be missing at the end.
+    pub(super) fn assert_cast_frames(
+        frames: &std::collections::BTreeMap<
+            crate::cast::rtp::FrameId,
+            crate::cast::fake_receiver::Frame,
+        >,
+        accepted: u64,
+    ) {
+        assert!(!frames.is_empty());
+        assert!(
+            frames.len() as u64 <= accepted,
+            "{} > {accepted}",
+            frames.len()
+        );
+        let ids: Vec<_> = frames.values().map(|f| f.frame_id).collect();
+        assert!(ids.windows(2).all(|w| w[1] == w[0] + 1), "holes in {ids:?}");
+    }
+
+    /// Video RTP timestamps are media time: frames dropped on the way
+    /// leave gaps of whole frames (3000 ticks at 30 fps), they never shift
+    /// the timeline.
+    fn assert_on_frame_grid(ts: &[u32]) {
+        for w in ts.windows(2) {
+            let d = w[1].wrapping_sub(w[0]);
+            let k = (d + 1500) / 3000;
+            assert!(k >= 1 && d.abs_diff(k * 3000) <= 1, "{ts:?}");
+        }
+    }
+
     #[test]
     fn raw_slrw_to_cast_without_ffmpeg() {
         use crate::cast::fake_receiver::{FakeReceiver, Options};
         let rx = FakeReceiver::spawn(Options::default());
+        let tally = SharedTally::default();
         let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-            fake_connector(None, None, t, c, m)
+            fake_connector(None, None, &tally, t, c, m)
         };
         play_with(
             raw_opts(rx.addr.to_string(), 48_000),
@@ -1922,6 +2015,8 @@ mod tests {
             never,
         )
         .unwrap();
+        let c = builtin::take_finished_counts().expect("built-in input");
+        let t = *tally.lock().unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped, "STOP not received");
@@ -1932,9 +2027,20 @@ mod tests {
         );
         let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
         let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
-        assert!((22..=30).contains(&v.frames.len()), "{}", v.frames.len());
+        assert_all_frames_accounted(&c);
+        // One sink: it got every encoded frame unless its queue was full.
+        assert!(t.video <= c.encoded, "{t:?} {c:?}");
+        assert_cast_frames(&v.frames, t.video_accepted);
         assert!(v.frames.values().next().unwrap().keyframe);
-        assert!((36..=48).contains(&a.frames.len()), "{}", a.frames.len());
+        let ts: Vec<u32> = v.frames.values().map(|f| f.rtp_timestamp).collect();
+        assert_on_frame_grid(&ts);
+        // PCM is never dropped for the encoder: 1600 samples per record in
+        // 1024-sample AAC units.
+        assert!(
+            audio_frames(&c, 1600, 1024).contains(&t.audio),
+            "{t:?} {c:?}"
+        );
+        assert_cast_frames(&a.frames, t.audio_accepted);
         assert!(a.frames.values().all(|f| is_adts(&f.data)));
         check_decodes(&v.frames);
     }
@@ -1943,8 +2049,9 @@ mod tests {
     fn test_pattern_to_cast_builtin() {
         use crate::cast::fake_receiver::{FakeReceiver, Options};
         let rx = FakeReceiver::spawn(Options::default());
+        let tally = SharedTally::default();
         let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-            fake_connector(None, Some(20), t, c, m)
+            fake_connector(None, Some(20), &tally, t, c, m)
         };
         let o = PlayOptions {
             to: vec![rx.addr.to_string()],
@@ -1961,13 +2068,17 @@ mod tests {
             stdout: Box::new(std::io::sink()),
         };
         play_with(o, io, &connect, never).unwrap();
+        let t = *tally.lock().unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped, "STOP not received");
         let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
         let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
-        assert!((18..=20).contains(&v.frames.len()), "{}", v.frames.len());
-        assert!(!a.frames.is_empty());
+        // The pattern never ends: the session ran until the sink had 20.
+        assert_eq!(t.video, 20, "{t:?}");
+        assert_cast_frames(&v.frames, t.video_accepted);
+        assert!(v.frames.values().next().unwrap().keyframe);
+        assert_cast_frames(&a.frames, t.audio_accepted);
         check_decodes(&v.frames);
     }
 
@@ -1976,8 +2087,9 @@ mod tests {
         use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
         // Raw SLRW, --encoder auto with a bogus ffmpeg.
         let fake = FakeMirror::start(Behaviour::default());
+        let tally = SharedTally::default();
         let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-            fake_connector(Some(&fake), None, t, c, m)
+            fake_connector(Some(&fake), None, &tally, t, c, m)
         };
         let to = format!("airplay:{}", fake.addr);
         play_with(
@@ -1988,22 +2100,36 @@ mod tests {
         )
         .unwrap();
         {
+            let c = builtin::take_finished_counts().expect("built-in input");
+            let t = *tally.lock().unwrap();
             let r = fake.rec();
             assert!(r.teardown);
             let frames = r.video.iter().filter(|p| p.kind == 0).count();
-            // Records the game sends before the session starts pulling
-            // (while the sink sets up) are dropped. How many depends on
-            // machine load (the sink's setup time), so only bound it loosely.
-            assert!((10..=30).contains(&frames), "{frames}");
+            assert_all_frames_accounted(&c);
+            assert!(t.video <= c.encoded, "{t:?} {c:?}");
+            // Mirroring video is TCP, and the sink drains its queue on
+            // stop: the receiver got every frame the sink accepted.
+            assert_eq!(frames as u64, t.video_accepted, "{t:?} {c:?}");
+            assert!(frames >= 1);
             assert!(r.video.iter().any(|p| p.kind == 1), "codec packet");
             assert!(r.video.iter().find(|p| p.kind == 0).unwrap().idr);
-            // Up to 44100 samples in 352-sample PCM frames.
-            assert!((95..=126).contains(&r.audio.len()), "{}", r.audio.len());
+            // 1470 samples per record in 352-sample PCM frames. The sink
+            // drops audio until the first video frame is out, and audio
+            // is UDP.
+            assert!(
+                audio_frames(&c, 1470, 352).contains(&t.audio),
+                "{t:?} {c:?}"
+            );
+            assert!(
+                (1..=t.audio_accepted).contains(&(r.audio.len() as u64)),
+                "{t:?}"
+            );
         }
         // The test pattern, built in because ffmpeg is missing.
         let fake = FakeMirror::start(Behaviour::default());
+        let tally = SharedTally::default();
         let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-            fake_connector(Some(&fake), Some(15), t, c, m)
+            fake_connector(Some(&fake), Some(15), &tally, t, c, m)
         };
         let o = PlayOptions {
             to: vec![format!("airplay:{}", fake.addr)],
@@ -2016,11 +2142,18 @@ mod tests {
             stdout: Box::new(std::io::sink()),
         };
         play_with(o, io, &connect, never).unwrap();
+        let t = *tally.lock().unwrap();
         let r = fake.rec();
         assert!(r.teardown);
         let frames = r.video.iter().filter(|p| p.kind == 0).count();
-        assert!((13..=15).contains(&frames), "{frames}");
-        assert!(!r.audio.is_empty());
+        // The pattern never ends: the session ran until the sink had 15.
+        assert_eq!(t.video, 15, "{t:?}");
+        assert_eq!(frames as u64, t.video_accepted, "{t:?}");
+        assert!(frames >= 1);
+        assert!(
+            (1..=t.audio_accepted).contains(&(r.audio.len() as u64)),
+            "{t:?}"
+        );
     }
 
     /// Records when each video frame reaches the sink; `start()` takes

@@ -104,6 +104,49 @@ struct Counters {
     dropped_early: AtomicU64,
     encoded: AtomicU64,
     encode_us: AtomicU64,
+    encode_max_us: AtomicU64,
+}
+
+/// A snapshot of [`Counters`], for tests that check what the input did
+/// with every frame instead of how many frames a loaded machine managed.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Counts {
+    /// Video records read (or generated).
+    pub frames: u64,
+    pub early: u64,
+    pub rate: u64,
+    pub busy: u64,
+    pub encoded: u64,
+    /// The slowest single encode.
+    pub encode_max: Duration,
+}
+
+#[cfg(test)]
+impl Counters {
+    fn snapshot(&self) -> Counts {
+        let get = |c: &AtomicU64| c.load(Ordering::SeqCst);
+        Counts {
+            frames: get(&self.frames),
+            early: get(&self.dropped_early),
+            rate: get(&self.dropped_rate),
+            busy: get(&self.dropped_busy),
+            encoded: get(&self.encoded),
+            encode_max: Duration::from_micros(get(&self.encode_max_us)),
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static FINISHED: std::cell::Cell<Option<Counts>> = const { std::cell::Cell::new(None) };
+}
+
+/// The counts of the last [`BuiltinInput`] finished on this thread (the
+/// session finishes its input on the caller's thread).
+#[cfg(test)]
+pub(crate) fn take_finished_counts() -> Option<Counts> {
+    FINISHED.with(|f| f.take())
 }
 
 /// Raw frames encoded in-process.
@@ -257,6 +300,11 @@ impl BuiltinInput {
             what,
             stop,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn counts(&self) -> Counts {
+        self.counters.snapshot()
     }
 
     /// Handles one event; `false` on a stop request.
@@ -432,10 +480,10 @@ fn encode_loop(
                 return;
             }
         };
+        let took = t0.elapsed().as_micros() as u64;
         counters.encoded.fetch_add(1, Ordering::Relaxed);
-        counters
-            .encode_us
-            .fetch_add(t0.elapsed().as_micros() as u64, Ordering::Relaxed);
+        counters.encode_us.fetch_add(took, Ordering::Relaxed);
+        counters.encode_max_us.fetch_max(took, Ordering::Relaxed);
         let mut payload = Vec::with_capacity(au.data.len() + 1);
         payload.push(if au.keyframe { slrw::H264_KEYFRAME } else { 0 });
         payload.extend_from_slice(&au.data);
@@ -495,13 +543,15 @@ impl Input for BuiltinInput {
     fn finish(self: Box<Self>, _clean_eof: bool) -> Result<()> {
         let c = &self.counters;
         let encoded = c.encoded.load(Ordering::Relaxed);
+        #[cfg(test)]
+        FINISHED.with(|f| f.set(Some(c.snapshot())));
         debug!(
-            "builtin: {} frames in, {} encoded ({:.1} ms each), {} dropped before the start, \
-             {} for the frame rate, \
-             {} while the encoder was busy",
+            "builtin: {} frames in, {} encoded ({:.1} ms each, at most {:.1}), {} dropped \
+             before the start, {} for the frame rate, {} while the encoder was busy",
             c.frames.load(Ordering::Relaxed),
             encoded,
             c.encode_us.load(Ordering::Relaxed) as f64 / encoded.max(1) as f64 / 1000.0,
+            c.encode_max_us.load(Ordering::Relaxed) as f64 / 1000.0,
             c.dropped_early.load(Ordering::Relaxed),
             c.dropped_rate.load(Ordering::Relaxed),
             c.dropped_busy.load(Ordering::Relaxed),
@@ -918,17 +968,40 @@ pub(crate) mod tests {
             .iter()
             .filter(|f| f.track == TrackKind::Video)
             .collect();
-        // 30 frames at 60 fps cut to 30 fps (the first may come before
-        // the first next_frame call and be dropped).
-        assert!((11..=15).contains(&video.len()), "{}", video.len());
-        assert!(video[0].keyframe && video[0].pts == 0);
-        assert!(video.windows(2).all(|p| p[1].pts > p[0].pts));
+        // Every record is accounted for: read, then dropped before the
+        // first next_frame call, cut for the frame rate, dropped while the
+        // encoder was busy (how many depends on machine load), or encoded.
+        let c = input.counts();
+        assert_eq!(c.frames, 30, "{c:?}");
+        assert_eq!(c.early + c.rate + c.busy + c.encoded, 30, "{c:?}");
+        assert_eq!(video.len() as u64, c.encoded, "{c:?}");
+        // Media time starts with the first record after the gate opened:
+        // this frame, or the audio of the record whose video came just
+        // before (one game frame, 1500 ticks, earlier).
+        assert!(video[0].keyframe, "{c:?}");
+        assert!([0, 1500].contains(&video[0].pts), "{} {c:?}", video[0].pts);
+        // 60 fps cut to 30 fps: kept frames are at least two game frames
+        // (33.3 ms, 3000 ticks) apart, and a frame is only cut right after
+        // a kept one (so without busy drops, every other frame is kept).
+        assert!(
+            video.windows(2).all(|p| p[1].pts >= p[0].pts + 2999),
+            "{:?}",
+            video.iter().map(|f| f.pts).collect::<Vec<_>>()
+        );
+        assert!(c.rate <= c.encoded, "{c:?}");
+        assert!(c.busy > 0 || c.encoded - c.rate <= 1, "{c:?}");
+        // Audio is never dropped for the encoder: 800 samples per record
+        // from the first record after the gate opened (the gate may open
+        // between a record's video and its audio), in 352-sample frames.
         let pcm = frames
             .iter()
             .filter(|f| f.track == TrackKind::Audio(AudioFamily::AirPlay))
-            .count();
-        // (A record or two may arrive before the first next_frame call.)
-        assert!((50..=30 * 800 / 352).contains(&pcm), "{pcm}");
+            .count() as u64;
+        let kept = 30 - c.early;
+        assert!(
+            (kept * 800 / 352..=(kept + 1) * 800 / 352).contains(&pcm),
+            "{pcm} {c:?}"
+        );
         assert!(input.request_keyframe());
         Box::new(input).finish(true).unwrap();
     }
@@ -983,24 +1056,44 @@ pub(crate) mod tests {
         assert!(!first(s, "nv12").unwrap());
     }
 
+    /// How late a frame may reach the session: it can wait for the
+    /// [`VIDEO_QUEUE`] frames ahead of it and its own encode, which on a
+    /// loaded machine (other builds, the debug-build encoder) takes far
+    /// longer than on an idle one, plus scheduling noise. This does not
+    /// hide start-up backlog: that would make frames early, not late.
+    fn latency_bound(c: &Counts) -> Duration {
+        Duration::from_millis(150) + c.encode_max * (VIDEO_QUEUE as u32 + 1)
+    }
+
     /// Opens late (like a session whose sinks take a while to start) and
     /// checks that no frame is ahead of its pts on the clock that starts
     /// with the first `next_frame`: nothing generated or read before was
     /// queued up (that would add the start-up time to the latency).
-    fn assert_on_schedule(mut input: BuiltinInput, frames: usize) {
+    /// Returns the input's counts.
+    fn assert_on_schedule(mut input: BuiltinInput, frames: usize) -> Counts {
         std::thread::sleep(Duration::from_millis(300));
         let go = Instant::now();
         let mut video = Vec::new();
+        let mut ended = false;
         while video.len() < frames {
             let Some(f) = input.next_frame().unwrap() else {
+                ended = true;
                 break;
             };
             if f.track == TrackKind::Video {
                 video.push((go.elapsed(), f.pts));
             }
         }
-        assert!(video.len() >= frames / 2, "{}", video.len());
-        assert!(video[0].0 < Duration::from_millis(100), "{:?}", video[0]);
+        let c = input.counts();
+        if ended {
+            // Fewer frames only when the encoder dropped some while busy,
+            // and then every one of them is accounted for.
+            assert_eq!(video.len() as u64, c.encoded, "{c:?}");
+            assert_eq!(c.early + c.rate + c.busy + c.encoded, c.frames, "{c:?}");
+        }
+        assert!(video.len() >= 2, "{c:?}");
+        let late = latency_bound(&c);
+        assert!(video[0].0 < late, "{:?} {c:?}", video[0]);
         assert_eq!(video[0].1, 0);
         for &(at, pts) in &video {
             let due = Duration::from_micros(pts * 1000 / 90);
@@ -1008,9 +1101,10 @@ pub(crate) mod tests {
                 at + Duration::from_millis(40) >= due,
                 "frame with pts {due:?} out at {at:?}"
             );
-            assert!(at < due + Duration::from_millis(150), "{at:?} vs {due:?}");
+            assert!(at < due + late, "{at:?} vs {due:?}, {c:?}");
         }
         Box::new(input).finish(false).unwrap();
+        c
     }
 
     #[test]
@@ -1025,7 +1119,9 @@ pub(crate) mod tests {
             gop: 30,
         };
         let input = BuiltinInput::test_pattern(out, 48_000, vec![], never).unwrap();
-        assert_on_schedule(input, 15);
+        let c = assert_on_schedule(input, 15);
+        // The pattern made nothing before the session pulled.
+        assert_eq!(c.early, 0, "{c:?}");
     }
 
     #[test]
@@ -1054,7 +1150,9 @@ pub(crate) mod tests {
         };
         // 0.8 s of game frames, starting right away.
         let input = BuiltinInput::open_slrw_with(raw_stream(48, 64, 36), opts, never).unwrap();
-        assert_on_schedule(input, 20);
+        let c = assert_on_schedule(input, 20);
+        // What the game sent in the 300 ms before was read and dropped.
+        assert!(c.early > 0, "{c:?}");
     }
 
     #[test]
@@ -1075,19 +1173,43 @@ pub(crate) mod tests {
         };
         let fams = vec![(AudioFamily::AirPlay, AudioOut::Pcm { frame_samples: 352 })];
         let mut input = BuiltinInput::test_pattern(out, 44_100, fams, soon).unwrap();
+        // Pull until the frame at media time 0.5 s (45000 ticks) arrives.
         let t0 = Instant::now();
-        let mut video = 0;
-        let mut audio = 0;
-        while t0.elapsed() < Duration::from_millis(500) {
+        let mut video = Vec::new();
+        let mut audio = 0u64;
+        while video.last().is_none_or(|&pts| pts < 45_000) {
             match input.next_frame().unwrap() {
-                Some(f) if f.track == TrackKind::Video => video += 1,
+                Some(f) if f.track == TrackKind::Video => video.push(f.pts),
                 Some(_) => audio += 1,
-                None => break,
+                None => panic!("the pattern ended"),
             }
         }
+        let elapsed = t0.elapsed();
+        let c = input.counts();
         CALLS.store(1, Ordering::SeqCst);
-        assert!((12..=17).contains(&video), "{video}");
-        assert!(audio > 40, "{audio}");
+        // Never ahead of real time; behind only by the encoder's latency.
+        assert!(elapsed + Duration::from_millis(40) >= Duration::from_millis(500));
+        assert!(
+            elapsed < Duration::from_millis(500) + latency_bound(&c),
+            "{elapsed:?} {c:?}"
+        );
+        // 30 fps on the media clock: frames 0..=15 were all generated
+        // (the encoder may have dropped some while busy), none ahead.
+        assert!(
+            (16..=1 + elapsed.as_micros() as u64 * 30 / 1_000_000).contains(&c.frames),
+            "{elapsed:?} {c:?}"
+        );
+        assert_eq!(video[0], 0);
+        assert!(
+            video
+                .windows(2)
+                .all(|p| p[1] > p[0] && (p[1] - p[0]) % 3000 == 0),
+            "{video:?}"
+        );
+        assert!(video.len() as u64 + c.busy <= c.frames, "{c:?}");
+        // The beep is never dropped: 0.5 s at 44.1 kHz in 352-sample
+        // frames are out before the video frame at 0.5 s.
+        assert!(audio >= 22_050 / 352 - 1, "{audio}");
         assert!(input.next_frame().unwrap().is_none() || soon());
         Box::new(input).finish(false).unwrap();
     }

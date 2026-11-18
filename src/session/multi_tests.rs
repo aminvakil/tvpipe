@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::tests::{fake_airplay, never, opts, FinishAfter};
+use super::tests::{assert_cast_frames, fake_airplay, never, opts, SharedTally, Tallied};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
@@ -117,16 +117,15 @@ fn mixed_receivers_share_one_timeline() {
     });
     let seen_mirror = Mutex::new(None);
     let (cast_log, airplay_log) = (Schedule::default(), Schedule::default());
-    let observed = |inner, ms, log: &Schedule| -> Box<dyn Sink> {
-        Box::new(FinishAfter {
-            inner: Box::new(Observed {
-                inner,
-                delay: Some(Duration::from_millis(ms)),
-                clock: None,
-                log: log.clone(),
-            }),
-            left: 24,
-        })
+    let (cast_tally, airplay_tally) = (SharedTally::default(), SharedTally::default());
+    let observed = |inner, ms, log: &Schedule, tally: &SharedTally| -> Box<dyn Sink> {
+        let inner = Box::new(Observed {
+            inner,
+            delay: Some(Duration::from_millis(ms)),
+            clock: None,
+            log: log.clone(),
+        });
+        Tallied::boxed(inner, Some(24), tally)
     };
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         match t {
@@ -134,6 +133,7 @@ fn mixed_receivers_share_one_timeline() {
                 Box::new(cast::connect(*addr, name, c)?),
                 80,
                 &cast_log,
+                &cast_tally,
             )),
             Target::AirPlay { .. } => {
                 *seen_mirror.lock().unwrap() = Some(m.clone());
@@ -145,6 +145,7 @@ fn mixed_receivers_share_one_timeline() {
                     fake_airplay(&fake, "fake-airplay", &m)?,
                     150,
                     &airplay_log,
+                    &airplay_tally,
                 ))
             }
         }
@@ -235,20 +236,33 @@ fn mixed_receivers_share_one_timeline() {
     }
 }
 
-/// Cast targets connect to the fake; the AirPlay ones to `fake`.
+/// What the Cast and the AirPlay sinks accepted.
+#[derive(Default)]
+struct Tallies {
+    cast: SharedTally,
+    airplay: SharedTally,
+}
+
+/// Cast targets connect to the fake; the AirPlay ones to `fake`. Every
+/// sink counts into `tallies`.
 fn mixed_connector<'a>(
     fake: &'a FakeMirror,
     cast_limit: Option<usize>,
     airplay_limit: Option<usize>,
+    tallies: &'a Tallies,
 ) -> impl Fn(&Target, &CastOptions, &MirrorOptions) -> Result<Box<dyn Sink>> + Sync + 'a {
     move |t, c, m| {
-        let (sink, limit): (Box<dyn Sink>, _) = match t {
-            Target::Cast { addr, name } => (Box::new(cast::connect(*addr, name, c)?), cast_limit),
-            Target::AirPlay { .. } => (fake_airplay(fake, "fake-airplay", m)?, airplay_limit),
-        };
-        Ok(match limit {
-            Some(left) => Box::new(FinishAfter { inner: sink, left }),
-            None => sink,
+        Ok(match t {
+            Target::Cast { addr, name } => Tallied::boxed(
+                Box::new(cast::connect(*addr, name, c)?),
+                cast_limit,
+                &tallies.cast,
+            ),
+            Target::AirPlay { .. } => Tallied::boxed(
+                fake_airplay(fake, "fake-airplay", m)?,
+                airplay_limit,
+                &tallies.airplay,
+            ),
         })
     }
 }
@@ -262,7 +276,8 @@ fn unreachable_receiver_is_left_out() {
     let rx = FakeReceiver::spawn(CastFake::default());
     let fake = FakeMirror::start(Behaviour::default());
     // Nothing listens on port 1: that receiver's connect fails.
-    let connect = mixed_connector(&fake, Some(10), Some(10));
+    let tallies = Tallies::default();
+    let connect = mixed_connector(&fake, Some(10), Some(10), &tallies);
     let o = pattern_opts(vec![
         rx.addr.to_string(),
         "cast:127.0.0.1:1".into(),
@@ -273,9 +288,16 @@ fn unreachable_receiver_is_left_out() {
     let st = state.lock().unwrap();
     assert!(st.stopped);
     let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
-    assert_eq!(v.frames.len(), 10);
+    // Both reachable receivers were streamed to until they had their 10
+    // (what a sink drops on a loaded machine never arrives).
+    let (tc, ta) = (
+        *tallies.cast.lock().unwrap(),
+        *tallies.airplay.lock().unwrap(),
+    );
+    assert_eq!((tc.video, ta.video), (10, 10), "{tc:?} {ta:?}");
+    assert_cast_frames(&v.frames, tc.video_accepted);
     assert!(fake.rec().teardown);
-    assert_eq!(airplay_frames(&fake), 10);
+    assert_eq!(airplay_frames(&fake) as u64, ta.video_accepted, "{ta:?}");
 
     // Nobody reachable: the session fails with the connect error.
     let o = pattern_opts(vec!["cast:127.0.0.1:1".into(), "cast:127.0.0.1:2".into()]);
@@ -291,14 +313,17 @@ fn airplay_receiver_leaving_does_not_stop_cast() {
         close_after_packets: Some(8),
         ..Behaviour::default()
     });
-    let connect = mixed_connector(&fake, Some(45), None);
+    let tallies = Tallies::default();
+    let connect = mixed_connector(&fake, Some(45), None, &tallies);
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
     play_with(o, no_io(), &connect, never).unwrap();
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     assert!(st.stopped);
     let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
-    assert_eq!(v.frames.len(), 45);
+    let tc = *tallies.cast.lock().unwrap();
+    assert_eq!(tc.video, 45, "{tc:?}");
+    assert_cast_frames(&v.frames, tc.video_accepted);
     assert!(airplay_frames(&fake) <= 8);
 }
 
@@ -306,7 +331,8 @@ fn airplay_receiver_leaving_does_not_stop_cast() {
 fn cast_receiver_leaving_does_not_stop_airplay() {
     let rx = FakeReceiver::spawn(CastFake::default());
     let fake = FakeMirror::start(Behaviour::default());
-    let connect = mixed_connector(&fake, None, Some(45));
+    let tallies = Tallies::default();
+    let connect = mixed_connector(&fake, None, Some(45), &tallies);
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
     // The Cast receiver goes away (control channel closed) after ~0.4 s.
     let killer = std::thread::spawn(move || {
@@ -316,10 +342,12 @@ fn cast_receiver_leaving_does_not_stop_airplay() {
     let t0 = Instant::now();
     play_with(o, no_io(), &connect, never).unwrap();
     let state = killer.join().unwrap();
-    // 45 frames at 30 fps: the AirPlay receiver got all of them, well
-    // after the Cast one left.
+    // 45 frames at 30 fps: the AirPlay sink was given all of them, well
+    // after the Cast one left, and its receiver got what it accepted.
     assert!(t0.elapsed() >= Duration::from_millis(1400));
-    assert_eq!(airplay_frames(&fake), 45);
+    let ta = *tallies.airplay.lock().unwrap();
+    assert_eq!(ta.video, 45, "{ta:?}");
+    assert_eq!(airplay_frames(&fake) as u64, ta.video_accepted, "{ta:?}");
     assert!(fake.rec().teardown);
     let st = state.lock().unwrap();
     let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
@@ -337,7 +365,8 @@ fn stop_request_tears_every_receiver_down() {
     let rx = FakeReceiver::spawn(CastFake::default());
     let fake = FakeMirror::start(Behaviour::default());
     // No frame limit: the test pattern runs until the stop request.
-    let connect = mixed_connector(&fake, None, None);
+    let tallies = Tallies::default();
+    let connect = mixed_connector(&fake, None, None, &tallies);
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
     let stopper = std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(700));
