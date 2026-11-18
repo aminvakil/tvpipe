@@ -22,3 +22,7 @@ Isolation is by instruction only, not by sandbox.
 | 2026-11-18 | subagent `w9-passthrough` | clean implementer W9 | repo, ISO BMFF/QuickTime docs, ffmpeg/ffprobe black-box | `src/media/{mp4,input,passthrough}.rs`, SLRW |
 | 2026-11-18 | subagent `w10-aac` | clean implementer W10 | repo, ISO/IEC 14496-3 descriptions, papers; ffmpeg as decode oracle | `src/media/aacenc/**` |
 | 2026-11-18 | subagent `w11-h264enc` | clean implementer W11 | repo, ITU-T H.264, papers, openh264 (BSD-2); ffmpeg as decode oracle | `src/media/h264enc/**`, `src/media/convert.rs` |
+
+Note (W7): while checking FairPlay call signatures, `w7-mirror` read the
+bodies of `FpSession`'s public methods in `src/airplay/fairplay/mod.rs`
+(LGPL port). It used only the public API and copied nothing.
