@@ -838,7 +838,14 @@
       if (ctx.state !== 'running') ctx.resume().catch(function () {});
       self._log('info', 'audio: ' + ctx.sampleRate + ' Hz context, sent as ' + rate + ' Hz ' + ch + ' ch');
     };
-    var load = function () { return self.audioCtx.audioWorklet.addModule(url); };
+    // A page with an opaque origin (file://) cannot load a blob: module;
+    // a data: URL works there.
+    var load = function () {
+      var w = self.audioCtx.audioWorklet;
+      return w.addModule(url).catch(function () {
+        return w.addModule('data:text/javascript;base64,' + btoa(WORKLET));
+      });
+    };
     return load().then(function () {
       try {
         connect();
