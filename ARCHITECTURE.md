@@ -9,6 +9,11 @@ their **real-time mirroring** protocols: AirPlay screen mirroring, and Cast
 Streaming (the Chromecast mirroring app, RTP/RTCP over UDP). It does not use
 URL playback, because that path cannot reach low latency.
 
+One more receiver lives on the same machine: `--to browser` serves a
+player page on 127.0.0.1 that decodes the stream with WebCodecs and plays
+it in a browser tab, on the same timeline as the TVs (see
+[Browser Player](#browser-player)).
+
 ## One Code Path for Every OS
 
 `tvpipe` uses only `std::net`, `std::process` and `std::fs`. It uses no OS
@@ -119,6 +124,18 @@ payload`.
   - `--latency` overrides both.
 
 Measured glass to glass: ~250 ms on an Apple TV 4K over Wi-Fi.
+
+## Browser Player
+
+`--to browser` (and `tvpipe preview`) is a sink like the others. It
+serves a page on 127.0.0.1 behind a random token and a loopback `Host`
+check, and sends each tab the decoder configuration, then one SLRW record
+per WebSocket message: H.264 access units and PCM, each stamped with the
+frame's instant on the session clock. The page learns tvpipe's clock by
+ping/pong, decodes with `VideoDecoder`, and presents video and audio
+(Web Audio) one playout delay after that instant, like the TVs. Each tab
+has its own queue and writer thread, so a slow tab only drops its own
+frames. Protocol: `docs/player-protocol.md`.
 
 ## Fanout
 

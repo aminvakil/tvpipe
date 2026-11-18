@@ -65,6 +65,7 @@ tvpipe unpair NAME|ADDR
 tvpipe play --to NAME|ADDR [--to ...] [OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)
 tvpipe test-pattern --to NAME|ADDR [OPTIONS]
 tvpipe share --to NAME|ADDR [--open] [--port PORT] [OPTIONS]
+tvpipe preview [--open] [--port PORT] [OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]
 tvpipe debug-pipeline [OPTIONS] INPUT
 ```
 
@@ -79,6 +80,7 @@ command with `--help` to see all of its options.
 | `192.168.1.20` | Cast on port 8009 (no discovery) |
 | `192.168.1.20:7000` | AirPlay on port 7000 (no discovery) |
 | `airplay:NAME` / `cast:NAME` | force a protocol (for TVs that speak both) |
+| `browser` | a player page in a browser tab on this computer (below) |
 
 A device that advertises both protocols uses Cast unless you write
 `airplay:`. You can repeat `--to` to stream to several receivers at once.
@@ -114,16 +116,53 @@ centered (black bars), at the capture's size up to what the TV allows.
 Stopping the share or closing the page ends the session. Protocol:
 `docs/share-protocol.md`.
 
+### Playing in a browser (`--to browser`, `preview`)
+
+```sh
+# Preview a file, a capture or the test pattern (no INPUT) in a browser tab
+tvpipe preview --open movie.mp4
+tvpipe preview --open
+
+# A browser tab next to a TV, on the same timeline
+tvpipe play --to "Living Room" --to browser movie.mp4
+```
+
+`--to browser` is a receiver like a TV: tvpipe serves a player page on
+127.0.0.1 and prints its URL (`--open` opens it, `--port` fixes the port).
+The page decodes H.264 with WebCodecs and plays PCM with Web Audio
+(Chrome, Edge, Safari 16.4+, Firefox 130+), in step with the other
+receivers. Any number of tabs can watch; a tab that joins later starts at
+the next keyframe. Without a tab, the stream runs anyway (frames are
+dropped); `--wait-for-viewer` holds the start until a tab is open.
+`preview` is `play --to browser`.
+
+On the page: double-click or `F` for fullscreen, `S` for statistics
+(delay, frame rate, drops, the wallclock of the shown frame). The
+controls and the cursor hide when the mouse rests. Browsers start audio
+only after a click: click the page once (the "Click for sound" button).
+URL options: `&delay=MS` (the page's own playout delay), `&stats=1`,
+`&ui=0` (never any overlay).
+
+- **OBS:** add the URL as a browser source with `&ui=0`; "Control audio
+  via OBS" routes its sound into the mix (not yet tried with OBS itself).
+- **Video calls:** present the tab in Meet, Zoom or Teams (share the tab
+  with its audio); see `docs/meet.md`. A larger `&delay=` (e.g. 500)
+  trades latency for a steadier picture there.
+
+The delay is `--latency`, or the TVs' (300 ms with Cast) when there are
+any, else 100 ms. Protocol and design: `docs/player-protocol.md`.
+
 Useful `play` options:
 
 | Option | Default | |
 |---|---|---|
-| `--latency MS` | Cast 300 ms; AirPlay automatic (video 100, audio 170 ms); both 300 ms when mixed | playout delay, the same on every receiver (5–2000) |
+| `--latency MS` | Cast 300 ms; AirPlay automatic (video 100, audio 170 ms); both 300 ms when mixed; browser alone 100 ms | playout delay, the same on every receiver (5–2000) |
 | `--size WxH`, `--fps N`, `--bitrate KBPS` | from the input and the receivers | output limits |
 | `--encoder` | `auto` | `builtin`, `x264`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `mf` |
 | `--no-audio` | | video only |
 | `--loop` | | loop the input |
 | `--realtime` / `--no-realtime` | real time for files | pace the input |
+| `--open`, `--port PORT`, `--wait-for-viewer` | | the `--to browser` page |
 
 ### When ffmpeg is used
 
