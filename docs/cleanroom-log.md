@@ -22,6 +22,7 @@ Isolation is by instruction only, not by sandbox.
 | 2026-11-18 | subagent `w9-passthrough` | clean implementer W9 | repo, ISO BMFF/QuickTime docs, ffmpeg/ffprobe black-box | `src/media/{mp4,input,passthrough}.rs`, SLRW |
 | 2026-11-18 | subagent `w10-aac` | clean implementer W10 | repo, ISO/IEC 13818-7:2004 text (PDF found via web search on ossrs.net; tables transcribed by script, standard not committed), ffmpeg as decode oracle; no encoder source read | `src/media/aacenc/**` (done) |
 | 2026-11-18 | subagent `w11-h264enc` | clean implementer W11 | repo, ITU-T H.264, papers, openh264 (BSD-2); ffmpeg as decode oracle | `src/media/h264enc/**`, `src/media/convert.rs` |
+| 2026-11-18 | subagent `cross-platform` | clean implementer (portability) | repo, ffmpeg 6.1/7.1/8.1 black-box, Docker Linux, zig; no tainted sources | ffmpeg raw-input probesize, `.gitattributes`, test profile, `scripts/cross-check.sh`, CI, `docs/cross-platform.md` |
 
 Note (W7): while checking FairPlay call signatures, `w7-mirror` read the
 bodies of `FpSession`'s public methods in `src/airplay/fairplay/mod.rs`
