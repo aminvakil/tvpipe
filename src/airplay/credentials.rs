@@ -53,7 +53,10 @@ pub fn config_dir() -> Result<PathBuf> {
     // tests (which set TVPIPE_ATV) do on purpose.
     #[cfg(test)]
     if std::env::var_os("TVPIPE_ATV").is_none() {
-        return Ok(std::env::temp_dir().join(format!("tvpipe-test-config-{}", std::process::id())));
+        return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp")
+            .join(format!("config-{}", std::process::id())));
     }
     platform_config_dir()
         .map(|d| d.join("tvpipe"))
@@ -86,27 +89,24 @@ fn platform_config_dir() -> Option<PathBuf> {
 /// The default store path: `config_dir()/credentials.txt`.
 pub fn default_path() -> Result<PathBuf> {
     let dir = config_dir()?;
-    if env_path(CONFIG_DIR_ENV).is_none() {
-        migrate_legacy_dir(&dir);
+    // Only the platform directory has a legacy one next to it: not
+    // `$TVPIPE_CONFIG_DIR`, and not the unit tests' temporary directory
+    // (which must never take the user's real credentials).
+    if let Some(base) = platform_config_dir().filter(|b| dir == b.join("tvpipe")) {
+        migrate_legacy_dir(&base.join("streamlib"), &dir);
     }
     Ok(dir.join(FILE_NAME))
 }
 
 /// The project used to be called `streamlib`; move its config directory
-/// (with the pairing credentials) to the new name once, so nobody has to
-/// pair again. Best effort: on failure the old directory stays and is
-/// ignored.
-fn migrate_legacy_dir(dir: &std::path::Path) {
-    if dir.exists() {
+/// `old` (with the pairing credentials) to the new name `dir` once, so
+/// nobody has to pair again. Best effort: on failure the old directory
+/// stays and is ignored.
+fn migrate_legacy_dir(old: &Path, dir: &Path) {
+    if dir.exists() || !old.is_dir() {
         return;
     }
-    let Some(old) = platform_config_dir().map(|d| d.join("streamlib")) else {
-        return;
-    };
-    if !old.is_dir() {
-        return;
-    }
-    match std::fs::rename(&old, dir) {
+    match std::fs::rename(old, dir) {
         Ok(()) => info!(
             "moved the old config directory {} to {}",
             old.display(),
@@ -664,6 +664,41 @@ pub(crate) mod tests {
         assert!(Store::parse(p, &bad_pk).is_err());
         let unknown = format!("# c\n{ok}\nfuture = 1\nx = y\n\ngarbage line\n");
         assert!(Store::parse(p, &unknown).is_ok());
+    }
+
+    /// Unit tests never use (or migrate into a scratch directory) the
+    /// user's real config directory.
+    #[test]
+    fn tests_use_a_scratch_config_dir() {
+        if std::env::var_os("TVPIPE_ATV").is_some() || env_path(CONFIG_DIR_ENV).is_some() {
+            return;
+        }
+        let path = default_path().unwrap();
+        assert!(path.starts_with(env!("CARGO_MANIFEST_DIR")), "{path:?}");
+        if let Some(real) = platform_config_dir() {
+            assert!(!path.starts_with(real), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn legacy_dir_moves_once() {
+        let root = temp_dir("credentials-migrate");
+        let (old, dir) = (root.join("streamlib"), root.join("tvpipe"));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join(FILE_NAME), "x").unwrap();
+        migrate_legacy_dir(&old, &dir);
+        assert!(!old.exists());
+        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "x");
+        // An existing new directory wins; the old one is left alone.
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join(FILE_NAME), "y").unwrap();
+        migrate_legacy_dir(&old, &dir);
+        assert_eq!(std::fs::read_to_string(old.join(FILE_NAME)).unwrap(), "y");
+        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "x");
+        // Nothing to move.
+        migrate_legacy_dir(&root.join("missing"), &root.join("new"));
+        assert!(!root.join("new").exists());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
