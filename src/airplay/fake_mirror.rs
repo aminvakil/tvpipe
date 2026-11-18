@@ -63,6 +63,8 @@ pub struct Behaviour {
     pub force_keyframe: bool,
     /// Omit the `X-Apple-*` timing headers (like the modelled LG).
     pub no_timing_headers: bool,
+    /// Accept the data connection but never read from it.
+    pub stall_data: bool,
 }
 
 impl Default for Behaviour {
@@ -74,6 +76,7 @@ impl Default for Behaviour {
             teardown_eof: false,
             force_keyframe: false,
             no_timing_headers: false,
+            stall_data: false,
         }
     }
 }
@@ -335,6 +338,12 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
     let ctx = ctx.clone();
     thread::spawn(move || {
         let Ok((mut s, _)) = l.accept() else { return };
+        if ctx.behaviour.stall_data {
+            while !ctx.close_data.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(20));
+            }
+            return;
+        }
         s.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
         let key = keys::video_key(&ctx.secret, stream_id).unwrap();
         let cipher = ChaCha20Poly1305::new(&key);

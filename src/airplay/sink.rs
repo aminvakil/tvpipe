@@ -1278,6 +1278,42 @@ mod tests {
     }
 
     #[test]
+    fn stalled_receiver_fails_the_sink() {
+        let fake = FakeMirror::start(Behaviour {
+            stall_data: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), None).unwrap();
+        let (_, sps, pps) = avcc();
+        let big = |i: u64| {
+            let mut f = video(i, &sps, &pps);
+            let mut d = f.data.to_vec();
+            d.extend(nal(&vec![0x41; 256 * 1024]));
+            f.data = d.into();
+            f
+        };
+        let t0 = Instant::now();
+        let mut dropped = 0;
+        let err = loop {
+            assert!(t0.elapsed() < Duration::from_secs(20), "never failed");
+            match sink.push(&big(dropped % 15)) {
+                Ok(SinkStatus::Dropped) => dropped += 1,
+                Ok(_) => {}
+                Err(e) => break e,
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert!(dropped > 0, "queue never filled");
+        assert!(sink.wants_keyframe());
+        assert_eq!(err.kind(), crate::error::ErrorKind::Timeout, "{err}");
+        let t = Instant::now();
+        sink.stop().unwrap();
+        assert!(t.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
     fn eof_after_teardown_is_a_clean_stop() {
         let fake = FakeMirror::start(Behaviour {
             teardown_eof: true,
