@@ -14,23 +14,27 @@ sources. `src/airplay/fairplay/` is an LGPL port: call its public API
 only, don't read its internals for protocol details beyond the doc
 comments, and don't copy from it.
 
-- [ ] Session setup per the spec: pair-verify (`pair::connect`), FairPlay
+- [x] Session setup per the spec: pair-verify (`pair::connect`), FairPlay
       (`fairplay::fp_setup`), SETUP #1, event channel, SETUP #2 (video 110 +
       audio 96), RECORD, volume, `/feedback` keep-alive, `/info` refresh,
       TEARDOWN; timeouts and failure rules exactly as specified.
-- [ ] Video data channel: 128-byte headers, codec (avcC) packets,
+- [x] Video data channel: 128-byte headers, codec (avcC) packets,
       ChaCha20-Poly1305 video (our path) and AES-CTR (legacy), heartbeats.
-- [ ] Timing: PTP anchoring from response headers, NTP responder (legacy).
-- [ ] Audio: RTP, ALAC — from our `PcmS16le` 352-sample frames wrapped as
+- [x] Timing: PTP anchoring from response headers, NTP responder (legacy).
+- [x] Audio: RTP, ALAC — from our `PcmS16le` 352-sample frames wrapped as
       verbatim (uncompressed) ALAC (ffmpeg's ALAC encoder can't do 352),
       ChaCha audio on our path, AES-CBC legacy; sync packets; control port;
       RFC 2198 redundancy as the spec says (note: verbatim frames are too
       big for redundancy).
-- [ ] `MirrorSink: types::Sink` and `airplay::connect_mirror(...)`, wired by
+- [x] `MirrorSink: types::Sink` and `airplay::connect_mirror(...)`, wired by
       you into `session.rs` (`play` currently rejects AirPlay targets with
       "not implemented yet (M6)"; replace that path). You may edit
       `session.rs` for this; keep the Cast path working.
-- [ ] Vector tests for every byte layout in the spec's vectors.
+- [x] Vector tests for every byte layout in the spec's vectors.
+
+Integration notes: `docs/decisions/0006-airplay-mirror-sink.md`. The Apple
+TV accepts the whole session (protocol level); picture/sound confirmation
+by the human pending.
 
 Done when: `streamlib play --to "Livingroom (2)" FILE` and
 `streamlib test-pattern --to "Livingroom (2)"` show picture and play sound
