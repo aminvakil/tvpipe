@@ -228,7 +228,12 @@ static PLAY: Cli<PlayArg> = Cli::new("play")
 
 static TEST_PATTERN: Cli<PlayArg> = Cli::new("test-pattern")
     .about("Stream a test pattern with a burned-in wallclock for latency measurement")
-    .opts(PLAY_OPTS);
+    .opts(PLAY_OPTS)
+    .after_help(
+        "The pattern (UTC clock in ms, frame counter, a beep and a flash every second) is \
+         generated and encoded in-process; ffmpeg is not needed. Naming an ffmpeg encoder \
+         (e.g. --encoder x264) streams ffmpeg's testsrc2 instead.",
+    );
 
 static SHARE: Cli<ShareArg> = Cli::new("share")
     .about("Mirror a browser tab, window or screen (serves a capture page on 127.0.0.1)")

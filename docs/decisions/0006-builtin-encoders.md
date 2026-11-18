@@ -28,6 +28,13 @@ when ffmpeg cannot be found (the test pattern also when ffmpeg lacks
 in the UTC wallclock in milliseconds and a frame counter, with a 1 kHz
 beep and a white flash for the first 100 ms of every second.
 
+Update: the built-in pattern is now better than ffmpeg's `testsrc2` +
+`drawtext` in every respect (millisecond UTC clock, beep/flash, no
+font dependency), so `test-pattern` uses it with `--encoder auto` too,
+whether or not ffmpeg (or `drawtext`) is available, and logs nothing
+about it. Naming an ffmpeg encoder (`--encoder x264` etc.) still streams
+`testsrc2` through ffmpeg; a missing `drawtext` there is a debug line.
+
 Clean room for C: ITU-T H.264 and ISO/IEC 14496-3 (and public papers,
 textbooks, Wikipedia) are fine; permissive code (openh264 BSD-2) may be
 read with attribution. Do **not** read copyleft encoders: x264 (GPL),

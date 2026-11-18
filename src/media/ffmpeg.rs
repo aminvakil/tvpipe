@@ -369,7 +369,7 @@ fn push_inputs(
                          :x=20:y=20:fontsize=48:fontcolor=white:box=1:boxcolor=black",
                     );
                 } else {
-                    warn!("ffmpeg lacks the drawtext filter; test pattern without wallclock");
+                    debug!("ffmpeg lacks the drawtext filter; test pattern without wallclock");
                 }
             }
             push_realtime(a, probe);

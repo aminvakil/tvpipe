@@ -662,8 +662,8 @@ enum EndReason {
     ReceiversGone,
 }
 
-/// ffmpeg, located and probed on first use: passthrough and encoded SLRW
-/// never need it.
+/// ffmpeg, located and probed on first use: passthrough, encoded SLRW and
+/// the built-in test pattern never need it.
 struct Tools<'a> {
     explicit: Option<&'a Path>,
     found: Option<(std::path::PathBuf, ffmpeg::Probe)>,
@@ -712,9 +712,10 @@ enum Route {
 }
 
 /// Whether raw SLRW input or the test pattern goes through the built-in
-/// encoder instead of ffmpeg: when asked (`--encoder builtin`), or with
-/// `--encoder auto` when ffmpeg is missing (or, for the test pattern,
-/// lacks `drawtext` for the wallclock).
+/// encoder instead of ffmpeg. The test pattern always does unless an
+/// ffmpeg encoder is named (`--encoder x264` etc. selects ffmpeg's
+/// `testsrc2`); raw input does when asked (`--encoder builtin`), or with
+/// `--encoder auto` when ffmpeg is missing.
 fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Result<bool> {
     let raw = opts.input == InputSpec::Stdin && !encoded;
     let pattern = opts.input == InputSpec::TestPattern;
@@ -730,21 +731,11 @@ fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Resu
         Encoder::Auto if raw => match tools.get() {
             Ok(_) => false,
             Err(e) => {
-                info!("{e}; encoding the raw input with the built-in H.264 encoder");
+                debug!("{e}; encoding the raw input with the built-in H.264 encoder");
                 true
             }
         },
-        Encoder::Auto if pattern => match tools.get() {
-            Ok((_, probe)) if probe.has_filter("drawtext") => false,
-            Ok(_) => {
-                info!("ffmpeg lacks the drawtext filter; using the built-in test pattern");
-                true
-            }
-            Err(e) => {
-                info!("{e}; using the built-in test pattern and H.264 encoder");
-                true
-            }
-        },
+        Encoder::Auto if pattern => true,
         _ => false,
     };
     if builtin && raw {
@@ -2574,6 +2565,27 @@ mod tests {
             ..o
         };
         assert!(use_builtin(&o, false, &mut tools).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_is_builtin_unless_an_ffmpeg_encoder_is_named() {
+        // Whatever ffmpeg is installed (and whether it has drawtext), the
+        // test pattern is the built-in one; ffmpeg is not even probed.
+        let bogus = std::path::PathBuf::from(NO_FFMPEG);
+        for ffmpeg in [None, Some(&bogus)] {
+            let mut tools = Tools::new(ffmpeg.map(|p| p.as_path()));
+            for encoder in [Encoder::Auto, Encoder::Builtin] {
+                let o = PlayOptions { encoder, ..opts() };
+                assert!(use_builtin(&o, false, &mut tools).unwrap());
+            }
+            assert!(tools.found.is_none(), "ffmpeg was probed");
+            // Naming an ffmpeg encoder selects ffmpeg's testsrc2.
+            let o = PlayOptions {
+                encoder: Encoder::X264,
+                ..opts()
+            };
+            assert!(!use_builtin(&o, false, &mut tools).unwrap());
+        }
     }
 
     #[test]

@@ -132,9 +132,11 @@ Useful `play` options:
 - **Passthrough:** an MP4/MOV/MKV file with H.264, no B-frames and a
   keyframe at least every 4 s, at a size the receivers accept, is sent
   unchanged. Nothing is re-encoded.
-- **Built-in encoders:** the test pattern and raw game frames go through the
-  built-in H.264 encoder (and the AAC encoder for Cast audio) when you pass
-  `--encoder builtin`, or when ffmpeg is not installed.
+- **Built-in encoders:** the test pattern always goes through the built-in
+  H.264 encoder (and the AAC encoder for Cast audio); naming an ffmpeg
+  encoder (`--encoder x264` etc.) streams ffmpeg's `testsrc2` instead. Raw
+  game frames use the built-in encoders when you pass `--encoder builtin`,
+  or when ffmpeg is not installed.
 - **Encoded game input:** a game that encodes H.264 itself never needs
   ffmpeg for video.
 
