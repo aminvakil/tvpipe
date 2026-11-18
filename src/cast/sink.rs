@@ -20,11 +20,13 @@
 //! target delay. If frames arrive later than their reference time by more
 //! than [`MAX_LATENESS`] (a stalled encoder), the clock is moved forward.
 //!
-//! AAC-LC goes out ADTS-framed, one access unit per Cast frame, as
-//! Chromium's Cast sender does (`media/cast/encoding/audio_encoder.cc`,
-//! `AppleAacImpl`); openscreen's receiver has no AudioSpecificConfig and
-//! cannot decode raw access units (docs/ffmpeg-optional.md). Raw units
-//! (from ffmpeg's Matroska, passthrough, `aacenc`) get the header here.
+//! AAC-LC goes out ADTS-framed by default ([`AacFraming::Adts`]), one
+//! access unit per Cast frame, as Chromium's Cast sender does
+//! (`media/cast/encoding/audio_encoder.cc`, `AppleAacImpl`); openscreen's
+//! receiver has no AudioSpecificConfig and cannot decode raw access units
+//! (docs/ffmpeg-optional.md). Raw units (from ffmpeg's Matroska,
+//! passthrough, `aacenc`) get the header here. [`AacFraming::Raw`] sends
+//! raw units instead (stripping headers), for receivers that want those.
 //!
 //! Sources: openscreen `cast/standalone_sender/looping_file_cast_agent.cc`
 //! (launch/connect/negotiate flow), `cast/streaming/sender_packet_router.cc`
@@ -83,6 +85,8 @@ pub struct CastOptions {
     /// Opus, then AAC. Offer only AAC when that is all the input has
     /// (passthrough of an AAC file, `aacenc`); receivers tend to pick Opus.
     pub audio_codecs: Vec<AudioCodec>,
+    /// How AAC access units go on the wire.
+    pub aac_framing: AacFraming,
     pub audio_sample_rate: u32,
     pub audio_channels: u8,
     /// Payload types 127/96 like Chrome (some Android TV receivers).
@@ -105,6 +109,7 @@ impl Default for CastOptions {
             max_bitrate_kbps: 10_000,
             audio: true,
             audio_codecs: vec![AudioCodec::Opus, AudioCodec::AacLc],
+            aac_framing: AacFraming::Adts,
             audio_sample_rate: 48_000,
             audio_channels: 2,
             android_rtp_hack: false,
@@ -333,6 +338,7 @@ struct Track {
     sender: StreamSender,
     /// Input pts rate (90 kHz video, AudioInfo::sample_rate audio).
     input_rate: u32,
+    /// Added to the rescaled pts (always 0; see `make_track`).
     rtp_offset: i64,
     last_rtp: Option<i64>,
 }
@@ -373,8 +379,18 @@ struct Media {
     threads: Vec<JoinHandle<()>>,
     avc: AvcConfig,
     scratch: Vec<u8>,
-    /// AAC: the ADTS header fields for raw access units.
-    adts: Option<Adts>,
+    /// AAC: how to frame units; the ADTS header fields for raw units.
+    aac: Option<(AacFraming, Adts)>,
+}
+
+/// AAC framing inside Cast frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AacFraming {
+    /// ADTS-framed units (Chromium; openscreen's receiver needs them).
+    #[default]
+    Adts,
+    /// Raw access units, ADTS headers stripped.
+    Raw,
 }
 
 /// The fixed part of an ADTS header (ISO/IEC 13818-7 §6.2): profile
@@ -417,6 +433,16 @@ impl Adts {
         data.len() >= 7 && data[0] == 0xff && data[1] & 0xf6 == 0xf0
     }
 
+    /// The raw access unit inside an ADTS frame (header of 7 bytes, 9 with
+    /// CRC); `data` itself when it is not ADTS-framed.
+    fn strip(data: &[u8]) -> &[u8] {
+        if !Self::framed(data) {
+            return data;
+        }
+        let header = if data[1] & 1 == 1 { 7 } else { 9 };
+        data.get(header..).unwrap_or_default()
+    }
+
     /// `au` with a 7-byte header (MPEG-4, no CRC, buffer fullness 0x7FF).
     fn wrap(&self, au: &[u8], out: &mut Vec<u8>) -> Result<()> {
         let len = au.len() + 7;
@@ -452,6 +478,7 @@ pub struct StreamingSink {
     negotiated: Negotiated,
     burst_bitrate: u32,
     media_relay: Option<SocketAddr>,
+    aac_framing: AacFraming,
     control_tx: ChannelSender,
     control: Option<Control>,
     control_thread: Option<JoinHandle<()>>,
@@ -493,6 +520,7 @@ impl StreamingSink {
                 .burst_bitrate
                 .unwrap_or_else(|| DEFAULT_BURST_BITRATE.max(video_bps.saturating_mul(3))),
             media_relay: opts.media_relay,
+            aac_framing: opts.aac_framing,
             control_tx,
             control: Some(control),
             control_thread: Some(thread),
@@ -546,7 +574,12 @@ impl StreamingSink {
                 first_sequence: u16::from_be_bytes(random_array()?),
             })?,
             input_rate,
-            rtp_offset: (u32::from_be_bytes(random_array()?) >> 1) as i64,
+            // RTP timestamps are the media time (pts in the stream's
+            // timebase), like openscreen's and Chromium's senders, not
+            // randomly offset as RFC 3550 suggests: a Google TV receiver
+            // (Sony XR, 2026-11-18) stops pulling audio after ~200 ms (and
+            // video freezes later) in most sessions with random offsets.
+            rtp_offset: 0,
             last_rtp: None,
         })
     }
@@ -575,7 +608,7 @@ impl Sink for StreamingSink {
             }
         }
         let avc = AvcConfig::parse(&video.avcc)?;
-        let mut adts = None;
+        let mut aac = None;
         let asel = match (self.negotiated.audio.clone(), audio) {
             (Some(sel), Some(info)) => {
                 if Codec::from_audio(info.codec) != Some(sel.offer.codec) {
@@ -585,7 +618,7 @@ impl Sink for StreamingSink {
                     )));
                 }
                 if sel.offer.codec == Codec::Aac {
-                    adts = Some(Adts::new(info)?);
+                    aac = Some((self.aac_framing, Adts::new(info)?));
                 }
                 Some((sel, info.sample_rate.max(1)))
             }
@@ -663,7 +696,7 @@ impl Sink for StreamingSink {
             threads,
             avc,
             scratch: Vec::new(),
-            adts,
+            aac,
         });
         Ok(())
     }
@@ -712,8 +745,9 @@ impl Sink for StreamingSink {
                 st.dirty = true;
             }
             TrackKind::Audio(AudioFamily::Cast) => {
-                let data = match &media.adts {
-                    Some(a) if !Adts::framed(&frame.data) => {
+                let data = match &media.aac {
+                    Some((AacFraming::Raw, _)) => Adts::strip(&frame.data),
+                    Some((AacFraming::Adts, a)) if !Adts::framed(&frame.data) => {
                         a.wrap(&frame.data, &mut media.scratch)?;
                         &media.scratch[..]
                     }
@@ -1116,12 +1150,13 @@ mod tests {
         assert!(a.wrap(&vec![0; 9000], &mut out).is_err());
     }
 
-    /// AAC offered alone; raw units arrive ADTS-framed, framed ones as is.
-    #[test]
-    fn aac_only_offer_frames_adts() {
+    /// Sends one raw and one ADTS-framed AAC unit with `framing`; returns
+    /// the two frames the receiver got.
+    fn aac_session(framing: AacFraming) -> (Vec<u8>, Vec<u8>) {
         let rx = FakeReceiver::spawn(fake_receiver::Options::default());
         let o = CastOptions {
             audio_codecs: vec![AudioCodec::AacLc],
+            aac_framing: framing,
             ..opts()
         };
         let mut sink = connect(rx.addr, "fake", &o).unwrap();
@@ -1150,7 +1185,7 @@ mod tests {
         framed.extend([0x22u8; 50]);
         let pre = EncodedFrame {
             pts: 1024,
-            data: StdArc::from(framed.clone()),
+            data: StdArc::from(framed),
             ..raw.clone()
         };
         assert_eq!(sink.push(&pre).unwrap(), SinkStatus::Accepted);
@@ -1164,10 +1199,39 @@ mod tests {
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         let s = st.streams.iter().find(|s| s.codec == "aac").unwrap();
-        let first = &s.frames[&0].data;
-        assert_eq!(&first[..7], [0xff, 0xf1, 0x4c, 0x80, 0x07, 0x3f, 0xfc]);
-        assert_eq!(&first[7..], [0x21u8; 50]);
-        assert_eq!(s.frames[&1].data, framed);
+        (s.frames[&0].data.clone(), s.frames[&1].data.clone())
+    }
+
+    /// Raw mode: raw units as is, ADTS headers stripped.
+    #[test]
+    fn aac_raw_when_asked() {
+        let (a, b) = aac_session(AacFraming::Raw);
+        assert_eq!(a, [0x21u8; 50]);
+        assert_eq!(b, [0x22u8; 50]);
+    }
+
+    /// Default: raw units get an ADTS header, framed ones pass as is.
+    #[test]
+    fn aac_adts_by_default() {
+        assert_eq!(CastOptions::default().aac_framing, AacFraming::Adts);
+        let (a, b) = aac_session(AacFraming::Adts);
+        assert_eq!(&a[..7], [0xff, 0xf1, 0x4c, 0x80, 0x07, 0x3f, 0xfc]);
+        assert_eq!(&a[7..], [0x21u8; 50]);
+        assert_eq!(&b[..7], [0xff, 0xf1, 0x4c, 0x80, 0x07, 0x3f, 0xfc]);
+        assert_eq!(&b[7..], [0x22u8; 50]);
+    }
+
+    #[test]
+    fn adts_strip() {
+        let mut f = vec![0xff, 0xf1, 0x4c, 0x80, 0x07, 0x3f, 0xfc];
+        f.extend([1, 2, 3]);
+        assert_eq!(Adts::strip(&f), [1, 2, 3]);
+        // With CRC (protection_absent = 0): 9-byte header.
+        let mut c = vec![0xff, 0xf0, 0x4c, 0x80, 0x07, 0x3f, 0xfc, 0xab, 0xcd];
+        c.extend([4, 5]);
+        assert_eq!(Adts::strip(&c), [4, 5]);
+        assert_eq!(Adts::strip(&[9, 9, 9]), [9, 9, 9]);
+        assert!(Adts::strip(&[0xff, 0xf0, 0, 0, 0, 0, 0]).is_empty());
     }
 
     use crate::cast::fake_receiver::{self, FakeReceiver};
@@ -1312,6 +1376,7 @@ mod tests {
                 "{}: no sender reports",
                 s.codec
             );
+
             if s.codec == "h264" {
                 assert_eq!(s.frames.len(), 60);
                 for (i, f) in sent_v.iter().enumerate() {
@@ -1325,15 +1390,17 @@ mod tests {
                         if f.keyframe { i as i64 } else { i as i64 - 1 }
                     );
                 }
-                let d = s.frames[&30]
-                    .rtp_timestamp
-                    .wrapping_sub(s.frames[&0].rtp_timestamp);
-                assert_eq!(d, 90_000);
+                // RTP timestamps are the pts (no random offset).
+                for (i, f) in sent_v.iter().enumerate() {
+                    assert_eq!(s.frames[&(i as i64)].rtp_timestamp as u64, f.pts);
+                }
             } else {
                 assert_eq!(s.codec, "opus");
                 assert_eq!(s.frames.len(), sent_a.len());
                 for (i, f) in sent_a.iter().enumerate() {
-                    assert_eq!(s.frames[&(i as i64)].data, &f.data[..], "audio frame {i}");
+                    let got = &s.frames[&(i as i64)];
+                    assert_eq!(got.data, &f.data[..], "audio frame {i}");
+                    assert_eq!(got.rtp_timestamp as u64, f.pts);
                 }
             }
             if loss > 0.0 {

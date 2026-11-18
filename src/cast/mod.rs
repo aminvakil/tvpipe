@@ -28,4 +28,4 @@ mod receiver_loop;
 mod testing;
 
 #[allow(unused_imports)] // wired into session.rs by the lead
-pub use sink::{connect, connect_device, CastOptions, StreamingSink};
+pub use sink::{connect, connect_device, AacFraming, CastOptions, StreamingSink};

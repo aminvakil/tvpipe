@@ -128,11 +128,39 @@ pub fn ogg_opus_packets(data: &[u8]) -> Vec<Vec<u8>> {
     packets.into_iter().skip(2).collect()
 }
 
-fn generate(secs: u64, size: &str) -> (Vec<u8>, Vec<u8>) {
+/// Raw AAC access units from an ADTS stream.
+pub fn adts_units(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos + 7 <= data.len() && data[pos] == 0xff && data[pos + 1] & 0xf0 == 0xf0 {
+        let len = (((data[pos + 3] & 3) as usize) << 11)
+            | ((data[pos + 4] as usize) << 3)
+            | (data[pos + 5] as usize >> 5);
+        let header = if data[pos + 1] & 1 == 1 { 7 } else { 9 };
+        if len < header || pos + len > data.len() {
+            break;
+        }
+        out.push(data[pos + header..pos + len].to_vec());
+        pos += len;
+    }
+    out
+}
+
+struct Generated {
+    h264: Vec<u8>,
+    opus: Vec<u8>,
+    adts: Vec<u8>,
+    /// 48 kHz stereo s16le.
+    pcm: Vec<u8>,
+}
+
+fn generate(secs: u64, size: &str) -> Generated {
     let dir = std::env::temp_dir().join(format!("tvpipe-cast-loop-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let h264 = dir.join("v.h264");
     let opus = dir.join("a.opus");
+    let aac = dir.join("a.aac");
+    let pcm = dir.join("a.pcm");
     let t = secs.to_string();
     let status = Command::new(ffmpeg())
         .args(["-hide_banner", "-loglevel", "error", "-y"])
@@ -168,10 +196,23 @@ fn generate(secs: u64, size: &str) -> (Vec<u8>, Vec<u8>) {
         .args(["-c:a", "libopus", "-b:a", "128k", "-frame_duration", "20"])
         .args(["-application", "lowdelay", "-f", "ogg"])
         .arg(&opus)
+        .args([
+            "-t", &t, "-map", "1:a", "-ac", "2", "-c:a", "aac", "-b:a", "128k",
+        ])
+        .args(["-f", "adts"])
+        .arg(&aac)
+        .args(["-t", &t, "-map", "1:a", "-ac", "2", "-f", "s16le"])
+        .arg(&pcm)
         .status()
         .expect("run ffmpeg");
     assert!(status.success(), "ffmpeg failed");
-    let out = (std::fs::read(&h264).unwrap(), std::fs::read(&opus).unwrap());
+    let read = |p| std::fs::read(p).unwrap();
+    let out = Generated {
+        h264: read(&h264),
+        opus: read(&opus),
+        adts: read(&aac),
+        pcm: read(&pcm),
+    };
     let _ = std::fs::remove_dir_all(&dir);
     out
 }
@@ -182,14 +223,17 @@ fn parses_generated_streams() {
         eprintln!("ffmpeg not found; skipping");
         return;
     }
-    let (v, a) = generate(1, "320x240");
-    let (avcc, frames) = h264_frames(&v);
+    let g = generate(1, "320x240");
+    let (avcc, frames) = h264_frames(&g.h264);
     assert_eq!(frames.len(), 30);
     assert!(frames[0].0);
     assert_eq!(frames.iter().filter(|f| f.0).count(), 1);
     assert!(super::annexb::AvcConfig::parse(&avcc).is_ok());
-    let packets = ogg_opus_packets(&a);
+    let packets = ogg_opus_packets(&g.opus);
     assert!((49..=52).contains(&packets.len()), "{}", packets.len());
+    let units = adts_units(&g.adts);
+    assert!((46..=49).contains(&units.len()), "{}", units.len());
+    assert_eq!(g.pcm.len(), 48_000 * 4);
 }
 
 /// A UDP relay that drops `loss` of the packets in each direction.
@@ -259,17 +303,46 @@ fn openscreen_receiver_loop() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
     let audio = std::env::var("TVPIPE_CAST_AUDIO").map_or(true, |v| v != "0");
+    // opus (ffmpeg, 20 ms), aac (ffmpeg, raw units) or aacenc (ours).
+    let acodec = std::env::var("TVPIPE_CAST_ACODEC").unwrap_or_else(|_| "opus".into());
+    let latency_ms: u32 = std::env::var("TVPIPE_CAST_LATENCY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400);
     let loss: f64 = std::env::var("TVPIPE_CAST_LOSS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
     crate::log::set_level(crate::log::Level::Debug);
-    let (v, a) = generate(secs, "1280x720");
-    let (avcc, vframes) = h264_frames(&v);
-    let apackets = ogg_opus_packets(&a);
+    let g = generate(secs, "1280x720");
+    let (avcc, vframes) = h264_frames(&g.h264);
+    let (codec, frame_samples, apackets) = match acodec.as_str() {
+        "opus" => (AudioCodec::Opus, 960, ogg_opus_packets(&g.opus)),
+        "aac" => (AudioCodec::AacLc, 1024, adts_units(&g.adts)),
+        "aacenc" => {
+            let mut enc = crate::media::aacenc::Encoder::new(48_000, 2, 128_000).unwrap();
+            let pcm: Vec<i16> = g
+                .pcm
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect();
+            let units = pcm
+                .chunks_exact(2048)
+                .map(|c| enc.encode(c).unwrap())
+                .collect();
+            (AudioCodec::AacLc, 1024, units)
+        }
+        other => panic!("unknown TVPIPE_CAST_ACODEC {other}"),
+    };
 
     let opts = CastOptions {
-        latency_ms: 400,
+        latency_ms,
+        // TVPIPE_CAST_OFFER=both offers Opus and AAC (the receiver picks).
+        audio_codecs: if std::env::var("TVPIPE_CAST_OFFER").is_ok_and(|v| v == "both") {
+            vec![AudioCodec::Opus, AudioCodec::AacLc]
+        } else {
+            vec![codec]
+        },
         max_width: 1280,
         max_height: 720,
         max_fps: Ratio::new(30, 1),
@@ -302,16 +375,25 @@ fn openscreen_receiver_loop() {
         },
         audio
             .then(|| AudioInfo {
-                codec: AudioCodec::Opus,
+                codec,
                 sample_rate: 48_000,
                 channels: 2,
-                frame_samples: 960,
-                config: Vec::new(),
+                frame_samples,
+                config: if codec == AudioCodec::AacLc {
+                    vec![0x11, 0x90]
+                } else {
+                    Vec::new()
+                },
             })
             .as_ref(),
     )
     .expect("start");
 
+    // TVPIPE_CAST_EARLY=0: audio frames never leave before their time.
+    let early: u64 = std::env::var("TVPIPE_CAST_EARLY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
     let start = Instant::now();
     let mut ai = 0usize;
     let mut dropped = 0;
@@ -331,10 +413,13 @@ fn openscreen_receiver_loop() {
             SinkStatus::Dropped => dropped += 1,
             SinkStatus::Accepted => {}
         }
-        while audio && ai < apackets.len() && ai * 20 <= (i + 1) * 33 {
+        while audio
+            && ai < apackets.len()
+            && (ai as u64 * frame_samples as u64) * 1000 / 48 <= (i as u64 + early) * 33_333
+        {
             sink.push(&EncodedFrame {
                 track: TrackKind::Audio(AudioFamily::Cast),
-                pts: ai as u64 * 960,
+                pts: ai as u64 * frame_samples as u64,
                 keyframe: true,
                 data: Arc::from(apackets[ai].clone()),
             })
