@@ -18,6 +18,8 @@ use std::time::Duration;
 use crate::airplay::keys;
 use crate::airplay::secure::SecureStream;
 use crate::codec::bplist::Plist;
+use crate::crypto::aes::Aes;
+use crate::crypto::modes::{cbc_decrypt, Ctr};
 use crate::crypto::ring::{nonce_counter, ChaCha20Poly1305};
 use crate::net::http::{Conn, Request, Response};
 
@@ -65,6 +67,9 @@ pub struct Behaviour {
     pub no_timing_headers: bool,
     /// Accept the data connection but never read from it.
     pub stall_data: bool,
+    /// Legacy profile with these FairPlay keys (`K`, `eiv`): plaintext
+    /// events, AES-CTR video, AES-CBC audio.
+    pub legacy: Option<([u8; 16], [u8; 16])>,
 }
 
 impl Default for Behaviour {
@@ -77,6 +82,7 @@ impl Default for Behaviour {
             force_keyframe: false,
             no_timing_headers: false,
             stall_data: false,
+            legacy: None,
         }
     }
 }
@@ -302,8 +308,18 @@ fn event_server(ctx: &Arc<Ctx>) -> u16 {
     let ctx = ctx.clone();
     thread::spawn(move || {
         let Ok((s, _)) = l.accept() else { return };
-        let keys = keys::event_keys(&ctx.secret).unwrap().swapped();
-        let mut conn = Conn::new(SecureStream::new(s, &keys));
+        if ctx.behaviour.legacy.is_some() {
+            run_events(&mut Conn::new(s), &ctx);
+        } else {
+            let keys = keys::event_keys(&ctx.secret).unwrap().swapped();
+            run_events(&mut Conn::new(SecureStream::new(s, &keys)), &ctx);
+        }
+    });
+    port
+}
+
+fn run_events<S: Read + std::io::Write>(conn: &mut Conn<S>, ctx: &Ctx) {
+    {
         let body = Plist::dict()
             .with("type", "updateInfo")
             .with("value", info(true))
@@ -328,8 +344,7 @@ fn event_server(ctx: &Arc<Ctx>) -> u16 {
         }
         // Keep the channel open until the sender closes it.
         let _ = conn.read_request();
-    });
-    port
+    }
 }
 
 fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
@@ -347,6 +362,10 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
         s.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
         let key = keys::video_key(&ctx.secret, stream_id).unwrap();
         let cipher = ChaCha20Poly1305::new(&key);
+        let mut ctr = ctx.behaviour.legacy.map(|(k, _)| {
+            let (key, iv) = keys::legacy_video_key_iv(&k, stream_id);
+            Ctr::with_key(&key, &iv).unwrap()
+        });
         let mut counter = 0u64;
         let mut n = 0usize;
         let mut buf = Vec::new();
@@ -370,7 +389,9 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
                 let header: Vec<u8> = buf[..128].to_vec();
                 let mut payload = buf[128..128 + len].to_vec();
                 buf.drain(..128 + len);
-                if header[4] == 0 {
+                if header[4] == 0 && ctr.is_some() {
+                    ctr.as_mut().unwrap().apply(&mut payload);
+                } else if header[4] == 0 {
                     let pt = cipher
                         .open_in_place(&nonce_counter(counter), &header, &mut payload)
                         .expect("video frame authenticates")
@@ -399,12 +420,17 @@ fn audio_server(ctx: &Arc<Ctx>, sender_control: u16) -> (u16, u16) {
         rtp.local_addr().unwrap().port(),
         rtcp.local_addr().unwrap().port(),
     );
-    let key = ctx.audio_key.lock().unwrap().expect("audio shk");
+    let key = *ctx.audio_key.lock().unwrap();
+    assert_eq!(key.is_none(), ctx.behaviour.legacy.is_some(), "shk iff HAP");
     {
         let ctx = ctx.clone();
         let rtcp = rtcp.try_clone().unwrap();
         thread::spawn(move || {
-            let cipher = ChaCha20Poly1305::new(&key);
+            let cipher = key.map(|k| ChaCha20Poly1305::new(&k));
+            let cbc = ctx
+                .behaviour
+                .legacy
+                .map(|(k, iv)| (Aes::new(&k).unwrap(), iv));
             let mut buf = [0u8; 2048];
             let mut n = 0usize;
             while let Ok(len) = rtp.recv(&mut buf) {
@@ -414,10 +440,20 @@ fn audio_server(ctx: &Arc<Ctx>, sender_control: u16) -> (u16, u16) {
                 let clear = if p[1] == 97 { 1 } else { 0 };
                 assert!(clear == 0 || p[12] == 0x60, "no redundant blocks expected");
                 let body = &p[12 + clear..];
-                let nonce = u64::from_le_bytes(body[body.len() - 8..].try_into().unwrap());
-                let pt = cipher
-                    .open(&nonce_counter(nonce), &p[4..12], &body[..body.len() - 8])
-                    .expect("audio packet authenticates");
+                let pt = match (&cipher, &cbc) {
+                    (Some(c), _) => {
+                        let nonce = u64::from_le_bytes(body[body.len() - 8..].try_into().unwrap());
+                        c.open(&nonce_counter(nonce), &p[4..12], &body[..body.len() - 8])
+                            .expect("audio packet authenticates")
+                    }
+                    (None, Some((aes, iv))) => {
+                        let mut b = body.to_vec();
+                        let whole = b.len() / 16 * 16;
+                        cbc_decrypt(aes, &mut iv.clone(), &mut b[..whole]).unwrap();
+                        b
+                    }
+                    (None, None) => body.to_vec(),
+                };
                 ctx.rec.lock().unwrap().audio.push((seq, ts, pt));
                 n += 1;
                 if ctx.behaviour.nack_after == Some(n) {

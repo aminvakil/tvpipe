@@ -1314,6 +1314,64 @@ mod tests {
     }
 
     #[test]
+    fn legacy_profile_media() {
+        let master = [0x25; 16];
+        let eiv = [0xf0; 16];
+        let fake = FakeMirror::start(Behaviour {
+            legacy: Some((master, eiv)),
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let tcp = TcpStream::connect(fake.addr).unwrap();
+        let opts = MirrorOptions::default();
+        let mut session = Session::establish(
+            RtspClient::new(tcp),
+            fake.addr,
+            fake.secret.clone(),
+            false,
+            &opts,
+        )
+        .map_err(SetupError::into_error)
+        .unwrap();
+        // NTP (PTP needs HAP); no ChaCha audio key.
+        assert!(matches!(session.timeline, Timeline::Ntp));
+        assert!(session.audio.key.is_none());
+        // The fake does no FairPlay; give the session fixed keys.
+        session.fairplay = Some(crate::airplay::session::FairPlayKeys {
+            master,
+            eiv,
+            ekey: [0; 72],
+        });
+        let mut sink = MirrorSink::new("legacy".into(), session, &opts);
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 20);
+        wait_for("media", || {
+            let r = fake.rec();
+            r.video.iter().filter(|p| p.kind == 0).count() == 20 && r.audio.len() > 5
+        });
+        sink.stop().unwrap();
+        let r = fake.rec();
+        assert_eq!(r.event_replies, 1, "plaintext event channel");
+        let frames: Vec<_> = r.video.iter().filter(|p| p.kind == 0).collect();
+        assert_eq!(frames[0].payload, nal(&[0x65, 0x88, 0]));
+        assert_eq!(frames[19].payload, nal(&[0x41, 0x9a, 19]));
+        assert_eq!(frames[0].timeline, 0);
+        let first = (0..20u64)
+            .find(|&src| alac_verbatim(&pcm(src), 2).unwrap() == r.audio[0].2)
+            .expect("CBC audio decrypts to a pushed frame");
+        assert_eq!(r.audio[1].2, alac_verbatim(&pcm(first + 1), 2).unwrap());
+        // The legacy SETUP #1 carries the FairPlay root fields... only when
+        // FairPlay ran during setup, which the fake cannot do.
+        assert!(r.setup_bodies[0].get("ekey").is_none());
+        assert_eq!(
+            r.setup_bodies[0]
+                .get("timingProtocol")
+                .and_then(Plist::as_str),
+            Some("NTP")
+        );
+    }
+
+    #[test]
     fn eof_after_teardown_is_a_clean_stop() {
         let fake = FakeMirror::start(Behaviour {
             teardown_eof: true,
