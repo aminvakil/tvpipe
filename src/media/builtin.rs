@@ -1069,8 +1069,8 @@ pub(crate) mod tests {
     /// checks that no frame is ahead of its pts on the clock that starts
     /// with the first `next_frame`: nothing generated or read before was
     /// queued up (that would add the start-up time to the latency).
-    /// Returns the input's counts.
-    fn assert_on_schedule(mut input: BuiltinInput, frames: usize) -> Counts {
+    /// `first` is the first video pts. Returns the input's counts.
+    fn assert_on_schedule(mut input: BuiltinInput, frames: usize, first: u64) -> Counts {
         std::thread::sleep(Duration::from_millis(300));
         let go = Instant::now();
         let mut video = Vec::new();
@@ -1094,7 +1094,7 @@ pub(crate) mod tests {
         assert!(video.len() >= 2, "{c:?}");
         let late = latency_bound(&c);
         assert!(video[0].0 < late, "{:?} {c:?}", video[0]);
-        assert_eq!(video[0].1, 0);
+        assert!(video[0].1 <= first, "{video:?}");
         for &(at, pts) in &video {
             let due = Duration::from_micros(pts * 1000 / 90);
             assert!(
@@ -1119,7 +1119,7 @@ pub(crate) mod tests {
             gop: 30,
         };
         let input = BuiltinInput::test_pattern(out, 48_000, vec![], never).unwrap();
-        let c = assert_on_schedule(input, 15);
+        let c = assert_on_schedule(input, 15, 0);
         // The pattern made nothing before the session pulled.
         assert_eq!(c.early, 0, "{c:?}");
     }
@@ -1150,7 +1150,9 @@ pub(crate) mod tests {
         };
         // 0.8 s of game frames, starting right away.
         let input = BuiltinInput::open_slrw_with(raw_stream(48, 64, 36), opts, never).unwrap();
-        let c = assert_on_schedule(input, 20);
+        // Media time starts with this frame, or with the audio record of
+        // the game frame before it (16.7 ms, 1500 ticks).
+        let c = assert_on_schedule(input, 20, 1500);
         // What the game sent in the 300 ms before was read and dropped.
         assert!(c.early > 0, "{c:?}");
     }
