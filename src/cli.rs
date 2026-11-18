@@ -60,6 +60,7 @@ enum PlayArg {
     Port,
     Open,
     WaitForViewer,
+    NewToken,
     Input,
 }
 
@@ -221,13 +222,16 @@ macro_rules! play_opts {
             Opt::new(PlayArg::Port)
                 .long("port")
                 .value("PORT")
-                .help("Browser player page port on 127.0.0.1 (--to browser; default: any free one)"),
+                .help("Browser player page port on 127.0.0.1 (--to browser; default 8765, 0: any)"),
             Opt::new(PlayArg::Open)
                 .long("open")
                 .help("Open the browser player page in the default browser (--to browser)"),
             Opt::new(PlayArg::WaitForViewer)
                 .long("wait-for-viewer")
                 .help("Start streaming once a browser tab is watching (--to browser)"),
+        Opt::new(PlayArg::NewToken)
+            .long("new-token")
+            .help("Change the browser player page's URL token (--to browser; old URLs stop working)"),
         ]
     };
 }
@@ -454,10 +458,12 @@ pub const BROWSER_TARGET: &str = "browser";
 /// Options of `--to browser` receivers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BrowserOptions {
-    /// Port of the player page (0: any free one).
-    pub port: u16,
+    /// Port of the player page (`None`: the fixed default, 0: any free one).
+    pub port: Option<u16>,
     pub open: bool,
     pub wait_for_viewer: bool,
+    /// Rotate the page's persistent token.
+    pub new_token: bool,
 }
 
 /// `tvpipe share`.
@@ -671,9 +677,10 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
             PlayArg::RawVideo => o.raw_video = Some(p.value()?),
             PlayArg::RawAudio => o.raw_audio = Some(p.value()?),
             PlayArg::Ffmpeg => o.ffmpeg = Some(p.raw_value()?.into()),
-            PlayArg::Port => o.browser.port = p.value()?,
+            PlayArg::Port => o.browser.port = Some(p.value()?),
             PlayArg::Open => o.browser.open = true,
             PlayArg::WaitForViewer => o.browser.wait_for_viewer = true,
+            PlayArg::NewToken => o.browser.new_token = true,
             PlayArg::Input => input = Some(input_from(p.raw_value()?)),
         }
     }
@@ -685,7 +692,9 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
     }
     let browser = o.to.iter().any(|t| t.eq_ignore_ascii_case(BROWSER_TARGET));
     if !browser && o.browser != BrowserOptions::default() {
-        return Err(p.error("--port, --open and --wait-for-viewer are for --to browser"));
+        return Err(
+            p.error("--port, --open, --wait-for-viewer and --new-token are for --to browser")
+        );
     }
     match mode {
         Mode::Play => {
@@ -905,9 +914,9 @@ mod tests {
         assert_eq!(
             o.browser,
             BrowserOptions {
-                port: 8123,
+                port: Some(8123),
                 open: true,
-                wait_for_viewer: false
+                ..BrowserOptions::default()
             }
         );
         let o = play(&["preview", "--", "-f", "avfoundation", "-i", "1"]);
@@ -930,6 +939,7 @@ mod tests {
         // The page's options need a page.
         assert!(parse_from(&["play", "--to", "tv", "--open", "x.mkv"]).is_err());
         assert!(parse_from(&["test-pattern", "--to", "tv", "--port", "1"]).is_err());
+        assert!(play(&["preview", "--new-token"]).browser.new_token);
     }
 
     #[test]

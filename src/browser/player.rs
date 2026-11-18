@@ -71,13 +71,23 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long `stop` waits for the tabs to get the end.
 const STOP_WAIT: Duration = Duration::from_millis(500);
 
+/// The page's port without `--port`: the same every run, so the URL (with
+/// the token kept in the config directory) stays the same.
+pub const DEFAULT_PORT: u16 = 8765;
+/// The token's file in the config directory (next to the AirPlay
+/// credentials).
+pub const TOKEN_FILE: &str = "player-token";
+
 /// How a `--to browser` receiver is set up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerOptions {
     /// Name in logs.
     pub name: String,
-    /// Port on 127.0.0.1 (0: any free one).
-    pub port: u16,
+    /// Port on 127.0.0.1: `None` is [`DEFAULT_PORT`], or any free one
+    /// (with a warning) when that is taken; `Some(0)`: any free one.
+    pub port: Option<u16>,
+    /// The URL's token; `None`: a new random one for this run.
+    pub token: Option<String>,
     /// Open the page with the OS's opener.
     pub open: bool,
     /// Block in [`BrowserSink::bind`] until a tab is connected.
@@ -93,13 +103,56 @@ impl Default for PlayerOptions {
     fn default() -> PlayerOptions {
         PlayerOptions {
             name: "browser".into(),
-            port: 0,
+            port: Some(0),
+            token: None,
             open: false,
             wait_for_viewer: false,
             latency_ms: 100,
             audio: true,
         }
     }
+}
+
+/// A new random token (16 bytes, hex).
+fn new_token() -> Result<String> {
+    Ok(crate::util::hex::encode(
+        &crate::crypto::ring::random_array::<16>()?,
+    ))
+}
+
+fn valid_token(t: &str) -> bool {
+    t.len() == 32
+        && t.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The player page's token, kept in [`TOKEN_FILE`] in the config
+/// directory so its URL stays the same across runs (an open tab or an
+/// OBS source reconnects to the next session). Made on first use, or
+/// anew with `rotate` (`--new-token`); the file is private (0600 on
+/// unix). Unlike the share page, which captures the user's screen, the
+/// player only shows what tvpipe streams anyway, so a lasting token is
+/// an acceptable trade.
+pub fn persistent_token(rotate: bool) -> Result<String> {
+    let dir = crate::airplay::credentials::config_dir()?;
+    token_in(&dir.join(TOKEN_FILE), rotate)
+}
+
+fn token_in(path: &std::path::Path, rotate: bool) -> Result<String> {
+    if !rotate {
+        match std::fs::read_to_string(path) {
+            Ok(t) if valid_token(t.trim()) => return Ok(t.trim().to_owned()),
+            Ok(_) => warn!("{}: not a token; making a new one", path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::io(format!("read {}", path.display()), e)),
+        }
+    }
+    let t = new_token()?;
+    crate::airplay::credentials::write_private(path, format!("{t}\n").as_bytes())?;
+    if rotate {
+        info!("browser: new player token (old URLs stop working)");
+    }
+    Ok(t)
 }
 
 /// The capabilities of every browser receiver.
@@ -569,8 +622,10 @@ impl BrowserSink {
     /// Listens on 127.0.0.1 and prints the URL; with `wait_for_viewer`,
     /// returns once a tab is connected (or `stop` says so: an error).
     pub fn bind(opts: &PlayerOptions, stop: fn() -> bool) -> Result<BrowserSink> {
-        let token = crate::util::hex::encode(&crate::crypto::ring::random_array::<16>()?);
-        let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, opts.port).into();
+        let token = match &opts.token {
+            Some(t) => t.clone(),
+            None => new_token()?,
+        };
         // The handler needs the port, known only after binding.
         let cell: Arc<Mutex<Option<Arc<Shared>>>> = Arc::new(Mutex::new(None));
         let c = cell.clone();
@@ -581,7 +636,21 @@ impl BrowserSink {
                 None => Reply::Response(httpd::error_response(503, "Service Unavailable")),
             }
         });
-        let http = httpd::Server::bind(addr, handler)?;
+        let at = |port: u16| -> SocketAddr { (std::net::Ipv4Addr::LOCALHOST, port).into() };
+        let http = match opts.port {
+            Some(port) => httpd::Server::bind(at(port), handler)?,
+            None => match httpd::Server::bind(at(DEFAULT_PORT), handler.clone()) {
+                Ok(h) => h,
+                Err(e) => {
+                    warn!(
+                        "{}: port {DEFAULT_PORT} is not available ({e}); using another one, \
+                         so the URL is not the usual one (--port picks one)",
+                        opts.name
+                    );
+                    httpd::Server::bind(at(0), handler)?
+                }
+            },
+        };
         let port = http.local_addr().port();
         let shared = Arc::new(Shared {
             name: opts.name.clone(),

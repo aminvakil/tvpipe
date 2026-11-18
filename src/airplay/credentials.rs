@@ -477,8 +477,9 @@ fn blocks(text: &str) -> Vec<Block> {
 }
 
 /// Writes `data` to `path` via a temporary file in the same directory and
-/// a rename. The file is created with mode 0600 on unix.
-fn write_private(path: &Path, data: &[u8]) -> Result<()> {
+/// a rename. The file is created with mode 0600 on unix. (Also used for
+/// the browser player's token, `browser::player`.)
+pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     use std::io::Write;
     let dir = path
         .parent()

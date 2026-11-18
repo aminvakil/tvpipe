@@ -10,9 +10,18 @@ Code: `src/browser/player.rs` (server and sink), `player.html`,
 
 The share page's rules (`docs/share-protocol.md`), with one more check:
 
-- tvpipe listens on `127.0.0.1` only (`--port`, default any free port) and
-  prints `http://127.0.0.1:PORT/?t=TOKEN`; `TOKEN` is 16 random bytes in
-  hex, new for every run.
+- tvpipe listens on `127.0.0.1` only and prints
+  `http://127.0.0.1:PORT/?t=TOKEN`. The URL is the same every run, so a
+  tab or an OBS source reconnects to the next session:
+  - `PORT` is 8765, or `--port` (0: any free port). When 8765 is taken
+    (another tvpipe), tvpipe warns and takes a free port for this run.
+  - `TOKEN` (16 random bytes in hex) is kept in `player-token` in the
+    config directory (0600 on unix), made on first use; `--new-token`
+    replaces it. A config directory that cannot be written costs only
+    the stable URL (a token for this run, with a warning).
+  - The share page keeps a new token per run: it captures the user's
+    screen, while the player only shows what tvpipe streams anyway, so
+    a lasting token there is the better trade.
 - `GET /?t=TOKEN`: the page. `GET /player.js`: the script (static, no
   token). `GET /ws?t=TOKEN`: the WebSocket (RFC 6455, no extensions).
 - Every request needs a `Host` of `127.0.0.1:PORT`, `localhost:PORT` or

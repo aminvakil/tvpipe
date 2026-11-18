@@ -38,9 +38,8 @@ and plays tvpipe's stream in any browser tab.
 
 ## Open questions
 
-- A stable page URL across runs (a fixed `--port` gets a new token each
-  run, so an OBS source or an open tab cannot reconnect after tvpipe
-  restarts): a `--token` option or a token kept in the config directory?
+- ~~A stable page URL across runs~~: done (port 8765, `player-token` in
+  the config directory, `--new-token`).
 - Passthrough files with AAC audio are re-encoded when a browser listens
   (the browser takes the AirPlay family's PCM). Decoding AAC in the page
   (`AudioDecoder`) would need a second audio family or a per-sink format.

@@ -128,7 +128,11 @@ tvpipe play --to "Living Room" --to browser movie.mp4
 ```
 
 `--to browser` is a receiver like a TV: tvpipe serves a player page on
-127.0.0.1 and prints its URL (`--open` opens it, `--port` fixes the port).
+127.0.0.1 and prints its URL (`--open` opens it). The URL stays the same
+across runs (port 8765 unless `--port` says otherwise, and a token kept in
+the config directory), so an open tab or an OBS source picks up the next
+run by itself; `--new-token` changes it, which locks out old URLs. If
+8765 is taken, tvpipe warns and uses another port for that run.
 The page decodes H.264 with WebCodecs and plays PCM with Web Audio
 (Chrome, Edge, Safari 16.4+, Firefox 130+), in step with the other
 receivers. Any number of tabs can watch; a tab that joins later starts at
@@ -162,7 +166,7 @@ Useful `play` options:
 | `--no-audio` | | video only |
 | `--loop` | | loop the input |
 | `--realtime` / `--no-realtime` | real time for files | pace the input |
-| `--open`, `--port PORT`, `--wait-for-viewer` | | the `--to browser` page |
+| `--open`, `--port PORT`, `--wait-for-viewer`, `--new-token` | port 8765 | the `--to browser` page |
 
 ### When ffmpeg is used
 
@@ -216,7 +220,8 @@ AirPlay pairings are stored in `credentials.txt` in the config directory:
 - Windows: `%APPDATA%\tvpipe`
 
 To use a different directory, set `TVPIPE_CONFIG_DIR`. The credentials file
-holds a private key, so do not share it.
+holds a private key, so do not share it. `player-token` next to it holds
+the browser player's URL token (`--new-token` replaces it).
 
 ## Development
 

@@ -30,6 +30,14 @@ fn never() -> bool {
     false
 }
 
+/// Tests never take the fixed port.
+fn any_port() -> BrowserOptions {
+    BrowserOptions {
+        port: Some(0),
+        ..BrowserOptions::default()
+    }
+}
+
 fn no_io() -> GameIo {
     GameIo {
         stdin: Box::new(std::io::empty()),
@@ -170,6 +178,7 @@ fn preview_plays_the_test_pattern_in_a_page() {
     // What `tvpipe preview --encoder builtin --size 320x180` parses to.
     let o = PlayOptions {
         to: vec!["browser".into()],
+        browser: any_port(),
         size: Some(Size {
             width: 320,
             height: 180,
@@ -248,6 +257,7 @@ fn a_late_tab_shares_the_cast_timeline() {
     let video = Arc::new(AtomicUsize::new(0));
     let o = PlayOptions {
         to: vec![rx.addr.to_string(), "browser".into()],
+        browser: any_port(),
         size: Some(Size {
             width: 320,
             height: 180,
@@ -362,6 +372,7 @@ fn preview_in_browser(drive: impl FnOnce(String) + Send + 'static) {
     let input = std::env::var_os("TVPIPE_TEST_PLAYER_INPUT");
     let o = PlayOptions {
         to: vec!["browser".into()],
+        browser: any_port(),
         encoder: if input.is_some() {
             Encoder::Auto
         } else {
@@ -586,4 +597,91 @@ fn firefox_player() {
         );
         watch_player(&mut |s| ff.eval(s));
     });
+}
+
+/// A tab stays open while tvpipe stops and starts again with the same
+/// port and token: it reconnects and plays the new session.
+#[test]
+#[ignore]
+fn chrome_player_reconnects_to_the_next_run() {
+    let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
+        eprintln!("TVPIPE_TEST_CHROME not set");
+        return;
+    };
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let page = PlayerOptions {
+        port: Some(port),
+        token: Some("0123456789abcdef0123456789abcdef".into()),
+        ..PlayerOptions::default()
+    };
+    let url = format!("http://127.0.0.1:{port}/?t=0123456789abcdef0123456789abcdef");
+    let browser: Arc<Mutex<Option<(std::process::Child, super::browser_tests::Cdp)>>> =
+        Arc::default();
+    let dir = std::env::temp_dir().join(format!("tvpipe-player-rc-{}", std::process::id()));
+    let mut drawn = Vec::new();
+    for run in 0..2 {
+        STOP.store(false, Ordering::SeqCst);
+        let (b, o, u, d, bin) = (
+            browser.clone(),
+            page.clone(),
+            url.clone(),
+            dir.clone(),
+            bin.clone(),
+        );
+        let connect =
+            move |_: &Target, _: &CastOptions, _: &MirrorOptions| -> Result<Box<dyn Sink>> {
+                let sink = BrowserSink::bind(&o, never)?;
+                let mut g = b.lock().unwrap();
+                if g.is_none() {
+                    *g = Some(super::browser_tests::chrome(&bin, &u, &d));
+                }
+                Ok(Box::new(sink))
+            };
+        let b = browser.clone();
+        let watcher = std::thread::spawn(move || {
+            let t0 = Instant::now();
+            let start =
+                |b: &Arc<Mutex<Option<(std::process::Child, super::browser_tests::Cdp)>>>| {
+                    b.lock().unwrap().as_mut().map(|(_, cdp)| {
+                        cdp.eval("return window.tvpipePlayer ? tvpipePlayer.stats.drawn : 0")
+                            .as_f64()
+                            .unwrap_or(0.0)
+                    })
+                };
+            let mut first = None;
+            let r = loop {
+                std::thread::sleep(Duration::from_millis(200));
+                let n = start(&b).unwrap_or(0.0);
+                let base = *first.get_or_insert(n);
+                if n >= base + 30.0 {
+                    break n;
+                }
+                if t0.elapsed() > Duration::from_secs(30) {
+                    break -1.0;
+                }
+            };
+            STOP.store(true, Ordering::SeqCst);
+            r
+        });
+        let o = PlayOptions {
+            to: vec!["browser".into()],
+            ..opts()
+        };
+        play_with(o, no_io(), &connect, stop_flag).unwrap();
+        let n = watcher.join().unwrap();
+        eprintln!("run {run}: page drew {n} frames so far");
+        assert!(n > 0.0, "run {run}: the page did not play");
+        drawn.push(n);
+    }
+    assert!(drawn[1] > drawn[0]);
+    if let Some((mut child, _)) = browser.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

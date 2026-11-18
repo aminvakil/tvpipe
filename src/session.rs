@@ -599,11 +599,24 @@ fn target_name(t: &Target) -> &str {
 /// Sets up the `--to browser` targets: the page's options, the session's
 /// playout budget and whether audio goes there.
 fn configure_browsers(targets: &mut [Target], opts: &BrowserOptions, latency_ms: u32, audio: bool) {
+    if !targets.iter().any(|t| matches!(t, Target::Browser(_))) {
+        return;
+    }
+    // One URL across runs (decision in docs/player-protocol.md); a
+    // config directory we cannot write only costs that.
+    let token = match crate::browser::player::persistent_token(opts.new_token) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            warn!("browser: cannot keep the page's token ({e}); the URL is new this time");
+            None
+        }
+    };
     for t in targets {
         if let Target::Browser(o) = t {
             **o = PlayerOptions {
                 name: BROWSER_TARGET.into(),
                 port: opts.port,
+                token: token.clone(),
                 open: opts.open,
                 wait_for_viewer: opts.wait_for_viewer,
                 latency_ms,

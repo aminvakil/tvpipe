@@ -452,3 +452,56 @@ fn annexb_when_the_input_has_no_avcc() {
     assert_eq!(&r.payload[1..], &[0, 0, 0, 1, 0x65, 7, 7]);
     sink.stop().unwrap();
 }
+
+#[test]
+fn the_token_is_kept_and_rotated() {
+    let dir = crate::airplay::credentials::tests::temp_dir("player-token");
+    let path = dir.join(TOKEN_FILE);
+    let t1 = token_in(&path, false).unwrap();
+    assert!(valid_token(&t1), "{t1}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{t1}\n"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert_eq!(token_in(&path, false).unwrap(), t1);
+    let t2 = token_in(&path, true).unwrap();
+    assert_ne!(t2, t1);
+    assert_eq!(token_in(&path, false).unwrap(), t2);
+    // Anything else in the file is replaced.
+    std::fs::write(&path, "../../etc\n").unwrap();
+    let t3 = token_in(&path, false).unwrap();
+    assert!(valid_token(&t3) && t3 != t2);
+    assert!(!valid_token("ABCDEF0123456789abcdef0123456789"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_url_uses_the_given_token_and_the_fixed_port_or_another() {
+    let token = "0123456789abcdef0123456789abcdef".to_owned();
+    // Taken (by us, or by whoever has it): the sink binds another port.
+    let held = std::net::TcpListener::bind(("127.0.0.1", DEFAULT_PORT));
+    let opts = PlayerOptions {
+        port: None,
+        token: Some(token.clone()),
+        ..PlayerOptions::default()
+    };
+    let sink = BrowserSink::bind(&opts, never).unwrap();
+    assert_ne!(sink.shared.port, DEFAULT_PORT);
+    assert!(
+        sink.url().ends_with(&format!("/?t={token}")),
+        "{}",
+        sink.url()
+    );
+    drop(held);
+    // An explicit port that is taken is an error.
+    let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = busy.local_addr().unwrap().port();
+    let opts = PlayerOptions {
+        port: Some(port),
+        ..PlayerOptions::default()
+    };
+    assert!(BrowserSink::bind(&opts, never).is_err());
+}
