@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -375,11 +376,27 @@ fn cast_receiver_gone_for_good_is_given_up() {
     let addr = rx.addr;
     let book = Arc::new(Book::default());
     let window = Duration::from_millis(1200);
-    let r = rejoin(
-        window,
-        resolver(&Names::default()),
-        connector(&book, Vec::new(), Limits::new()),
-    );
+    // Once it is gone, connecting fails at once: on Windows a refused
+    // loopback connect takes about 2 s (it retries the SYN), which leaves
+    // no room for retries in the window.
+    let gone = Arc::new(AtomicBool::new(false));
+    let real = connector(&book, Vec::new(), Limits::new());
+    let connect: rejoin::Connect = {
+        let (book, gone) = (book.clone(), gone.clone());
+        Arc::new(move |t: &Target, c: &CastOptions, m: &MirrorOptions| {
+            if !gone.load(Ordering::SeqCst) {
+                return real(t, c, m);
+            }
+            if let Target::Cast { name, addr } = t {
+                book.connects.lock().unwrap().push((name.clone(), *addr));
+            }
+            Err(Error::io(
+                "connect",
+                std::io::ErrorKind::ConnectionRefused.into(),
+            ))
+        })
+    };
+    let r = rejoin(window, resolver(&Names::default()), connect);
     let killer = {
         let book = book.clone();
         let name = addr.to_string();
@@ -387,6 +404,7 @@ fn cast_receiver_gone_for_good_is_given_up() {
             wait_frames(&book, &name, 0, 10);
             // Gone: the connection breaks and nobody listens any more.
             let t = Instant::now();
+            gone.store(true, Ordering::SeqCst);
             rx.shutdown();
             t
         })
