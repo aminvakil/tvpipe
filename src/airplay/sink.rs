@@ -76,6 +76,8 @@ const CODEC_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 const HEARTBEAT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long `stop` lets the writer send what is still queued.
 const STOP_DRAIN: Duration = Duration::from_millis(500);
+/// After TEARDOWN: how long `stop` waits for the sink's threads.
+const STOP_JOIN: Duration = Duration::from_secs(1);
 /// Video packets queued for the writer before frames are dropped.
 const MAX_QUEUED: usize = 32;
 const MAX_QUEUED_BYTES: usize = 8 << 20;
@@ -1144,8 +1146,12 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
                 debug!("airplay: sent {} audio frames", a.frames);
             }
         }
+        // A `/feedback` blocked on a receiver that stopped answering is
+        // woken by the shutdown above on Linux and macOS, not on Windows
+        // (`util::thread`): leave it to its own timeout.
+        let deadline = Instant::now() + STOP_JOIN;
         for t in threads {
-            let _ = t.join();
+            crate::util::thread::join_until(t, deadline);
         }
         info!("airplay: {}: stopped", self.name);
         r

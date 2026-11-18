@@ -1,8 +1,9 @@
-//! Small shared helpers: bytes, hex, ratios, time, test vectors.
+//! Small shared helpers: bytes, hex, ratios, time, threads, test vectors.
 
 pub mod bytes;
 pub mod hex;
 pub mod interrupt;
 pub mod ratio;
+pub mod thread;
 pub mod time;
 pub mod vectors;

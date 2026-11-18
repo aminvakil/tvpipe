@@ -21,6 +21,8 @@ use crate::error::{Error, Result};
 use crate::net::http::{Conn, Limits, Response, Version};
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long `close` waits for the reader thread after the shutdown.
+const CLOSE_WAIT: Duration = Duration::from_secs(1);
 
 /// One receiver command.
 #[derive(Debug, Clone, PartialEq)]
@@ -140,8 +142,11 @@ impl EventChannel {
     /// Closes the connection and joins the thread.
     pub fn close(&mut self) {
         let _ = self.sock.shutdown(std::net::Shutdown::Both);
+        // A receiver answers our FIN by closing; one that hangs keeps the
+        // reader blocked on Windows (see `util::thread`), so do not wait
+        // for it past CLOSE_WAIT.
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            crate::util::thread::join_until(t, std::time::Instant::now() + CLOSE_WAIT);
         }
     }
 }
