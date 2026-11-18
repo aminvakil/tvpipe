@@ -45,6 +45,7 @@ use crate::airplay::policy::{self, bit};
 use crate::airplay::secure::SecureStream;
 use crate::airplay::session::{
     lock_control, ControlStream, MirrorOptions, Session, SetupError, DEFAULT_TIMEOUT,
+    STOP_TEARDOWN_TIMEOUT,
 };
 use crate::airplay::setup::AudioCodecId;
 use crate::airplay::timing::{
@@ -58,6 +59,7 @@ use crate::types::{
     TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
 };
 use crate::util::ratio::Ratio;
+use crate::util::time::ticks_to_duration;
 
 /// Frames later than this re-anchor the media clock.
 pub const MAX_LATENESS: Duration = Duration::from_millis(100);
@@ -70,9 +72,14 @@ pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEC_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 const HEARTBEAT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long `stop` lets the writer send what is still queued.
+const STOP_DRAIN: Duration = Duration::from_millis(500);
 /// Video packets queued for the writer before frames are dropped.
 const MAX_QUEUED: usize = 32;
 const MAX_QUEUED_BYTES: usize = 8 << 20;
+/// Capture instants further than this from the predicted ones mean the
+/// media clock was re-anchored.
+const CLOCK_SHIFT_TOLERANCE: Duration = Duration::from_millis(1);
 /// Consecutive stale audio frames at start-up before giving up (§8.8).
 const MAX_STALE_AT_START: u32 = 128;
 /// Burst pacing: packets per window (§8.4).
@@ -232,6 +239,9 @@ struct Queue {
     items: VecDeque<Item>,
     bytes: usize,
     closed: bool,
+    /// After `closed`: queued packets are written until then, the rest
+    /// is dropped (a slow receiver must not hold up a stop).
+    drain_until: Option<Instant>,
 }
 
 /// State shared between the sink and its threads.
@@ -289,6 +299,16 @@ fn writer_loop(shared: &Shared, mut sock: TcpStream, mut cipher: VideoCipher, ti
         let next = {
             let mut q = shared.queue();
             loop {
+                if q.closed && q.drain_until.is_some_and(|t| Instant::now() >= t) {
+                    if !q.items.is_empty() {
+                        debug!(
+                            "airplay: dropping {} queued video packets at stop",
+                            q.items.len()
+                        );
+                    }
+                    q.items.clear();
+                    q.bytes = 0;
+                }
                 if let Some(it) = q.items.pop_front() {
                     q.bytes -= it.len();
                     break Next::Item(it);
@@ -425,6 +445,8 @@ struct AudioState {
     /// `rtp = pts + offset` (mod 2³²).
     offset: u32,
     last_pts: Option<u64>,
+    /// The capture instant of the last frame (to see clock re-anchors).
+    last_capture: Option<Instant>,
     last_sync: Option<Instant>,
     first_sync: bool,
     window: (Instant, u32),
@@ -497,7 +519,7 @@ impl AudioState {
             self.offset = ALAC_FRAME_SAMPLES.wrapping_sub(frame.pts as u32);
         }
         let samples = (frame.data.len() / (2 * self.channels as usize)) as u32;
-        if let Some(last) = self.last_pts {
+        if let (Some(last), Some(last_capture)) = (self.last_pts, self.last_capture) {
             if frame.pts < last {
                 // A new segment: continue after the last frame (§8.5).
                 let last_rtp = (last as u32).wrapping_add(self.offset);
@@ -506,9 +528,29 @@ impl AudioState {
                     .wrapping_sub(frame.pts as u32);
                 self.first_sync = true;
                 self.last_sync = None;
+            } else {
+                // The media clock re-anchored (the source stalled and the
+                // frames arrive late): keep the RTP timeline on the same
+                // sample<->time line by leaving a gap of the shift in the
+                // RTP timestamps (§8.2: a real gap stays a gap). The
+                // receiver keeps its first mapping; without the gap every
+                // later packet would be late by the accumulated stalls.
+                let predicted = last_capture + ticks_to_duration(frame.pts - last, SAMPLE_RATE);
+                if capture > predicted + CLOCK_SHIFT_TOLERANCE {
+                    let gap = ((capture - predicted).as_secs_f64() * SAMPLE_RATE as f64).round();
+                    debug!("airplay: audio clock moved {gap} samples ahead; RTP gap");
+                    self.offset = self.offset.wrapping_add(gap as u32);
+                } else if capture + CLOCK_SHIFT_TOLERANCE < predicted {
+                    // Moved back (a jump in the input): announce a new
+                    // mapping (§8.5).
+                    debug!("airplay: audio clock moved back; new sync mapping");
+                    self.first_sync = true;
+                    self.last_sync = None;
+                }
             }
         }
         self.last_pts = Some(frame.pts);
+        self.last_capture = Some(capture);
         let rtp = (frame.pts as u32).wrapping_add(self.offset);
         let alac = alac_verbatim(&frame.data, self.channels)?;
         let due = self
@@ -535,7 +577,69 @@ impl AudioState {
 // ---------------------------------------------------------------------------
 // The sink
 
+/// Debug statistics on frame timing, logged every few seconds: how late
+/// each track arrives relative to a fixed pts schedule (anchored on the
+/// first frame, never moved), and the playout headroom it is sent with.
+#[derive(Default)]
+struct Diag {
+    origin: Option<(Instant, Duration)>,
+    since: Option<Instant>,
+    /// [video, audio]: (min, max) arrival lateness and min headroom, ms.
+    late: [(i64, i64); 2],
+    headroom: [i64; 2],
+    count: [u64; 2],
+}
+
+const DIAG_INTERVAL: Duration = Duration::from_secs(5);
+
+impl Diag {
+    fn note(&mut self, track: usize, media: Duration, now: Instant, deadline: Instant) {
+        let (t0, m0) = *self.origin.get_or_insert((now, media));
+        let since = *self.since.get_or_insert(now);
+        let ms = |a: Instant, b: Instant| -> i64 {
+            if a >= b {
+                (a - b).as_millis() as i64
+            } else {
+                -((b - a).as_millis() as i64)
+            }
+        };
+        let due = if media >= m0 {
+            t0 + (media - m0)
+        } else {
+            t0.checked_sub(m0 - media).unwrap_or(t0)
+        };
+        let late = ms(now, due);
+        let head = ms(deadline, now);
+        if self.count[track] == 0 {
+            self.late[track] = (late, late);
+            self.headroom[track] = head;
+        } else {
+            let l = &mut self.late[track];
+            *l = (l.0.min(late), l.1.max(late));
+            self.headroom[track] = self.headroom[track].min(head);
+        }
+        self.count[track] += 1;
+        if now.duration_since(since) >= DIAG_INTERVAL {
+            debug!(
+                "airplay: timing: video {} frames late {}..{} ms headroom >= {} ms; \
+                 audio {} frames late {}..{} ms headroom >= {} ms",
+                self.count[0],
+                self.late[0].0,
+                self.late[0].1,
+                self.headroom[0],
+                self.count[1],
+                self.late[1].0,
+                self.late[1].1,
+                self.headroom[1]
+            );
+            self.count = [0, 0];
+            self.since = Some(now);
+        }
+    }
+}
+
 struct Media {
+    diag: Diag,
     clock: MediaClock,
     video: VideoState,
     audio: Option<AudioState>,
@@ -662,6 +766,7 @@ impl<S: ControlStream> MirrorSink<S> {
             stale: 0,
             offset: 0,
             last_pts: None,
+            last_capture: None,
             last_sync: None,
             first_sync: true,
             window: (Instant::now(), 0),
@@ -773,6 +878,7 @@ impl<S: ControlStream> MirrorSink<S> {
             }
         );
         self.media = Some(Media {
+            diag: Diag::default(),
             clock: MediaClock::new(),
             video: vstate,
             audio: astate,
@@ -828,6 +934,12 @@ impl<S: ControlStream> MirrorSink<S> {
             return Ok(SinkStatus::Dropped);
         }
         let capture = capture_instant(&m.clock, frame.pts, VIDEO_CLOCK_RATE, now);
+        m.diag.note(
+            0,
+            ticks_to_duration(frame.pts, VIDEO_CLOCK_RATE),
+            now,
+            capture + Duration::from_millis(self.session.leads.video_ms as u64),
+        );
         let ts = m
             .video
             .timestamp(self.session.timeline.at(capture).wrapping_add(m.video.lead));
@@ -868,7 +980,17 @@ impl<S: ControlStream> MirrorSink<S> {
         if !self.shared.first_frame_sent.load(Ordering::Acquire) {
             return Ok(SinkStatus::Dropped);
         }
-        a.push(frame, &m.clock, &self.session.timeline)
+        let now = Instant::now();
+        let r = a.push(frame, &m.clock, &self.session.timeline);
+        if let Some(capture) = m.clock.instant_for(frame.pts, SAMPLE_RATE) {
+            m.diag.note(
+                1,
+                ticks_to_duration(frame.pts, SAMPLE_RATE),
+                now,
+                capture + a.lead,
+            );
+        }
+        r
     }
 }
 
@@ -995,6 +1117,7 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
         {
             let mut q = self.shared.queue();
             q.closed = true;
+            q.drain_until = Some(Instant::now() + STOP_DRAIN);
         }
         self.shared.cond.notify_all();
         let mut threads = Vec::new();
@@ -1007,7 +1130,7 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
         }
         self.shared.stopping.store(true, Ordering::Release);
         self.shared.cond.notify_all();
-        let r = self.session.teardown(DEFAULT_TIMEOUT);
+        let r = self.session.teardown(STOP_TEARDOWN_TIMEOUT);
         if let Some(m) = self.media.take() {
             let _ = m.data_sock.shutdown(std::net::Shutdown::Both);
             if let Some(a) = &m.audio {
@@ -1032,6 +1155,7 @@ impl<S: ControlStream> Drop for MirrorSink<S> {
 mod tests {
     use super::*;
     use crate::airplay::fake_mirror::{Behaviour, FakeMirror, CLOCK_ID};
+    use crate::airplay::policy::Leads;
     use crate::codec::bplist::Plist;
     use crate::net::rtsp::RtspClient;
     use crate::util::vectors;
@@ -1132,12 +1256,28 @@ mod tests {
 
     /// Streams 1.3 s of 30 fps video and audio to the fake receiver.
     fn stream(sink: &mut MirrorSink<TcpStream>, frames: u64) -> Vec<SinkStatus> {
+        stream_with_stall(sink, frames, None)
+    }
+
+    /// Like `stream`, but the source stalls for `stall.1` before frame
+    /// `stall.0` (like ffmpeg lagging on a badly interleaved file): the
+    /// frames after it arrive late and in a burst.
+    fn stream_with_stall(
+        sink: &mut MirrorSink<TcpStream>,
+        frames: u64,
+        stall: Option<(u64, Duration)>,
+    ) -> Vec<SinkStatus> {
         let (_, sps, pps) = avcc();
         let t0 = Instant::now();
         let mut out = Vec::new();
         let mut a = 0u64;
         for i in 0..frames {
-            let due = t0 + Duration::from_micros(i * 33_333);
+            let mut due = t0 + Duration::from_micros(i * 33_333);
+            if let Some((at, d)) = stall {
+                if i >= at {
+                    due += d;
+                }
+            }
             if let Some(d) = due.checked_duration_since(Instant::now()) {
                 std::thread::sleep(d);
             }
@@ -1228,7 +1368,7 @@ mod tests {
         // First sync: X bit, PTP form, rtp_play = rtp_now - 3748.
         assert_eq!(&r.sync[0][..4], &[0x90, 0xd7, 0, 4]);
         let play = u32::from_be_bytes(r.sync[0][4..8].try_into().unwrap());
-        assert_eq!(play, 352u32.wrapping_sub(3748));
+        assert_eq!(play, 352u32.wrapping_sub(Leads::new(None).audio_samples()));
         assert_eq!(&r.sync[0][20..28], &CLOCK_ID.to_be_bytes());
         assert!(r.sync.len() >= 2 && r.sync[1][0] == 0x80);
         // Retransmit answers for seq 1 and 2 carry the stored PT 96 copies.
@@ -1476,6 +1616,78 @@ mod tests {
         assert_eq!(frames[0].payload, nal(&[0x65, 0x88, 0]));
         assert_eq!(frames[9].payload, nal(&[0x41, 0x9a, 9]));
         assert!((0..20u64).any(|src| alac_verbatim(&pcm(src), 2).unwrap() == r.audio[0].2));
+    }
+
+    /// Regression (audio stopped on a QuickTime recording): when the
+    /// source stalls and the media clock re-anchors, the RTP timestamps
+    /// get the same gap, so every sync packet stays on one sample<->time
+    /// line (the receiver keeps its first mapping and would otherwise
+    /// count every later packet as late).
+    #[test]
+    fn source_stall_keeps_audio_mapping() {
+        let fake = FakeMirror::start(Behaviour {
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        let stall = Duration::from_millis(400);
+        stream_with_stall(&mut sink, 84, Some((36, stall)));
+        wait_for("sync after the stall", || fake.rec().sync.len() >= 3);
+        sink.stop().unwrap();
+        let r = fake.rec();
+        // RTP: consecutive frames 352 apart except one gap of ~0.4 s.
+        let gaps: Vec<u32> = r
+            .audio
+            .windows(2)
+            .map(|w| w[1].1.wrapping_sub(w[0].1))
+            .filter(|&d| d != 352)
+            .collect();
+        assert_eq!(gaps.len(), 1, "{gaps:?}");
+        let gap_ms = (gaps[0] - 352) as f64 * 1000.0 / 44_100.0;
+        assert!((300.0..450.0).contains(&gap_ms), "gap {gap_ms} ms");
+        // Every sync packet: (rtp_play, T ns). All on one line.
+        let points: Vec<(u32, u64)> = r
+            .sync
+            .iter()
+            .map(|p| {
+                (
+                    u32::from_be_bytes(p[4..8].try_into().unwrap()),
+                    u64::from_be_bytes(p[8..16].try_into().unwrap()),
+                )
+            })
+            .collect();
+        let (r0, t0) = points[0];
+        for &(rtp, t) in &points[1..] {
+            let by_rtp = rtp.wrapping_sub(r0) as f64 / 44_100.0;
+            let by_time = (t - t0) as f64 / 1e9;
+            assert!(
+                (by_rtp - by_time).abs() < 0.003,
+                "sync mapping moved: {by_rtp} s of samples vs {by_time} s"
+            );
+        }
+        // Only the first sync packet has the X bit.
+        assert!(r.sync[1..].iter().all(|p| p[0] == 0x80));
+    }
+
+    /// A receiver that stops answering must not make `stop` (Ctrl-C) wait
+    /// for the 30 s request timeout of the pending `/feedback`.
+    #[test]
+    fn stop_is_bounded_when_the_receiver_hangs() {
+        let fake = FakeMirror::start(Behaviour {
+            hang_feedback: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 5);
+        wait_for("feedback", || {
+            fake.rec().requests.iter().any(|r| r == "POST /feedback")
+        });
+        let t = Instant::now();
+        let _ = sink.stop();
+        assert!(t.elapsed() < Duration::from_secs(6), "{:?}", t.elapsed());
     }
 
     #[test]

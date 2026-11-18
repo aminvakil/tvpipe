@@ -23,6 +23,7 @@ use crate::airplay::events::{Event, EventChannel};
 use crate::airplay::fairplay::{self, FpSession};
 use crate::airplay::info::Info;
 use crate::airplay::keys;
+use crate::airplay::mdc::MediaDataControl;
 use crate::airplay::policy::{self, bit, Canvas, Leads};
 use crate::airplay::secure::SecureStream;
 use crate::airplay::setup::{
@@ -45,12 +46,17 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const INFO_TIMEOUT: Duration = Duration::from_secs(3);
 pub const VOLUME_TIMEOUT: Duration = Duration::from_secs(3);
 pub const CLEANUP_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+/// TEARDOWN when the user stops (Ctrl-C, EOF): the Apple TV answers in
+/// ~0.7 s or closes the connection; a receiver that takes longer is not
+/// waited for (the spec's general 30 s would make Ctrl-C hang).
+pub const STOP_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(4);
 pub const DATA_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long to wait for an asynchronous PTP clock id (§4.1).
 const ASYNC_CLOCK_WAIT: Duration = Duration::from_secs(2);
 /// Statuses that mean "use the other ordering / layout" (§4.1, §4.6).
 const SETUP1_REFUSED: [u16; 6] = [400, 405, 406, 415, 455, 501];
 const LAYOUT_REFUSED: [u16; 5] = [400, 406, 415, 455, 501];
+const MDC_MIN_VERSION: (u64, u64, u64) = (450, 1, 0);
 const MEDIA_FIRST_PTP_REFUSED: [u16; 5] = [400, 406, 415, 455, 501];
 
 /// A control connection's stream: gives access to the socket for timeouts.
@@ -337,6 +343,11 @@ pub struct Session<S: ControlStream> {
     pub signals: Arc<Signals>,
     /// The video `shk` sent in SETUP #3 (legacy profile: keys the video).
     pub video_shk: Option<[u8; 16]>,
+    /// A handle on the control socket, to unblock a stuck request.
+    control_sock: Option<TcpStream>,
+    /// The MediaDataControl seed, when the receiver qualifies (§8.10).
+    mdc_seed: Option<u64>,
+    mdc: Option<MediaDataControl>,
     events: Option<EventChannel>,
     ntp: Option<NtpResponder>,
     record_pending: bool,
@@ -354,6 +365,23 @@ impl<S: ControlStream> std::fmt::Debug for Session<S> {
             .field("hap", &self.hap)
             .field("timeline", &self.timeline)
             .finish_non_exhaustive()
+    }
+}
+
+/// Locks the control connection, giving up at `deadline`.
+fn lock_control_until<S>(
+    c: &Mutex<Control<S>>,
+    deadline: Instant,
+) -> Option<MutexGuard<'_, Control<S>>> {
+    loop {
+        match c.try_lock() {
+            Ok(g) => return Some(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => return Some(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        }
     }
 }
 
@@ -436,6 +464,7 @@ impl<S: ControlStream> Session<S> {
         };
         let leads = Leads::new(opts.latency_ms);
         let mut session = Session {
+            control_sock: control.socket().try_clone().ok(),
             control: Arc::new(Mutex::new(control)),
             peer,
             audio_id: stream_id()?,
@@ -462,6 +491,8 @@ impl<S: ControlStream> Session<S> {
             },
             signals: Arc::new(Signals::default()),
             video_shk: None,
+            mdc_seed: None,
+            mdc: None,
             events: None,
             ntp,
             record_pending: true,
@@ -494,6 +525,17 @@ impl<S: ControlStream> Session<S> {
         };
         if self.hap {
             self.audio.key = Some(random_array()?);
+        }
+        // §8.10: MediaDataControl (receiver audio reports) only with HAP,
+        // features 59 + 60, sourceVersion >= 450.1.0 and automatic leads.
+        if self.hap
+            && opts.audio
+            && opts.latency_ms.is_none()
+            && policy::has(features, bit::STREAM_CONNECTIONS)
+            && policy::has(features, bit::MEDIA_DATA_CONTROL)
+            && policy::version_at_least(self.version.as_deref(), MDC_MIN_VERSION)
+        {
+            self.mdc_seed = Some(u64::from_le_bytes(random_array()?));
         }
         let timing = if ptp {
             TimingRequest::Ptp {
@@ -662,6 +704,7 @@ impl<S: ControlStream> Session<S> {
             layout,
             shk: self.audio.key,
             control_port: udp_port(&self.audio.sockets.control)?,
+            mdc_seed: self.mdc_seed.filter(|_| layout == AudioLayout::S),
         };
         let body = streams_body(req.descriptor(), session).to_bytes();
         self.request(
@@ -796,6 +839,16 @@ impl<S: ControlStream> Session<S> {
             .map_err(|e| Error::io(format!("airplay: connect video data {addr}"), e))?;
         let _ = data.set_nodelay(true);
         debug!("airplay: video data connection to {addr}");
+        if let (Some(seed), Some(port)) = (
+            self.mdc_seed,
+            self.audio.ports.and_then(|p| p.media_data_control),
+        ) {
+            let keys = keys::media_data_control_keys(&self.secret.0, seed)?;
+            match MediaDataControl::connect(SocketAddr::new(self.peer.ip(), port), &keys) {
+                Ok(m) => self.mdc = Some(m),
+                Err(e) => debug!("airplay: no MediaDataControl: {e}"),
+            }
+        }
 
         // Initial volume (§4.9, §8.9).
         let mut initial = policy::info_volume(&self.info);
@@ -846,37 +899,55 @@ impl<S: ControlStream> Session<S> {
     /// `TEARDOWN` for the whole session (§4.14), then closes the side
     /// channels. Safe to call more than once.
     pub fn teardown(&mut self, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
         let r = if self.torn_down {
             Ok(())
         } else {
             self.torn_down = true;
             let uri = self.audio_uri();
-            match self.request("TEARDOWN", &uri, &[], None, timeout) {
-                Ok(r) if r.is_success() => {
-                    debug!("airplay: session torn down");
-                    Ok(())
+            // Another request (a `/feedback` to a receiver that stopped
+            // answering) may hold the connection; do not wait for it past
+            // the deadline.
+            match lock_control_until(&self.control, deadline) {
+                None => Err(Error::timeout(
+                    "airplay: TEARDOWN: control connection busy (receiver not answering)",
+                )),
+                Some(mut c) => {
+                    let left = deadline
+                        .saturating_duration_since(Instant::now())
+                        .max(Duration::from_millis(100));
+                    match c.request("TEARDOWN", &uri, &[], None, left) {
+                        Ok(r) if r.is_success() => {
+                            debug!("airplay: session torn down");
+                            Ok(())
+                        }
+                        Ok(r) => Err(Error::protocol(format!(
+                            "airplay: TEARDOWN answered {} {}",
+                            r.status, r.reason
+                        ))),
+                        // The Apple TV often closes the control connection
+                        // instead of answering; that ends the session too
+                        // (§4.14, §13).
+                        Err(e) if e.kind() == crate::error::ErrorKind::Closed => {
+                            debug!("airplay: receiver closed the connection on TEARDOWN ({e})");
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
                 }
-                Ok(r) => Err(Error::protocol(format!(
-                    "airplay: TEARDOWN answered {} {}",
-                    r.status, r.reason
-                ))),
-                // The Apple TV often closes the control connection instead
-                // of answering; that ends the session too (§4.14, §13).
-                Err(e) if e.kind() == crate::error::ErrorKind::Closed => {
-                    debug!("airplay: receiver closed the connection on TEARDOWN ({e})");
-                    Ok(())
-                }
-                Err(e) => Err(e),
             }
         };
         if let Some(mut ev) = self.events.take() {
             ev.close();
         }
+        if let Some(mut m) = self.mdc.take() {
+            m.close();
+        }
         self.ntp = None;
         if r.is_err() {
-            let _ = lock_control(&self.control)
-                .socket()
-                .shutdown(std::net::Shutdown::Both);
+            if let Some(s) = &self.control_sock {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
         }
         r
     }

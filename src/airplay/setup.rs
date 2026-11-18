@@ -135,6 +135,8 @@ pub struct AudioRequest {
     pub shk: Option<[u8; 32]>,
     /// Our audio control (RTCP) port.
     pub control_port: u16,
+    /// Layout S only: the MediaDataControl seed (§8.10).
+    pub mdc_seed: Option<u64>,
 }
 
 impl AudioRequest {
@@ -172,6 +174,13 @@ impl AudioRequest {
                                 "streamConnectionTypeRTCP",
                                 Plist::dict()
                                     .with("streamConnectionKeyPort", self.control_port as i64),
+                            )
+                            .with_opt(
+                                "streamConnectionTypeMediaDataControl",
+                                self.mdc_seed.map(|seed| {
+                                    Plist::dict()
+                                        .with("streamConnectionKeyEncryptionSeed", seed as i64)
+                                }),
                             ),
                     );
             }
@@ -377,6 +386,7 @@ pub(crate) mod tests {
             layout: AudioLayout::S,
             shk: Some(ramp(0x80, 32).try_into().unwrap()),
             control_port: 50001,
+            mdc_seed: None,
         };
         assert_eq!(
             canon(&streams_body(a.descriptor(), None)),
@@ -451,16 +461,21 @@ pub(crate) mod tests {
             layout: AudioLayout::S,
             shk: Some([0; 32]),
             control_port: 53817,
+            mdc_seed: Some(1),
         }
         .descriptor();
-        // We do not send the optional MediaDataControl seed.
         let mut sent_audio = sent_audio.clone();
-        if let Some(sc) = sent_audio
-            .as_dict_mut()
-            .and_then(|d| d.get_mut("streamConnections"))
-            .and_then(Plist::as_dict_mut)
-        {
-            sc.remove("streamConnectionTypeMediaDataControl");
+        // The seed is random; compare the rest.
+        for d in [&mut ours, &mut sent_audio] {
+            if let Some(m) = d
+                .as_dict_mut()
+                .and_then(|d| d.get_mut("streamConnections"))
+                .and_then(Plist::as_dict_mut)
+                .and_then(|d| d.get_mut("streamConnectionTypeMediaDataControl"))
+                .and_then(Plist::as_dict_mut)
+            {
+                m.insert("streamConnectionKeyEncryptionSeed", 0i64);
+            }
         }
         assert_eq!(keys(&sent_audio), keys(&ours));
         for k in ["streamConnectionID", "shk"] {

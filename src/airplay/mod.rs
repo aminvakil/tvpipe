@@ -12,6 +12,7 @@ pub mod fake_mirror;
 pub mod info;
 pub mod keys;
 pub mod legacy_pair;
+pub mod mdc;
 pub mod mirror;
 pub mod pair;
 pub mod pairing;

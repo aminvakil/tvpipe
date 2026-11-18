@@ -74,6 +74,8 @@ pub struct Behaviour {
     pub raw_pairing: Option<[u8; 32]>,
     /// Legacy without FairPlay: audio in the clear (video keyed from `shk`).
     pub legacy_no_fairplay: bool,
+    /// Never answer `POST /feedback` (a wedged receiver).
+    pub hang_feedback: bool,
 }
 
 impl Default for Behaviour {
@@ -89,6 +91,7 @@ impl Default for Behaviour {
             legacy: None,
             raw_pairing: None,
             legacy_no_fairplay: false,
+            hang_feedback: false,
         }
     }
 }
@@ -197,6 +200,10 @@ fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
             .unwrap()
             .requests
             .push(format!("{} {}", req.method, req.target));
+        if ctx.behaviour.hang_feedback && req.target == "/feedback" {
+            thread::sleep(Duration::from_secs(40));
+            return Ok(());
+        }
         if req.method == "TEARDOWN" {
             ctx.rec.lock().unwrap().teardown = true;
             ctx.close_data.store(true, Ordering::Release);
