@@ -59,6 +59,16 @@ Found and fixed on Windows:
   timeout on a hung receiver; the event/MediaDataControl readers (no read
   timeout) could hang `close` forever. Fixed with
   `util::thread::join_until` (deadline joins).
+- Socket timeouts belong to the handle: `try_clone` copies them, and a
+  read timeout set through one handle later does not apply to reads on
+  the other. A test page set its WebSocket read timeout through the
+  sender's handle and blocked forever (CI's Windows job hung in
+  `late_joiners_wait_for_a_keyframe_without_freezing_others`). Timeouts
+  are set before `websocket::pair` clones, or on the receiver's stream
+  (`Receiver::with_stream`).
+- The CDP client joined its reader after a shutdown: a hung browser would
+  have hung tvpipe's exit (and the stale-profile sweep). Joined with a
+  deadline now.
 - Timed waits end on the 15.6 ms system tick (in the VM a 1 ms condvar
   or socket timeout took ~25 ms, up to ~75 ms): Cast pacing went bursty
   and two session tests flaked. Fixed with `util::timer` (see
@@ -142,6 +152,11 @@ in another on the same user-defined bridge network.
 - A blocked socket read is not woken by `shutdown` from another thread
   on Windows: threads that may block on a silent peer are joined with a
   deadline (`util::thread::join_until`).
+- Socket timeouts are per handle on Windows (copied by `try_clone`): set
+  them before cloning, or on the handle that reads.
+- A refused loopback `connect` takes about 2 s on Windows (it retries
+  the SYN), not a few microseconds: tests that count retries in a short
+  window fail the connects themselves.
 
 ## Unverified on Windows
 

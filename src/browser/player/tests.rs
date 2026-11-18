@@ -74,13 +74,14 @@ struct Page {
 
 impl Page {
     fn connect(sink: &BrowserSink) -> Page {
-        let (rx, tx) = websocket::connect(
+        let (mut rx, tx) = websocket::connect(
             &sink.ws_url(),
             Duration::from_secs(10),
             websocket::Limits::default(),
         )
         .unwrap();
-        tx.with_stream(|s| s.set_read_timeout(Some(Duration::from_secs(10))))
+        // The receiver's own handle: on Windows timeouts are per handle.
+        rx.with_stream(|s| s.set_read_timeout(Some(Duration::from_secs(10))))
             .unwrap();
         Page { rx, tx }
     }
@@ -114,7 +115,7 @@ impl Page {
 
     /// Nothing arrives within `d`.
     fn quiet(&mut self, d: Duration) -> bool {
-        self.tx
+        self.rx
             .with_stream(|s| s.set_read_timeout(Some(d)))
             .unwrap();
         let r = match self.rx.read_message() {
@@ -125,7 +126,7 @@ impl Page {
             }
             Err(e) => panic!("{e}"),
         };
-        self.tx
+        self.rx
             .with_stream(|s| s.set_read_timeout(Some(Duration::from_secs(10))))
             .unwrap();
         r

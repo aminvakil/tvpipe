@@ -31,6 +31,8 @@ use crate::net::websocket::{self, Message};
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Events kept for a slow reader before the oldest are dropped.
 const EVENT_QUEUE: usize = 4096;
+/// How long dropping a [`Cdp`] waits for its reader thread.
+const DROP_WAIT: Duration = Duration::from_secs(1);
 
 /// An event from the browser.
 #[derive(Debug, Clone, PartialEq)]
@@ -308,8 +310,11 @@ impl Drop for Cdp {
         self.inner.tx.with_stream(|s| {
             let _ = s.shutdown(std::net::Shutdown::Both);
         });
+        // The shutdown ends the reader's blocked read on Linux and macOS,
+        // not on Windows: there it ends when the browser closes its end,
+        // which a hung browser never does.
         if let Some(r) = self.reader.take() {
-            let _ = r.join();
+            crate::util::thread::join_until(r, Instant::now() + DROP_WAIT);
         }
     }
 }

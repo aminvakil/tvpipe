@@ -268,13 +268,14 @@ impl Beacon {
 impl Drop for Beacon {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        // Wake the blocking accept.
+        // Wake the blocking accept (if that fails, the thread is left
+        // behind rather than hanging the exit).
         let _ = TcpStream::connect_timeout(
             &(Ipv4Addr::LOCALHOST, self.port).into(),
             Duration::from_secs(1),
         );
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            crate::util::thread::join_until(t, Instant::now() + Duration::from_secs(2));
         }
     }
 }

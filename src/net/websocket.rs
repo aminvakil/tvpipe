@@ -293,6 +293,12 @@ pub fn connect(
 
 /// A receiver and sender over one TCP stream (after the handshake;
 /// `leftover` are bytes already read past it).
+///
+/// They hold two handles of the socket (`try_clone`). On Windows each
+/// handle has its own timeouts (copied when cloned): a read timeout set
+/// through the sender's stream does not apply to the receiver's reads.
+/// Set timeouts before the pair is made, or on the receiver's own stream
+/// ([`Receiver::with_stream`]).
 pub fn pair(
     tcp: TcpStream,
     leftover: Vec<u8>,
@@ -497,6 +503,12 @@ impl<R: Read, W: Write> Receiver<R, W> {
 
     pub fn sender(&self) -> &Sender<W> {
         &self.sender
+    }
+
+    /// Runs `f` on the stream this receiver reads (e.g. to set its read
+    /// timeout; see [`pair`]).
+    pub fn with_stream<T>(&mut self, f: impl FnOnce(&mut R) -> T) -> T {
+        f(&mut self.r)
     }
 
     /// Reads the next message. Errors of kind [`ErrorKind::Timeout`] (a
@@ -1097,6 +1109,41 @@ mod tests {
             server.join().unwrap(),
             Some((close_code::GOING_AWAY, "done".into()))
         );
+    }
+
+    /// A read timeout set on the receiver's stream applies to its reads
+    /// (on Windows, one set through the sender's handle does not), and a
+    /// timeout leaves the receiver usable.
+    #[test]
+    fn receiver_read_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (tcp, _) = listener.accept().unwrap();
+            let mut conn = Conn::new(tcp);
+            let req = conn.read_request().unwrap();
+            conn.send_response(&server_response(&req).unwrap()).unwrap();
+            let (tcp, rest) = conn.into_parts();
+            let (_rx, tx) = pair(tcp, rest, Role::Server, Limits::default()).unwrap();
+            let _ = go_rx.recv();
+            tx.send_text("late").unwrap();
+            let _ = go_rx.recv();
+        });
+        let url = format!("ws://{addr}/");
+        let (mut rx, _tx) = connect(&url, Duration::from_secs(10), Limits::default()).unwrap();
+        rx.with_stream(|s| s.set_read_timeout(Some(Duration::from_millis(100))))
+            .unwrap();
+        let t0 = std::time::Instant::now();
+        let e = rx.read_message().unwrap_err();
+        assert_eq!(e.kind(), ErrorKind::Timeout, "{e}");
+        assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
+        rx.with_stream(|s| s.set_read_timeout(Some(Duration::from_secs(10))))
+            .unwrap();
+        go_tx.send(()).unwrap();
+        assert_eq!(rx.read_message().unwrap(), Message::Text("late".into()));
+        drop(go_tx);
+        server.join().unwrap();
     }
 
     #[test]

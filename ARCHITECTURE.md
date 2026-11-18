@@ -376,7 +376,7 @@ Everything is platform-neutral except these, each with no crate and every
   (`src/browser/platform.rs`).
 
 Other Windows differences (UDP `ConnectionReset`, `shutdown` not waking a
-blocked `recv`, PowerShell pipes) are handled in portable code; see
+blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in portable code; see
 [`docs/cross-platform.md`](docs/cross-platform.md).
 
 ## Licensing and Clean Room

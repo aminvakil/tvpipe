@@ -61,14 +61,14 @@ struct PageLog {
 fn spawn_page(ws_url: String, video: Arc<AtomicUsize>) -> JoinHandle<PageLog> {
     std::thread::spawn(move || {
         let mut log = PageLog::default();
-        let (mut rx, tx) = websocket::connect(
+        let (mut rx, _tx) = websocket::connect(
             &ws_url,
             Duration::from_secs(10),
             websocket::Limits::default(),
         )
         .unwrap();
         log.connected = Some(Instant::now());
-        tx.with_stream(|s| s.set_read_timeout(Some(Duration::from_secs(30))))
+        rx.with_stream(|s| s.set_read_timeout(Some(Duration::from_secs(30))))
             .unwrap();
         loop {
             match rx.read_message() {

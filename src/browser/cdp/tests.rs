@@ -252,6 +252,36 @@ fn a_call_in_flight_fails_when_the_browser_dies() {
     assert!(t0.elapsed() < Duration::from_secs(5));
 }
 
+/// A hung browser keeps the connection open and never answers the close:
+/// dropping the client still returns (on Windows the local shutdown does
+/// not end the reader's blocked read).
+#[test]
+fn dropping_the_client_does_not_wait_for_a_hung_browser() {
+    let handler: httpd::Handler = Arc::new(|req: &Request| {
+        let resp = websocket::server_response(req).unwrap();
+        Reply::Upgrade(
+            resp,
+            Box::new(|tcp, _rest| {
+                std::thread::sleep(Duration::from_secs(20));
+                drop(tcp);
+            }),
+        )
+    });
+    let server = httpd::Server::bind(([127, 0, 0, 1], 0).into(), handler).unwrap();
+    let url = format!(
+        "ws://127.0.0.1:{}/devtools/browser/x",
+        server.local_addr().port()
+    );
+    let cdp = Cdp::connect(&url, Duration::from_secs(5)).unwrap();
+    // Let the reader block in its read (a shutdown before that ends the
+    // read on every OS).
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(cdp.inner.lock().closed.is_none());
+    let t0 = Instant::now();
+    drop(cdp);
+    assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
+}
+
 #[test]
 fn connecting_to_nothing_fails() {
     let port = std::net::TcpListener::bind("127.0.0.1:0")
