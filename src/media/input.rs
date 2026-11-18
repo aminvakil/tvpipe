@@ -968,6 +968,8 @@ pub(crate) struct EncodedState {
     families: Vec<FamilyAudio>,
     avcc: Option<Vec<u8>>,
     first_sps: Option<Vec<u8>>,
+    /// A later SPS differed in its VUI only (logged once).
+    vui_changed: bool,
     started: bool,
     origin_us: Option<u64>,
     last_video_pts: Option<u64>,
@@ -1092,6 +1094,7 @@ impl EncodedState {
             families,
             avcc: None,
             first_sps: None,
+            vui_changed: false,
             started: false,
             origin_us: None,
             last_video_pts: None,
@@ -1175,7 +1178,7 @@ impl EncodedState {
         let cfg = AvcConfig::parse(&avcc)?;
         let sps = cfg.sps.first().cloned();
         if self.started {
-            if sps != self.first_sps {
+            if sps != self.first_sps && !self.vui_only(sps.as_deref()) {
                 return Err(Error::unsupported(
                     "slrw: the H.264 configuration changed mid-stream",
                 ));
@@ -1199,6 +1202,20 @@ impl EncodedState {
         self.first_sps = sps;
         self.avcc = Some(avcc);
         Ok(())
+    }
+
+    /// A new SPS that differs from the first only in its VUI (slices
+    /// decode the same; receivers keep the first). Logged once.
+    fn vui_only(&mut self, sps: Option<&[u8]>) -> bool {
+        let same = match (sps, &self.first_sps) {
+            (Some(new), Some(first)) => h264::same_decoding(first, new),
+            _ => false,
+        };
+        if same && !self.vui_changed {
+            self.vui_changed = true;
+            debug!("slrw: the H.264 SPS changed in its VUI only; keeping the first");
+        }
+        same
     }
 
     pub(crate) fn handle(&mut self, p: Packet) -> Result<()> {
@@ -1271,7 +1288,10 @@ impl EncodedState {
         if !sps.is_empty() && !pps.is_empty() {
             if !self.started && self.avcc.is_none() {
                 self.set_config(AvcConfig::from_parameter_sets(sps, pps)?.to_bytes()?)?;
-            } else if self.started && sps.first() != self.first_sps.as_ref() {
+            } else if self.started
+                && sps.first() != self.first_sps.as_ref()
+                && !self.vui_only(sps.first().map(Vec::as_slice))
+            {
                 return Err(Error::unsupported(
                     "slrw: the H.264 SPS changed mid-stream (a resolution change?)",
                 ));

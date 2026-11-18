@@ -254,6 +254,10 @@ pub struct Sps {
     /// is set with a known or extended (`255`) `aspect_ratio_idc` (Table
     /// E-1). `None`: unspecified, which receivers treat as square.
     pub sar: Option<(u32, u32)>,
+    /// Bits of the RBSP (after the NAL header) before
+    /// `vui_parameters_present_flag`: everything a decoder needs to read
+    /// slices. See [`same_decoding`].
+    pub bits_before_vui: usize,
 }
 
 impl Sps {
@@ -421,6 +425,7 @@ pub fn parse_sps(nal: &[u8]) -> Result<Sps> {
     let height = u32::try_from(coded_h - crop_h)
         .map_err(|_| Error::malformed("h264 sps: height too large"))?;
     let mut sar = None;
+    let bits_before_vui = br.bit;
     let (fps, restriction) = if br.flag()? {
         let fps = parse_vui_fps(&mut br, &mut sar)?;
         // The rest of the VUI only adds information; a stream whose tail
@@ -445,7 +450,32 @@ pub fn parse_sps(nal: &[u8]) -> Result<Sps> {
         max_num_reorder_frames: restriction.map(|r| r.0),
         max_dec_frame_buffering: restriction.map(|r| r.1),
         sar,
+        bits_before_vui,
     })
+}
+
+/// Whether two SPS NAL units differ at most in their VUI (video
+/// usability information: colour description, timing, buffering hints),
+/// so slices coded against one decode with the other. Browsers' encoders
+/// change the VUI between their first frames (Chrome's VideoToolbox
+/// encoder on macOS switches the transfer characteristics from sRGB to
+/// BT.709), and again after a page shares again.
+pub fn same_decoding(a: &[u8], b: &[u8]) -> bool {
+    let (Ok(sa), Ok(sb)) = (parse_sps(a), parse_sps(b)) else {
+        return false;
+    };
+    let n = sa.bits_before_vui;
+    if n != sb.bits_before_vui {
+        return false;
+    }
+    let (ra, rb) = (unescape_rbsp(&a[1..]), unescape_rbsp(&b[1..]));
+    let (Some(pa), Some(pb)) = (ra.get(..n / 8), rb.get(..n / 8)) else {
+        return false;
+    };
+    let rest = n % 8;
+    let mask = !(0xffu8 >> rest);
+    let tail = |r: &[u8]| r.get(n / 8).map_or(0, |b| b & mask);
+    pa == pb && (rest == 0 || tail(&ra) == tail(&rb))
 }
 
 /// `aspect_ratio_idc` 0..=16 (H.264 Table E-1); 0 is unspecified.
@@ -736,6 +766,34 @@ fn put_ps(w: &mut Writer, nal: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sps_vui_changes_keep_decoding() {
+        // Chrome 157 (VideoToolbox) 1280x720 Constrained Baseline: the
+        // first keyframe's SPS says sRGB transfer, later ones BT.709.
+        let first = crate::util::hex::decode("2742001f898a300a00b74d40434041e10084d0").unwrap();
+        let later = crate::util::hex::decode("2742001f898a300a00b74d40404041e10084d0").unwrap();
+        let (a, b) = (parse_sps(&first).unwrap(), parse_sps(&later).unwrap());
+        assert_eq!((a.width, a.height), (1280, 720));
+        assert_eq!(a.bits_before_vui, b.bits_before_vui);
+        assert!(same_decoding(&first, &later));
+        assert!(same_decoding(&later, &first));
+        // Another size (the built-in encoder's 64x48) is not.
+        let enc = crate::media::h264enc::Encoder::new(crate::media::h264enc::Config {
+            width: 64,
+            height: 48,
+            ..crate::media::h264enc::Config::default()
+        })
+        .unwrap();
+        let other = AvcConfig::parse(&enc.avcc()).unwrap().sps[0].clone();
+        assert!(!same_decoding(&first, &other));
+        // A changed field before the VUI (level_idc).
+        let mut level = first.clone();
+        level[3] = 0x20;
+        assert!(!same_decoding(&first, &level));
+        assert!(!same_decoding(&first, &[0x68, 0xce, 0x3c, 0x80]));
+        assert!(!same_decoding(&first, &first[..6]));
+    }
     use crate::util::vectors;
 
     #[test]
