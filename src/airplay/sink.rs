@@ -1269,8 +1269,24 @@ mod tests {
 
     /// Streams 1.3 s of 30 fps video and audio to the fake receiver.
     fn stream(sink: &mut MirrorSink<TcpStream>, frames: u64) -> Vec<SinkStatus> {
-        stream_with_stall(sink, frames, None).0
+        stream_with_stall(sink, frames, None).statuses
     }
+
+    /// What `stream_with_stall` pushed and saw.
+    struct Streamed {
+        statuses: Vec<SinkStatus>,
+        /// The most a push came after its due time (a loaded machine
+        /// oversleeping). The audio pushed with video frame `i` is due
+        /// with it, so the clock sees it up to [`FRAME`] later still.
+        late: Duration,
+        /// Per audio frame, right after pushing it: where the sink's
+        /// clock put media time 0 (its origin), relative to the start of
+        /// the schedule, in ms. Changes are the clock's re-anchors.
+        origins_ms: Vec<f64>,
+    }
+
+    /// One video frame at 30 fps.
+    const FRAME: Duration = Duration::from_micros(33_333);
 
     /// Like `stream`, but the source stalls for `stall.1` before frame
     /// `stall.0` (like ffmpeg lagging on a badly interleaved file): the
@@ -1279,14 +1295,31 @@ mod tests {
         sink: &mut MirrorSink<TcpStream>,
         frames: u64,
         stall: Option<(u64, Duration)>,
-    ) -> (Vec<SinkStatus>, Duration) {
+    ) -> Streamed {
         let (_, sps, pps) = avcc();
         let t0 = Instant::now();
-        let mut out = Vec::new();
-        let mut late = Duration::ZERO;
+        // The clock's origin, read through a pts far after the anchor.
+        const PROBE: u64 = 3600 * VIDEO_CLOCK_RATE as u64;
+        let origin_ms = |sink: &MirrorSink<TcpStream>| {
+            let at = sink
+                .media
+                .as_ref()?
+                .clock
+                .instant_for(PROBE, VIDEO_CLOCK_RATE)?;
+            let at = at.checked_sub(ticks_to_duration(PROBE, VIDEO_CLOCK_RATE))?;
+            Some(match at.checked_duration_since(t0) {
+                Some(d) => d.as_secs_f64() * 1000.0,
+                None => -(t0 - at).as_secs_f64() * 1000.0,
+            })
+        };
+        let mut s = Streamed {
+            statuses: Vec::new(),
+            late: Duration::ZERO,
+            origins_ms: Vec::new(),
+        };
         let mut a = 0u64;
         for i in 0..frames {
-            let mut due = t0 + Duration::from_micros(i * 33_333);
+            let mut due = t0 + FRAME * i as u32;
             if let Some((at, d)) = stall {
                 if i >= at {
                     due += d;
@@ -1295,15 +1328,17 @@ mod tests {
             if let Some(d) = due.checked_duration_since(Instant::now()) {
                 std::thread::sleep(d);
             }
-            late = late.max(Instant::now().saturating_duration_since(due));
-            out.push(sink.push(&video(i, &sps, &pps)).unwrap());
+            s.late = s.late.max(Instant::now().saturating_duration_since(due));
+            s.statuses.push(sink.push(&video(i, &sps, &pps)).unwrap());
             // Audio up to this video frame's time.
             while a * 352 * 90_000 / 44_100 <= i * 3000 {
-                out.push(sink.push(&audio(a)).unwrap());
+                s.late = s.late.max(Instant::now().saturating_duration_since(due));
+                s.statuses.push(sink.push(&audio(a)).unwrap());
+                s.origins_ms.push(origin_ms(sink).unwrap_or(f64::NAN));
                 a += 1;
             }
         }
-        (out, late)
+        s
     }
 
     #[test]
@@ -1647,37 +1682,69 @@ mod tests {
         let mut sink = connect(&fake, &MirrorOptions::default());
         sink.start(&video_info(), Some(&audio_info())).unwrap();
         let stall = Duration::from_millis(400);
-        // `late`: the most a push came after its due time (a loaded
-        // machine oversleeping), on top of the stall.
-        let (_, late) = stream_with_stall(&mut sink, 84, Some((36, stall)));
+        let st = stream_with_stall(&mut sink, 84, Some((36, stall)));
         wait_for("sync after the stall", || fake.rec().sync.len() >= 3);
         sink.stop().unwrap();
         let r = fake.rec();
-        // RTP: consecutive frames 352 apart except for a gap of the shift
-        // at every re-anchor: the stall (0.4 s), and on a loaded machine
-        // any push more than MAX_LATENESS late. On an idle machine (`late`
-        // ~0) that is exactly one gap of 0.4 s.
-        let gaps_ms: Vec<f64> = r
-            .audio
-            .windows(2)
-            .map(|w| w[1].1.wrapping_sub(w[0].1))
-            .filter(|&d| d != 352)
-            .map(|d| d.wrapping_sub(352) as f64 * 1000.0 / 44_100.0)
-            .collect();
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        let (late_ms, stall_ms) = (ms(late) + 10.0, ms(stall));
-        let stalls = gaps_ms.iter().filter(|&&g| g >= 300.0).count();
-        assert_eq!(stalls, 1, "{gaps_ms:?}, {late:?} late");
-        for &g in &gaps_ms {
-            let max = if g >= 300.0 {
-                stall_ms + late_ms
-            } else {
-                late_ms
-            };
+        let samples_ms = |n: u32| n as i32 as f64 * 1000.0 / 44_100.0;
+        // The received packets by audio frame (the payload tells which).
+        let index: std::collections::HashMap<Vec<u8>, usize> = (0..st.origins_ms.len())
+            .map(|a| (alac_verbatim(&pcm(a as u64), 2).unwrap(), a))
+            .collect();
+        let got: Vec<(usize, u32)> = r
+            .audio
+            .iter()
+            .map(|(_, rtp, payload)| (index[payload], *rtp))
+            .collect();
+        let (a0, rtp0) = got[0];
+        let origin0 = st.origins_ms[a0];
+        // RTP gaps (beyond 352 per frame) appear exactly where and by as
+        // much as the clock re-anchored (moved its origin), so every
+        // packet stays on the first sample<->time line.
+        let mut gaps_ms = Vec::new();
+        let mut last_gap = 0.0;
+        for &(a, rtp) in &got {
+            let gap = samples_ms(rtp.wrapping_sub(rtp0).wrapping_sub((a - a0) as u32 * 352));
+            let moved = st.origins_ms[a] - origin0;
             assert!(
-                (ms(MAX_LATENESS) - 10.0..=max).contains(&g),
-                "{gaps_ms:?}, {late:?} late"
+                (gap - moved).abs() < 0.1,
+                "audio frame {a}: RTP gap {gap} ms, clock moved {moved} ms since frame {a0}"
             );
+            if gap - last_gap > 0.1 {
+                gaps_ms.push(gap - last_gap);
+            }
+            last_gap = gap;
+        }
+        // The re-anchors add up to the real stall plus lateness: the
+        // origin starts at the first push (or at a re-anchor before audio
+        // started) and ends at a frame after the stall, each at most
+        // `late` plus the audio's lag behind video (one frame) after the
+        // schedule. Each re-anchor is a frame more than MAX_LATENESS late.
+        let (late_ms, stall_ms) = (ms(st.late + FRAME) + 5.0, ms(stall));
+        let end = *st.origins_ms.last().unwrap();
+        let what = format!(
+            "gaps {gaps_ms:?} ms, {:?} late, origins {origin0} -> {end} ms",
+            st.late
+        );
+        assert!((-1.0..=late_ms).contains(&origin0), "{what}");
+        assert!(
+            (stall_ms - 1.0..=stall_ms + late_ms).contains(&end),
+            "{what}"
+        );
+        let total: f64 = gaps_ms.iter().sum();
+        assert!(
+            (stall_ms - origin0 - 1.0..=stall_ms + late_ms).contains(&total),
+            "{what}"
+        );
+        assert!(
+            gaps_ms.iter().all(|&g| g >= ms(MAX_LATENESS) - 1.0),
+            "{what}"
+        );
+        // On an idle machine no push is MAX_LATENESS late: the stall is
+        // the one re-anchor.
+        if late_ms < ms(MAX_LATENESS) {
+            assert_eq!(gaps_ms.len(), 1, "{what}");
         }
         // Every sync packet: (rtp_play, T ns). All on one line.
         let points: Vec<(u32, u64)> = r
