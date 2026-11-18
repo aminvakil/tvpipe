@@ -70,14 +70,22 @@ tvpipe share --to "Living Room" --tunnel   # someone elsewhere shares their scre
 ```
 
 `--tunnel` also puts the browser player or the share page on a public
-https link through [OpenTunnel](https://opentunnel.xyz), with TLS ending in
-tvpipe (the relay cannot read the page or the stream). The link is new
-every run and has a token of its own; at most 4 viewers come in that way.
-A remote share shows up only after you answer `y` in the terminal
-(`--yes` skips the question), and its link lets people in for 60 minutes
-(`--tunnel-ttl`). The first use creates the machine's tunnel and
-certificate (about 15 s, once; kept in the config directory under
-`opentunnel/`). Details: [`docs/tunnels.md`](docs/tunnels.md).
+https link. Two providers, both built in (no account, no extra program):
+
+- `--tunnel` (or `--tunnel=cloudflare`): a [Cloudflare Quick
+  Tunnel](https://try.cloudflare.com) on `*.trycloudflare.com`, about 7 s
+  to set up, a new hostname every run. Cloudflare ends TLS, so it can read
+  the page and the stream.
+- `--tunnel=opentunnel`: [OpenTunnel](https://opentunnel.xyz), with TLS
+  ending in tvpipe (the relay cannot read the page or the stream). The
+  first use creates the machine's tunnel and certificate (about 15 s,
+  once; kept in the config directory under `opentunnel/`), later runs
+  take 0.2 s.
+
+The link is new every run and has a token of its own; at most 4 viewers
+come in that way. A remote share shows up only after you answer `y` in the
+terminal (`--yes` skips the question), and its link lets people in for 60
+minutes (`--tunnel-ttl`). Details: [`docs/tunnels.md`](docs/tunnels.md).
 
 ## Manual
 

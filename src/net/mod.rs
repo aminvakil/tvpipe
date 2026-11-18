@@ -4,6 +4,7 @@
 //! Owner: W3 (PLAN §3, §6).
 
 pub mod base64;
+pub mod cftunnel;
 pub mod device;
 pub mod discover;
 pub mod dns;

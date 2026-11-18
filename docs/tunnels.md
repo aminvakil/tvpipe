@@ -202,3 +202,149 @@ terminates TLS.
 - CCADB: Mozilla included roots report (websites trust bit), CDLA
   Permissive 2.0.
 - RFC 2986 (PKCS#10), RFC 5280, RFC 5480, RFC 5758.
+
+## Cloudflare Quick Tunnels
+
+`--tunnel` gives the browser player (`preview`, `play --to browser`) or the
+share page (`share` without URL) a public `https://RANDOM.trycloudflare.com`
+link. tvpipe is its own tunnel client (`src/net/cftunnel/`): no account, no
+cloudflared, no new crate. What the link lets people do is decided by the
+page's server like for loopback (`browser::access`, see
+[player-protocol.md](player-protocol.md) and
+[share-protocol.md](share-protocol.md)); this page is about the transport.
+
+### How it works
+
+Ported from cloudflared 2026.11.1 (Apache-2.0,
+`github.com/cloudflare/cloudflared`); there is no specification.
+
+1. **Credentials.** `POST https://api.trycloudflare.com/tunnel` (empty
+   body) answers `{success, result: {id, hostname, account_tag, secret}}`:
+   an ordinary tunnel's credentials plus its hostname
+   (`cmd/cloudflared/tunnel/quick_tunnel.go`). The service's certificate is
+   checked against the public roots in `src/net/cftunnel/api_roots.pem`
+   (Google Trust Services today, Let's Encrypt as a fallback).
+2. **Edge.** TLS to `region1.v2.argotunnel.com:7844` (`region2` on every
+   other attempt; the SRV record `_v2-origintunneld._tcp.argotunnel.com`
+   lists these two), SNI `h2.cftunnel.com`, no ALPN. The edge's
+   certificate chains to Cloudflare's *origin* CA, not a public root;
+   `edge_ca.pem` holds the one that signs it today (CloudFlare Origin SSL
+   ECC CA, valid until 2029-08-15; cloudflared embeds it with two more,
+   `tlsconfig/cloudflare_ca.go`).
+3. **HTTP/2, roles swapped** (`connection/http2.go`). tvpipe dialed but is
+   the HTTP/2 *server*: it sends SETTINGS, the edge sends the client
+   preface and opens streams. `h2.rs` is that server: frames, flow control
+   both ways (1 MiB stream and 16 MiB connection windows advertised,
+   credit returned as streams consume), PING, GOAWAY, CONTINUATION; HPACK
+   (`hpack.rs`) decodes fully (Huffman, dynamic table) and encodes only
+   literals.
+4. **Registration** (`connection/control.go`,
+   `tunnelrpc/registration_client.go`). The edge's first stream carries
+   `Cf-Cloudflared-Proxy-Connection-Upgrade: control-stream`; we answer
+   200 and speak Cap'n Proto RPC on its body as the client: `Bootstrap`
+   (question 0), then `Call` question 1 pipelined on its answer:
+   `RegistrationServer.registerConnection(auth {accountTag, tunnelSecret},
+   tunnelId, connIndex 0, options {client {clientId, features [], version
+   "tvpipe/X", arch}, numPreviousAttempts})`. The `Return` carries
+   `ConnectionDetails {uuid, locationName}` (e.g. `vie02`) or
+   `ConnectionError {cause, shouldRetry}`. On shutdown,
+   `unregisterConnection` (question 2). `capnp.rs` builds single-segment
+   messages and reads any (far pointers included); field offsets from
+   `tunnelrpc.capnp` and zombiezen's `rpc.capnp.go`.
+5. **Visitors.** Every other stream is a request: `:method`, `:path`,
+   `:authority` and the visitor's headers (`cf-connecting-ip` among them);
+   `Cf-Cloudflared-Proxy-Connection-Upgrade: websocket` marks a WebSocket.
+   tvpipe sends it to `127.0.0.1:PORT` as HTTP/1.1 (`Host` from
+   `:authority`, so the page's Host/token/Origin checks apply unchanged)
+   and answers with `:status` (101 becomes 200: HTTP/2 has none),
+   `content-length`, and the origin's headers serialized into
+   `cf-cloudflared-response-headers` (`base64(name):base64(value)` joined
+   by `;`, unpadded) plus `cf-cloudflared-response-meta: {"src":"origin"}`
+   (`connection/header.go`). A WebSocket's bytes then flow as DATA both
+   ways. Configuration pushes and TCP (WARP) streams get 502.
+6. **DNS.** The hostname reaches Cloudflare's name servers 0.5-10 s after
+   registration, and a resolver that asks earlier caches the NXDOMAIN for
+   minutes (1.1.1.1 did in tests). So `start` returns, and the URL is
+   printed, only once `kevin.ns.cloudflare.com` answers for it (plain DNS
+   over UDP, no recursion, a new source port per query: those servers also
+   remember a negative answer for ~5 s, per port).
+7. **Reconnecting.** If the connection drops (or the edge goes silent: a
+   PING after 15 s idle, given up after 30 s) tvpipe dials again with the
+   same credentials after 0.2 s, 0.4 s, ... up to 25.6 s, alternating
+   regions. The hostname stays: it belongs to the tunnel, not the
+   connection.
+
+The visitor's address for the share confirmation comes from
+`cf-connecting-ip`, by the local address of the connection to the page.
+
+### Measurements
+
+2026-11-18/19 from Vienna (residential fibre, macOS 26, Chrome 157
+headless), tvpipe and the viewer on the same machine: every number crosses
+the internet twice. Edge locations vie02/vie07.
+
+| | |
+|---|---|
+| Code | `src/net/cftunnel/`: 2862 lines of Rust, 2004 without tests, 1657 without tests, comments and blank lines (HTTP/2 461, HPACK 226, Cap'n Proto 334, the rest 636); 115 lines of PEM |
+| Binary | release, stripped (`CARGO_PROFILE_RELEASE_STRIP=symbols`): +218 KB over the provider-neutral commit (`__text` +149 KB); about a quarter is rustls' certificate-chain verification (webpki), which tvpipe did not link before |
+| Setup | process start to first successful HTTPS GET through the link: 6.66, 6.69, 6.71, 7.19, 8.88 s, **median 6.7 s**. Of that, `api.trycloudflare.com` takes 4.3-5.5 s to answer; connecting and registering 0.35-0.45 s; DNS 0.5-3 s |
+| WebSocket | 100 pings (the player's JSON ping/pong): median 12 ms, p95 72-82 ms, 11-15 % above 30 ms. cloudflared 2026.11.1 over the same path, `--protocol http2` and `quic`, measured the same (median 11-13 ms, p95 72-80 ms): the spikes are Cloudflare's |
+| Player, 1080p30 ~7 Mbit/s, 60 s | `delay=300`: no late or dropped frames, no late audio (two runs). `delay=100`: one run clean, one with 6 frames dropped late and 2.7 % of audio records late (max delay 117 ms) |
+| Share page | fake 800×450 capture with audio from headless Chrome through the link (share --yes): 20 fps (the fake source's rate), no drops, capture-to-tvpipe jitter peaks ~65 ms above the average |
+| Reconnect | edge connection cut (in-process, the live test): the same URL answered again 1.0 s later (1.9 s with the earlier 0.5 s first backoff). Open WebSockets break with the connection; the player page reconnects by itself (0.3 s, 0.6 s, ...) |
+
+The public player URL asks for `delay=300`, which these numbers support.
+
+Rate limit: `api.trycloudflare.com` answered `429 Too Many Requests`
+after about 29 tunnels in 90 minutes from one address (tvpipe reports
+it as is).
+
+### Stability and terms
+
+- **Protocol.** What tvpipe implements is cloudflared's HTTP/2 transport
+  as of 2026.11.1. It has existed since 2020-09 (TUN-3400, the Go HTTP/2
+  library replacing h2mux) and is still the fallback when UDP (QUIC) is
+  blocked, so the edge keeps it. The registration RPC dates from named
+  tunnels (2020); the schema keeps every deprecated method and struct for
+  wire compatibility, and the feature list it sends is optional
+  (`serialized_headers` and friends are "universally supported" and no
+  longer advertised, TUN-10904). The edge accepted `version
+  "tvpipe/0.1.1"` and no features.
+- **Support policy.** cloudflared's README: Cloudflare supports cloudflared
+  versions within one year of the latest release; breaking changes
+  "unrelated to feature availability may be introduced that will impact
+  versions released more than one year ago". There is no promise for
+  third-party clients, and no announcement channel other than cloudflared's
+  releases. In practice: re-check this client against a new cloudflared
+  at least yearly (`connection/http2.go`, `connection/header.go`,
+  `tunnelrpc/proto/tunnelrpc.capnp`, `quick_tunnel.go`), and expect to
+  change `edge_ca.pem` before 2029-08 and `api_roots.pem` when
+  Cloudflare changes CAs.
+- **Terms.** Quick tunnels have no uptime guarantee and fall under the
+  Cloudflare Online Services Terms; the CDN terms say free plans should not
+  serve "video and other large files" without the paid products. A live
+  stream to a few viewers is in that grey zone. Cloudflare ends TLS, so it
+  sees the page, the token and the stream.
+
+### Limits
+
+- One edge connection (like cloudflared for quick tunnels); while it is
+  down, visitors get Cloudflare's error page.
+- Quick tunnels: 200 requests in flight, no server-sent events, a new
+  hostname every run.
+- The link is printed only when it resolves; someone who opens it within
+  a few seconds may still meet a Cloudflare name server that remembers the
+  NXDOMAIN from before (tvpipe's own probes create such entries for ~5 s).
+
+### Sources
+
+- cloudflared 2026.11.1 (Apache-2.0): `cmd/cloudflared/tunnel/quick_tunnel.go`,
+  `connection/{http2,header,control,protocol}.go`, `client/config.go`,
+  `features/features.go`, `proxy/proxy.go`,
+  `tunnelrpc/{registration_client.go,pogs/registration_server.go}`,
+  `tunnelrpc/proto/tunnelrpc.capnp`, `edgediscovery/allregions/discovery.go`,
+  `tlsconfig/cloudflare_ca.go`, `README.md` (support policy),
+  `RELEASE_NOTES`.
+- zombiezen.com/go/capnproto2 v2.18.0 `std/capnp/rpc/rpc.capnp.go` (field
+  offsets); capnproto.org `encoding.html`, `rpc.capnp`.
+- RFC 9113 (HTTP/2), RFC 7541 (HPACK; the tests use Appendix C), RFC 1035.

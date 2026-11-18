@@ -32,11 +32,15 @@ pub trait Tunnel: Send {
 }
 
 /// Starts a tunnel to `127.0.0.1:port`; returns once its URL works.
-/// `stop` aborts a slow first setup (Ctrl-C).
+/// `stop` aborts a slow first setup (Ctrl-C). A Cloudflare quick tunnel;
+/// `TVPIPE_TUNNEL=opentunnel` picks OpenTunnel.
 pub fn start(port: u16, stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
-    Ok(Box::new(crate::net::opentunnel::OpenTunnel::start(
-        port, stop,
-    )?))
+    if std::env::var("TVPIPE_TUNNEL").as_deref() == Ok("opentunnel") {
+        return Ok(Box::new(crate::net::opentunnel::OpenTunnel::start(
+            port, stop,
+        )?));
+    }
+    Ok(Box::new(crate::net::cftunnel::Tunnel::start(port, stop)?))
 }
 
 impl Tunnel for crate::net::opentunnel::OpenTunnel {
