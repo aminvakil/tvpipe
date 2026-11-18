@@ -1,7 +1,7 @@
 # Making ffmpeg optional
 
 Status: A and B decided and implemented by W9 (decision 0006,
-`media::{mp4,passthrough,input}`, decision 0007); experiment results
+`media::{mp4,passthrough,input}`, decision 0008); experiment results
 below.
 
 Today every session runs ffmpeg (PLAN §5). The question is when we can skip

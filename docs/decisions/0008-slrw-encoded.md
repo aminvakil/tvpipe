@@ -1,6 +1,6 @@
-# 0007: SLRW encoded H.264 and the keyframe back channel (amends 0002)
+# 0008: SLRW encoded H.264 and the keyframe back channel (amends 0002)
 
-Status: proposed by W9, pending lead review. Affects only the game-input
+Status: accepted by lead. Proposed by W9. Affects only the game-input
 format and `media::input`. Implements option B of
 `docs/ffmpeg-optional.md` (decision 0006).
 

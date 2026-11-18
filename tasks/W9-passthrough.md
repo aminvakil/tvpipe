@@ -32,7 +32,7 @@ lead tells you, then you wire `media::input` in.
       port or on stdout; keep it std-only), documented in a decision note
       amending 0002. Update `slrw-gen` with an `--encoded` mode (it may use
       ffmpeg to produce H.264 for the example only).
-      (decision 0007: kinds 3-5, `keyframe\n` on stdout;
+      (decision 0008: kinds 3-5, `keyframe\n` on stdout;
       `Fanout::keyframe_wanted()`, lead-approved.)
 - [~] Experiments on the receivers, as `#[ignore]` tests or scripts plus a
       short write-up in `docs/ffmpeg-optional.md`: H.264 with B-frames sent

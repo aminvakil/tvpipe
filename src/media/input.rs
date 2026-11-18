@@ -9,7 +9,7 @@
 //!   unchanged ([`passthrough`]), paced in real time on a [`MediaClock`],
 //!   optionally looped. No ffmpeg at all.
 //! - [`SlrwEncodedInput`]: a game sends encoded H.264 (and PCM) in SLRW
-//!   (`--raw-video WxH@FPS:h264`, decision 0007), with keyframes on
+//!   (`--raw-video WxH@FPS:h264`, decision 0008), with keyframes on
 //!   demand through the stdout back channel. No ffmpeg for video.
 //!
 //! The session loop is the same for all three: `info()`, then
@@ -19,7 +19,7 @@
 //! (Ctrl-C), also while waiting for input.
 //!
 //! Sources: PLAN §3, §5; docs/ffmpeg-optional.md; decisions 0002, 0006,
-//! 0007.
+//! 0008.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -564,7 +564,7 @@ pub fn encoded_audio_families(
     (out, warnings)
 }
 
-/// Writes keyframe requests to the game (decision 0007).
+/// Writes keyframe requests to the game (decision 0008).
 struct BackChannel {
     state: Arc<(Mutex<(bool, bool)>, Condvar)>,
     last: Option<Instant>,
@@ -634,7 +634,7 @@ pub struct EncodedOptions {
     pub back_channel: Option<Box<dyn Write + Send>>,
 }
 
-/// Encoded H.264 + PCM from a game over SLRW (decision 0007).
+/// Encoded H.264 + PCM from a game over SLRW (decision 0008).
 pub struct SlrwEncodedInput {
     rx: Receiver<std::io::Result<Option<Packet>>>,
     info: StreamInfo,
