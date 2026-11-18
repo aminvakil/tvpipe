@@ -49,7 +49,7 @@ use crate::airplay::setup::AudioCodecId;
 use crate::airplay::timing::{
     anchor_from_headers, fp_from_duration, fp_to_ns, ntp_clock, Timeline, NTP_EPOCH_OFFSET_FP,
 };
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, Result};
 use crate::media::clock::MediaClock;
 use crate::media::h264::{self, AvcConfig};
 use crate::types::{
@@ -915,13 +915,7 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
             let _ = t.join();
         }
         info!("airplay: {}: stopped", self.name);
-        match r {
-            Err(e) if e.kind() == ErrorKind::Closed => {
-                debug!("airplay: teardown: {e}");
-                Ok(())
-            }
-            other => other,
-        }
+        r
     }
 }
 
@@ -1191,6 +1185,20 @@ mod tests {
         }
         assert!(finished);
         sink.stop().unwrap();
+    }
+
+    #[test]
+    fn eof_after_teardown_is_a_clean_stop() {
+        let fake = FakeMirror::start(Behaviour {
+            teardown_eof: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 5);
+        sink.stop().unwrap();
+        assert!(fake.rec().teardown);
     }
 
     #[test]

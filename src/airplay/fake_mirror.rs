@@ -57,6 +57,8 @@ pub struct Behaviour {
     pub close_after_packets: Option<usize>,
     /// Ask for retransmission of audio seq 1..2 after this many packets.
     pub nack_after: Option<usize>,
+    /// Close the control connection instead of answering TEARDOWN.
+    pub teardown_eof: bool,
 }
 
 impl Default for Behaviour {
@@ -65,6 +67,7 @@ impl Default for Behaviour {
             refuse_session_setup: None,
             close_after_packets: None,
             nack_after: Some(5),
+            teardown_eof: false,
         }
     }
 }
@@ -170,12 +173,15 @@ fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
             .unwrap()
             .requests
             .push(format!("{} {}", req.method, req.target));
-        let resp = handle(&req, ctx);
-        conn.send_response(&resp)?;
         if req.method == "TEARDOWN" {
             ctx.rec.lock().unwrap().teardown = true;
             ctx.close_data.store(true, Ordering::Release);
+            if ctx.behaviour.teardown_eof {
+                return Ok(());
+            }
         }
+        let resp = handle(&req, ctx);
+        conn.send_response(&resp)?;
     }
 }
 

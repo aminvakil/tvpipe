@@ -854,6 +854,12 @@ impl<S: ControlStream> Session<S> {
                     "airplay: TEARDOWN answered {} {}",
                     r.status, r.reason
                 ))),
+                // The Apple TV often closes the control connection instead
+                // of answering; that ends the session too (§4.14, §13).
+                Err(e) if e.kind() == crate::error::ErrorKind::Closed => {
+                    debug!("airplay: receiver closed the connection on TEARDOWN ({e})");
+                    Ok(())
+                }
                 Err(e) => Err(e),
             }
         };
