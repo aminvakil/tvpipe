@@ -3,6 +3,7 @@
 //!
 //! Owner: W4 (PLAN §3, §5).
 
+pub mod aacenc;
 pub mod clock;
 pub mod debug;
 pub mod fanout;
