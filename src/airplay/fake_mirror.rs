@@ -389,8 +389,8 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
                 let header: Vec<u8> = buf[..128].to_vec();
                 let mut payload = buf[128..128 + len].to_vec();
                 buf.drain(..128 + len);
-                if header[4] == 0 && ctr.is_some() {
-                    ctr.as_mut().unwrap().apply(&mut payload);
+                if let (0, Some(ctr)) = (header[4], ctr.as_mut()) {
+                    ctr.apply(&mut payload);
                 } else if header[4] == 0 {
                     let pt = cipher
                         .open_in_place(&nonce_counter(counter), &header, &mut payload)
