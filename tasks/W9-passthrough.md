@@ -1,7 +1,7 @@
 # W9 Passthrough sources + encoded SLRW (options A + B)
 
-Status: done except the session wiring (waits for W7) and the Apple TV
-experiments. Owns `src/media/{mp4,input,passthrough}.rs` (new),
+Status: done; Apple TV B-frame experiment waits for the human
+(`STREAMLIB_EXPERIMENT_BFRAMES`). Owns `src/media/{mp4,input,passthrough}.rs` (new),
 `src/media/{slrw,rawin}.rs` (extend), `examples/slrw-gen.rs`,
 `tests/fixtures/media/**`. Don't edit `session.rs` until W7 has merged; the
 lead tells you, then you wire `media::input` in.
@@ -38,8 +38,11 @@ lead tells you, then you wire `media::input` in.
       short write-up in `docs/ffmpeg-optional.md`: H.264 with B-frames sent
       in decode order (openscreen receiver; Apple TV once W7 merges), and
       AAC-LC passthrough. (openscreen done; Apple TV pending W7.)
-- [ ] Wire `media::input` into `session.rs` (after W7 merges; plan in the
-      W9 report / below).
+- [x] Wire `media::input` into `session.rs` (plan below, as done).
+- [x] Encoded SLRW → Cast audio with `media::aacenc`; Cast sink sends
+      ADTS AAC and can offer AAC only (`CastOptions::audio_codecs`).
+- [x] ffmpeg located lazily: passthrough and encoded SLRW run without it
+      (session tests with a bogus `--ffmpeg`).
 
 ## Session wiring plan (for after W7)
 

@@ -145,8 +145,25 @@ Decisions taken in the code (W9):
   whether real receivers want raw AAC or ADTS. Until then AAC files go
   through ffmpeg for Cast (Opus); AAC for AirPlay is untested (W7).
 
-Still open (hardware): B-frames and AAC-LC on the Apple TV; scaling of
-a stream larger than the advertised canvas; B-frames on a Chromecast.
+Follow-up (W9, after the wiring):
+
+- The Cast sink now sends AAC ADTS-framed, as Chromium's Cast sender does
+  (`media/cast/encoding/audio_encoder.cc`), and `CastOptions` can offer
+  AAC alone. A file with AAC that could pass is offered AAC only; an
+  encoding game's PCM goes through `media::aacenc` to Cast. On openscreen
+  both play without decode errors (`slrw-gen --encoded --exec streamlib
+  play --ffmpeg /bogus ...`: 180 video and 281 AAC frames, 3 keyframe
+  requests honoured).
+- B-frames on hardware: `STREAMLIB_EXPERIMENT_BFRAMES=dts` (or `pts`)
+  makes `play FILE` pass files with B-frames through in decode order,
+  stamped with decode (or presentation) times. Unset, they go through
+  ffmpeg.
+- AAC-LC into AirPlay is not possible yet: the AirPlay sink sets up ALAC
+  (verbatim, from 44.1 kHz PCM) or AAC-ELD (not implemented), so AirPlay
+  passthrough carries audio only for 44.1 kHz s16le PCM files.
+
+Still open (hardware): B-frames on the Apple TV and a Chromecast; scaling
+of a stream larger than the advertised canvas.
 
 ## Suggested order
 

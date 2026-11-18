@@ -141,8 +141,13 @@ pub fn decide_file(
             why: format!("re-encoding because of {flag}"),
         };
     }
+    let reorder = reorder_experiment();
+    if let Some(r) = reorder {
+        warn!("experiment: B-frames pass through in decode order, stamped with their {r:?}");
+    }
     let check = CheckOptions {
         audio: !opts.no_audio,
+        allow_reordering: reorder.is_some(),
         ..CheckOptions::default()
     };
     match passthrough::check(info, sinks, check) {
@@ -347,7 +352,36 @@ pub struct PassthroughInput {
     pending: VecDeque<EncodedFrame>,
     /// PCM audio is re-cut into AirPlay-sized frames.
     pcm: Option<PcmFramer>,
+    /// B-frame experiment (see [`reorder_experiment`]).
+    reorder: Option<ReorderStamp>,
     stop: StopFn,
+}
+
+/// The timestamp B-frames carry in the reordering experiment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReorderStamp {
+    /// Each frame's presentation time (goes back and forth).
+    Pts,
+    /// Each frame's decode time (increases; pictures come out of the
+    /// decoder in presentation order).
+    Dts,
+}
+
+/// Environment variable for the B-frame experiment: `dts` or `pts`.
+pub const REORDER_EXPERIMENT_ENV: &str = "STREAMLIB_EXPERIMENT_BFRAMES";
+
+/// `$STREAMLIB_EXPERIMENT_BFRAMES`: pass files with B-frames through
+/// anyway (decode order, stamped as said), to try receivers
+/// (docs/ffmpeg-optional.md). Unset: B-frames go through ffmpeg.
+pub fn reorder_experiment() -> Option<ReorderStamp> {
+    match std::env::var(REORDER_EXPERIMENT_ENV).ok()?.as_str() {
+        "dts" => Some(ReorderStamp::Dts),
+        "pts" => Some(ReorderStamp::Pts),
+        other => {
+            warn!("{REORDER_EXPERIMENT_ENV}={other:?}: expected dts or pts; ignored");
+            None
+        }
+    }
 }
 
 /// Cuts PCM packets into fixed frames, keeping their sample timeline.
@@ -442,8 +476,14 @@ impl PassthroughInput {
             last_video_pts: None,
             pending: VecDeque::new(),
             pcm,
+            reorder: reorder_experiment(),
             stop,
         })
+    }
+
+    /// Overrides [`reorder_experiment`] (tests, experiments).
+    pub fn set_reorder(&mut self, r: Option<ReorderStamp>) {
+        self.reorder = r;
     }
 
     fn queue_audio(&mut self, frame: &EncodedFrame) {
@@ -540,23 +580,29 @@ impl Input for PassthroughInput {
             };
             let start_ns = ticks_to_duration(ff.frame.pts, rate).as_nanos();
             self.pass_end_ns = self.pass_end_ns.max(start_ns + dur_ns);
-            let pts = shift(ff.frame.pts, rate, self.loop_offset_ns);
+            let mut pts = shift(ff.frame.pts, rate, self.loop_offset_ns);
+            // Frames leave in decode order at their decode time.
+            let dts = shift(ff.dts, rate, self.loop_offset_ns);
             if kind == TrackKind::Video {
-                if self.last_video_pts.is_some_and(|l| pts <= l) {
-                    return Err(Error::unsupported(
-                        "passthrough: the video has B-frames after the probed part; \
-                         run again with --encoder auto|x264|... to re-encode",
-                    ));
+                match self.reorder {
+                    None if self.last_video_pts.is_some_and(|l| pts <= l) => {
+                        return Err(Error::unsupported(
+                            "passthrough: the video has B-frames after the probed part; \
+                             run again with --encoder auto|x264|... to re-encode",
+                        ));
+                    }
+                    Some(ReorderStamp::Dts) => pts = dts,
+                    _ => {}
                 }
                 self.last_video_pts = Some(pts);
             }
             if self.realtime {
                 if !self.clock.is_anchored() {
-                    self.clock.observe(pts, rate);
+                    self.clock.observe(dts, rate);
                 }
                 let due = self
                     .clock
-                    .instant_for(pts, rate)
+                    .instant_for(dts, rate)
                     .unwrap_or_else(Instant::now);
                 if !sleep_until(due, self.stop) {
                     return Ok(None);
@@ -1389,6 +1435,39 @@ pub(crate) mod tests {
         assert_eq!(airplay, cast);
         assert!(airplay > 90);
         Box::new(input).finish(true).unwrap();
+    }
+
+    #[test]
+    fn bframe_experiment_orders() {
+        let plan = PassPlan {
+            audio_families: vec![],
+        };
+        let open = |r| {
+            let mut i =
+                PassthroughInput::open_with(&fixture("bframes.mp4"), &plan, false, false, never)
+                    .unwrap();
+            i.set_reorder(r);
+            i
+        };
+        assert!(drain_result(&mut open(None)).is_err());
+        let dts = drain(&mut open(Some(ReorderStamp::Dts)));
+        assert_eq!(dts.len(), 30);
+        assert!(dts.windows(2).all(|w| w[1].pts > w[0].pts));
+        let pts = drain(&mut open(Some(ReorderStamp::Pts)));
+        assert_eq!(pts.len(), 30);
+        assert!(pts.windows(2).any(|w| w[1].pts < w[0].pts));
+        // The same set of presentation times, decode-order shuffled.
+        let mut sorted: Vec<u64> = pts.iter().map(|f| f.pts).collect();
+        sorted.sort();
+        assert!(sorted.windows(2).all(|w| w[1] - w[0] == 3000));
+    }
+
+    fn drain_result(input: &mut dyn Input) -> Result<usize> {
+        let mut n = 0;
+        while input.next_frame()?.is_some() {
+            n += 1;
+        }
+        Ok(n)
     }
 
     #[test]

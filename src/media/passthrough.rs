@@ -607,7 +607,13 @@ fn open_mp4(file: File) -> Result<(Inner, FileInfo)> {
     let origin_ns = lookahead
         .iter()
         .filter(|s| used(s.track_id))
-        .filter_map(|s| demux.track(s.track_id).map(|t| to_ns(s.pts, t.timescale)))
+        // Decode times too: with B-frames they start before the first
+        // presentation, and must not go negative.
+        .filter_map(|s| {
+            demux
+                .track(s.track_id)
+                .map(|t| to_ns(s.pts.min(s.dts), t.timescale))
+        })
         .min()
         .unwrap_or(0);
     let duration = v.duration_secs();
