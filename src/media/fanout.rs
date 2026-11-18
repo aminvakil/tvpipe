@@ -76,6 +76,9 @@ struct State {
     abort: bool,
     /// The sink thread is gone; drop everything.
     dead: bool,
+    /// What the sink's `wants_keyframe()` said when last polled (before
+    /// pushing a video frame).
+    sink_wants_key: bool,
     stats: SinkStats,
 }
 
@@ -122,6 +125,7 @@ impl Fanout {
                     closed: false,
                     abort: false,
                     dead: false,
+                    sink_wants_key: false,
                     stats: SinkStats::default(),
                 }),
                 cond: Condvar::new(),
@@ -190,6 +194,21 @@ impl Fanout {
             drop(st);
             h.shared.cond.notify_one();
         }
+    }
+
+    /// Whether some running sink is waiting for a keyframe: it just
+    /// joined, its queue overflowed, or its receiver asked (PLI, loss).
+    ///
+    /// A *hint* polled by the session, not an event: it stays true until
+    /// a keyframe went through, and the sink's own `wants_keyframe()` is
+    /// only sampled when a video frame is about to be pushed to it. A
+    /// source that can make keyframes on demand (an encoding game) is
+    /// asked for one while this is true, rate-limited by the source.
+    pub fn keyframe_wanted(&self) -> bool {
+        self.sinks.iter().any(|h| {
+            let st = h.shared.lock();
+            !st.dead && !st.closed && (st.waiting_for_key || st.sink_wants_key)
+        })
     }
 
     /// Sinks still running.
@@ -284,7 +303,11 @@ fn run_sink(
             }
         };
         let Some(frame) = frame else { break };
-        if frame.track == TrackKind::Video && sink.wants_keyframe() {
+        let wants_key = frame.track == TrackKind::Video && sink.wants_keyframe();
+        if frame.track == TrackKind::Video {
+            shared.lock().sink_wants_key = wants_key && !frame.keyframe;
+        }
+        if wants_key {
             let mut st = shared.lock();
             if !frame.keyframe {
                 // Skip this and everything queued up to the next keyframe.
@@ -580,7 +603,10 @@ mod tests {
         let (gate_tx, gate_rx) = mpsc::channel();
         s.gate = Some(gate_rx);
         let f = Fanout::new(vec![Box::new(s)], &info(), FanoutConfig::default()).unwrap();
+        // A new sink waits for its first keyframe.
+        assert!(f.keyframe_wanted());
         f.push(&video(0, true));
+        assert!(!f.keyframe_wanted());
         // Let frame 0 through, then the receiver reports loss.
         gate_tx.send(()).unwrap();
         while videos(&log).is_empty() {
@@ -589,12 +615,24 @@ mod tests {
         wants.store(true, Ordering::SeqCst);
         for i in 1..8u64 {
             f.push(&video(i, i == 6));
+            if i == 1 {
+                // Seen when the sink thread takes the next video frame.
+                let t0 = std::time::Instant::now();
+                while !f.keyframe_wanted() && t0.elapsed() < std::time::Duration::from_secs(5) {
+                    std::thread::yield_now();
+                }
+                assert!(f.keyframe_wanted());
+            }
         }
         f.push(&audio(AudioFamily::Cast, 99));
         for _ in 0..20 {
             let _ = gate_tx.send(());
         }
         drop(gate_tx);
+        while videos(&log).len() < 3 {
+            std::thread::yield_now();
+        }
+        assert!(!f.keyframe_wanted());
         f.close(true);
         assert_eq!(videos(&log), [0, 6, 7]);
         // Audio is not dropped for a keyframe request.
