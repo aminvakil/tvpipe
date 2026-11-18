@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 520" width="560" height="520">
+  <title>tv pipe</title>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- antennas -->
+    <g stroke="#172B46" stroke-width="12">
+      <line x1="208" y1="118" x2="152" y2="62"/>
+      <line x1="256" y1="118" x2="322" y2="40"/>
+    </g>
+    <g fill="#172B46">
+      <circle cx="152" cy="62" r="14"/>
+      <circle cx="322" cy="40" r="14"/>
+      <path d="M180 137 A52 30 0 0 1 284 137 Z"/>
+      <!-- feet -->
+      <path d="M92 474 A19 19 0 0 0 130 474 Z"/>
+      <path d="M334 474 A19 19 0 0 0 372 474 Z"/>
+    </g>
+
+    <!-- body + screen -->
+    <rect x="23" y="137" width="419" height="331" rx="48" stroke="#172B46" stroke-width="16" fill="#fff"/>
+    <path d="M92 180 Q211 168 330 180 Q350 182 352 202 Q360 301 352 400 Q350 420 330 422 Q211 434 92 422 Q72 420 70 400 Q62 301 70 202 Q72 182 92 180 Z"
+          stroke="#172B46" stroke-width="14"/>
+
+    <!-- knobs -->
+    <circle cx="390" cy="222" r="17" fill="#E8743B"/>
+    <circle cx="390" cy="272" r="12" fill="#E8743B"/>
+
+    <!-- pipe: white knockout, then shape -->
+    <g stroke-width="14">
+      <path id="pipe" d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z"
+            stroke="#fff" stroke-width="40"/>
+      <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z"
+            fill="#E8743B" stroke="#172B46"/>
+      <ellipse cx="445" cy="322" rx="55" ry="13" fill="#fff" stroke="#172B46"/>
+      <line x1="182" y1="262" x2="182" y2="310" stroke="#172B46" stroke-width="16"/>
+    </g>
+
+    <!-- smoke -->
+    <g stroke="#E8743B" stroke-width="13" transform="translate(12 0)">
+      <path d="M492 225 C492 205 464 195 464 160 C464 136 482 120 502 120 C522 120 536 135 533 155 C531 170 518 177 507 175"/>
+      <path d="M470 290 C468 262 492 252 506 242 C520 230 524 214 518 200"/>
+    </g>
+  </g>
+</svg>
