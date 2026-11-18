@@ -16,6 +16,18 @@ The source side gets a `media::input` abstraction (W9) so `session.rs`
 can take frames from ffmpeg, a passthrough demuxer, or SLRW + built-in
 encoders alike.
 
+Landed (builtin-wiring): `types::Encoder::Builtin` (the only change to
+the frozen types; `ffmpeg.rs` treats it like `Auto`, i.e. never hands it
+to ffmpeg) and `--encoder builtin`. Policy: raw SLRW input (`-` with a
+pixel format) and `test-pattern` use `media::builtin` (convert + scale +
+`h264enc`, keyframes on demand; audio as in 0008: PCM for AirPlay,
+`aacenc` for Cast) with `--encoder builtin`, and with `--encoder auto`
+when ffmpeg cannot be found (the test pattern also when ffmpeg lacks
+`drawtext`); otherwise ffmpeg as before. Files, URLs and capture with
+`--encoder builtin` are a usage error. The built-in test pattern burns
+in the UTC wallclock in milliseconds and a frame counter, with a 1 kHz
+beep and a white flash for the first 100 ms of every second.
+
 Clean room for C: ITU-T H.264 and ISO/IEC 14496-3 (and public papers,
 textbooks, Wikipedia) are fine; permissive code (openh264 BSD-2) may be
 read with attribution. Do **not** read copyleft encoders: x264 (GPL),

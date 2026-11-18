@@ -110,12 +110,16 @@ pub struct Capabilities {
     pub preferred_latency_ms: Option<u32>,
 }
 
-/// Which encoder ffmpeg should use for video.
+/// Which encoder makes the video: one of ffmpeg's, or our own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Encoder {
-    /// Probe `ffmpeg -encoders` and pick the best available.
+    /// Probe `ffmpeg -encoders` and pick the best available (the built-in
+    /// encoder when raw input has no ffmpeg; decision 0006).
     #[default]
     Auto,
+    /// `media::h264enc` in-process (raw SLRW input and the test pattern;
+    /// decision 0006). Never handed to ffmpeg.
+    Builtin,
     X264,
     VideoToolbox,
     Nvenc,

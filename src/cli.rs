@@ -174,6 +174,7 @@ static PLAY_OPTS: &[Opt<PlayArg>] = &[
         .default_value("auto")
         .possible_values(&[
             "auto",
+            "builtin",
             "x264",
             "videotoolbox",
             "nvenc",
@@ -574,6 +575,7 @@ fn parse_pipeline(mut p: Parser<PipelineArg>) -> Result<Command, Error> {
 
 fn parse_encoder(s: &str) -> Encoder {
     match s {
+        "builtin" => Encoder::Builtin,
         "x264" => Encoder::X264,
         "videotoolbox" => Encoder::VideoToolbox,
         "nvenc" => Encoder::Nvenc,
@@ -642,6 +644,16 @@ mod tests {
             }
         );
         assert_eq!(o.raw_audio.unwrap().channels, 2);
+    }
+
+    #[test]
+    fn builtin_encoder() {
+        let (_, cmd) = parse_from(&["test-pattern", "--to", "tv", "--encoder", "builtin"]).unwrap();
+        let Command::TestPattern(o) = cmd else {
+            panic!()
+        };
+        assert_eq!(o.encoder, Encoder::Builtin);
+        assert_eq!(o.input, InputSpec::TestPattern);
     }
 
     #[test]

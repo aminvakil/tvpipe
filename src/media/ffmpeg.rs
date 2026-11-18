@@ -139,7 +139,7 @@ pub fn parse_listing(text: &str) -> BTreeSet<String> {
 pub fn encoder_name(encoder: Encoder, codec: VideoCodec) -> Option<&'static str> {
     use Encoder::*;
     Some(match (codec, encoder) {
-        (_, Auto) => return None,
+        (_, Auto | Builtin) => return None,
         (VideoCodec::H264, X264) => "libx264",
         (VideoCodec::H264, VideoToolbox) => "h264_videotoolbox",
         (VideoCodec::H264, Nvenc) => "h264_nvenc",
@@ -527,7 +527,7 @@ fn push_video(
         Encoder::MediaFoundation => {
             a.extend(["-rate_control", "cbr", "-scenario", "display_remoting"]);
         }
-        Encoder::Auto => return Err(Error::usage("encoder not resolved")),
+        Encoder::Auto | Encoder::Builtin => return Err(Error::usage("encoder not resolved")),
     }
     Ok(())
 }
