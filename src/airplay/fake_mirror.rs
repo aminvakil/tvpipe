@@ -72,6 +72,8 @@ pub struct Behaviour {
     pub legacy: Option<([u8; 16], [u8; 16])>,
     /// Answer raw (legacy) pair-setup/verify with this Ed25519 seed.
     pub raw_pairing: Option<[u8; 32]>,
+    /// Legacy without FairPlay: audio in the clear (video keyed from `shk`).
+    pub legacy_no_fairplay: bool,
 }
 
 impl Default for Behaviour {
@@ -86,6 +88,7 @@ impl Default for Behaviour {
             stall_data: false,
             legacy: None,
             raw_pairing: None,
+            legacy_no_fairplay: false,
         }
     }
 }
@@ -310,7 +313,12 @@ fn handle(req: &Request, ctx: &Arc<Ctx>) -> Response {
                         .get("streamConnectionID")
                         .and_then(Plist::as_i128)
                         .unwrap() as u64;
-                    let port = data_server(ctx, id);
+                    let shk: [u8; 16] = s
+                        .get("shk")
+                        .and_then(Plist::as_data)
+                        .and_then(|k| k.try_into().ok())
+                        .unwrap();
+                    let port = data_server(ctx, id, shk);
                     out = out.with(
                         "streams",
                         Plist::array([Plist::dict()
@@ -371,7 +379,7 @@ fn run_events<S: Read + std::io::Write>(conn: &mut Conn<S>, ctx: &Ctx) {
     }
 }
 
-fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
+fn data_server(ctx: &Arc<Ctx>, stream_id: u64, shk: [u8; 16]) -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
     let ctx = ctx.clone();
@@ -386,8 +394,9 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64) -> u16 {
         s.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
         let key = keys::video_key(&ctx.secret, stream_id).unwrap();
         let cipher = ChaCha20Poly1305::new(&key);
-        let mut ctr = ctx.behaviour.legacy.map(|(k, _)| {
-            let (key, iv) = keys::legacy_video_key_iv(&k, stream_id);
+        // Legacy: the receiver derives the CTR key from the `shk` it got.
+        let mut ctr = ctx.behaviour.legacy.map(|_| {
+            let (key, iv) = keys::legacy_video_key_iv(&shk, stream_id);
             Ctr::with_key(&key, &iv).unwrap()
         });
         let mut counter = 0u64;
@@ -454,6 +463,7 @@ fn audio_server(ctx: &Arc<Ctx>, sender_control: u16) -> (u16, u16) {
             let cbc = ctx
                 .behaviour
                 .legacy
+                .filter(|_| !ctx.behaviour.legacy_no_fairplay)
                 .map(|(k, iv)| (Aes::new(&k).unwrap(), iv));
             let mut buf = [0u8; 2048];
             let mut n = 0usize;

@@ -56,7 +56,13 @@ let sink = connect_mirror(&airplay::pair::Target { addr, device }, &opts)?;
   or third-party bit 26/51 in the TXT features) try raw pair-setup first
   and fall back to HAP. Raw pairings are stored with `pairing = raw`
   (older credential files load unchanged). A legacy session without
-  FairPlay fails at `start` (open spec question).
+  FairPlay sends random `shk`/`shiv`, keys the AES-CTR video from that
+  `shk` and sends audio in the clear (spec §5.2; untested on any
+  receiver, logged as such).
+- Transient pair-setup (W5's `pairing.rs`, minimal W7 change): HKP 3 first
+  for legacy-preferring receivers (from discovery), HKP 4 otherwise, one
+  retry with the other value on an M1 rejection, one retry with the empty
+  SRP password on an M4 authentication failure (spec Appendix A).
 - No MediaDataControl channel, no HTTP Digest (password receivers), no
   AAC-ELD, no HEVC. `forceKeyFrame` makes `wants_keyframe()` true until
   the next IDR (the fanout skips to it; ffmpeg cannot be asked for one).

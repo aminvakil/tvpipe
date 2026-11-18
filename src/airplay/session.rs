@@ -335,6 +335,8 @@ pub struct Session<S: ControlStream> {
     pub canvas: Canvas,
     pub audio: AudioStream,
     pub signals: Arc<Signals>,
+    /// The video `shk` sent in SETUP #3 (legacy profile: keys the video).
+    pub video_shk: Option<[u8; 16]>,
     events: Option<EventChannel>,
     ntp: Option<NtpResponder>,
     record_pending: bool,
@@ -459,6 +461,7 @@ impl<S: ControlStream> Session<S> {
                 sockets,
             },
             signals: Arc::new(Signals::default()),
+            video_shk: None,
             events: None,
             ntp,
             record_pending: true,
@@ -756,8 +759,11 @@ impl<S: ControlStream> Session<S> {
                 shiv.copy_from_slice(&k.read[..16]);
                 (shk, shiv)
             }
+            // Legacy without FairPlay: random values that also key the
+            // video (§5.2; untested on any receiver).
             None => (random_array()?, random_array()?),
         };
+        self.video_shk = Some(shk);
         let req = VideoRequest {
             stream_id: self.video_id,
             latency_ms: self.leads.video_ms,

@@ -693,11 +693,17 @@ impl<S: ControlStream> MirrorSink<S> {
                 self.session.video_id,
             )?)
         } else {
-            let fp =
-                self.session.fairplay.as_ref().ok_or_else(|| {
-                    Error::unsupported("airplay: legacy profile without FairPlay")
-                })?;
-            let (k, iv) = keys::legacy_video_key_iv(&fp.master, self.session.video_id);
+            // §5.2: K with FairPlay; without it the random `shk` we sent
+            // (audio then goes in the clear). Untested on hardware.
+            let shk = match (&self.session.fairplay, self.session.video_shk) {
+                (Some(fp), _) => fp.master,
+                (None, Some(shk)) => {
+                    warn!("airplay: legacy profile without FairPlay (untested on any receiver)");
+                    shk
+                }
+                (None, None) => return Err(Error::protocol("airplay: no video key")),
+            };
+            let (k, iv) = keys::legacy_video_key_iv(&shk, self.session.video_id);
             VideoCipher::aes_ctr(&k, &iv)?
         };
         let mut threads = Vec::new();
@@ -1432,6 +1438,44 @@ mod tests {
                 .and_then(Plist::as_str),
             Some("NTP")
         );
+    }
+
+    /// Legacy without FairPlay (§5.2, untested on any receiver): random
+    /// `shk` keys the AES-CTR video, audio goes in the clear, no ekey.
+    #[test]
+    fn legacy_without_fairplay() {
+        let fake = FakeMirror::start(Behaviour {
+            legacy: Some(([0; 16], [0; 16])),
+            legacy_no_fairplay: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let tcp = TcpStream::connect(fake.addr).unwrap();
+        let opts = MirrorOptions::default();
+        let session = Session::establish(
+            RtspClient::new(tcp),
+            fake.addr,
+            fake.secret.clone(),
+            false,
+            &opts,
+        )
+        .map_err(SetupError::into_error)
+        .unwrap();
+        assert!(session.fairplay.is_none());
+        let mut sink = MirrorSink::new("legacy".into(), session, &opts);
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 10);
+        wait_for("media", || {
+            let r = fake.rec();
+            r.video.iter().filter(|p| p.kind == 0).count() == 10 && r.audio.len() > 3
+        });
+        sink.stop().unwrap();
+        let r = fake.rec();
+        assert!(r.setup_bodies.iter().all(|b| b.get("ekey").is_none()));
+        let frames: Vec<_> = r.video.iter().filter(|p| p.kind == 0).collect();
+        assert_eq!(frames[0].payload, nal(&[0x65, 0x88, 0]));
+        assert_eq!(frames[9].payload, nal(&[0x41, 0x9a, 9]));
+        assert!((0..20u64).any(|src| alac_verbatim(&pcm(src), 2).unwrap() == r.audio[0].2));
     }
 
     #[test]
