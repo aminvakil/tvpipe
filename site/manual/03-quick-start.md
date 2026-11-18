@@ -2,22 +2,19 @@
 title: Quick start
 summary: Find a TV, pair it once and play a file.
 group: Start
-spec:
-  Needs: A receiver on the same network
-  Covers: `discover`, `pair`, `play`
 ---
 
-The procedure for putting a file on a receiver for the first time.
+Find a TV, pair it once and play a file.
 
-## First transmission
+## First steps
 
-:::aside Procedure
-The computer and the TV have to be on the same local network. Discovery uses mDNS, which does not cross routers.
+:::aside Network
+The computer and the TV need to be on the same network.
 :::
 
 :::steps
 ### Find receivers
-List everything on the network that speaks AirPlay or Cast:
+List the TVs on your network:
 
 ```sh
 $ tvpipe discover
@@ -34,21 +31,18 @@ $ tvpipe pair "Living Room"
 ```
 
 ### Play
-A name is matched case-insensitively and a unique prefix is enough, so `liv` works too.
+Names are not case sensitive, and the start of a name is enough, so `liv` works too.
 
 ```sh
 $ tvpipe play --to "Living Room" movie.mp4
 ```
 
 ### Stop
-Press `Ctrl-C`, or type `q` and Enter. Either way the TV gets a proper teardown and leaves mirroring mode.
+Press `Ctrl-C`, or type `q` and press Enter. The TV leaves mirroring mode.
 :::
 
 ## Next
 
-:::aside Next
-:::
-
-- [Stream the test pattern](09-latency.md) to see the delay of your setup.
 - [Send to two TVs](04-receivers.md) by repeating `--to`.
 - [Share a browser tab](06-share.md) instead of a file.
+- [Put a web page on the TV](07-web-page.md).

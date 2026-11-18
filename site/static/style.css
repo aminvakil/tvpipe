@@ -250,15 +250,30 @@ main.landing { max-width: 1040px; margin: 0 auto; padding: 96px var(--pad) 40px;
 .landing h1 span { font: 400 clamp(30px, 10vw, 76px)/1 var(--display); font-variation-settings: "SCAN" 30; letter-spacing: -.03em; }
 .landing h1 span b { font-weight: 400; color: var(--accent); }
 .landing > p:first-of-type { font-size: 25px; line-height: 1.5; font-weight: 300; margin: 0 0 32px; max-width: 34em; }
-.status { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: baseline; margin: 0 0 36px; font-size: 15.5px; color: var(--ink-2); }
-.status .lbl { color: var(--accent); }
-.status p { margin: 0; }
 .buttons { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 40px; }
 .btn { font: 400 10.5px/1 var(--title); letter-spacing: .12em; text-transform: uppercase; text-decoration: none;
        padding: 15px 20px; border-radius: 3px; background: var(--panel); color: var(--ink); }
 .btn.primary { background: var(--btn-bg); color: var(--btn-ink); }
 .btn:hover { filter: brightness(1.08); }
 .landing pre { font-size: 14px; padding: 24px 26px; margin-bottom: 72px; }
+
+/* the install commands: a tab per platform, the visitor's first (site.js) */
+.install { margin: 0 0 1.4em; }
+.landing .install { margin-bottom: 72px; }
+.install .tabs { display: flex; gap: 2px; }
+.install .tabs button, .install .copy {
+  font: 400 9.5px/1 var(--title); letter-spacing: .12em; text-transform: uppercase;
+  border: 0; cursor: pointer; color: var(--ink-3); background: none;
+}
+.install .tabs button { padding: 11px 14px; border-radius: 4px 4px 0 0; }
+.install .tabs button:hover { color: var(--ink); }
+.install .tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel); }
+.install pre { display: flex; align-items: center; gap: 16px; margin: 0; border-top-left-radius: 0; padding: 14px 14px 14px 20px; }
+.install pre[hidden] { display: none; }
+.install pre code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.landing .install pre { margin: 0; padding: 18px 16px 18px 26px; }
+.install .copy { flex: none; padding: 9px 11px; border-radius: 3px; background: var(--bg); color: var(--ink-2); }
+.install .copy:hover { color: var(--ink); }
 .features { display: grid; grid-template-columns: repeat(5, 1fr); gap: 44px 28px; margin-bottom: 72px; }
 .feature { border-top: 1px solid var(--rule); padding-top: 18px; }
 .feature .n { font-size: 10px; color: var(--accent); display: block; margin-bottom: 12px; }
@@ -286,7 +301,6 @@ main.landing { max-width: 1040px; margin: 0 auto; padding: 96px var(--pad) 40px;
   figure .frame { padding: 14px; }
   main.landing { padding-top: 56px; }
   .landing > p:first-of-type { font-size: 20px; }
-  .status { grid-template-columns: 1fr; gap: 6px; }
   /* the two buttons side by side, sharing the width */
   .buttons { flex-wrap: nowrap; gap: 10px; }
   .btn { flex: 1 1 0; min-width: 0; text-align: center; padding: 15px 8px; font-size: 9.5px; letter-spacing: .07em; white-space: nowrap; }

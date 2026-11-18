@@ -1,59 +1,55 @@
 ---
 title: A web page on the TV
-summary: Dashboards and slides in a browser of tvpipe’s own.
+summary: Dashboards and slides, without a browser window.
 group: Use
 spec:
   Command: `share URL`
   Needs: Chrome, Edge, Chromium or Brave
 ---
 
-Give `share` a URL and tvpipe starts a browser of its own, headless, opens the page at exactly the size of the stream and puts it on the TV, with sound.
+Give `share` a URL and tvpipe opens it in a hidden browser of its own and puts it on the TV, with sound.
 
 ## Showing a page
 
 :::aside Size
-The TV’s screen shape, at most 1920×1080, or `--size`.
+The page gets the shape of the TV, up to 1920×1080. `--size` sets another size.
 :::
 
 ```sh
 # a dashboard, reloaded every 30 minutes
 $ tvpipe share https://status.example.com --to TV --reload 30
 
-# a local file, also in a browser tab here
-$ tvpipe share ./slides.html --to TV --to browser --open
+# a local file
+$ tvpipe share ./slides.html --to TV
 ```
 
-The start takes about a second. If the page navigates or reloads, tvpipe shares it again after a gap of about half a second. If the page or the browser crashes, it is started again.
+If the page reloads, navigates or crashes, tvpipe keeps it on the TV.
 
 ## Pages that need a login
 
 :::aside Profiles
-tvpipe never uses your own browser profile. Each run gets a temporary one that is deleted afterwards, unless you pass `--profile`.
+tvpipe never uses your own browser profile. Without `--profile` every run starts fresh.
 :::
 
-Log in once in a visible window and keep the profile; later runs reuse it headless.
+Log in once in a visible window and keep the profile. Later runs use it without a window.
 
 ```sh
 $ tvpipe share https://grafana.example.com --to TV --visible --profile ~/tvpipe-grafana
 $ tvpipe share https://grafana.example.com --to TV --profile ~/tvpipe-grafana
 ```
 
-With `--visible`, closing the window ends the session.
+With `--visible`, closing the window stops tvpipe.
 
 ## Which browser
 
-:::aside Lookup order
+:::aside Order
 1. `--browser PATH`
-2. `$TVPIPE_BROWSER`
+2. `TVPIPE_BROWSER`
 3. Chrome, Edge, Chromium, Brave
 :::
 
-Any Chromium-based browser works. tvpipe controls it over the DevTools protocol and shares the tab through the same path as [share](06-share.md).
+Any Chromium based browser works. tvpipe uses the first one it finds.
 
 ## Limitations
 
-:::caution
-tvpipe identifies its browser as automated and does not disguise it.
-:::
-
-Sites that refuse automated browsers do not work; tvpipe reports the site’s 401, 403 or 429. Video calls are one such case: open the call in a normal browser and present a [`--to browser` tab](08-browser.md) in it instead.
+Some sites refuse browsers that are controlled by a program. tvpipe does not hide that, so those sites do not work. Video calls are an example. For those, open the call in your normal browser and present a [browser tab](08-browser.md) in it.

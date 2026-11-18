@@ -10,7 +10,9 @@ Sources:
                          install.ps1 are also copied to the site's root
   src/browser/fonts/     the fonts (shared with tvpipe's share page)
   site/shots/            screenshots (site/screenshots.mjs makes them)
-Output: site/_out/ (static files, open index.html or serve the directory).
+Output: site/_out/ (static files, serve the directory). Every page is a
+directory with an index.html (manual/receivers/index.html), and links
+point at the directory (manual/receivers/).
 
 Only the Python standard library. The Markdown is a small subset, parsed
 here; see "Syntax" below.
@@ -35,14 +37,15 @@ Containers:
   :::steps ... :::           a procedure; each `###` starts a step
   :::features ... :::        a grid; each `###` starts a tile
   :::buttons ... :::         one `[text](url)` per line
-  :::status LABEL ... :::    a short labelled note
+  :::install :::             the install commands, for the visitor's platform
   :::figure CAPTION ... :::  raw HTML (an inline SVG) as a numbered figure
   :::index :::               the list of manual sections
 
-Inline: `code`, **bold**, *italic*, [links](x.md) (.md becomes .html).
+Inline: `code`, **bold**, *italic*, [links](x.md) (to the page's directory).
 """
 
 import html
+import posixpath
 import re
 import shutil
 import sys
@@ -50,9 +53,17 @@ from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
 INSTALLERS = ("install.sh", "install.ps1")
+SOURCE = "https://github.com/mitsuhiko/tvpipe"
+LICENSE = SOURCE + "/blob/main/LICENSE"
+FOOTER_NOTE = f'tvpipe is open source. <a href="{LICENSE}">License</a>'
+# The install commands; site.js shows the visitor's platform first.
+INSTALL = """<div class="install" data-install>
+<div class="tabs" role="tablist"><button role="tab" data-os="unix" aria-selected="true">macOS and Linux</button><button role="tab" data-os="windows" aria-selected="false">Windows</button></div>
+<pre data-os="unix"><code><span class="p">$ </span>curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh</code><button class="copy" aria-label="Copy">Copy</button></pre>
+<pre data-os="windows" hidden><code><span class="p">PS&gt; </span>irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex</code><button class="copy" aria-label="Copy">Copy</button></pre>
+</div>"""
 # The colour theme switch (site.js), in the footer of every page.
 THEME = """<div class="theme" role="group" aria-label="Colour theme">  <button data-t="light" title="Light" aria-label="Light"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75"/><path d="M8 1.25v1.5M8 13.25v1.5M1.25 8h1.5M13.25 8h1.5M3.2 3.2l1.06 1.06M11.74 11.74l1.06 1.06M3.2 12.8l1.06-1.06M11.74 4.26l1.06-1.06"/></svg></button>  <button data-t="dark" title="Dark" aria-label="Dark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 0 1 5.8 2.4a6 6 0 1 0 7.8 7.8z"/></svg></button>  <button data-t="auto" title="Like the system" aria-label="Like the system"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path class="fill" d="M8 2.25a5.75 5.75 0 0 1 0 11.5z"/></svg></button></div>"""
-VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.M)
 
 
 # ---------------------------------------------------------------- inline
@@ -105,15 +116,27 @@ def code_block(lang, lines):
 
 # ---------------------------------------------------------------- blocks
 
+def rel(here, target):
+    """The relative URL from directory `here` to directory `target` (both
+    relative to the site root, "" or ending in "/"), ending in "/"."""
+    r = posixpath.relpath("/" + target, "/" + here)
+    return "./" if r == "." else r + "/"
+
+
 class Ctx:
     """Per-page state: link rewriting, figure numbers, margin notes."""
 
-    def __init__(self, root, num, pages):
-        self.root = root          # "" or "../": the way back to the site root
+    def __init__(self, here, num, pages):
+        self.here = here          # the page's directory: "", "manual/", "manual/play/"
+        self.root = rel(here, "")  # the way back to the site root, "" or "../.."
         self.num = num            # section number for figures ("05"), or None
         self.pages = pages
         self.figures = 0
         self.asides = []
+
+    def to(self, target):
+        """A link from this page to the directory `target`."""
+        return rel(self.here, target)
 
     def href(self, href):
         if re.match(r"^[a-z]+:", href) or href.startswith("#"):
@@ -121,12 +144,10 @@ class Ctx:
         path, _, frag = href.partition("#")
         if path.endswith(".md"):
             name = Path(path).name
-            stem = name[:-3]
-            if stem == "index":
-                path = path[:-3] + ".html"
-            else:
-                page = next((p for p in self.pages if p["file"] == name), None)
-                path = page["out"] if page else path[:-3] + ".html"
+            page = next((p for p in self.pages if p["file"] == name), None)
+            if page is None and name != "index.md":
+                raise SystemExit(f"link to unknown page {href}")
+            path = self.to(page["dir"] if page else "")
         return path + ("#" + frag if frag else "")
 
     def fig(self):
@@ -327,13 +348,13 @@ def container(kind, arg, body, ctx):
         return '<div class="buttons">' + "".join(
             f'<a class="btn{" primary" if n == 0 else ""}" href="{html.escape(ctx.href(h))}">{html.escape(t)}</a>'
             for n, (t, h) in enumerate(links)) + "</div>"
-    if kind == "status":
-        return f'<div class="status"><span class="lbl">{html.escape(arg)}</span><p>{inline(" ".join(l.strip() for l in body), ctx)}</p></div>'
+    if kind == "install":
+        return INSTALL
     if kind == "figure":
         return figure('<div class="frame">' + "\n".join(body) + "</div>", arg, ctx)
     if kind == "index":
         return '<div class="index">' + "".join(
-            f'<a href="{p["out"]}"><span class="n">{p["num"]}</span><span><b>{html.escape(p["title"])}</b>'
+            f'<a href="{ctx.to(p["dir"])}"><span class="n">{p["num"]}</span><span><b>{html.escape(p["title"])}</b>'
             f'<span>{html.escape(p.get("summary", ""))}</span></span></a>'
             for p in ctx.pages[1:]) + "</div>"
     raise SystemExit(f"unknown container :::{kind}")
@@ -396,7 +417,7 @@ def manual_page(page, ctx):
     return head + "\n".join(rows)
 
 
-def nav_html(pages, current):
+def nav_html(pages, current, ctx):
     groups, out = [], []
     for p in pages:
         g = p.get("group", "")
@@ -407,30 +428,36 @@ def nav_html(pages, current):
         out.append(f'<h4 class="lbl">{html.escape(g)}</h4><ol>')
         for p in ps:
             cur = ' aria-current="page"' if p is current else ""
-            out.append(f'<li><a href="{p["out"]}"{cur}><span class="n">{p["num"]}</span>{html.escape(p["title"])}</a></li>')
+            out.append(f'<li><a href="{ctx.to(p["dir"])}"{cur}><span class="n">{p["num"]}</span>{html.escape(p["title"])}</a></li>')
         out.append("</ol>")
     return "".join(out)
 
 
-def layout(title, crumb, body, root, version, kind, source):
+def layout(title, crumb, body, root, kind):
     tpl = (SITE / "templates" / "layout.html").read_text(encoding="utf-8")
     for k, v in {
         "title": html.escape(title), "crumb": crumb, "body": body, "root": root,
-        "version": html.escape(version), "kind": kind, "source": html.escape(source),
+        "kind": kind, "source": SOURCE,
     }.items():
         tpl = tpl.replace("{{" + k + "}}", v)
     return tpl
 
 
+def write(out, here, text):
+    """Writes the page for directory `here` (its index.html)."""
+    path = out / here / "index.html"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def build(out):
-    version = VERSION_RE.search((SITE.parent / "Cargo.toml").read_text()).group(1)
     if out.exists():
         shutil.rmtree(out)
-    (out / "manual").mkdir(parents=True)
+    out.mkdir(parents=True)
     shutil.copytree(SITE / "static", out / "static")
     # The fonts are the ones compiled into tvpipe for its share page.
     shutil.copytree(SITE.parent / "src" / "browser" / "fonts", out / "static" / "fonts")
-    # The installers live at the root, for the one-liners on the install page:
+    # The installers live at the root, for the one-liners:
     # curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
     for name in INSTALLERS:
         if (SITE / "static" / name).exists():
@@ -438,38 +465,32 @@ def build(out):
     if (SITE / "shots").exists():
         shutil.copytree(SITE / "shots", out / "shots")
 
-    landing_meta, _ = read_md(SITE / "index.md")
-    source = landing_meta.get("source", "#")
-
     pages = []
     for path in sorted((SITE / "manual").glob("[0-9][0-9]-*.md")):
         meta, lines = read_md(path)
         num, slug = path.stem.split("-", 1)
         meta.update(file=path.name, num=num, slug=slug, lines=lines,
-                    out="index.html" if num == "01" else slug + ".html")
+                    dir="manual/" if num == "01" else f"manual/{slug}/")
         pages.append(meta)
-    last = pages[-1]["num"]
 
     for i, page in enumerate(pages):
-        ctx = Ctx("../", page["num"], pages)
+        ctx = Ctx(page["dir"], page["num"], pages)
         main = manual_page(page, ctx)
         prev, nxt = (pages[i - 1] if i else None), (pages[i + 1] if i + 1 < len(pages) else None)
-        pn = "".join(f'<a href="{p["out"]}"><span>{lbl}</span>{html.escape(p["title"])}</a>'
+        pn = "".join(f'<a href="{ctx.to(p["dir"])}"><span>{lbl}</span>{html.escape(p["title"])}</a>'
                      for lbl, p in (("Previous", prev), ("Next", nxt)) if p)
-        body = (f'<div class="shell"><nav class="side" id="nav" aria-label="Contents">{nav_html(pages, page)}</nav>'
-                f'<main>{main}<footer class="pf"><div>tvpipe Operations Manual<br>Revision {version} · Section {page["num"]} of {last}</div>'
-                f'<div class="pn">{pn}</div><div class="r">{THEME}<span>Apache-2.0 · LGPL-3.0+ with FairPlay</span></div></footer></main></div>')
+        body = (f'<div class="shell"><nav class="side" id="nav" aria-label="Contents">{nav_html(pages, page, ctx)}</nav>'
+                f'<main>{main}<footer class="pf"><div>tvpipe Operations Manual<br>{FOOTER_NOTE}</div>'
+                f'<div class="pn">{pn}</div><div class="r">{THEME}</div></footer></main></div>')
         crumb = f'Section {page["num"]}<span>{html.escape(page["title"])}</span>'
         title = ("" if i == 0 else page["title"] + " · ") + "tvpipe operations manual"
-        (out / "manual" / page["out"]).write_text(layout(title, crumb, body, "../", version, "manual", source), encoding="utf-8")
+        write(out, page["dir"], layout(title, crumb, body, ctx.root, "manual"))
 
     meta, lines = read_md(SITE / "index.md")
-    ctx = Ctx("", None, [dict(p, out="manual/" + p["out"]) for p in pages])
+    ctx = Ctx("", None, pages)
     body = f'<main class="landing">{render(lines, ctx)}</main>'
-    body += (f'<footer class="lf"><div>tvpipe {version}<br>Apache-2.0 · LGPL-3.0+ with FairPlay</div>'
-             f'<div class="r">{THEME}</div></footer>')
-    crumb = 'tvpipe<span>Low-latency mirroring</span>'
-    (out / "index.html").write_text(layout(meta.get("title", "tvpipe"), crumb, body, "", version, "landing", source), encoding="utf-8")
+    body += f'<footer class="lf"><div>{FOOTER_NOTE}</div><div class="r">{THEME}</div></footer>'
+    write(out, "", layout(meta.get("title", "tvpipe"), "", body, ctx.root, "landing"))
     print(f"built {len(pages) + 1} pages into {out}")
 
 

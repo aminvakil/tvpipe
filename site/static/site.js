@@ -70,6 +70,18 @@
       if (nav) btn.setAttribute("aria-expanded", String(nav.classList.toggle("open")));
       return;
     }
+    const tab = e.target.closest(".install .tabs button");
+    if (tab) { showOs(tab.closest(".install"), tab.dataset.os); return; }
+    const copy = e.target.closest(".install .copy");
+    if (copy) {
+      const code = copy.parentElement.querySelector("code").cloneNode(true);
+      code.querySelectorAll(".p").forEach(p => p.remove());
+      navigator.clipboard.writeText(code.textContent.trim()).then(() => {
+        copy.textContent = "Copied";
+        setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+      }).catch(() => {});
+      return;
+    }
     const a = e.target.closest("a[href]");
     if (a && boostable(a, e)) { e.preventDefault(); go(a.href, true); }
   });
@@ -186,7 +198,16 @@
     };
   }
 
+  // ---------- install commands ----------
+  const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+  const visitorOs = /win/i.test(platform) ? "windows" : "unix";
+  function showOs(box, os) {
+    box.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.os === os)));
+    box.querySelectorAll("pre[data-os]").forEach(p => { p.hidden = p.dataset.os !== os; });
+  }
+
   function init() {
+    document.querySelectorAll("[data-install]").forEach(box => showOs(box, visitorOs));
     document.querySelectorAll("[data-crt]").forEach(box => {
       const stop = crt(box);
       if (stop) crts.push(stop);
