@@ -12,6 +12,15 @@
 //! An `end` record has `len = 0`. Multi-byte fields are little-endian
 //! (docs/decisions/0002-slrw.md).
 //!
+//! Encoded mode (`--raw-video WxH@FPS:h264`, docs/decisions/0007-slrw-encoded.md)
+//! adds three kinds:
+//!
+//! ```text
+//!   3 = h264         u8 flags (0x01 keyframe, 0x02 Annex B) | access unit
+//!   4 = h264-config  u8 format (0 avcC, 1 Annex B SPS+PPS) | data
+//!   5 = control      u32 flags (0x01 keyframe requests on stdout)
+//! ```
+//!
 //! This file has no dependencies on the rest of the crate so the example
 //! generator (`examples/slrw-gen.rs`) can include it with `#[path]`.
 
@@ -22,12 +31,33 @@ use std::io::{self, Read, Write};
 pub const MAGIC: &[u8; 4] = b"SLRW";
 /// Largest payload accepted (an 8K RGBA frame is 133 MB).
 pub const MAX_PAYLOAD: u32 = 256 << 20;
+/// Largest encoded access unit.
+pub const MAX_H264_PAYLOAD: u32 = 64 << 20;
+/// Largest decoder configuration.
+pub const MAX_CONFIG_PAYLOAD: u32 = 1 << 20;
+
+/// `h264` flags.
+pub const H264_KEYFRAME: u8 = 0x01;
+pub const H264_ANNEX_B: u8 = 0x02;
+/// `h264-config` formats.
+pub const CONFIG_AVCC: u8 = 0;
+pub const CONFIG_ANNEX_B: u8 = 1;
+/// `control` flags.
+pub const CONTROL_KEYFRAME_REQUESTS: u32 = 0x01;
+/// The line written to stdout for a keyframe request.
+pub const KEYFRAME_REQUEST_LINE: &[u8] = b"keyframe\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     End,
     Video,
     Audio,
+    /// Encoded H.264 access unit.
+    H264,
+    /// avcC or Annex B parameter sets.
+    H264Config,
+    /// Feature flags from the game.
+    Control,
 }
 
 impl Kind {
@@ -36,6 +66,9 @@ impl Kind {
             Kind::End => 0,
             Kind::Video => 1,
             Kind::Audio => 2,
+            Kind::H264 => 3,
+            Kind::H264Config => 4,
+            Kind::Control => 5,
         }
     }
 
@@ -44,9 +77,45 @@ impl Kind {
             0 => Kind::End,
             1 => Kind::Video,
             2 => Kind::Audio,
+            3 => Kind::H264,
+            4 => Kind::H264Config,
+            5 => Kind::Control,
             _ => return None,
         })
     }
+
+    /// Whether this kind belongs to encoded mode.
+    pub fn is_encoded(self) -> bool {
+        matches!(self, Kind::H264 | Kind::H264Config | Kind::Control)
+    }
+}
+
+/// Writes an `h264` record.
+pub fn write_h264(
+    w: &mut impl Write,
+    pts_us: u64,
+    keyframe: bool,
+    annex_b: bool,
+    au: &[u8],
+) -> io::Result<()> {
+    let flags = if keyframe { H264_KEYFRAME } else { 0 } | if annex_b { H264_ANNEX_B } else { 0 };
+    let mut payload = Vec::with_capacity(au.len() + 1);
+    payload.push(flags);
+    payload.extend_from_slice(au);
+    write_packet(w, Kind::H264, pts_us, &payload)
+}
+
+/// Writes an `h264-config` record.
+pub fn write_h264_config(w: &mut impl Write, format: u8, data: &[u8]) -> io::Result<()> {
+    let mut payload = Vec::with_capacity(data.len() + 1);
+    payload.push(format);
+    payload.extend_from_slice(data);
+    write_packet(w, Kind::H264Config, 0, &payload)
+}
+
+/// Writes a `control` record.
+pub fn write_control(w: &mut impl Write, flags: u32) -> io::Result<()> {
+    write_packet(w, Kind::Control, 0, &flags.to_le_bytes())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,7 +223,20 @@ impl<R: Read> SlrwReader<R> {
             Kind::End => 0,
             Kind::Video => self.max_video,
             Kind::Audio => self.max_audio,
+            Kind::H264 => MAX_H264_PAYLOAD,
+            Kind::H264Config => MAX_CONFIG_PAYLOAD,
+            Kind::Control => 4,
         };
+        let min = match kind {
+            Kind::H264 | Kind::H264Config => 1,
+            Kind::Control => 4,
+            _ => 0,
+        };
+        if len < min {
+            return Err(invalid(format!(
+                "{kind:?} record of {len} bytes is too short"
+            )));
+        }
         if len > max {
             return Err(invalid(format!(
                 "{kind:?} record of {len} bytes exceeds {max}"
@@ -201,6 +283,38 @@ mod tests {
         );
         assert_eq!(r.next_packet().unwrap().unwrap().kind, Kind::End);
         assert_eq!(r.next_packet().unwrap(), None);
+    }
+
+    #[test]
+    fn encoded_kinds() {
+        let mut out = Vec::new();
+        write_magic(&mut out).unwrap();
+        write_control(&mut out, CONTROL_KEYFRAME_REQUESTS).unwrap();
+        write_h264_config(&mut out, CONFIG_AVCC, &[1, 2]).unwrap();
+        write_h264(&mut out, 0x10, true, true, &[0, 0, 1, 0x65]).unwrap();
+        assert_eq!(
+            &out[4..],
+            [
+                5, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, // control
+                4, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1, 2, // config
+                3, 0x10, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 3, 0, 0, 1, 0x65, // h264
+            ]
+        );
+        let mut r = SlrwReader::new(&out[..]);
+        let kinds: Vec<Kind> = std::iter::from_fn(|| r.next_packet().unwrap())
+            .map(|p| p.kind)
+            .collect();
+        assert_eq!(kinds, [Kind::Control, Kind::H264Config, Kind::H264]);
+        assert!(Kind::H264.is_encoded() && !Kind::Video.is_encoded());
+        // Wrong sizes.
+        let mut bad = b"SLRW\x05".to_vec();
+        bad.extend([0; 8]);
+        bad.extend(3u32.to_le_bytes());
+        bad.extend([0; 3]);
+        assert!(SlrwReader::new(&bad[..]).next_packet().is_err());
+        let mut empty = b"SLRW\x03".to_vec();
+        empty.extend([0; 12]);
+        assert!(SlrwReader::new(&empty[..]).next_packet().is_err());
     }
 
     #[test]

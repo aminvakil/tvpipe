@@ -35,6 +35,11 @@ const ACCEPT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Drift between pts and arrival that is worth a log line.
 const DRIFT_LOG: Duration = Duration::from_millis(100);
 
+/// The `--raw-video` pixel format that selects encoded H.264 input
+/// (docs/decisions/0007-slrw-encoded.md); handled by `media::input`, not
+/// here.
+pub const ENCODED_PIX_FMT: &str = "h264";
+
 /// Bytes per video frame for common raw pixel formats; `None` if unknown
 /// (then sizes are not checked).
 pub fn frame_size(pix_fmt: &str, w: u32, h: u32) -> Option<usize> {
@@ -88,6 +93,11 @@ impl RawInput {
     /// Binds a localhost listener per stream. Video is required.
     pub fn bind(video: Option<&RawVideoSpec>, audio: Option<&RawAudioSpec>) -> Result<RawInput> {
         let v = video.ok_or_else(|| Error::usage("raw input needs --raw-video"))?;
+        if v.pix_fmt == ENCODED_PIX_FMT {
+            return Err(Error::usage(
+                "encoded SLRW input (pixel format h264) does not go through ffmpeg",
+            ));
+        }
         let frame_bytes = frame_size(&v.pix_fmt, v.size.width, v.size.height);
         if frame_bytes.is_none() {
             warn!(
@@ -335,7 +345,13 @@ fn pump<R: Read>(
                     }
                 }
             }
-            Kind::Audio => {
+            k if k.is_encoded() => {
+                return Err(Error::malformed(format!(
+                    "slrw: {k:?} record (encoded H.264) in raw mode; \
+                     use --raw-video WxH@FPS:{ENCODED_PIX_FMT}"
+                )));
+            }
+            _ => {
                 let Some(atx) = &atx else {
                     // No --raw-audio: ignore audio records.
                     continue;
@@ -446,6 +462,32 @@ mod tests {
         assert_eq!(video.len() / n + stats.video_dropped as usize, 5);
         let firsts: Vec<u8> = video.chunks(n).map(|c| c[0]).collect();
         assert!(firsts.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn rejects_encoded_records_in_raw_mode() {
+        let (v, _) = specs();
+        let raw = RawInput::bind(Some(&v), None).unwrap();
+        let Source::Raw {
+            video: Some(vi), ..
+        } = raw.source()
+        else {
+            panic!()
+        };
+        let mut s = Vec::new();
+        slrw::write_magic(&mut s).unwrap();
+        slrw::write_h264(&mut s, 0, true, false, &[0, 0, 0, 1, 0x65]).unwrap();
+        let fw = raw.start(io::Cursor::new(s)).unwrap();
+        let c = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(vi.addr).unwrap();
+            let _ = s.read_to_end(&mut Vec::new());
+        });
+        let e = fw.wait().unwrap_err();
+        assert!(e.to_string().contains(":h264"), "{e}");
+        c.join().unwrap();
+        let mut enc = v.clone();
+        enc.pix_fmt = ENCODED_PIX_FMT.into();
+        assert!(RawInput::bind(Some(&enc), None).is_err());
     }
 
     #[test]
