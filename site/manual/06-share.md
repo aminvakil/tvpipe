@@ -31,7 +31,9 @@ The picture keeps its shape. If it does not fill the TV, tvpipe adds black bars.
 
 The browser mutes a tab while it shares its sound. “Keep tab audio playing here” keeps it audible on the computer too.
 
-Safari and Firefox share windows and screens, but not single tabs, and no sound.
+Safari and Firefox share windows and screens, but not single tabs, and no sound. To show one tab, share the browser's window and switch it to that tab: the share page keeps streaming in the background. Or drag the tab into a window of its own and share that window.
+
+For a web page with its sound in Firefox, let tvpipe show it in a Firefox of its own: `tvpipe share URL --browser firefox` ([A web page on the TV](07-web-page.md)).
 
 ## Stopping
 

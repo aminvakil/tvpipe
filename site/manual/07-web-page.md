@@ -4,7 +4,7 @@ summary: Dashboards and slides, without a browser window.
 group: Use
 spec:
   Command: `share URL`
-  Needs: Chrome, Edge, Chromium or Brave
+  Needs: Chrome, Edge, Chromium, Brave or Firefox
 ---
 
 Give `share` a URL and tvpipe opens it in a hidden browser of its own and puts it on the TV, with sound.
@@ -48,9 +48,16 @@ With `--visible`, closing the window stops tvpipe.
 1. `--browser PATH`
 2. `TVPIPE_BROWSER`
 3. Chrome, Edge, Chromium, Brave
+4. Firefox
 :::
 
-Any Chromium based browser works. tvpipe uses the first one it finds.
+Any Chromium based browser works, and Firefox. tvpipe uses the first one it finds, so Firefox only when no Chromium based browser is installed. `--browser firefox` picks Firefox.
+
+```sh
+$ tvpipe share https://status.example.com --to TV --browser firefox
+```
+
+Firefox shows the page with its sound too. Its own speakers stay quiet while tvpipe shares. Pages that set their content security policy in a `<meta>` tag cannot share in Firefox. On Linux, a Firefox installed as a Snap cannot read tvpipe's profile in `/tmp`: use Firefox from Mozilla or your distribution's package.
 
 ## Limitations
 

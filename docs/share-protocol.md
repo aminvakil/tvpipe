@@ -152,12 +152,12 @@ are dropped above the same threshold.
 
 ## Browsers
 
-| | Chrome / Edge | Safari 26 (macOS 26) | Firefox |
+| | Chrome / Edge | Safari 26 (macOS 26) | Firefox 160 |
 |---|---|---|---|
-| getDisplayMedia offers | tabs, windows, screens | windows, screens (no tabs) | windows, screens |
-| Sound | tab audio (system audio on Windows) | none | none |
+| getDisplayMedia offers | tabs, windows, screens | windows, screens (no tabs) | windows, screens (no tabs) |
+| Sound | tab audio (system audio on Windows) | none | none (`share URL`: the tab's sound, see below) |
 | Video engine | page (MediaStreamTrackProcessor) | worker (track moved to a worker, MediaStreamTrackProcessor there) | page (`<video>` + VideoFrame) |
-| Tested | headless, CDP-driven, real tab capture | WebDriver, synthetic stream (picker needs a human) | not yet |
+| Tested | headless, CDP-driven, real tab capture | WebDriver, synthetic stream (picker needs a human) | headless, BiDi-driven, its own tab captured (below) |
 
 - The engine runs in a worker whenever the browser can transfer the video
   track to one (`postMessage(track, [track])` and MediaStreamTrackProcessor,
@@ -169,8 +169,42 @@ are dropped above the same threshold.
   not be retried without a new click) and hints `displaySurface: "window"`,
   and the page explains: share the Safari window (or the screen), then
   switch to the tab; or drag the tab into its own window first.
+- Firefox has no MediaStreamTrackProcessor and cannot transfer a
+  MediaStreamTrack to a worker, so its engine runs on the page: a hidden
+  `<video>` plays the track and a VideoFrame is made of it per
+  `requestVideoFrameCallback`, or on the worker-driven timer while that
+  is quiet (a background tab: the test measured 30 fps with the share
+  page hidden). Its VideoEncoder (Firefox 130+) takes H.264 Constrained
+  Baseline, Main and High with `avc: {format: "avc"}` and
+  `latencyMode: "realtime"`; the AudioWorklet and the OffscreenCanvas
+  padding work as in the other browsers.
+- Firefox's getDisplayMedia shows its own picker (windows and screens;
+  `displaySurface`, `preferCurrentTab`, `selfBrowserSurface`, `systemAudio`
+  and audio are not supported, per MDN's compatibility data). With
+  `media.navigator.permission.disabled` it skips the picker and shares
+  the primary screen (what `TVPIPE_TEST_FIREFOX_SCREEN=1` tests).
 - Clocks are `performance.timeOrigin + performance.now()` so page and
   worker timestamps agree.
+
+Checking Firefox's picker by hand (the automated test cannot press it):
+
+1. `tvpipe -v share --to browser --open` (or `--to` a TV); open the
+   printed URL in Firefox 130 or later. The page shows the box "Firefox
+   can share a window or the whole screen, but not a single tab, and no
+   sound", and no "Keep tab audio playing here".
+2. Press **Share…**. Firefox's panel offers windows and the entire
+   screen, no tabs and no sound. On macOS the first time, Firefox needs
+   the Screen Recording permission (System Settings › Privacy &
+   Security), and a restart of Firefox.
+3. Pick this Firefox window. The player tab (or the TV) shows it within
+   a second; tvpipe logs `capturing window WxH@30` and about 30 fps.
+4. Switch the shared window to another tab with motion (a video). The
+   picture keeps moving at about 30 fps while the share page is in the
+   background (`-v`: `fps from the page`).
+5. Resize the window: the picture is recomputed and stays centered with
+   black bars; the stream's size does not change.
+6. Stop with **Stop Sharing** in Firefox's sharing indicator: tvpipe ends
+   (`the share was stopped in the browser`).
 
 ## Capture script API
 
@@ -206,3 +240,29 @@ and grants every origin Chrome's Local Network Access permission
 `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`). On a `file://` page
 (an opaque origin) the audio worklet is loaded from a `data:` URL, since
 a `blob:` one fails there.
+
+**Firefox** (`--browser firefox`, or the only browser installed) is
+driven over WebDriver BiDi (`src/browser/bidi.rs`,
+`src/browser/headless/firefox.rs`); Firefox no longer has the DevTools
+protocol. Its getDisplayMedia cannot share the current tab, but the
+older getUserMedia sources still exist behind preferences tvpipe's
+profile sets (`launch::FIREFOX_PREFS`): `{video: {mediaSource:
+"browser"}}` captures the calling tab's viewport (cross-site iframes
+included, at the size `browsingContext.setViewport` gives it, also in a
+visible window on a 2x screen) and `{audio: {mediaSource:
+"audioCapture"}}` the sound the tab plays, without a prompt
+(`media.navigator.permission.disabled`). `captureDisplay()` takes that
+path in Firefox when `preferCurrentTab` is set; it needs transient
+activation like getDisplayMedia (`script.evaluate` with
+`userActivation: true`). The captured sound keeps playing locally, so the
+profile mutes Firefox's output (`media.volume_scale` 0; the capture is
+taken before the volume). The capture includes what the page itself
+plays, so the worklet's output must not reach the page's destination
+(that cycle is silenced by Firefox's audio graph): in Firefox it goes to
+a MediaStreamAudioDestinationNode. BiDi has no `setBypassCSP`: tvpipe
+intercepts the tab's responses (`network.addIntercept`, phase
+`responseStarted`) and lets each continue without its
+`Content-Security-Policy` headers, answered on the connection's reader
+thread so the page never waits for the keeper; a policy in a `<meta>`
+tag still applies. Local Network Access is off in the profile
+(`network.lna.*`).
