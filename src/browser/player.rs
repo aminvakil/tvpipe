@@ -754,7 +754,7 @@ impl Sink for BrowserSink {
         self.broadcast_text(&st, &config);
         st.status = Some(status);
         st.config = Some(config);
-        info!(
+        debug!(
             "{}: {}x{} H.264{}, playout delay {} ms",
             self.name,
             video.width,
