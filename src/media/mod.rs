@@ -5,6 +5,7 @@
 
 pub mod aacenc;
 pub mod clock;
+pub mod convert;
 pub mod debug;
 pub mod fanout;
 pub mod ffmpeg;
