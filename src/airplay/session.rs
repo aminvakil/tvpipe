@@ -1,0 +1,919 @@
+//! The control-connection side of a mirroring session (spec §3, §4):
+//! FairPlay, SETUP #1 (or the media-first SETUP), the event channel, the
+//! `/info` refresh, RECORD, the audio and video SETUPs, the initial
+//! volume, `/feedback` and TEARDOWN, with the spec's timeouts and failure
+//! rules.
+//!
+//! [`Session::establish`] runs everything up to the audio SETUP (so the
+//! canvas and audio format are known before the encoder starts);
+//! [`Session::start_video`] runs the video SETUP and the rest when the
+//! encoder's stream info is ready.
+//!
+//! Sources: docs/spec/airplay-mirroring.md §2, §3, §4, §5.3, §7.2, §7.3,
+//! §8.9; vectors tests/vectors/airplay-mirror/setup.txt,
+//! appletv-session.txt.
+
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use crate::airplay::events::{Event, EventChannel};
+use crate::airplay::fairplay::{self, FpSession};
+use crate::airplay::info::Info;
+use crate::airplay::keys;
+use crate::airplay::policy::{self, bit, Canvas, Leads};
+use crate::airplay::secure::SecureStream;
+use crate::airplay::setup::{
+    parse_audio_response, parse_video_response, streams_body, AudioCodecId, AudioLayout,
+    AudioPorts, AudioRequest, SessionRequest, SessionResponse, TimingRequest, VideoRequest,
+};
+use crate::airplay::timing::{anchor_from_headers, NtpResponder, PtpClock, Timeline};
+use crate::codec::bplist::Plist;
+use crate::crypto::ring::{random_array, random_fill};
+use crate::error::{Error, Result};
+use crate::net::http::Response;
+use crate::net::rtsp::RtspClient;
+
+pub const USER_AGENT: &str = "AirPlay/935.7.1";
+pub const BPLIST: &str = "application/x-apple-binary-plist";
+const TEXT_PARAMETERS: &str = "text/parameters";
+
+/// Response timeouts (§3).
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const INFO_TIMEOUT: Duration = Duration::from_secs(3);
+pub const VOLUME_TIMEOUT: Duration = Duration::from_secs(3);
+pub const CLEANUP_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+pub const DATA_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long to wait for an asynchronous PTP clock id (§4.1).
+const ASYNC_CLOCK_WAIT: Duration = Duration::from_secs(2);
+/// Statuses that mean "use the other ordering / layout" (§4.1, §4.6).
+const SETUP1_REFUSED: [u16; 6] = [400, 405, 406, 415, 455, 501];
+const LAYOUT_REFUSED: [u16; 5] = [400, 406, 415, 455, 501];
+const MEDIA_FIRST_PTP_REFUSED: [u16; 5] = [400, 406, 415, 455, 501];
+
+/// A control connection's stream: gives access to the socket for timeouts.
+pub trait ControlStream: Read + Write + Send + 'static {
+    fn tcp(&self) -> &TcpStream;
+}
+
+impl ControlStream for TcpStream {
+    fn tcp(&self) -> &TcpStream {
+        self
+    }
+}
+
+impl ControlStream for SecureStream<TcpStream> {
+    fn tcp(&self) -> &TcpStream {
+        self.get_ref()
+    }
+}
+
+/// The control connection with the spec's request conventions (§3).
+pub struct Control<S> {
+    client: RtspClient<S>,
+    broken: bool,
+}
+
+impl<S: ControlStream> Control<S> {
+    pub fn new(mut client: RtspClient<S>) -> Control<S> {
+        client.default_headers.set("User-Agent", USER_AGENT);
+        Control {
+            client,
+            broken: false,
+        }
+    }
+
+    /// One request, answered within `timeout`. A timeout or transport
+    /// error makes the connection unusable (a late answer would be read
+    /// as the next one's); a complete non-2xx answer does not.
+    pub fn request(
+        &mut self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<(&str, Vec<u8>)>,
+        timeout: Duration,
+    ) -> Result<Response> {
+        if self.broken {
+            return Err(Error::closed(
+                "airplay: control connection unusable after an earlier failure",
+            ));
+        }
+        // `Session:` only where a caller sets it (RECORD).
+        self.client.session = None;
+        let _ = self
+            .client
+            .conn()
+            .get_ref()
+            .tcp()
+            .set_read_timeout(Some(timeout));
+        let mut req = self.client.prepare(method, uri);
+        for (k, v) in headers {
+            req.headers.set(*k, *v);
+        }
+        match body {
+            Some((ct, b)) => req = req.body(ct, b),
+            None => {
+                req.headers.set("Content-Length", "0");
+            }
+        }
+        debug!("airplay: > {method} {uri}");
+        match self.client.send(&req) {
+            Ok(r) => {
+                debug!("airplay: < {} {} ({method} {uri})", r.status, r.reason);
+                Ok(r)
+            }
+            Err(e) => {
+                self.broken = true;
+                Err(Error::new(
+                    e.kind(),
+                    format!("airplay: {method} {uri}: {e}"),
+                ))
+            }
+        }
+    }
+
+    pub fn is_broken(&self) -> bool {
+        self.broken
+    }
+
+    fn socket(&mut self) -> &TcpStream {
+        self.client.conn().get_ref().tcp()
+    }
+}
+
+fn check(resp: Response, what: &str) -> Result<Response> {
+    resp.error_for_status(&format!("airplay: {what}"))
+}
+
+fn plist_of(resp: &Response, what: &str) -> Result<Plist> {
+    if resp.body.is_empty() {
+        return Ok(Plist::dict());
+    }
+    Plist::from_bytes(&resp.body).map_err(|e| Error::malformed(format!("airplay: {what}: {e}")))
+}
+
+/// Options for a mirroring session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorOptions {
+    /// `--latency`: explicit leads (else the normal profile, §2.7).
+    pub latency_ms: Option<u32>,
+    /// Whether the encode will carry audio for this receiver.
+    pub audio: bool,
+    /// Our name in SETUP.
+    pub name: String,
+    /// Allow PTP (else always NTP).
+    pub ptp: bool,
+}
+
+impl Default for MirrorOptions {
+    fn default() -> MirrorOptions {
+        MirrorOptions {
+            latency_ms: None,
+            audio: true,
+            name: "streamlib".into(),
+            ptp: true,
+        }
+    }
+}
+
+/// Why [`Session::establish`] failed.
+#[derive(Debug)]
+pub enum SetupError {
+    /// PTP could not be set up; retry on a fresh connection with NTP.
+    PtpFailed(Error),
+    Fatal(Error),
+}
+
+impl From<Error> for SetupError {
+    fn from(e: Error) -> SetupError {
+        SetupError::Fatal(e)
+    }
+}
+
+impl SetupError {
+    pub fn into_error(self) -> Error {
+        match self {
+            SetupError::PtpFailed(e) | SetupError::Fatal(e) => e,
+        }
+    }
+}
+
+/// What FairPlay contributed (§2.2).
+#[derive(Clone)]
+pub struct FairPlayKeys {
+    /// `K`, the stream master key.
+    pub master: [u8; 16],
+    pub eiv: [u8; 16],
+    /// `ekey` (legacy profile only).
+    pub ekey: [u8; 72],
+}
+
+impl std::fmt::Debug for FairPlayKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FairPlayKeys { .. }")
+    }
+}
+
+/// The three local UDP sockets: timing N, audio control N+1, data N+2.
+#[derive(Debug)]
+pub struct AudioSockets {
+    pub timing: UdpSocket,
+    pub control: UdpSocket,
+    pub data: UdpSocket,
+}
+
+fn bind_sockets(ipv6: bool) -> Result<AudioSockets> {
+    let any = |port: u16| -> SocketAddr {
+        if ipv6 {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port)
+        } else {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port)
+        }
+    };
+    let bind = |port| UdpSocket::bind(any(port)).map_err(|e| Error::io("airplay: bind UDP", e));
+    // Consecutive ports, as Apple senders use them (§8.2).
+    for _ in 0..16 {
+        let timing = bind(0)?;
+        let n = timing
+            .local_addr()
+            .map_err(|e| Error::io("airplay: UDP address", e))?
+            .port();
+        if n > u16::MAX - 2 {
+            continue;
+        }
+        if let (Ok(control), Ok(data)) = (bind(n + 1), bind(n + 2)) {
+            return Ok(AudioSockets {
+                timing,
+                control,
+                data,
+            });
+        }
+    }
+    Ok(AudioSockets {
+        timing: bind(0)?,
+        control: bind(0)?,
+        data: bind(0)?,
+    })
+}
+
+fn udp_port(s: &UdpSocket) -> Result<u16> {
+    Ok(s.local_addr()
+        .map_err(|e| Error::io("airplay: UDP address", e))?
+        .port())
+}
+
+/// A positive random 63-bit `streamConnectionID`.
+fn stream_id() -> Result<u64> {
+    loop {
+        let v = u64::from_le_bytes(random_array()?) & (i64::MAX as u64);
+        if v != 0 {
+            return Ok(v);
+        }
+    }
+}
+
+fn uuid_lower() -> Result<String> {
+    Ok(crate::airplay::credentials::random_uuid()?.to_lowercase())
+}
+
+/// A random locally administered MAC-style id (`02:..`).
+fn device_id() -> Result<String> {
+    let mut b: [u8; 6] = random_array()?;
+    b[0] = 0x02;
+    Ok(b.iter()
+        .map(|x| format!("{x:02X}"))
+        .collect::<Vec<_>>()
+        .join(":"))
+}
+
+/// The audio stream as negotiated.
+#[derive(Debug)]
+pub struct AudioStream {
+    pub codec: AudioCodecId,
+    /// `None`: the receiver gave no ports; video only.
+    pub ports: Option<AudioPorts>,
+    /// HAP profile: the ChaCha audio key.
+    pub key: Option<[u8; 32]>,
+    pub sockets: AudioSockets,
+}
+
+/// The pairing's shared secret `S`.
+#[derive(Clone)]
+pub struct KeyedSecret(pub Vec<u8>);
+
+impl std::fmt::Debug for KeyedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "KeyedSecret({} bytes)", self.0.len())
+    }
+}
+
+/// Requests a keyframe from the sink (the receiver's `forceKeyFrame`).
+#[derive(Debug, Default)]
+pub struct Signals {
+    pub keyframe_requested: AtomicBool,
+}
+
+/// An established session, ready for [`start_video`](Session::start_video).
+pub struct Session<S: ControlStream> {
+    pub control: Arc<Mutex<Control<S>>>,
+    /// The control connection's peer (receiver IP and port).
+    pub peer: SocketAddr,
+    pub audio_id: u64,
+    pub video_id: u64,
+    pub session_uuid: String,
+    pub secret: KeyedSecret,
+    /// HAP profile (else legacy).
+    pub hap: bool,
+    pub fairplay: Option<FairPlayKeys>,
+    pub timeline: Timeline,
+    pub info: Info,
+    pub version: Option<String>,
+    pub leads: Leads,
+    pub canvas: Canvas,
+    pub audio: AudioStream,
+    pub signals: Arc<Signals>,
+    events: Option<EventChannel>,
+    ntp: Option<NtpResponder>,
+    record_pending: bool,
+    skip_record: bool,
+    has_audio: bool,
+    torn_down: bool,
+}
+
+impl<S: ControlStream> std::fmt::Debug for Session<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("peer", &self.peer)
+            .field("audio_id", &self.audio_id)
+            .field("video_id", &self.video_id)
+            .field("hap", &self.hap)
+            .field("timeline", &self.timeline)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Locks the shared control connection.
+pub fn lock_control<S>(c: &Mutex<Control<S>>) -> MutexGuard<'_, Control<S>> {
+    c.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+impl<S: ControlStream> Session<S> {
+    pub fn audio_uri(&self) -> String {
+        format!("rtsp://{}/{}", self.peer, self.audio_id)
+    }
+
+    pub fn video_uri(&self) -> String {
+        format!("rtsp://{}/{}", self.peer, self.video_id)
+    }
+
+    fn request(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<(&str, Vec<u8>)>,
+        timeout: Duration,
+    ) -> Result<Response> {
+        lock_control(&self.control).request(method, uri, headers, body, timeout)
+    }
+
+    /// Runs the setup up to and including the audio SETUP (§4.1–§4.6,
+    /// §4.12) on an authenticated control connection. `secret` is the
+    /// pair-verify shared secret; `hap` selects the crypto profile.
+    pub fn establish(
+        client: RtspClient<S>,
+        peer: SocketAddr,
+        secret: Vec<u8>,
+        hap: bool,
+        opts: &MirrorOptions,
+    ) -> std::result::Result<Session<S>, SetupError> {
+        let mut control = Control::new(client);
+        let local_ip = control
+            .socket()
+            .local_addr()
+            .map_err(|e| Error::io("airplay: local address", e))?
+            .ip();
+        let resp = check(
+            control.request("GET", "/info", &[], None, DEFAULT_TIMEOUT)?,
+            "GET /info",
+        )?;
+        let info = Info::parse(&resp.body)?;
+        let version = policy::source_version(&info, resp.headers.get("server"));
+        let features = info.features;
+        debug!(
+            "airplay: receiver {} ({}), features {features:#x}, sourceVersion {:?}",
+            info.name.as_deref().unwrap_or("?"),
+            info.model.as_deref().unwrap_or("?"),
+            version
+        );
+        if !policy::has(features, bit::SCREEN_MIRRORING) {
+            warn!("airplay: receiver does not advertise screen mirroring (feature 7)");
+        }
+
+        // FairPlay (§2.2).
+        let fairplay = if policy::has(features, bit::FAIRPLAY_SAP) {
+            fair_play(&mut control, &secret)?
+        } else {
+            debug!("airplay: no FairPlay (feature 14 not set)");
+            None
+        };
+
+        let ptp = opts.ptp && policy::use_ptp(hap, features, version.as_deref());
+        let sockets = bind_sockets(peer.is_ipv6())?;
+        let ntp = if ptp {
+            None
+        } else {
+            let sock = sockets
+                .timing
+                .try_clone()
+                .map_err(|e| Error::io("airplay: clone timing socket", e))?;
+            Some(NtpResponder::start(sock, peer.ip())?)
+        };
+        let leads = Leads::new(opts.latency_ms);
+        let mut session = Session {
+            control: Arc::new(Mutex::new(control)),
+            peer,
+            audio_id: stream_id()?,
+            video_id: stream_id()?,
+            session_uuid: uuid_lower()?,
+            secret: KeyedSecret(secret),
+            hap,
+            fairplay,
+            timeline: Timeline::Ntp,
+            info,
+            version,
+            leads,
+            canvas: Canvas {
+                width: 0,
+                height: 0,
+                max_fps: None,
+                from_display: false,
+            },
+            audio: AudioStream {
+                codec: AudioCodecId::Alac,
+                ports: None,
+                key: None,
+                sockets,
+            },
+            signals: Arc::new(Signals::default()),
+            events: None,
+            ntp,
+            record_pending: true,
+            skip_record: false,
+            has_audio: opts.audio,
+            torn_down: true,
+        };
+        let r = session.setup(opts, ptp, local_ip);
+        match r {
+            Ok(()) => Ok(session),
+            Err(e) => {
+                session.cleanup();
+                Err(e)
+            }
+        }
+    }
+
+    fn setup(
+        &mut self,
+        opts: &MirrorOptions,
+        ptp: bool,
+        local_ip: IpAddr,
+    ) -> std::result::Result<(), SetupError> {
+        let features = self.info.features;
+        // Audio codec first: an unusable audio format is fatal early.
+        self.audio.codec = if opts.audio {
+            policy::select_audio(policy::audio_mask(&self.info), false)?
+        } else {
+            AudioCodecId::Alac
+        };
+        if self.hap {
+            self.audio.key = Some(random_array()?);
+        }
+        let timing = if ptp {
+            TimingRequest::Ptp {
+                peer_id: uuid_lower()?,
+                address: local_ip.to_string(),
+            }
+        } else {
+            TimingRequest::Ntp {
+                port: udp_port(&self.audio.sockets.timing)?,
+            }
+        };
+        let req = SessionRequest {
+            device_id: device_id()?,
+            session_uuid: self.session_uuid.clone(),
+            name: opts.name.clone(),
+            timing,
+            fairplay: match (&self.fairplay, self.hap) {
+                (Some(fp), false) => Some((fp.ekey.to_vec(), fp.eiv)),
+                _ => None,
+            },
+        };
+        let layout = if policy::has(features, bit::STREAM_CONNECTIONS) {
+            AudioLayout::S
+        } else {
+            AudioLayout::P
+        };
+
+        // SETUP #1 (§4.1); refused → media-first (§4.12).
+        let uri = self.audio_uri();
+        let body = req.to_plist(true).to_bytes();
+        let resp = self.request("SETUP", &uri, &[], Some((BPLIST, body)), DEFAULT_TIMEOUT)?;
+        let t0 = Instant::now();
+        let mut media_first = false;
+        let (resp, t0) = if SETUP1_REFUSED.contains(&resp.status) {
+            info!(
+                "airplay: session SETUP refused ({}), using media-first ordering",
+                resp.status
+            );
+            media_first = true;
+            let session = Some(req.to_plist(false));
+            let resp = self.audio_setup(layout, session.clone())?;
+            if ptp && MEDIA_FIRST_PTP_REFUSED.contains(&resp.status) {
+                return Err(SetupError::PtpFailed(Error::protocol(format!(
+                    "airplay: media-first PTP SETUP refused with {}",
+                    resp.status
+                ))));
+            }
+            let resp = if LAYOUT_REFUSED.contains(&resp.status) {
+                self.audio_setup(layout.other(), session)?
+            } else {
+                resp
+            };
+            (check(resp, "SETUP (media-first)")?, Instant::now())
+        } else {
+            (check(resp, "SETUP (session)")?, t0)
+        };
+        self.torn_down = false;
+        let body = plist_of(&resp, "SETUP response")?;
+        let sr = SessionResponse::parse(&body);
+        self.skip_record = sr.skip_record;
+        if media_first {
+            self.audio.ports = parse_audio_response(&body);
+        }
+
+        // Timing (§7.2, §7.3).
+        let clock = if ptp {
+            let anchor = anchor_from_headers(&resp.headers).ok_or_else(|| {
+                SetupError::PtpFailed(Error::protocol(
+                    "airplay: SETUP response without timing headers",
+                ))
+            })?;
+            Some(Arc::new(PtpClock::new(
+                t0,
+                anchor,
+                sr.clock_id.unwrap_or(0),
+            )))
+        } else {
+            None
+        };
+
+        // Event channel (§4.2).
+        self.connect_events(sr.event_port, clock.clone());
+
+        if let Some(c) = &clock {
+            if c.timeline() == 0 {
+                if sr.async_ptp && self.events.is_some() {
+                    let until = Instant::now() + ASYNC_CLOCK_WAIT;
+                    while c.timeline() == 0 && Instant::now() < until {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                if c.timeline() == 0 {
+                    return Err(SetupError::PtpFailed(Error::protocol(
+                        "airplay: receiver sent no PTP clock id",
+                    )));
+                }
+            }
+            debug!("airplay: PTP timeline {:#018x}", c.timeline());
+            self.timeline = Timeline::Ptp(c.clone());
+        } else {
+            self.timeline = Timeline::Ntp;
+            if let Some(p) = sr.timing_port {
+                NtpResponder::initiate(
+                    &self.audio.sockets.timing,
+                    SocketAddr::new(self.peer.ip(), p),
+                );
+            }
+        }
+
+        // `/info` with displays (§4.3).
+        match sr.info.as_ref().filter(|i| i.get("displays").is_some()) {
+            Some(i) => {
+                if let Ok(info) = Info::from_plist(i.clone()) {
+                    self.info = info;
+                }
+            }
+            None => self.refresh_info()?,
+        }
+        self.canvas = policy::canvas(&self.info.raw, self.info.features);
+        debug!(
+            "airplay: canvas {}x{} (max fps {:?}, from displays: {})",
+            self.canvas.width, self.canvas.height, self.canvas.max_fps, self.canvas.from_display
+        );
+
+        if !media_first {
+            // Early RECORD (§4.4).
+            if !self.skip_record && self.has_audio {
+                let resp = self.record()?;
+                if resp.status == 455 {
+                    debug!("airplay: RECORD refused with 455; sending it after the streams");
+                } else {
+                    check(resp, "RECORD")?;
+                    self.record_pending = false;
+                }
+            }
+            // SETUP #2 (§4.6).
+            let resp = self.audio_setup(layout, None)?;
+            let resp = if LAYOUT_REFUSED.contains(&resp.status) {
+                debug!(
+                    "airplay: audio SETUP refused ({}), other layout",
+                    resp.status
+                );
+                self.audio_setup(layout.other(), None)?
+            } else {
+                resp
+            };
+            let resp = check(resp, "SETUP (audio)")?;
+            let body = plist_of(&resp, "audio SETUP response")?;
+            self.audio.ports = parse_audio_response(&body);
+            if self.events.is_none() {
+                self.connect_events(SessionResponse::parse(&body).event_port, clock.clone());
+            }
+        }
+        match self.audio.ports {
+            Some(p) => debug!("airplay: audio RTP port {}, RTCP port {}", p.rtp, p.rtcp),
+            None => info!("airplay: receiver gave no audio ports; video only"),
+        }
+        Ok(())
+    }
+
+    fn audio_setup(&self, layout: AudioLayout, session: Option<Plist>) -> Result<Response> {
+        let req = AudioRequest {
+            stream_id: self.audio_id,
+            codec: self.audio.codec,
+            latency_max: self.leads.audio_samples(),
+            layout,
+            shk: self.audio.key,
+            control_port: udp_port(&self.audio.sockets.control)?,
+        };
+        let body = streams_body(req.descriptor(), session).to_bytes();
+        self.request(
+            "SETUP",
+            &self.audio_uri(),
+            &[],
+            Some((BPLIST, body)),
+            DEFAULT_TIMEOUT,
+        )
+    }
+
+    fn record(&self) -> Result<Response> {
+        let resp = self.request(
+            "RECORD",
+            &self.audio_uri(),
+            &[
+                ("Session", &self.session_uuid),
+                ("Range", "npt=0-"),
+                ("RTP-Info", "seq=0;rtptime=0"),
+            ],
+            None,
+            DEFAULT_TIMEOUT,
+        )?;
+        if let Some(l) = resp.headers.get("audio-latency") {
+            debug!("airplay: Audio-Latency {l}");
+        }
+        Ok(resp)
+    }
+
+    fn refresh_info(&mut self) -> Result<()> {
+        let resp = self.request("GET", "/info", &[], None, INFO_TIMEOUT)?;
+        if resp.status == 401 {
+            return Err(Error::auth("airplay: GET /info: 401 (password required)"));
+        }
+        if !resp.is_success() {
+            debug!("airplay: info refresh failed with {}", resp.status);
+            return Ok(());
+        }
+        match Info::parse(&resp.body) {
+            Ok(i) => self.info = i,
+            Err(e) => debug!("airplay: info refresh: {e}"),
+        }
+        Ok(())
+    }
+
+    fn connect_events(&mut self, port: Option<u16>, clock: Option<Arc<PtpClock>>) {
+        let Some(port) = port else { return };
+        let keys = if self.hap {
+            match keys::event_keys(&self.secret.0) {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    warn!("airplay: event keys: {e}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let signals = self.signals.clone();
+        let handler = move |ev: Event| match ev {
+            Event::UpdateInfo(_) => debug!("airplay event: updateInfo"),
+            Event::UpdateTimingPeerInfo(id) => {
+                debug!("airplay event: updateTimingPeerInfo {id:?}");
+                if let (Some(c), Some(id)) = (&clock, id.filter(|&i| i != 0)) {
+                    c.set_timeline(id);
+                }
+            }
+            Event::ForceKeyFrame => {
+                debug!("airplay event: forceKeyFrame");
+                signals.keyframe_requested.store(true, Ordering::Release);
+            }
+            Event::Other(t) => debug!("airplay event: {t}"),
+        };
+        match EventChannel::connect(
+            SocketAddr::new(self.peer.ip(), port),
+            keys.as_ref(),
+            handler,
+        ) {
+            Ok(ch) => self.events = Some(ch),
+            Err(e) => warn!("airplay: no event channel: {e}"),
+        }
+    }
+
+    /// SETUP #3, the data connection, the initial volume and a pending
+    /// RECORD (§4.7–§4.11). Returns the connected data socket.
+    pub fn start_video(&mut self) -> Result<TcpStream> {
+        let (shk, shiv) = match &self.fairplay {
+            Some(fp) => (fp.master, fp.eiv),
+            // §5.3: placeholders without FairPlay.
+            None if self.hap => {
+                let k = crate::airplay::secure::Keys::control(&self.secret.0)?;
+                let mut shk = [0u8; 16];
+                let mut shiv = [0u8; 16];
+                shk.copy_from_slice(&k.write[..16]);
+                shiv.copy_from_slice(&k.read[..16]);
+                (shk, shiv)
+            }
+            None => (random_array()?, random_array()?),
+        };
+        let req = VideoRequest {
+            stream_id: self.video_id,
+            latency_ms: self.leads.video_ms,
+            shk,
+            shiv,
+        };
+        let body = streams_body(req.descriptor(), None).to_bytes();
+        let resp = check(
+            self.request(
+                "SETUP",
+                &self.video_uri(),
+                &[],
+                Some((BPLIST, body)),
+                DEFAULT_TIMEOUT,
+            )?,
+            "SETUP (video)",
+        )?;
+        let body = plist_of(&resp, "video SETUP response")?;
+        let port = parse_video_response(&body)
+            .ok_or_else(|| Error::protocol("airplay: video SETUP response without dataPort"))?;
+        if self.events.is_none() {
+            let clock = match &self.timeline {
+                Timeline::Ptp(c) => Some(c.clone()),
+                Timeline::Ntp => None,
+            };
+            self.connect_events(SessionResponse::parse(&body).event_port, clock);
+        }
+        let addr = SocketAddr::new(self.peer.ip(), port);
+        let data = TcpStream::connect_timeout(&addr, DATA_CONNECT_TIMEOUT)
+            .map_err(|e| Error::io(format!("airplay: connect video data {addr}"), e))?;
+        let _ = data.set_nodelay(true);
+        debug!("airplay: video data connection to {addr}");
+
+        // Initial volume (§4.9, §8.9).
+        let mut initial = policy::info_volume(&self.info);
+        if initial.is_none()
+            && policy::should_query_volume(&self.info, self.version.as_deref(), self.has_audio)
+        {
+            let resp = self.request(
+                "GET_PARAMETER",
+                &self.audio_uri(),
+                &[],
+                Some((TEXT_PARAMETERS, b"volume\r\n".to_vec())),
+                VOLUME_TIMEOUT,
+            )?;
+            if resp.is_success() {
+                initial = policy::parse_volume(&resp.body);
+                debug!("airplay: receiver volume {initial:?}");
+            }
+        }
+        // Late RECORD (§4.10).
+        if self.record_pending && !self.skip_record {
+            check(self.record()?, "RECORD")?;
+            self.record_pending = false;
+        }
+        if self.has_audio {
+            if let Some(v) = policy::initial_volume(&self.info, initial) {
+                self.set_volume(v);
+            }
+        }
+        Ok(data)
+    }
+
+    /// `SET_PARAMETER volume` (failure is not fatal).
+    pub fn set_volume(&self, v: f64) {
+        let body = policy::volume_body(policy::outgoing_volume(v));
+        match self.request(
+            "SET_PARAMETER",
+            &self.audio_uri(),
+            &[],
+            Some((TEXT_PARAMETERS, body)),
+            DEFAULT_TIMEOUT,
+        ) {
+            Ok(r) if r.is_success() => debug!("airplay: volume set to {v}"),
+            Ok(r) => debug!("airplay: SET_PARAMETER volume: {}", r.status),
+            Err(e) => warn!("airplay: SET_PARAMETER volume: {e}"),
+        }
+    }
+
+    /// `TEARDOWN` for the whole session (§4.14), then closes the side
+    /// channels. Safe to call more than once.
+    pub fn teardown(&mut self, timeout: Duration) -> Result<()> {
+        let r = if self.torn_down {
+            Ok(())
+        } else {
+            self.torn_down = true;
+            let uri = self.audio_uri();
+            match self.request("TEARDOWN", &uri, &[], None, timeout) {
+                Ok(r) if r.is_success() => {
+                    debug!("airplay: session torn down");
+                    Ok(())
+                }
+                Ok(r) => Err(Error::protocol(format!(
+                    "airplay: TEARDOWN answered {} {}",
+                    r.status, r.reason
+                ))),
+                Err(e) => Err(e),
+            }
+        };
+        if let Some(mut ev) = self.events.take() {
+            ev.close();
+        }
+        self.ntp = None;
+        if r.is_err() {
+            let _ = lock_control(&self.control)
+                .socket()
+                .shutdown(std::net::Shutdown::Both);
+        }
+        r
+    }
+
+    /// After a failed setup: TEARDOWN within 2 s, else close (§4.14).
+    fn cleanup(&mut self) {
+        if let Err(e) = self.teardown(CLEANUP_TEARDOWN_TIMEOUT) {
+            debug!("airplay: cleanup: {e}");
+        }
+    }
+}
+
+/// `POST /fp-setup` ×2 (§2.2). `None`: the receiver does not do
+/// FairPlay (404). Any other failure aborts.
+fn fair_play<S: ControlStream>(
+    control: &mut Control<S>,
+    secret: &[u8],
+) -> Result<Option<FairPlayKeys>> {
+    let mut fp = FpSession::new()?;
+    let post = |control: &mut Control<S>, body: Vec<u8>| {
+        control.request(
+            "POST",
+            "/fp-setup",
+            &[("X-Apple-ET", fairplay::ENCRYPTION_TYPE)],
+            Some((fairplay::CONTENT_TYPE, body)),
+            DEFAULT_TIMEOUT,
+        )
+    };
+    let m2 = post(control, fp.m1().to_vec())?;
+    if m2.status == 404 {
+        debug!("airplay: /fp-setup not found; no FairPlay");
+        return Ok(None);
+    }
+    let m2 = check(m2, "fp-setup m1")?;
+    let m3 = fp.m3(&m2.body)?;
+    let m4 = post(control, m3.to_vec())?;
+    if m4.status == 404 {
+        debug!("airplay: /fp-setup m3 not found; no FairPlay");
+        return Ok(None);
+    }
+    let m4 = check(m4, "fp-setup m3")?;
+    fp.check_m4(&m4.body)?;
+    let k_fp: [u8; 16] = random_array()?;
+    let mut eiv = [0u8; 16];
+    random_fill(&mut eiv)?;
+    let ekey = fp.wrap_key(&k_fp)?;
+    // §2.2: HAP mixes the pair-verify secret in (as does a raw verify
+    // with X-Apple-PD: 1, which we would always send).
+    let master = keys::stream_master_key(&k_fp, secret);
+    debug!("airplay: FairPlay done");
+    Ok(Some(FairPlayKeys { master, eiv, ekey }))
+}

@@ -15,5 +15,7 @@ pub mod pair;
 pub mod pairing;
 pub mod policy;
 pub mod secure;
+pub mod session;
 pub mod setup;
+pub mod sink;
 pub mod timing;

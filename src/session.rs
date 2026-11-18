@@ -95,8 +95,16 @@ const AUDIO_KBPS: u32 = 128;
 /// A resolved `--to`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Target {
-    Cast { addr: SocketAddr, name: String },
-    AirPlay { name: String },
+    Cast {
+        addr: SocketAddr,
+        name: String,
+    },
+    AirPlay {
+        name: String,
+        addr: SocketAddr,
+        /// The discovered device (for the credentials lookup).
+        device: Option<Box<crate::net::device::Device>>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +148,11 @@ fn address_target(forced: Option<Protocol>, rest: &str) -> Option<Target> {
     let name = addr.to_string();
     Some(match proto {
         Protocol::Cast => Target::Cast { addr, name },
-        Protocol::AirPlay => Target::AirPlay { name },
+        Protocol::AirPlay => Target::AirPlay {
+            name,
+            addr,
+            device: None,
+        },
     })
 }
 
@@ -161,7 +173,17 @@ fn device_target(dev: &crate::net::device::Device, forced: Option<Protocol>) -> 
             "{name} is a Cast audio device (no video output)"
         ))),
         _ if dev.airplay.is_some() && forced != Some(Protocol::Cast) => {
-            Ok(Target::AirPlay { name })
+            let ep = dev
+                .airplay
+                .as_ref()
+                .or(dev.raop.as_ref())
+                .map(|a| &a.endpoint)
+                .ok_or_else(|| Error::not_found(format!("{name} has no AirPlay endpoint")))?;
+            Ok(Target::AirPlay {
+                name,
+                addr: SocketAddr::new(ep.addr(), ep.port),
+                device: Some(Box::new(dev.clone())),
+            })
         }
         _ => Err(Error::not_found(format!(
             "{name} has no {} endpoint",
@@ -404,10 +426,21 @@ fn common_audio(caps: &[&Capabilities]) -> Option<AudioFormat> {
 }
 
 fn audio_plan(family: AudioFamily, f: AudioFormat) -> Option<AudioPlan> {
+    if family == AudioFamily::AirPlay && f.codec == AudioCodec::Alac {
+        // ffmpeg's ALAC encoder only makes 4096-sample frames; the AirPlay
+        // sink wraps 352-sample PCM frames as verbatim ALAC instead.
+        return Some(AudioPlan {
+            family,
+            codec: AudioCodec::PcmS16le,
+            sample_rate: f.sample_rate,
+            channels: f.channels,
+            frame_samples: crate::airplay::audio::ALAC_FRAME_SAMPLES,
+            bitrate_kbps: None,
+        });
+    }
     let (frame_samples, bitrate) = match f.codec {
         AudioCodec::Opus => (OPUS_FRAME_SAMPLES, Some(AUDIO_KBPS)),
         AudioCodec::AacLc => (AAC_FRAME_SAMPLES, Some(AUDIO_KBPS)),
-        // AirPlay codecs arrive with M7.
         _ => return None,
     };
     Some(AudioPlan {
@@ -480,7 +513,12 @@ fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> R
             height: size.height,
             fps,
             bitrate_kbps: bitrate.max(100),
-            gop: fps.ceil().max(1),
+            // AirPlay receivers want an IDR at least every ~0.5 s.
+            gop: if caps.iter().any(|c| c.audio_family == AudioFamily::AirPlay) {
+                fps.ceil().div_ceil(2).max(1)
+            } else {
+                fps.ceil().max(1)
+            },
         },
         audio: audio_plans,
         latency_ms,
@@ -494,7 +532,11 @@ fn lock(p: &Mutex<ffmpeg::Process>) -> std::sync::MutexGuard<'_, ffmpeg::Process
     p.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn connect_all(targets: &[Target], opts: &CastOptions) -> Result<Vec<Box<dyn Sink>>> {
+fn connect_all(
+    targets: &[Target],
+    opts: &CastOptions,
+    mirror: &crate::airplay::session::MirrorOptions,
+) -> Result<Vec<Box<dyn Sink>>> {
     let results: Vec<Result<Box<dyn Sink>>> = std::thread::scope(|s| {
         let handles: Vec<_> = targets
             .iter()
@@ -505,9 +547,14 @@ fn connect_all(targets: &[Target], opts: &CastOptions) -> Result<Vec<Box<dyn Sin
                             let sink = cast::connect(*addr, name, opts)?;
                             Ok(Box::new(sink))
                         }
-                        Target::AirPlay { name } => Err(Error::unsupported(format!(
-                            "{name}: AirPlay mirroring not implemented yet (M6)"
-                        ))),
+                        Target::AirPlay { addr, device, .. } => {
+                            let target = crate::airplay::pair::Target {
+                                addr: *addr,
+                                device: device.as_deref().cloned(),
+                            };
+                            let sink = crate::airplay::sink::connect_mirror(&target, mirror)?;
+                            Ok(Box::new(sink))
+                        }
                     }
                 })
             })
@@ -527,7 +574,7 @@ fn connect_all(targets: &[Target], opts: &CastOptions) -> Result<Vec<Box<dyn Sin
             Ok(s) => sinks.push(s),
             Err(e) => {
                 let name = match t {
-                    Target::Cast { name, .. } | Target::AirPlay { name } => name,
+                    Target::Cast { name, .. } | Target::AirPlay { name, .. } => name,
                 };
                 error!("{name}: {e}");
                 first_err.get_or_insert(e);
@@ -653,14 +700,12 @@ fn play(opts: PlayOptions) -> Result<()> {
         .iter()
         .map(|q| resolve_target(q))
         .collect::<Result<Vec<_>>>()?;
-    if let Some(Target::AirPlay { name }) =
-        targets.iter().find(|t| matches!(t, Target::AirPlay { .. }))
-    {
-        return Err(Error::unsupported(format!(
-            "{name}: AirPlay mirroring not implemented yet (M6)"
-        )));
-    }
-    let sinks = connect_all(&targets, &cast_options(&d, audio))?;
+    let mirror = crate::airplay::session::MirrorOptions {
+        latency_ms: opts.latency_ms,
+        audio,
+        ..Default::default()
+    };
+    let sinks = connect_all(&targets, &cast_options(&d, audio), &mirror)?;
     if interrupt::requested() {
         stop_all(sinks);
         return Ok(());
@@ -930,18 +975,13 @@ mod tests {
         assert_eq!(t("CAST:10.0.0.5:7000"), Some(cast("10.0.0.5:7000")));
         assert_eq!(t("[::1]"), Some(cast("[::1]:8009")));
         assert_eq!(t("[::1]:8010"), Some(cast("[::1]:8010")));
-        assert_eq!(
-            t("10.0.0.5:7000"),
-            Some(Target::AirPlay {
-                name: "10.0.0.5:7000".into()
-            })
-        );
-        assert_eq!(
-            t("airplay:10.0.0.5"),
-            Some(Target::AirPlay {
-                name: "10.0.0.5:7000".into()
-            })
-        );
+        let airplay = |a: &str| Target::AirPlay {
+            name: a.into(),
+            addr: a.parse().unwrap(),
+            device: None,
+        };
+        assert_eq!(t("10.0.0.5:7000"), Some(airplay("10.0.0.5:7000")));
+        assert_eq!(t("airplay:10.0.0.5"), Some(airplay("10.0.0.5:7000")));
         assert_eq!(t("Living Room"), None);
         assert_eq!(t("cast:Living Room"), None);
         assert_eq!(parse_target("cast:"), (None, "cast:"));
@@ -1195,9 +1235,9 @@ mod tests {
     }
 
     #[test]
-    fn airplay_targets_are_unsupported() {
+    fn airplay_target_connect_failure() {
         let o = PlayOptions {
-            to: vec!["airplay:127.0.0.1".into()],
+            to: vec!["airplay:127.0.0.1:1".into()],
             ffmpeg: crate::media::ffmpeg::tests::real_ffmpeg().map(|(b, _)| b),
             ..opts()
         };
@@ -1205,7 +1245,7 @@ mod tests {
             return;
         }
         let e = play(o).unwrap_err();
-        assert_eq!(e.kind(), crate::error::ErrorKind::Unsupported);
-        assert!(e.to_string().contains("not implemented yet (M6)"), "{e}");
+        assert_ne!(e.kind(), crate::error::ErrorKind::Unsupported, "{e}");
+        assert!(e.to_string().contains("airplay"), "{e}");
     }
 }
