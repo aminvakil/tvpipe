@@ -615,6 +615,7 @@
     }
     var cfg = this.config || { fps: 30, audio: true };
     var o = this.opts, f = features();
+    if (o.preferCurrentTab && f.family === 'firefox') return this._captureFirefoxTab(cfg);
     var video = { frameRate: { ideal: cfg.fps, max: cfg.fps } };
     // Safari and Firefox share windows and screens (no tabs) and no
     // sound: suggest a window, and do not ask for audio (a refused
@@ -638,6 +639,25 @@
     return navigator.mediaDevices.getDisplayMedia(c).then(function (stream) { return self.share(stream); });
   };
 
+  // Firefox has no tab capture in getDisplayMedia (and no preferCurrentTab),
+  // but its older getUserMedia sources still capture this tab's viewport
+  // ('browser') and the sound this tab plays ('audioCapture'), behind the
+  // prefs tvpipe's own Firefox sets (media.getusermedia.browser.enabled,
+  // media.getusermedia.audio.capture.enabled; the permission prompt off).
+  // Like getDisplayMedia it needs transient activation. (The capture keeps
+  // playing the sound locally; tvpipe's Firefox mutes its output instead.)
+  Capture.prototype._captureFirefoxTab = function (cfg) {
+    var c = {
+      video: { mediaSource: 'browser', frameRate: { ideal: cfg.fps, max: cfg.fps } },
+      audio: cfg.audio ? { mediaSource: 'audioCapture' } : false
+    };
+    var self = this;
+    return navigator.mediaDevices.getUserMedia(c).then(function (stream) {
+      self.surface = 'browser';
+      return self.share(stream);
+    });
+  };
+
   // Streams `stream` (its first video track and first audio track).
   Capture.prototype.share = function (stream) {
     if (this.stream) return Promise.reject(new Error('already sharing'));
@@ -659,7 +679,7 @@
     this.captureInfo = {
       type: 'capture',
       width: s.width || 0, height: s.height || 0, fps: s.frameRate || null,
-      audio: !!at, surface: s.displaySurface || null, label: vt.label || null
+      audio: !!at, surface: s.displaySurface || this.surface || null, label: vt.label || null
     };
     this.timers.push(every(CAPTURE_WAIT_MS, function () { self._sendCapture(null); }));
     // Socket backlog for the engine's flow control.
@@ -752,13 +772,21 @@
       feed(f);
     };
     v.play().catch(function () {});
+    var fps = (this.config && this.config.fps) || 30;
+    var interval = Math.max(5, Math.round(1000 / fps)), lastShown = -1e9;
     if (typeof v.requestVideoFrameCallback === 'function') {
-      var cb = function () { grab(); if (!self.stopped) v.requestVideoFrameCallback(cb); };
+      var cb = function () {
+        lastShown = performance.now();
+        grab();
+        if (!self.stopped) v.requestVideoFrameCallback(cb);
+      };
       v.requestVideoFrameCallback(cb);
     }
-    // Also on a timer: rVFC stops in background tabs.
-    var fps = (this.config && this.config.fps) || 30;
-    this.timers.push(every(Math.max(5, Math.round(1000 / fps)), grab));
+    // Also on a timer while rVFC is quiet: it stops in background tabs
+    // (and copying each picture twice would be wasted).
+    this.timers.push(every(interval, function () {
+      if (performance.now() - lastShown > 2 * interval) grab();
+    }));
   };
 
   Capture.prototype._fromEngine = function (m) {
@@ -832,7 +860,10 @@
         self.audioBytes += pcm.length;
       };
       src.connect(node);
-      node.connect(ctx.destination);
+      // Firefox captures what this page plays (audioCapture) and would
+      // feed the node its own output: a cycle, which its graph silences.
+      // Its nodes run unconnected; a stream destination keeps it pulled.
+      node.connect(family() === 'firefox' ? ctx.createMediaStreamDestination() : ctx.destination);
       self.audioNode = node;
       self.audioSrc = src;
       if (ctx.state !== 'running') ctx.resume().catch(function () {});

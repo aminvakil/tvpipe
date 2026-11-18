@@ -378,7 +378,7 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
             .long("browser")
             .value("PATH")
             .value_hint(ValueHint::ExecutablePath)
-            .help("With URL: the Chromium-based browser (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
+            .help("With URL: the browser: a Chromium-based one or Firefox, a path or 'firefox' (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave, Firefox)"),
     ])
     .args(&[Pos::new(ShareArg::Url, "URL")
         .optional()
@@ -389,10 +389,10 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
          (Chrome, Edge, Safari 16.4+, Firefox 130+) and press Share. Closing the page or\n\
          stopping the share ends the session.\n\
          \n\
-         With URL: tvpipe starts a Chromium-based browser with a profile of its own (never\n\
-         yours), sized to the stream, opens URL and shares that tab with its sound. It is\n\
-         started again if it crashes; Ctrl-C or 'q' stops. Sites that refuse automated\n\
-         browsers (e.g. Google Meet) do not work.",
+         With URL: tvpipe starts a Chromium-based browser (or Firefox) with a profile of its\n\
+         own (never yours), sized to the stream, opens URL and shares that tab with its\n\
+         sound. It is started again if it crashes; Ctrl-C or 'q' stops. Sites that refuse\n\
+         automated browsers (e.g. Google Meet) do not work.",
     );
 
 static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")

@@ -86,6 +86,7 @@
   .note { margin-top: 26px; padding: 18px 20px; background: var(--panel); border-radius: 4px; font-size: 14.5px; color: var(--ink-2); }
   .note b { color: var(--ink); font-weight: 600; }
   .note ol { margin: 8px 0; padding-left: 20px; }
+  .note code { font: 400 13px "IBM Plex Mono", monospace; color: var(--ink); white-space: nowrap; }
 
   .sec { border-top: 1px solid var(--rule); padding-top: 22px; }
   summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; }
@@ -232,12 +233,17 @@
   if (!f.tabs) {
     var name = f.family === 'safari' ? 'Safari' : f.family === 'firefox' ? 'Firefox' : 'This browser';
     var sameApp = f.family === 'safari' || f.family === 'firefox';
+    var stop = f.family === 'firefox' ? 'with <b>Stop Sharing</b> in Firefox\u2019s sharing indicator' : 'from the menu bar';
+    var sound = f.family === 'firefox'
+      ? 'For a web page with its sound, let tvpipe show it in a Firefox of its own: ' +
+        '<code>tvpipe share URL --browser firefox</code>. For a tab of yours with sound, use Chrome or Edge.'
+      : 'For a tab with sound, use Chrome or Edge.';
     howto.innerHTML = '<b>' + name + ' can share a window or the whole screen, but not a single tab, and no sound.</b>' +
       (sameApp ? '<ol><li>Press <b>Share…</b> and choose this ' + name + ' window (or the screen).</li>' +
         '<li>Switch the window to the tab you want on the TV. This page keeps streaming in the background.</li>' +
-        '<li>Come back to this tab and press <b>Stop</b>, or stop sharing from the menu bar.</li></ol>' +
+        '<li>Come back to this tab and press <b>Stop</b>, or stop sharing ' + stop + '.</li></ol>' +
         'Tip: drag the tab into its own window and share that window, so this page stays out of the picture. ' +
-        'For a tab with sound, use Chrome or Edge.' : '');
+        sound : '');
     howto.hidden = false;
   }
   if (!f.audio) $('localLabel').hidden = true;

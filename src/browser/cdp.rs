@@ -13,9 +13,17 @@
 //! are dropped when nobody reads them). Nothing the browser sends can
 //! panic the client; a malformed message is logged and skipped.
 //!
+//! WebDriver BiDi (Firefox, [`super::bidi`]) has the same shape: a
+//! command is `{id, method, params}`, an answer carries the `id` and a
+//! `result` (or `error`: a code string, and a `message`), an event is
+//! `{type: "event", method, params}`. So the same client speaks it, with
+//! no session. A BiDi browser also blocks requests until tvpipe answers
+//! (network interception): an [`EventHook`] answers those on the reader
+//! thread, so a busy caller never stalls the page.
+//!
 //! Sources: Chrome DevTools Protocol docs
 //! (chromedevtools.github.io/devtools-protocol: Target, Page, Runtime,
-//! Browser), RFC 6455.
+//! Browser), W3C WebDriver BiDi (transport, commands, events), RFC 6455.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::TcpStream;
@@ -54,10 +62,16 @@ struct State {
     closed: Option<String>,
 }
 
+/// Runs on the reader thread for every event before it is queued; a
+/// command it returns (`method`, `params`) is sent at once, its answer
+/// ignored.
+pub type EventHook = Box<dyn Fn(&Event) -> Option<(String, Value)> + Send>;
+
 struct Inner {
     tx: websocket::Sender<TcpStream>,
     state: Mutex<State>,
     cv: Condvar,
+    hook: Mutex<Option<EventHook>>,
 }
 
 impl Inner {
@@ -80,6 +94,7 @@ impl Cdp {
             tx,
             state: Mutex::new(State::default()),
             cv: Condvar::new(),
+            hook: Mutex::new(None),
         });
         let me = inner.clone();
         let reader = std::thread::Builder::new()
@@ -165,6 +180,11 @@ impl Cdp {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
+    }
+
+    /// Sets the hook that sees every event first (see [`EventHook`]).
+    pub fn set_event_hook(&self, hook: EventHook) {
+        *self.inner.hook.lock().unwrap_or_else(|e| e.into_inner()) = Some(hook);
     }
 
     /// The next event, waiting up to `timeout`: `Ok(None)` when none came,
@@ -261,16 +281,11 @@ impl Inner {
                 return;
             }
         };
-        let mut st = self.lock();
         if let Some(id) = v.get("id").and_then(Value::as_u64) {
+            let mut st = self.lock();
             if let Some(slot) = st.waiting.get_mut(&id) {
                 *slot = Some(match v.get("error") {
-                    Some(err) => Err(Error::protocol(
-                        err.get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("error")
-                            .to_owned(),
-                    )),
+                    Some(err) => Err(Error::protocol(error_text(err, &v))),
                     None => Ok(v.get("result").cloned().unwrap_or_else(Value::object)),
                 });
                 self.cv.notify_all();
@@ -280,19 +295,59 @@ impl Inner {
         let Some(method) = v.get("method").and_then(Value::as_str) else {
             return;
         };
-        if st.events.len() >= EVENT_QUEUE {
-            st.events.pop_front();
-            st.dropped_events += 1;
-        }
-        st.events.push_back(Event {
+        let ev = Event {
             method: method.to_owned(),
             params: v.get("params").cloned().unwrap_or_else(Value::object),
             session: v
                 .get("sessionId")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-        });
+        };
+        let answer = {
+            let hook = self.hook.lock().unwrap_or_else(|e| e.into_inner());
+            hook.as_ref().and_then(|h| h(&ev))
+        };
+        if let Some((method, params)) = answer {
+            self.send_unanswered(&method, params);
+        }
+        let mut st = self.lock();
+        if st.events.len() >= EVENT_QUEUE {
+            st.events.pop_front();
+            st.dropped_events += 1;
+        }
+        st.events.push_back(ev);
         self.cv.notify_all();
+    }
+
+    /// Sends a command whose answer nobody waits for (answers to unknown
+    /// ids are dropped).
+    fn send_unanswered(&self, method: &str, params: Value) {
+        let id = {
+            let mut st = self.lock();
+            st.next_id += 1;
+            st.next_id
+        };
+        let msg = Value::object()
+            .with("id", id)
+            .with("method", method)
+            .with("params", params);
+        trace!("cdp> {}", short(&msg.to_json()));
+        if let Err(e) = self.tx.send_text(&msg.to_json()) {
+            debug!("cdp: {method}: {e}");
+        }
+    }
+}
+
+/// An error answer's text: CDP's `{code, message}` object, or BiDi's
+/// error code string with the `message` beside it.
+fn error_text(err: &Value, msg: &Value) -> String {
+    if let Some(m) = err.get("message").and_then(Value::as_str) {
+        return m.to_owned();
+    }
+    match (err.as_str(), msg.get("message").and_then(Value::as_str)) {
+        (Some(code), Some(m)) if !m.is_empty() => format!("{code}: {m}"),
+        (Some(code), _) => code.to_owned(),
+        _ => "error".into(),
     }
 }
 

@@ -1,12 +1,20 @@
 //! `share` with the real capture script in real browsers (opt-in,
-//! `--ignored`): headless Chrome driven over the DevTools protocol, and
-//! Safari over WebDriver (`safaridriver`). To fake Cast + AirPlay
-//! receivers by default, or to a real one.
+//! `--ignored`): headless Chrome driven over the DevTools protocol,
+//! headless Firefox over WebDriver BiDi (tvpipe's own launcher and
+//! profile, no geckodriver), and Safari over WebDriver (`safaridriver`).
+//! To fake Cast + AirPlay receivers by default, or to a real one.
 //!
 //! ```sh
 //! TVPIPE_TEST_CHROME=/path/to/chrome cargo test --release chrome_share -- --ignored --nocapture
+//! TVPIPE_TEST_FIREFOX=/path/to/firefox cargo test --release firefox_share -- --ignored --nocapture
 //! TVPIPE_TEST_SAFARI=1 cargo test --release safari_share -- --ignored --nocapture
 //! ```
+//!
+//! Firefox: `TVPIPE_TEST_FIREFOX_HEADED=1` (a window),
+//! `TVPIPE_TEST_FIREFOX_SCREEN=1` (the page's own getDisplayMedia, which
+//! shares the primary screen without a picker; on macOS Firefox needs the
+//! Screen Recording permission). The manual check with the picker is in
+//! docs/share-protocol.md (Browsers).
 //!
 //! Options (both): `TVPIPE_TEST_BROWSER_SECS` (streaming time, default 6),
 //! `_TO=ADDR` (a real receiver), `_SIZE=WxH` (`--size`), `_DUMP=PATH`
@@ -334,6 +342,167 @@ fn chrome_share_to_fakes() {
         report.lock().unwrap().push(format!("captureDisplay: {r}"));
         watch(&mut eval, &report);
         drop(chrome);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Firefox (WebDriver BiDi)
+
+/// Firefox for the tests: `browser::launch` with a temporary profile and
+/// tvpipe's preferences, the tab set up by
+/// `browser::headless::firefox::attach` (the production code), on `url`.
+/// Dropping it quits Firefox and deletes the profile.
+pub(super) struct Firefox {
+    browser: crate::browser::launch::Browser,
+    context: String,
+    profile: crate::browser::launch::Profile,
+}
+
+impl Firefox {
+    /// Evaluates a function body as if the user clicked (transient
+    /// activation); awaits a returned promise.
+    pub(super) fn eval(&mut self, body: &str) -> Value {
+        crate::browser::bidi::evaluate(
+            self.browser.cdp(),
+            &self.context,
+            &format!("(async () => {{ {body} }})()"),
+            true,
+            true,
+            Duration::from_secs(30),
+        )
+        .unwrap_or_else(|e| {
+            eprintln!("eval {body}: {e}");
+            Value::Null
+        })
+    }
+
+    pub(super) fn profile_dir(&self) -> std::path::PathBuf {
+        self.profile.dir().to_path_buf()
+    }
+
+    /// Opens another tab in front: this one goes to the background.
+    pub(super) fn open_tab_in_front(&self, url: &str) {
+        let r = self
+            .browser
+            .cdp()
+            .call(
+                None,
+                "browsingContext.create",
+                Value::object()
+                    .with("type", "tab")
+                    .with("background", false),
+            )
+            .unwrap();
+        let ctx = r.get("context").and_then(Value::as_str).unwrap();
+        crate::browser::headless::firefox::navigate(self.browser.cdp(), ctx, url).unwrap();
+    }
+}
+
+/// TVPIPE_TEST_FIREFOX=/path/to/firefox (the executable, or a macOS
+/// `.app`'s `Contents/MacOS/firefox`).
+pub(super) fn firefox_bin() -> Option<String> {
+    std::env::var("TVPIPE_TEST_FIREFOX").ok()
+}
+
+/// Starts Firefox on `url` (headless unless TVPIPE_TEST_FIREFOX_HEADED).
+pub(super) fn firefox(bin: &str, url: &str, viewport: (u32, u32)) -> Firefox {
+    let profile = crate::browser::launch::Profile::temporary().unwrap();
+    let opts = crate::browser::launch::LaunchOptions {
+        bin: bin.into(),
+        viewport,
+        visible: std::env::var("TVPIPE_TEST_FIREFOX_HEADED").is_ok(),
+    };
+    assert_eq!(
+        opts.engine(),
+        crate::browser::launch::Engine::Firefox,
+        "{bin} is not Firefox"
+    );
+    let browser = crate::browser::launch::Browser::launch(&opts, &profile).unwrap();
+    let context = crate::browser::headless::firefox::attach(&browser, viewport).unwrap();
+    crate::browser::headless::firefox::navigate(browser.cdp(), &context, url).unwrap();
+    Firefox {
+        browser,
+        context,
+        profile,
+    }
+}
+
+/// The real capture script and share page in Firefox: the page's own
+/// tab captured (getUserMedia's `browser` source and its sound,
+/// `audioCapture`: what `share URL` uses) and shared through the page's
+/// engine (`<video>` frames, Firefox's H.264 encoder, the padding, the
+/// audio worklet, keyframe requests). TVPIPE_TEST_FIREFOX_SCREEN=1
+/// shares with the page's real getDisplayMedia instead, which tvpipe's
+/// preferences answer without the picker: the primary screen.
+#[test]
+#[ignore]
+fn firefox_share_to_fakes() {
+    let Some(bin) = firefox_bin() else {
+        eprintln!("TVPIPE_TEST_FIREFOX not set");
+        return;
+    };
+    share_in_browser(move |url, report| {
+        // 16:10 into the receivers' 16:9: the padding.
+        let mut ff = firefox(&bin, &url, (1280, 800));
+        let mut eval = |s: &str| ff.eval(s);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while eval("return !!(window.tvpipeShare && window.tvpipeShare.config)")
+            != Value::Bool(true)
+        {
+            assert!(Instant::now() < deadline, "the page got no config");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let f = eval("return JSON.stringify(tvpipeCapture.features())");
+        report.lock().unwrap().push(format!("features: {f}"));
+        let howto = eval("return document.getElementById('howto').hidden ? '' : document.getElementById('howto').innerText");
+        report
+            .lock()
+            .unwrap()
+            .push(format!("how-to shown: {howto}"));
+        assert!(
+            howto.as_str().is_some_and(|h| h.contains("Firefox")),
+            "Firefox's how-to is missing: {howto}"
+        );
+        check_place(&mut eval);
+        eval(
+            "const c = document.createElement('canvas'); c.width = 640; c.height = 200; \
+             document.body.prepend(c); const g = c.getContext('2d'); let n = 0; \
+             (function draw() { g.fillStyle = `hsl(${n % 360},80%,50%)`; g.fillRect(0, 0, 640, 200); \
+             g.fillStyle = '#fff'; g.font = '48px sans-serif'; g.fillText(String(n++), 20, 120); \
+             requestAnimationFrame(draw); })(); \
+             const a = new AudioContext(); const o = a.createOscillator(); o.frequency.value = 440; \
+             o.connect(a.destination); o.start(); return a.state;",
+        );
+        let screen = std::env::var("TVPIPE_TEST_FIREFOX_SCREEN").is_ok();
+        let r = eval(&format!(
+            "tvpipeShare.opts.preferCurrentTab = {}; \
+             return tvpipeShare.captureDisplay().then(() => 'ok', e => 'error: ' + e.name + ': ' + e.message)",
+            !screen
+        ));
+        report.lock().unwrap().push(format!("captureDisplay: {r}"));
+        assert_eq!(r.as_str(), Some("ok"), "{r}");
+        watch(&mut eval, &report);
+        let mode = eval("return window.tvpipeLastStats && window.tvpipeLastStats.mode");
+        report.lock().unwrap().push(format!("engine: {mode}"));
+        // The share page in a background tab (the user switched to the
+        // tab to show) keeps streaming.
+        ff.open_tab_in_front("about:blank");
+        std::thread::sleep(Duration::from_secs(5));
+        let s =
+            ff.eval("return JSON.stringify([document.visibilityState, window.tvpipeLastStats])");
+        report
+            .lock()
+            .unwrap()
+            .push(format!("in the background: {s}"));
+        let v = Value::parse(s.as_str().unwrap_or("null")).unwrap_or(Value::Null);
+        assert_eq!(v.at(0).and_then(Value::as_str), Some("hidden"), "{s}");
+        let fps = v
+            .at(1)
+            .and_then(|st| st.get("fps"))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        assert!(fps >= 20.0, "{fps} fps in the background: {s}");
+        drop(ff);
     });
 }
 

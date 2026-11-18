@@ -1,8 +1,11 @@
-//! Finding and starting a Chromium-based browser for `tvpipe share URL`.
+//! Finding and starting the browser for `tvpipe share URL`: a
+//! Chromium-based one (driven over the DevTools protocol, [`Cdp`]) or
+//! Firefox (WebDriver BiDi, `bidi`); [`Engine`] tells them apart.
 //!
 //! - [`find_browser`]: `--browser PATH` (or a name on `PATH`, or a macOS
-//!   `.app`), `$TVPIPE_BROWSER`, the well-known install paths
-//!   (`browser::platform`), then `PATH`.
+//!   `.app`; `firefox` also finds an installed Firefox), `$TVPIPE_BROWSER`,
+//!   the well-known install paths of Chromium-based browsers
+//!   (`browser::platform`), then `PATH`, then the same for Firefox.
 //! - [`Profile`]: the browser's own user-data directory: a fresh temp
 //!   directory (deleted on drop) or `--profile DIR` (kept, for logins).
 //!   Never the user's real browser profile.
@@ -12,15 +15,23 @@
 //!   with a random nonce while it runs; no answer means its tvpipe is
 //!   gone. A browser still on such a profile is asked to quit through the
 //!   DevTools endpoint its own `DevToolsActivePort` names (the path holds
-//!   that browser instance's id, so no other browser can answer it).
+//!   that browser instance's id, so no other browser can answer it), or
+//!   Firefox through the BiDi port its `WebDriverBiDiServer.json` names.
 //! - [`Browser::launch`]: starts it with `--remote-debugging-port=0`,
-//!   reads the port from `DevToolsActivePort` in the profile, connects
-//!   [`Cdp`] to the browser endpoint. [`Browser::close`] (and drop) asks
-//!   it to quit (`Browser.close`), waits, then kills it.
+//!   reads the port from `DevToolsActivePort` (Firefox:
+//!   `WebDriverBiDiServer.json`) in the profile, connects [`Cdp`] to the
+//!   browser endpoint (Firefox: a BiDi session). [`Browser::close`] (and
+//!   drop) asks it to quit (`Browser.close`, `browser.close`), waits,
+//!   then kills it.
+//! - Firefox's preferences ([`FIREFOX_PREFS`], written to the profile's
+//!   `user.js`): no permission prompts, the old getUserMedia tab and
+//!   tab-audio capture sources on, autoplay allowed, its own sound muted.
 //!
 //! Sources: Chrome DevTools Protocol docs; Chromium command-line switches
 //! (`--remote-debugging-port`, `--user-data-dir`, `--headless`,
-//! `--auto-accept-this-tab-capture`, `--autoplay-policy`, ...).
+//! `--auto-accept-this-tab-capture`, `--autoplay-policy`, ...); Firefox's
+//! command line (`--profile`, `--headless`, `--remote-debugging-port`) and
+//! preferences (modules/libpref/init/StaticPrefList.yaml).
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -33,7 +44,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::browser::cdp::Cdp;
-use crate::browser::platform;
+use crate::browser::{bidi, platform};
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
 
@@ -46,7 +57,34 @@ const QUIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Lines of the browser's stderr kept for error messages.
 const STDERR_TAIL: usize = 20;
 
-/// Finds a Chromium-based browser (see the module docs for the order).
+/// The kind of browser, which decides how tvpipe drives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// Chrome, Edge, Chromium, Brave: the DevTools protocol.
+    Chromium,
+    /// Firefox: WebDriver BiDi.
+    Firefox,
+}
+
+impl Engine {
+    /// By the executable's name: Firefox's has `firefox` in it
+    /// (`firefox`, `firefox-esr`, `firefox.exe`); anything else is taken
+    /// for a Chromium-based browser.
+    pub fn of(bin: &Path) -> Engine {
+        let name = bin
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if name.contains("firefox") {
+            Engine::Firefox
+        } else {
+            Engine::Chromium
+        }
+    }
+}
+
+/// Finds a Chromium-based browser or Firefox (see the module docs for the
+/// order).
 pub fn find_browser(explicit: Option<&Path>) -> Result<PathBuf> {
     find_with(explicit, &|k| std::env::var_os(k), &|p| p.is_file())
 }
@@ -74,16 +112,31 @@ fn find_with(
                     .flatten()
             })
     };
+    let firefox = || {
+        platform::firefox_install_paths(env)
+            .into_iter()
+            .find(|p| exists(p))
+            .or_else(|| {
+                platform::firefox_names()
+                    .iter()
+                    .find_map(|n| on_path(Path::new(n)))
+            })
+    };
     let given = |p: &Path, what: &str| -> Result<PathBuf> {
         if exists(p) {
             return Ok(p.to_path_buf());
         }
-        if let Some(exe) = app_bundle_executable(p).filter(|e| exists(e)) {
+        if let Some(exe) = app_bundle_executable(p).into_iter().find(|e| exists(e)) {
             return Ok(exe);
         }
         if p.components().count() == 1 {
             if let Some(found) = on_path(p) {
                 return Ok(found);
+            }
+            if p.as_os_str().eq_ignore_ascii_case("firefox") {
+                if let Some(found) = firefox() {
+                    return Ok(found);
+                }
             }
         }
         Err(Error::not_found(format!(
@@ -109,17 +162,28 @@ fn find_with(
     {
         return Ok(p);
     }
+    if let Some(p) = firefox() {
+        return Ok(p);
+    }
     Err(Error::not_found(format!(
-        "no Chromium-based browser found (Chrome, Edge, Chromium or Brave); \
+        "no browser found (Chrome, Edge, Chromium, Brave or Firefox); \
          install one or name it with --browser PATH or ${BROWSER_ENV}"
     )))
 }
 
-/// `X.app` → `X.app/Contents/MacOS/X` (a macOS bundle given as the
-/// browser).
-fn app_bundle_executable(p: &Path) -> Option<PathBuf> {
-    let name = p.file_name()?.to_str()?.strip_suffix(".app")?;
-    Some(p.join("Contents/MacOS").join(name))
+/// `X.app` → `X.app/Contents/MacOS/X`, or `.../firefox` (Firefox's
+/// bundles, `Firefox Nightly.app` too, name it so): a macOS bundle given
+/// as the browser.
+fn app_bundle_executable(p: &Path) -> Vec<PathBuf> {
+    let Some(name) = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".app"))
+    else {
+        return Vec::new();
+    };
+    let dir = p.join("Contents/MacOS");
+    vec![dir.join(name), dir.join("firefox")]
 }
 
 /// Name prefix of temporary profiles (the only directories the sweep
@@ -378,18 +442,28 @@ fn owner(dir: &Path, orphan_age: Duration) -> Owner {
     }
 }
 
-/// Whether a browser answers on the DevTools endpoint `dir` names.
-fn browser_answers(dir: &Path) -> bool {
-    std::fs::read_to_string(dir.join("DevToolsActivePort"))
+/// The endpoint of a browser that may still run on profile `dir`: its
+/// engine, port and WebSocket URL (Chromium's `DevToolsActivePort`,
+/// Firefox's `WebDriverBiDiServer.json`).
+fn stale_endpoint(dir: &Path) -> Option<(Engine, u16, String)> {
+    if let Some((port, path)) = std::fs::read_to_string(dir.join("DevToolsActivePort"))
         .ok()
         .and_then(|s| parse_active_port(&s))
-        .is_some_and(|(port, path)| {
-            Cdp::connect(
-                &format!("ws://127.0.0.1:{port}{path}"),
-                Duration::from_secs(2),
-            )
-            .is_ok()
-        })
+    {
+        return Some((
+            Engine::Chromium,
+            port,
+            format!("ws://127.0.0.1:{port}{path}"),
+        ));
+    }
+    let port = bidi::server_file(dir)?;
+    Some((Engine::Firefox, port, bidi::session_url(port)))
+}
+
+/// Whether a browser answers on the endpoint `dir` names.
+fn browser_answers(dir: &Path) -> bool {
+    stale_endpoint(dir)
+        .is_some_and(|(_, _, url)| Cdp::connect(&url, Duration::from_secs(2)).is_ok())
 }
 
 fn beacon_answers(port: u16, nonce: &str) -> bool {
@@ -408,24 +482,24 @@ fn beacon_answers(port: u16, nonce: &str) -> bool {
 /// quit; `Ok(false)`: none answers; an error: one answers but does not
 /// quit.
 fn close_stale_browser(dir: &Path) -> Result<bool> {
-    let Some((port, path)) = std::fs::read_to_string(dir.join("DevToolsActivePort"))
-        .ok()
-        .and_then(|s| parse_active_port(&s))
-    else {
+    let Some((engine, port, url)) = stale_endpoint(dir) else {
         return Ok(false);
     };
-    let Ok(cdp) = Cdp::connect(
-        &format!("ws://127.0.0.1:{port}{path}"),
-        Duration::from_secs(2),
-    ) else {
+    let Ok(cdp) = Cdp::connect(&url, Duration::from_secs(2)) else {
         return Ok(false);
     };
-    let _ = cdp.call_timeout(
-        None,
-        "Browser.close",
-        Value::object(),
-        Duration::from_secs(2),
-    );
+    // Firefox still holds the dead tvpipe's BiDi session: Marionette.
+    let marionette = (engine == Engine::Firefox)
+        .then(|| bidi::marionette_port(dir))
+        .flatten();
+    match marionette {
+        Some(m) => {
+            if let Err(e) = bidi::marionette_quit(m, Duration::from_secs(2)) {
+                debug!("browser: marionette: {e}");
+            }
+        }
+        None => ask_to_quit(&cdp, engine),
+    }
     drop(cdp);
     // Gone once its DevTools port refuses connections.
     let deadline = Instant::now() + QUIT_TIMEOUT;
@@ -441,6 +515,28 @@ fn close_stale_browser(dir: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// Asks the browser on `rpc` to quit (without waiting for it). Firefox
+/// takes the command in a session only (ours, or a new one if it has
+/// none).
+fn ask_to_quit(rpc: &Cdp, engine: Engine) {
+    let wait = Duration::from_secs(2);
+    match engine {
+        Engine::Chromium => {
+            let _ = rpc.call_timeout(None, "Browser.close", Value::object(), wait);
+        }
+        Engine::Firefox => {
+            // In a session of ours, or a new one.
+            if rpc
+                .call_timeout(None, "browser.close", Value::object(), wait)
+                .is_err()
+                && bidi::new_session(rpc).is_ok()
+            {
+                let _ = rpc.call_timeout(None, "browser.close", Value::object(), wait);
+            }
+        }
+    }
+}
+
 /// How to start the browser.
 #[derive(Debug, Clone)]
 pub struct LaunchOptions {
@@ -451,9 +547,63 @@ pub struct LaunchOptions {
     pub visible: bool,
 }
 
+impl LaunchOptions {
+    pub fn engine(&self) -> Engine {
+        Engine::of(&self.bin)
+    }
+}
+
+/// Firefox's preferences for tvpipe's profile (`user.js`). Firefox's
+/// remote agent adds its own automation defaults (no first-run pages, no
+/// update checks, ...).
+pub const FIREFOX_PREFS: &[(&str, &str)] = &[
+    // The Marionette port in MarionetteActivePort (for the sweep,
+    // `bidi::marionette_quit`).
+    ("marionette.port", "0"),
+    // getUserMedia without a prompt, and its sources for this tab's
+    // picture ('browser') and sound ('audioCapture'): Firefox's
+    // getDisplayMedia has no tab capture and no audio (capture.js).
+    ("media.navigator.permission.disabled", "true"),
+    ("media.getusermedia.browser.enabled", "true"),
+    ("media.getusermedia.audio.capture.enabled", "true"),
+    // Sound and video play without a click.
+    ("media.autoplay.default", "0"),
+    ("media.autoplay.blocking_policy", "0"),
+    // The captured sound is taken before the output: mute the output
+    // (the TV plays it).
+    ("media.volume_scale", "\"0.0\""),
+    // Pages from the internet may reach tvpipe on 127.0.0.1 (Local
+    // Network Access).
+    ("network.lna.enabled", "false"),
+    ("network.lna.blocking", "false"),
+    // Navigations and reloads never wait for a "leave this page?" prompt.
+    ("dom.disable_beforeunload", "true"),
+    // No hidden preloaded new-tab page beside the page's tab.
+    ("browser.newtab.preload", "false"),
+    // A restarted browser opens the page, not a restore or safe-mode
+    // question.
+    ("browser.sessionstore.resume_from_crash", "false"),
+    ("toolkit.startup.max_resumed_crashes", "-1"),
+    // The page keeps its timers and painting in a window behind others.
+    ("dom.timeout.enable_budget_timer_throttling", "false"),
+    ("widget.windows.window_occlusion_tracking.enabled", "false"),
+];
+
+/// `user.js` with [`FIREFOX_PREFS`].
+pub fn firefox_user_js() -> String {
+    let mut s = String::from("// Written by tvpipe for 'tvpipe share URL'.\n");
+    for (k, v) in FIREFOX_PREFS {
+        s.push_str(&format!("user_pref(\"{k}\", {v});\n"));
+    }
+    s
+}
+
 /// The command line for `opts` with profile `dir`, opening `about:blank`
 /// (the caller sets the page up before it loads the real URL).
 pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
+    if opts.engine() == Engine::Firefox {
+        return firefox_args(opts, dir);
+    }
     let (w, h) = opts.viewport;
     let mut a: Vec<OsString> = Vec::new();
     if !opts.visible {
@@ -492,11 +642,36 @@ pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
     a
 }
 
-/// A running browser and its DevTools connection.
+/// Firefox's command line (the viewport is set over BiDi).
+fn firefox_args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
+    let (w, h) = opts.viewport;
+    let mut a: Vec<OsString> = Vec::new();
+    if !opts.visible {
+        a.push("--headless".into());
+    }
+    a.push("--profile".into());
+    a.push(dir.into());
+    for s in [
+        "--no-remote",
+        "--new-instance",
+        "--remote-debugging-port=0",
+        "--marionette",
+    ] {
+        a.push(s.into());
+    }
+    a.push(format!("--window-size={w},{h}").into());
+    a.push("about:blank".into());
+    a
+}
+
+/// A running browser and its DevTools (Firefox: WebDriver BiDi)
+/// connection.
 pub struct Browser {
     child: Option<Child>,
     cdp: Cdp,
-    /// The product (`Chrome/157.0...`, `HeadlessChrome/...`).
+    pub engine: Engine,
+    /// The product (`Chrome/157.0...`, `HeadlessChrome/...`,
+    /// `Firefox/160.0`).
     pub product: String,
     pub user_agent: String,
     stderr: Arc<Mutex<VecDeque<String>>>,
@@ -505,9 +680,19 @@ pub struct Browser {
 impl Browser {
     /// Starts the browser with `profile` and connects to it.
     pub fn launch(opts: &LaunchOptions, profile: &Profile) -> Result<Browser> {
-        let port_file = profile.dir().join("DevToolsActivePort");
+        let engine = opts.engine();
+        let port_file = profile.dir().join(match engine {
+            Engine::Chromium => "DevToolsActivePort",
+            Engine::Firefox => bidi::SERVER_FILE,
+        });
         // A persistent profile may hold the last run's.
         let _ = std::fs::remove_file(&port_file);
+        if engine == Engine::Firefox {
+            let _ = std::fs::remove_file(profile.dir().join(bidi::MARIONETTE_FILE));
+            let user_js = profile.dir().join("user.js");
+            std::fs::write(&user_js, firefox_user_js())
+                .map_err(|e| Error::io(format!("write {}", user_js.display()), e))?;
+        }
         debug!(
             "browser: starting {} with profile {}",
             opts.bin.display(),
@@ -546,11 +731,17 @@ impl Browser {
                 .unwrap_or_default()
         };
         let deadline = Instant::now() + START_TIMEOUT;
-        let (port, path) = loop {
-            if let Some(p) = std::fs::read_to_string(&port_file)
-                .ok()
-                .and_then(|s| parse_active_port(&s))
-            {
+        let (port, url) = loop {
+            let found = match engine {
+                Engine::Chromium => std::fs::read_to_string(&port_file)
+                    .ok()
+                    .and_then(|s| parse_active_port(&s))
+                    .map(|(port, path)| (port, format!("ws://127.0.0.1:{port}{path}"))),
+                Engine::Firefox => {
+                    bidi::server_file(profile.dir()).map(|port| (port, bidi::session_url(port)))
+                }
+            };
+            if let Some(p) = found {
                 break p;
             }
             if let Ok(Some(status)) = child.try_wait() {
@@ -565,14 +756,13 @@ impl Browser {
             if Instant::now() >= deadline {
                 kill(&mut child);
                 return Err(Error::timeout(format!(
-                    "the browser did not open its DevTools port within {} s{}",
+                    "the browser did not open its remote debugging port within {} s{}",
                     START_TIMEOUT.as_secs(),
                     tail(&stderr)
                 )));
             }
             std::thread::sleep(Duration::from_millis(50));
         };
-        let url = format!("ws://127.0.0.1:{port}{path}");
         let cdp = match Cdp::connect(&url, Duration::from_secs(10)) {
             Ok(c) => c,
             Err(e) => {
@@ -583,15 +773,26 @@ impl Browser {
         let mut b = Browser {
             child: Some(child),
             cdp,
+            engine,
             product: String::new(),
             user_agent: String::new(),
             stderr,
         };
-        let v = b.cdp.call(None, "Browser.getVersion", Value::object())?;
-        let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
-        b.product = s("product");
-        b.user_agent = s("userAgent");
-        debug!("browser: {} on DevTools port {port}", b.product);
+        match engine {
+            Engine::Chromium => {
+                let v = b.cdp.call(None, "Browser.getVersion", Value::object())?;
+                let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+                b.product = s("product");
+                b.user_agent = s("userAgent");
+                debug!("browser: {} on DevTools port {port}", b.product);
+            }
+            Engine::Firefox => {
+                let info = bidi::new_session(&b.cdp)?;
+                b.product = info.product;
+                b.user_agent = info.user_agent;
+                debug!("browser: {} on WebDriver BiDi port {port}", b.product);
+            }
+        }
         Ok(b)
     }
 
@@ -618,12 +819,7 @@ impl Browser {
             return;
         };
         if matches!(child.try_wait(), Ok(None)) {
-            let _ = self.cdp.call_timeout(
-                None,
-                "Browser.close",
-                Value::object(),
-                Duration::from_secs(2),
-            );
+            ask_to_quit(&self.cdp, self.engine);
         }
         let deadline = Instant::now() + QUIT_TIMEOUT;
         loop {
@@ -715,6 +911,84 @@ mod tests {
     }
 
     #[test]
+    fn engines() {
+        for (p, e) in [
+            (
+                "/Applications/Firefox.app/Contents/MacOS/firefox",
+                Engine::Firefox,
+            ),
+            ("/usr/lib/firefox-esr/firefox-esr", Engine::Firefox),
+            (
+                r"C:\Program Files\Mozilla Firefox\firefox.exe",
+                Engine::Firefox,
+            ),
+            ("FIREFOX", Engine::Firefox),
+            ("/opt/google/chrome/chrome", Engine::Chromium),
+            (
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                Engine::Chromium,
+            ),
+            ("msedge.exe", Engine::Chromium),
+        ] {
+            assert_eq!(Engine::of(Path::new(p)), e, "{p}");
+        }
+    }
+
+    #[test]
+    fn firefox_is_found() {
+        let home = if cfg!(windows) {
+            r"C:\Users\me"
+        } else {
+            "/home/me"
+        };
+        let vars = [
+            ("HOME", home),
+            ("ProgramFiles", r"C:\Program Files"),
+            ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
+        ];
+        let installed = platform::firefox_install_paths(&env_of(&vars));
+        assert!(!installed.is_empty());
+        let ff = installed[0].to_string_lossy().into_owned();
+        let path = path_var(&["/usr/bin"]);
+        let mut with_path = vars.to_vec();
+        with_path.push(("PATH", &path));
+        let env = env_of(&with_path);
+        // Only Firefox installed: auto-detected.
+        assert_eq!(find_with(None, &env, &files(&[&ff])).unwrap(), installed[0]);
+        // A Chromium-based browser comes first.
+        let chrome = platform::browser_install_paths(&env)[0].clone();
+        let both = files(&[&ff, &chrome.to_string_lossy()]);
+        assert_eq!(find_with(None, &env, &both).unwrap(), chrome);
+        // `--browser firefox`: on PATH, else installed.
+        let name = platform::firefox_names()[0];
+        let on_path = Path::new("/usr/bin").join(name);
+        let on_path = on_path.to_string_lossy().into_owned();
+        assert_eq!(
+            find_with(Some(Path::new("firefox")), &env, &both).unwrap(),
+            installed[0]
+        );
+        assert_eq!(
+            find_with(
+                Some(Path::new("Firefox")),
+                &env,
+                &files(&[&ff, &on_path, &chrome.to_string_lossy()])
+            )
+            .unwrap(),
+            installed[0]
+        );
+        if !cfg!(windows) {
+            assert_eq!(
+                find_with(Some(Path::new("firefox")), &env, &files(&[&on_path])).unwrap(),
+                Path::new(&on_path)
+            );
+        }
+        let e = find_with(Some(Path::new("firefox")), &env, &files(&[])).unwrap_err();
+        assert!(e.to_string().contains("--browser firefox"), "{e}");
+        let e = find_with(None, &env, &files(&[])).unwrap_err();
+        assert!(e.to_string().contains("Firefox"), "{e}");
+    }
+
+    #[test]
     fn app_bundles() {
         let exists = files(&["/Apps/Brave Browser.app/Contents/MacOS/Brave Browser"]);
         let env = env_of(&[]);
@@ -722,6 +996,13 @@ mod tests {
             find_with(Some(Path::new("/Apps/Brave Browser.app")), &env, &exists).unwrap(),
             Path::new("/Apps/Brave Browser.app/Contents/MacOS/Brave Browser")
         );
+        let exists = files(&["/Apps/Firefox Nightly.app/Contents/MacOS/firefox"]);
+        let found = find_with(Some(Path::new("/Apps/Firefox Nightly.app")), &env, &exists).unwrap();
+        assert_eq!(
+            found,
+            Path::new("/Apps/Firefox Nightly.app/Contents/MacOS/firefox")
+        );
+        assert_eq!(Engine::of(&found), Engine::Firefox);
     }
 
     #[test]
@@ -772,6 +1053,26 @@ mod tests {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
+        let firefox: Vec<String> = platform::firefox_install_paths(&env)
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                firefox[0],
+                "/Applications/Firefox.app/Contents/MacOS/firefox"
+            );
+            assert!(firefox.contains(
+                &"/Users/me/Applications/Firefox Nightly.app/Contents/MacOS/firefox".into()
+            ));
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(firefox[0], r"C:\Program Files\Mozilla Firefox\firefox.exe");
+            assert!(
+                firefox.contains(&r"C:\Users\me\AppData\Local\Mozilla Firefox\firefox.exe".into())
+            );
+        } else {
+            assert_eq!(firefox[0], "/usr/lib/firefox/firefox");
+        }
         if cfg!(target_os = "macos") {
             assert_eq!(
                 all[0],
@@ -802,9 +1103,22 @@ mod tests {
         );
         assert!(check_not_real(Path::new("/home/me/.config"), &real).is_err());
         assert!(check_not_real(Path::new("/home/me/tvpipe-profile"), &real).is_ok());
-        let env = env_of(&[("HOME", "/Users/me"), ("LOCALAPPDATA", r"C:\L")]);
+        let env = env_of(&[
+            ("HOME", "/Users/me"),
+            ("LOCALAPPDATA", r"C:\L"),
+            ("APPDATA", r"C:\R"),
+        ]);
         let dirs = platform::default_profile_dirs(&env);
         assert!(!dirs.is_empty());
+        // Firefox's profiles too.
+        let firefox = if cfg!(target_os = "macos") {
+            "/Users/me/Library/Application Support/Firefox"
+        } else if cfg!(target_os = "windows") {
+            r"C:\R\Mozilla\Firefox"
+        } else {
+            "/Users/me/.mozilla/firefox"
+        };
+        assert!(dirs.contains(&PathBuf::from(firefox)), "{dirs:?}");
     }
 
     #[test]
@@ -902,7 +1216,30 @@ mod tests {
             eprintln!("TVPIPE_TEST_CHROME not set");
             return;
         };
-        let root = std::env::temp_dir().join(format!("tvpipe-sweep-chrome-{}", std::process::id()));
+        left_by_a_killed_tvpipe_is_swept(&bin);
+    }
+
+    /// The same with Firefox (opt-in: TVPIPE_TEST_FIREFOX=/path/to/firefox).
+    #[test]
+    #[ignore]
+    fn firefox_left_by_a_killed_tvpipe_is_swept() {
+        let Ok(bin) = std::env::var("TVPIPE_TEST_FIREFOX") else {
+            eprintln!("TVPIPE_TEST_FIREFOX not set");
+            return;
+        };
+        left_by_a_killed_tvpipe_is_swept(&bin);
+    }
+
+    fn left_by_a_killed_tvpipe_is_swept(bin: &str) {
+        let root = std::env::temp_dir().join(format!(
+            "tvpipe-sweep-{}-{}",
+            if Engine::of(Path::new(bin)) == Engine::Firefox {
+                "firefox"
+            } else {
+                "chrome"
+            },
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir(&root).unwrap();
         let mut profile = Profile::temporary_in(&root).unwrap();
@@ -976,12 +1313,66 @@ mod tests {
             assert!(a.iter().any(|x| x == want), "{want} missing: {a:?}");
         }
         assert_eq!(a.last().unwrap(), "about:blank");
-        let visible: Vec<OsString> =
-            args(&LaunchOptions { visible: true, ..o }, Path::new("/tmp/p"));
+        let visible: Vec<OsString> = args(
+            &LaunchOptions {
+                visible: true,
+                ..o.clone()
+            },
+            Path::new("/tmp/p"),
+        );
         assert!(!visible
             .iter()
             .any(|x| x.to_string_lossy().starts_with("--headless")
                 || x.to_string_lossy().starts_with("--screen-info")));
+
+        // Firefox: its own flags, the profile as a separate argument.
+        let ff = LaunchOptions {
+            bin: "/opt/firefox/firefox".into(),
+            ..o
+        };
+        assert_eq!(ff.engine(), Engine::Firefox);
+        let a: Vec<String> = args(&ff, Path::new("/tmp/my p"))
+            .into_iter()
+            .map(|s| s.into_string().unwrap())
+            .collect();
+        assert_eq!(
+            a,
+            [
+                "--headless",
+                "--profile",
+                "/tmp/my p",
+                "--no-remote",
+                "--new-instance",
+                "--remote-debugging-port=0",
+                "--marionette",
+                "--window-size=1280,720",
+                "about:blank"
+            ]
+        );
+    }
+
+    #[test]
+    fn firefox_preferences() {
+        let js = firefox_user_js();
+        for want in [
+            "user_pref(\"media.navigator.permission.disabled\", true);",
+            "user_pref(\"media.getusermedia.browser.enabled\", true);",
+            "user_pref(\"media.getusermedia.audio.capture.enabled\", true);",
+            "user_pref(\"media.autoplay.default\", 0);",
+            "user_pref(\"media.volume_scale\", \"0.0\");",
+        ] {
+            assert!(js.lines().any(|l| l == want), "{want} missing:\n{js}");
+        }
+        // Every line a comment or a pref with a JSON value.
+        for l in js.lines().skip(1) {
+            let inner = l
+                .strip_prefix("user_pref(")
+                .and_then(|r| r.strip_suffix(");"))
+                .unwrap_or_else(|| panic!("{l}"));
+            let (k, v) = inner.split_once(", ").unwrap();
+            assert!(Value::parse(k).unwrap().as_str().is_some(), "{l}");
+            Value::parse(v).unwrap_or_else(|e| panic!("{l}: {e}"));
+        }
     }
 
     #[test]

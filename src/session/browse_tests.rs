@@ -198,14 +198,16 @@ fn a_browser_that_fails_later_fails_the_session() {
 }
 
 // ---------------------------------------------------------------------------
-// Real Chrome (opt-in):
+// Real Chrome and Firefox (opt-in):
 //
 // TVPIPE_TEST_CHROME=/path/to/chrome cargo test --release chrome_browser -- --ignored --nocapture
+// TVPIPE_TEST_FIREFOX=/path/to/firefox cargo test --release firefox_browser -- --ignored --nocapture
 //
 // `tvpipe share URL` on a local test page (a moving clock and a 440 Hz
 // tone, reloaded every 4 s by --reload to exercise sharing again) to the
 // fake Cast receiver and the `--to browser` player, watched by a second
-// headless Chrome for TVPIPE_TEST_BROWSER_SECS (default 6): the player
+// headless browser of the same kind for TVPIPE_TEST_BROWSER_SECS
+// (default 6): the player
 // decodes and plays video and audio on time, Cast gets video and AAC
 // (decoded by ffprobe when it is on PATH), and afterwards no browser
 // process and no temporary profile is left.
@@ -244,11 +246,41 @@ fn processes_with(needle: &str) -> Vec<String> {
 #[test]
 #[ignore]
 fn chrome_browser_to_cast_and_player() {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
         eprintln!("TVPIPE_TEST_CHROME not set");
         return;
     };
+    browser_to_cast_and_player(
+        bin,
+        std::env::var("TVPIPE_TEST_CHROME_HEADED").is_ok(),
+        |bin, url| {
+            let mut c = super::browser_tests::chrome(bin, url);
+            super::player_tests::watch_player(&mut |s| c.eval(s));
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn firefox_browser_to_cast_and_player() {
+    let Some(bin) = super::browser_tests::firefox_bin() else {
+        eprintln!("TVPIPE_TEST_FIREFOX not set");
+        return;
+    };
+    browser_to_cast_and_player(
+        bin,
+        std::env::var("TVPIPE_TEST_FIREFOX_HEADED").is_ok(),
+        |bin, url| {
+            let mut f = super::browser_tests::firefox(bin, url, (1280, 720));
+            super::player_tests::watch_player(&mut |s| f.eval(s));
+        },
+    );
+}
+
+/// `share URL` with browser `bin`; `view(bin, url)` watches the player
+/// page at `url` in another one.
+fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
         crate::log::set_level(crate::log::Level::Debug);
     }
@@ -291,10 +323,7 @@ fn chrome_browser_to_cast_and_player() {
                 let url = format!("{}&stats=1", sink.url());
                 let bin = b.clone();
                 *viewer.lock().unwrap() = Some(std::thread::spawn(move || {
-                    let r = std::panic::catch_unwind(|| {
-                        let mut c = super::browser_tests::chrome(&bin, &url);
-                        super::player_tests::watch_player(&mut |s| c.eval(s));
-                    });
+                    let r = std::panic::catch_unwind(|| view(&bin, &url));
                     STOP.store(true, Ordering::SeqCst);
                     r
                 }));
@@ -316,7 +345,7 @@ fn chrome_browser_to_cast_and_player() {
                 launch: crate::browser::launch::LaunchOptions {
                     bin: bin.clone().into(),
                     viewport: vp,
-                    visible: std::env::var("TVPIPE_TEST_CHROME_HEADED").is_ok(),
+                    visible: headed,
                 },
                 profile: None,
                 reload: Some(Duration::from_secs(4)),
@@ -400,11 +429,33 @@ fn chrome_browser_to_cast_and_player() {
 #[test]
 #[ignore]
 fn chrome_browser_survives_crashes() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
         eprintln!("TVPIPE_TEST_CHROME not set");
         return;
     };
+    browser_survives_crashes(bin, crash_twice);
+}
+
+/// The same with Firefox: its tab's content process is killed, then
+/// Firefox itself (unix: `kill -9` of the processes on the profile).
+#[test]
+#[ignore]
+fn firefox_browser_survives_crashes() {
+    let Some(bin) = super::browser_tests::firefox_bin() else {
+        eprintln!("TVPIPE_TEST_FIREFOX not set");
+        return;
+    };
+    if cfg!(windows) {
+        eprintln!("not on Windows (kills processes with kill(1))");
+        return;
+    }
+    browser_survives_crashes(bin, kill_firefox_twice);
+}
+
+/// `share URL` with browser `bin` while `crash(profile, tally)` crashes
+/// it.
+fn browser_survives_crashes(bin: String, crash: fn(&std::path::Path, &SharedTally)) {
+    use std::sync::atomic::{AtomicBool, Ordering};
     if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
         crate::log::set_level(crate::log::Level::Debug);
     }
@@ -456,7 +507,7 @@ fn chrome_browser_survives_crashes() {
         *profile.lock().unwrap() = Some(dir.clone());
         let tally = tally.clone();
         *driver.lock().unwrap() = Some(std::thread::spawn(move || {
-            let r = std::panic::catch_unwind(|| crash_twice(&dir, &tally));
+            let r = std::panic::catch_unwind(|| crash(&dir, &tally));
             STOP.store(true, Ordering::SeqCst);
             r
         }));
@@ -481,6 +532,45 @@ fn chrome_browser_survives_crashes() {
     assert!(!dir.exists(), "{} is still there", dir.display());
     let left = processes_with(&dir.to_string_lossy());
     assert!(left.is_empty(), "browser processes left: {left:#?}");
+}
+
+/// Kills Firefox's content processes (the page's among them: they are
+/// not told apart by their command lines), then its main process (the one
+/// started with `--profile`).
+fn kill_firefox_twice(dir: &std::path::Path, tally: &SharedTally) {
+    let pids = |main: bool| -> Vec<String> {
+        let needle = dir.to_string_lossy().into_owned();
+        processes_with(&needle)
+            .into_iter()
+            .filter(|l| {
+                let is_main = l.contains("--profile");
+                if main {
+                    is_main
+                } else {
+                    !is_main && l.trim_end().ends_with(" tab")
+                }
+            })
+            .filter_map(|l| l.split_whitespace().next().map(str::to_owned))
+            .collect()
+    };
+    let kill = |pids: Vec<String>| {
+        assert!(!pids.is_empty(), "no process to kill");
+        let st = std::process::Command::new("kill")
+            .arg("-9")
+            .args(&pids)
+            .status()
+            .unwrap();
+        assert!(st.success());
+    };
+    wait_frames(tally, 30, "at the start");
+    eprintln!("killing the tabs");
+    kill(pids(false));
+    let gap = wait_frames(tally, 30, "after the tab crashed");
+    eprintln!("30 frames {} ms after the tab crashed", gap.as_millis());
+    eprintln!("killing the browser");
+    kill(pids(true));
+    let gap = wait_frames(tally, 30, "after the browser crashed");
+    eprintln!("30 frames {} ms after the browser crashed", gap.as_millis());
 }
 
 /// Waits for `n` more video frames to reach the receiver.

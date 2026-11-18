@@ -27,8 +27,14 @@
 //! On shutdown it asks the browser to quit (then kills it) and deletes
 //! the temporary profile.
 //!
+//! Firefox (`launch::Engine::Firefox`) is driven over WebDriver BiDi
+//! instead ([`firefox`]): the keeper is the same, the tab's setup, its
+//! navigation, evaluation and events differ.
+//!
 //! Sources: Chrome DevTools Protocol docs (Target, Page, Runtime,
 //! Network, Inspector, Browser, Emulation domains).
+
+pub(crate) mod firefox;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,8 +42,9 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::browser::bidi;
 use crate::browser::cdp::Event;
-use crate::browser::launch::{Browser, LaunchOptions, Profile};
+use crate::browser::launch::{Browser, Engine, LaunchOptions, Profile};
 use crate::browser::share::{ShareHandle, CAPTURE_JS};
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
@@ -287,7 +294,9 @@ const MAX_FITS: u32 = 3;
 /// The browser, its tab and what we know about the page in it.
 struct Tab {
     browser: Browser,
+    /// The tab's target (Firefox: its browsing context).
     target: String,
+    /// The tab's flattened session (Firefox: none).
     session: String,
     main_frame: Option<String>,
     url: String,
@@ -306,7 +315,13 @@ impl Tab {
     /// Starts the browser, sets its tab up and opens the URL.
     fn open(opts: &HeadlessOptions, profile: &Profile, first: bool) -> Result<Tab> {
         let browser = Browser::launch(&opts.launch, profile)?;
-        let (target, session) = attach(&browser, opts.launch.viewport)?;
+        let (target, session) = match browser.engine {
+            Engine::Chromium => attach(&browser, opts.launch.viewport)?,
+            Engine::Firefox => (
+                firefox::attach(&browser, opts.launch.viewport)?,
+                String::new(),
+            ),
+        };
         let mut tab = Tab {
             browser,
             target,
@@ -331,11 +346,24 @@ impl Tab {
     /// warning later.
     fn navigate(&mut self, url: &str, first: bool) -> Result<()> {
         debug!("browser: opening {url}");
-        let r = self.call("Page.navigate", Value::object().with("url", url))?;
-        if let Some(frame) = r.get("frameId").and_then(Value::as_str) {
-            self.main_frame = Some(frame.to_owned());
-        }
-        if let Some(err) = r.get("errorText").and_then(Value::as_str) {
+        let err = match self.browser.engine {
+            Engine::Chromium => {
+                let r = self.call("Page.navigate", Value::object().with("url", url))?;
+                if let Some(frame) = r.get("frameId").and_then(Value::as_str) {
+                    self.main_frame = Some(frame.to_owned());
+                }
+                r.get("errorText")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }
+            Engine::Firefox => match firefox::navigate(self.browser.cdp(), &self.target, url) {
+                Ok(()) => None,
+                // The connection is gone: the browser.
+                Err(e) if e.kind() == ErrorKind::Closed => return Err(e),
+                Err(e) => Some(e.to_string()),
+            },
+        };
+        if let Some(err) = err {
             let msg = format!("browser: cannot open {url}: {err}");
             if first {
                 return Err(Error::not_found(msg));
@@ -349,9 +377,36 @@ impl Tab {
     }
 
     fn evaluate(&self, expr: &str, gesture: bool) -> Result<Value> {
-        self.browser
-            .cdp()
-            .evaluate(&self.session, expr, gesture, false, EVAL_TIMEOUT)
+        match self.browser.engine {
+            Engine::Chromium => {
+                self.browser
+                    .cdp()
+                    .evaluate(&self.session, expr, gesture, false, EVAL_TIMEOUT)
+            }
+            Engine::Firefox => bidi::evaluate(
+                self.browser.cdp(),
+                &self.target,
+                expr,
+                gesture,
+                false,
+                EVAL_TIMEOUT,
+            ),
+        }
+    }
+
+    fn reload(&self) -> Result<()> {
+        match self.browser.engine {
+            Engine::Chromium => self.call("Page.reload", Value::object()).map(|_| ()),
+            Engine::Firefox => firefox::reload(self.browser.cdp(), &self.target),
+        }
+    }
+
+    /// Makes the page's viewport `want` again.
+    fn fit(&self, want: (u32, u32)) -> Result<()> {
+        match self.browser.engine {
+            Engine::Chromium => fit_viewport(&self.browser, &self.target, &self.session, want),
+            Engine::Firefox => firefox::set_viewport(self.browser.cdp(), &self.target, want),
+        }
     }
 
     /// Runs the capture script and starts the share in the current
@@ -683,6 +738,9 @@ impl Keeper {
 
     fn event(&mut self, ev: Event) -> Option<Exit> {
         let tab = self.tab.as_mut()?;
+        if tab.browser.engine == Engine::Firefox {
+            return self.firefox_event(ev);
+        }
         let ours = ev.session.as_deref() == Some(tab.session.as_str());
         let p = &ev.params;
         let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
@@ -781,6 +839,31 @@ impl Keeper {
         None
     }
 
+    fn firefox_event(&mut self, ev: Event) -> Option<Exit> {
+        let tab = self.tab.as_mut()?;
+        match firefox::event(&ev, &tab.target) {
+            firefox::Seen::Committed { url } => {
+                debug!("browser: the page is now {url}");
+                tab.url = url;
+                tab.started = None;
+                tab.sharing = false;
+                tab.fits = 0;
+                tab.crashed = false;
+            }
+            firefox::Seen::Ready { url } => {
+                tab.url = url;
+                if let Err(e) = tab.inject(&self.start_expr) {
+                    debug!("browser: cannot start the share yet: {e}");
+                }
+            }
+            firefox::Seen::Crashed if !tab.crashed => return self.page_crashed(),
+            firefox::Seen::Closed => return Some(Exit::Done("the tab was closed".into())),
+            firefox::Seen::Status { url, status, text } => report_status(&url, status, &text),
+            _ => {}
+        }
+        None
+    }
+
     /// The page's renderer died: load the URL again (counts as a restart).
     fn page_crashed(&mut self) -> Option<Exit> {
         let now = Instant::now();
@@ -814,7 +897,7 @@ impl Keeper {
             if now >= at {
                 self.next_reload = Some(now + every);
                 info!("browser: reloading the page (--reload)");
-                if let Err(e) = tab.call("Page.reload", Value::object()) {
+                if let Err(e) = tab.reload() {
                     warn!("browser: reload: {e}");
                 }
                 tab.started = None;
@@ -866,7 +949,7 @@ impl Keeper {
                 let want = self.opts.launch.viewport;
                 if viewport.is_some_and(|v| v != want) && tab.fits < MAX_FITS {
                     tab.fits += 1;
-                    if let Err(e) = fit_viewport(&tab.browser, &tab.target, &tab.session, want) {
+                    if let Err(e) = tab.fit(want) {
                         debug!("browser: viewport: {e}");
                     }
                 }

@@ -1,7 +1,7 @@
 //! The OS-specific bits of the browser modes (`cfg(target_os)` is allowed
 //! here, like a config path): which command opens a URL, where
-//! Chromium-based browsers are installed, and where their own profiles
-//! live (which `tvpipe share URL` never uses).
+//! Chromium-based browsers and Firefox are installed, and where their own
+//! profiles live (which `tvpipe share URL` never uses).
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -98,6 +98,64 @@ pub fn browser_install_paths(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<Path
     out
 }
 
+/// Well-known install locations of Firefox on this OS, most preferred
+/// first (release, then Developer Edition and Nightly).
+pub fn firefox_install_paths(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if cfg!(target_os = "macos") {
+        let mut roots = vec![PathBuf::from("/Applications")];
+        if let Some(home) = env("HOME") {
+            roots.push(PathBuf::from(home).join("Applications"));
+        }
+        for app in [
+            "Firefox.app",
+            "Firefox Developer Edition.app",
+            "Firefox Nightly.app",
+        ] {
+            for root in &roots {
+                out.push(root.join(app).join("Contents/MacOS/firefox"));
+            }
+        }
+    } else if cfg!(target_os = "windows") {
+        let roots: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+            .iter()
+            .filter_map(|v| env(v))
+            .map(PathBuf::from)
+            .collect();
+        for dir in [
+            "Mozilla Firefox",
+            "Firefox Developer Edition",
+            "Firefox Nightly",
+        ] {
+            for root in &roots {
+                out.push(root.join(dir).join("firefox.exe"));
+            }
+        }
+    } else {
+        // Distribution packages and Mozilla's tarball in /opt. (Snap's
+        // /snap/bin/firefox is left out: its sandbox cannot read a
+        // profile in /tmp.)
+        for p in [
+            "/usr/lib/firefox/firefox",
+            "/usr/lib64/firefox/firefox",
+            "/usr/lib/firefox-esr/firefox-esr",
+            "/opt/firefox/firefox",
+        ] {
+            out.push(PathBuf::from(p));
+        }
+    }
+    out
+}
+
+/// Names of Firefox to look for on `PATH`.
+pub fn firefox_names() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &["firefox.exe"]
+    } else {
+        &["firefox", "firefox-esr"]
+    }
+}
+
 /// Names of Chromium-based browsers to look for on `PATH`.
 pub fn browser_names() -> &'static [&'static str] {
     if cfg!(target_os = "windows") {
@@ -130,6 +188,7 @@ pub fn default_profile_dirs(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathB
                 "Microsoft Edge",
                 "Chromium",
                 "BraveSoftware/Brave-Browser",
+                "Firefox",
             ] {
                 out.push(support.join(d));
             }
@@ -147,6 +206,9 @@ pub fn default_profile_dirs(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathB
                 out.push(local.join(d));
             }
         }
+        if let Some(roaming) = env("APPDATA") {
+            out.push(PathBuf::from(roaming).join(r"Mozilla\Firefox"));
+        }
     } else {
         let config = env("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -158,9 +220,13 @@ pub fn default_profile_dirs(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathB
                 "chromium",
                 "microsoft-edge",
                 "BraveSoftware/Brave-Browser",
+                "mozilla/firefox",
             ] {
                 out.push(config.join(d));
             }
+        }
+        if let Some(home) = env("HOME") {
+            out.push(PathBuf::from(home).join(".mozilla/firefox"));
         }
     }
     out
