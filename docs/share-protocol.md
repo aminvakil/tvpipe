@@ -1,12 +1,14 @@
 # Share page protocol (`tvpipe share`)
 
 The protocol between tvpipe and a capture script (`src/browser/capture.js`)
-running in a browser: tvpipe's share page (`tvpipe share`), or any page the
-headless-browser mode injects the script into. Version 1.
+running in a browser: tvpipe's share page (`tvpipe share`), or the page
+tvpipe's own browser shows and injects the script into (`tvpipe share URL`).
+Version 1.
 
 ## Transport
 
-- tvpipe listens on `127.0.0.1` only (`--port`, default: any free port)
+- tvpipe listens on `127.0.0.1` only, on any free port (the URL has a
+  new token every run anyway; `--port` is the `--to browser` player's),
   and prints `http://127.0.0.1:PORT/?t=TOKEN`. `TOKEN` is 16 random bytes
   in hex, new for every run.
 - `GET /?t=TOKEN`: the share page. `GET /capture.js`: the capture script
@@ -41,7 +43,7 @@ Several pages may connect; the first `capture` wins, later ones get
 closing its socket or sending `ended` ends the session (after one playout
 delay, like the end of a file).
 
-**Rejoin mode** (`tvpipe browser`): the source page is a document
+**Rejoin mode** (`tvpipe share URL`): the source page is a document
 in tvpipe's own browser, and a navigation, a reload or a crash replaces
 it. There, the newest page that sends `capture` is the source (nobody
 gets `busy`); a source page that goes away mid-stream does not end the
@@ -189,7 +191,7 @@ c.stop(reason);
 CDP `Runtime.evaluate` with `userGesture: true` plus Chrome's
 auto-accept flags in the headless mode).
 
-`tvpipe browser` evaluates `capture.js` and then `src/browser/headless.js`
+`tvpipe share URL` evaluates `capture.js` and then `src/browser/headless.js`
 in the page after every navigation. That one connects with
 `preferCurrentTab`, `selfBrowserSurface: 'include'`, no local audio, and
 calls `captureDisplay()` once the `config` arrives; its state is in

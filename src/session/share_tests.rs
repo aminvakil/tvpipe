@@ -22,8 +22,8 @@ fn share_opts(to: Vec<String>) -> ShareOptions {
         fps: None,
         bitrate_kbps: None,
         no_audio: false,
-        port: 0,
         open: false,
+        ..ShareOptions::default()
     }
 }
 

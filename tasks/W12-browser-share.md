@@ -9,7 +9,8 @@ Status: implemented on w12-share; manual Safari/Chrome checks pending. Owns `src
       ping/pong, close; size limits; never panics) with RFC/known vectors and
       a loopback test. The client is for W13 (CDP), so make it usable.
 - [x] Tiny HTTP server on 127.0.0.1 (net::http framing): serves the page and
-      upgrades /ws. Bind to loopback only; print the URL; optional `--port`.
+      upgrades /ws. Bind to loopback only; print the URL; optional `--port`
+      (later dropped: always a free port; `--port` is the player's, W13).
 - [x] The page: buttons to share (getDisplayMedia, with audio when offered),
       VideoEncoder H.264 (avc format → AVCC + avcC description), realtime,
       bitrate/size/fps from tvpipe's plan (sent over the socket), keyframe on

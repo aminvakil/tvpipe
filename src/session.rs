@@ -66,8 +66,8 @@ pub fn run(cmd: Command) -> Result<()> {
         Command::Pair { target, pin } => crate::airplay::pair::pair(&target, pin.as_deref()),
         Command::Unpair { target } => crate::airplay::pair::unpair(&target),
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
+        Command::Share(opts) if opts.page.is_some() => browse::browse(opts),
         Command::Share(opts) => share(opts),
-        Command::Browse(opts) => browse::browse(opts),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
 }
@@ -1201,7 +1201,7 @@ fn share_with(
     on_listening: &dyn Fn(&ShareServer),
 ) -> Result<()> {
     crate::util::timer::raise_resolution();
-    let mut server = ShareServer::bind(opts.port)?;
+    let mut server = ShareServer::bind(0)?;
     info!(
         "open {} in a browser and choose what to share (Ctrl-C to stop)",
         server.url()
@@ -1268,7 +1268,7 @@ fn share_with(
     cast_opts.latency_ms = budget.cast_ms;
     configure_browsers(
         &mut targets,
-        &BrowserOptions::default(),
+        &player_options(&opts),
         budget.browser_ms,
         audio,
     );
@@ -1388,7 +1388,7 @@ fn share_with(
     }
 }
 
-/// The Cast offer of a page-encoded stream (`share`, `browser`): the
+/// The Cast offer of a page-encoded stream (`share`, `share URL`): the
 /// upper bounds of `offer`, AAC from the page's PCM.
 fn share_cast_options(
     d: &Desired,
@@ -1435,6 +1435,15 @@ fn screen_shape(caps: &[&Capabilities]) -> (Option<(u32, u32)>, (u32, u32)) {
         caps.iter().map(|c| c.max_height).min().unwrap_or(0),
     );
     (aspect, max)
+}
+
+/// The `--to browser` player's options of `share` (`--open` opens it
+/// too).
+fn player_options(opts: &ShareOptions) -> BrowserOptions {
+    BrowserOptions {
+        open: opts.open,
+        ..opts.player.clone()
+    }
 }
 
 /// "screen 16:9", or "any shape" without screens.

@@ -1,4 +1,4 @@
-// tvpipe browser: shares this tab through
+// tvpipe share URL: shares this tab through
 // capture.js. tvpipe evaluates capture.js and then this expression in the
 // page over the DevTools protocol, as a user gesture, after every
 // navigation; Chrome's --auto-accept-this-tab-capture answers the picker.

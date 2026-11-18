@@ -1,4 +1,4 @@
-//! A minimal Chrome DevTools Protocol client (`tvpipe browser`).
+//! A minimal Chrome DevTools Protocol client (`tvpipe share URL`).
 //!
 //! JSON-RPC over our WebSocket client (`net::websocket::connect`):
 //! a command is `{id, method, params, sessionId?}`, the browser answers

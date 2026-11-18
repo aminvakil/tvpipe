@@ -1,7 +1,7 @@
 //! The OS-specific bits of the browser modes (`cfg(target_os)` is allowed
 //! here, like a config path): which command opens a URL, where
 //! Chromium-based browsers are installed, and where their own profiles
-//! live (which `tvpipe browser` never uses).
+//! live (which `tvpipe share URL` never uses).
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -117,7 +117,7 @@ pub fn browser_names() -> &'static [&'static str] {
 }
 
 /// The browsers' own default profile directories (`--user-data-dir`
-/// defaults), which `tvpipe browser --profile` refuses: tvpipe never
+/// defaults), which `tvpipe share URL --profile` refuses: tvpipe never
 /// touches the user's real browser profile.
 pub fn default_profile_dirs(env: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
     let mut out = Vec::new();

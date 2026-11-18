@@ -1,15 +1,19 @@
-# W13 `tvpipe browser URL` (headless Chrome, auto-shared)
+# W13 `tvpipe share URL` (headless Chrome, auto-shared)
 
 Status: done (pending merge). Owns `src/browser/{launch,cdp,headless}.rs`,
-`src/browser/headless.js`, `src/session/browse*.rs`, the `browser`
-subcommand, docs. Reuses W12 (`capture.js`, share protocol,
+`src/browser/headless.js`, `src/session/browse*.rs`, `share URL`, docs.
+Built as `tvpipe browser URL`; merged into `share` (owner decision,
+"Proposal A"): `share` without URL is the capture page, `share URL` this
+mode. URL-only options are refused without a URL; the `--to browser`
+player options are shared by every streaming subcommand. Reuses W12 (`capture.js`, share protocol,
 `net::websocket` client) and W14 (`--to browser` works as a target too).
 How it works: ARCHITECTURE.md "Headless browser", docs/share-protocol.md
 ("Rejoin mode", "Capture script API").
 
 ```
-tvpipe browser URL --to TV [--to browser] [--size WxH] [--fps N]
+tvpipe share URL --to TV [--to browser] [--size WxH] [--fps N]
               [--profile DIR] [--visible] [--reload MIN] [--browser PATH]
+              [--open] [--port PORT] [--wait-for-viewer] [--new-token]
 ```
 
 - [x] Find a Chromium-based browser: `--browser PATH` (also a name on
@@ -63,7 +67,7 @@ Open:
 - `--visible` follows the screen's scaling (device scale 1.5 seen on a
   scaled display), so the capture is scaled to the stream.
 - A browser that tvpipe cannot clean up (tvpipe killed with SIGKILL)
-  keeps running with its temp profile until the next `tvpipe browser`,
+  keeps running with its temp profile until the next `tvpipe share URL`,
   which sweeps it: every temp profile holds `tvpipe-owner` (pid, the port
   of a loopback beacon answering a random nonce while its tvpipe runs);
   without an answer the browser on it is quit through the DevTools

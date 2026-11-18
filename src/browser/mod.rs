@@ -8,7 +8,7 @@
 //! - [`player`]: `--to browser` (W14), a receiver that plays the stream
 //!   in a browser tab (docs/player-protocol.md).
 //! - [`protocol`]: the page's WebSocket messages (docs/share-protocol.md).
-//! - [`headless`]: `tvpipe browser URL` (W13), a browser of tvpipe's own
+//! - [`headless`]: `tvpipe share URL` (W13), a browser of tvpipe's own
 //!   that shares its tab through the same capture script ([`launch`]
 //!   starts it, [`cdp`] drives it over the DevTools protocol).
 //! - [`platform`]: opening a URL with the OS's opener and the browsers'

@@ -21,7 +21,6 @@ enum Top {
     TestPattern,
     Preview,
     Share,
-    Browser,
     DebugPipeline,
 }
 
@@ -75,16 +74,8 @@ enum ShareArg {
     NoAudio,
     Port,
     Open,
-}
-
-#[derive(Copy, Clone)]
-enum BrowseArg {
-    To,
-    Latency,
-    Size,
-    Fps,
-    Bitrate,
-    NoAudio,
+    WaitForViewer,
+    NewToken,
     Profile,
     Visible,
     Reload,
@@ -121,7 +112,6 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::TestPattern, &TEST_PATTERN),
         Cmd::new(Top::Preview, &PREVIEW),
         Cmd::new(Top::Share, &SHARE),
-        Cmd::new(Top::Browser, &BROWSE),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -157,6 +147,41 @@ const fn to<A>(id: A) -> Opt<A> {
         .value("NAME|ADDR")
         .help("Receiver to stream to (repeat for several)")
 }
+
+// The `--to browser` player page's options, the same in every subcommand
+// that streams (`play`, `test-pattern`, `preview`, `share`).
+
+const fn player_port<A>(id: A) -> Opt<A> {
+    Opt::new(id)
+        .long("port")
+        .value("PORT")
+        .help("Browser player page port on 127.0.0.1 (--to browser; default 8765, 0: any)")
+}
+
+const fn player_open<A>(id: A) -> Opt<A> {
+    Opt::new(id)
+        .long("open")
+        .help("Open the browser player page in the default browser (--to browser)")
+}
+
+const fn wait_for_viewer<A>(id: A) -> Opt<A> {
+    Opt::new(id)
+        .long("wait-for-viewer")
+        .help("Start streaming once a browser tab is watching (--to browser)")
+}
+
+const fn new_token<A>(id: A) -> Opt<A> {
+    Opt::new(id)
+        .long("new-token")
+        .help("Change the browser player page's URL token (--to browser; old URLs stop working)")
+}
+
+/// Whether `--to browser` is among the receivers.
+fn has_browser_target(to: &[String]) -> bool {
+    to.iter().any(|t| t.eq_ignore_ascii_case(BROWSER_TARGET))
+}
+
+const PLAYER_ONLY: &str = "--port, --open, --wait-for-viewer and --new-token are for --to browser";
 
 const fn interface<A>(id: A) -> Opt<A> {
     Opt::new(id)
@@ -236,19 +261,10 @@ macro_rules! play_opts {
             raw_video(PlayArg::RawVideo),
             raw_audio(PlayArg::RawAudio),
             ffmpeg_path(PlayArg::Ffmpeg),
-            Opt::new(PlayArg::Port)
-                .long("port")
-                .value("PORT")
-                .help("Browser player page port on 127.0.0.1 (--to browser; default 8765, 0: any)"),
-            Opt::new(PlayArg::Open)
-                .long("open")
-                .help("Open the browser player page in the default browser (--to browser)"),
-            Opt::new(PlayArg::WaitForViewer)
-                .long("wait-for-viewer")
-                .help("Start streaming once a browser tab is watching (--to browser)"),
-        Opt::new(PlayArg::NewToken)
-            .long("new-token")
-            .help("Change the browser player page's URL token (--to browser; old URLs stop working)"),
+            player_port(PlayArg::Port),
+            player_open(PlayArg::Open),
+            wait_for_viewer(PlayArg::WaitForViewer),
+            new_token(PlayArg::NewToken),
         ]
     };
 }
@@ -294,7 +310,8 @@ static PREVIEW: Cli<PlayArg> = Cli::new("preview")
     );
 
 static SHARE: Cli<ShareArg> = Cli::new("share")
-    .about("Mirror a browser tab, window or screen (serves a capture page on 127.0.0.1)")
+    .about("Mirror a browser tab, window or screen, or a web page (URL) in a browser of tvpipe's own")
+    .usage("[URL] --to NAME|ADDR [OPTIONS]")
     .opts(&[
         to(ShareArg::To),
         Opt::new(ShareArg::Latency)
@@ -304,7 +321,7 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
         Opt::new(ShareArg::Size)
             .long("size")
             .value("WxH")
-            .help("Output video size (default: the capture, at most 1920x1080)"),
+            .help("Output video size (default: the capture, or with URL the receivers' screen shape; at most 1920x1080)"),
         Opt::new(ShareArg::Fps)
             .long("fps")
             .value("N")
@@ -315,70 +332,44 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
             .help("Video bitrate in kbit/s"),
         Opt::new(ShareArg::NoAudio)
             .long("no-audio")
-            .help("Do not capture audio"),
-        Opt::new(ShareArg::Port)
-            .long("port")
-            .value("PORT")
-            .help("Port of the page on 127.0.0.1 (default: any free one)"),
+            .help("Do not send sound"),
         Opt::new(ShareArg::Open)
             .long("open")
-            .help("Open the page in the default browser"),
-    ])
-    .after_help(
-        "Open the printed http://127.0.0.1 URL in a browser with WebCodecs (Chrome, Edge,\n\
-         Safari 16.4+, Firefox 130+) and press Share. Closing the page or stopping the\n\
-         share ends the session.",
-    );
-
-static BROWSE: Cli<BrowseArg> = Cli::new("browser")
-    .about("Mirror a web page: a browser of tvpipe's own opens URL and shares its tab")
-    .usage("URL --to NAME|ADDR [OPTIONS]")
-    .opts(&[
-        to(BrowseArg::To),
-        Opt::new(BrowseArg::Latency)
-            .long("latency")
-            .value("MS")
-            .help("Playout delay in ms, the same on every receiver"),
-        Opt::new(BrowseArg::Size)
-            .long("size")
-            .value("WxH")
-            .help("Page and video size (default: the receivers' screen shape, at most 1920x1080)"),
-        Opt::new(BrowseArg::Fps)
-            .long("fps")
-            .value("N")
-            .help("Output frame rate (default 30)"),
-        Opt::new(BrowseArg::Bitrate)
-            .long("bitrate")
-            .value("KBPS")
-            .help("Video bitrate in kbit/s"),
-        Opt::new(BrowseArg::NoAudio)
-            .long("no-audio")
-            .help("Do not send the page's sound"),
-        Opt::new(BrowseArg::Profile)
+            .help("Open the share page (without URL) and the browser player page (--to browser) in the default browser"),
+        player_port(ShareArg::Port),
+        wait_for_viewer(ShareArg::WaitForViewer),
+        new_token(ShareArg::NewToken),
+        Opt::new(ShareArg::Visible)
+            .long("visible")
+            .help("With URL: show the browser window instead of running headless (e.g. to log in)"),
+        Opt::new(ShareArg::Profile)
             .long("profile")
             .value("DIR")
             .value_hint(ValueHint::DirPath)
-            .help("Keep the browser's profile (logins, cookies) in DIR (default: a temporary one)"),
-        Opt::new(BrowseArg::Visible)
-            .long("visible")
-            .help("Show the browser window instead of running headless (e.g. to log in)"),
-        Opt::new(BrowseArg::Reload)
+            .help("With URL: keep the browser's profile (logins, cookies) in DIR (default: a temporary one)"),
+        Opt::new(ShareArg::Reload)
             .long("reload")
             .value("MIN")
-            .help("Reload the page every MIN minutes"),
-        Opt::new(BrowseArg::Browser)
+            .help("With URL: reload the page every MIN minutes"),
+        Opt::new(ShareArg::Browser)
             .long("browser")
             .value("PATH")
             .value_hint(ValueHint::ExecutablePath)
-            .help("Chromium-based browser to use (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
+            .help("With URL: the Chromium-based browser (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
     ])
-    .args(&[Pos::new(BrowseArg::Url, "URL")
+    .args(&[Pos::new(ShareArg::Url, "URL")
+        .optional()
         .value_hint(ValueHint::Url)
-        .help("The page: http(s)://..., file://... or a local file")])
+        .help("A page to show instead of picking a tab: http(s)://..., file://... or a local file")])
     .after_help(
-        "The browser runs with a profile of its own (never yours), sized to the stream, and\n\
-         shares its tab with sound. It is started again if it crashes; Ctrl-C or 'q' stops.\n\
-         Sites that refuse automated browsers (e.g. Google Meet) do not work.",
+        "Without URL: open the printed http://127.0.0.1 page in a browser with WebCodecs\n\
+         (Chrome, Edge, Safari 16.4+, Firefox 130+) and press Share. Closing the page or\n\
+         stopping the share ends the session.\n\
+         \n\
+         With URL: tvpipe starts a Chromium-based browser with a profile of its own (never\n\
+         yours), sized to the stream, opens URL and shares that tab with its sound. It is\n\
+         started again if it crashes; Ctrl-C or 'q' stops. Sites that refuse automated\n\
+         browsers (e.g. Google Meet) do not work.",
     );
 
 static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")
@@ -534,24 +525,8 @@ pub struct BrowserOptions {
     pub new_token: bool,
 }
 
-/// `tvpipe browser`.
-#[derive(Debug, Clone)]
-pub struct BrowseOptions {
-    pub url: String,
-    pub to: Vec<String>,
-    pub latency_ms: Option<u32>,
-    pub size: Option<Size>,
-    pub fps: Option<Ratio>,
-    pub bitrate_kbps: Option<u32>,
-    pub no_audio: bool,
-    pub profile: Option<PathBuf>,
-    pub visible: bool,
-    pub reload: Option<Duration>,
-    pub browser: Option<PathBuf>,
-}
-
-/// `tvpipe share`.
-#[derive(Debug, Clone)]
+/// `tvpipe share [URL]`.
+#[derive(Debug, Clone, Default)]
 pub struct ShareOptions {
     pub to: Vec<String>,
     pub latency_ms: Option<u32>,
@@ -559,9 +534,22 @@ pub struct ShareOptions {
     pub fps: Option<Ratio>,
     pub bitrate_kbps: Option<u32>,
     pub no_audio: bool,
-    /// 0: any free port.
-    pub port: u16,
+    /// Open the share page (without URL) and the player page.
     pub open: bool,
+    /// For `--to browser` receivers (`open` is the field above).
+    pub player: BrowserOptions,
+    /// With URL: tvpipe's own browser shows it.
+    pub page: Option<PageOptions>,
+}
+
+/// `share URL`: the page and tvpipe's browser.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PageOptions {
+    pub url: String,
+    pub profile: Option<PathBuf>,
+    pub visible: bool,
+    pub reload: Option<Duration>,
+    pub browser: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -590,7 +578,6 @@ pub enum Command {
     Play(PlayOptions),
     TestPattern(PlayOptions),
     Share(ShareOptions),
-    Browse(BrowseOptions),
     DebugPipeline(PipelineOptions),
 }
 
@@ -635,7 +622,6 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                 ))
             }
             Top::Share => return Ok((g, parse_share(p.subcommand(&SHARE))?)),
-            Top::Browser => return Ok((g, parse_browse(p.subcommand(&BROWSE))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -776,11 +762,8 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
     if o.to.is_empty() {
         return Err(p.error("at least one --to NAME|ADDR is required"));
     }
-    let browser = o.to.iter().any(|t| t.eq_ignore_ascii_case(BROWSER_TARGET));
-    if !browser && o.browser != BrowserOptions::default() {
-        return Err(
-            p.error("--port, --open, --wait-for-viewer and --new-token are for --to browser")
-        );
+    if !has_browser_target(&o.to) && o.browser != BrowserOptions::default() {
+        return Err(p.error(PLAYER_ONLY));
     }
     match mode {
         Mode::Play => {
@@ -800,16 +783,9 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
 }
 
 fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
-    let mut o = ShareOptions {
-        to: Vec::new(),
-        latency_ms: None,
-        size: None,
-        fps: None,
-        bitrate_kbps: None,
-        no_audio: false,
-        port: 0,
-        open: false,
-    };
+    let mut o = ShareOptions::default();
+    let mut page = PageOptions::default();
+    let mut url = None;
     while let Some(arg) = p.param()? {
         match arg {
             ShareArg::To => o.to.push(p.value()?),
@@ -818,57 +794,48 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
             ShareArg::Fps => o.fps = Some(p.value()?),
             ShareArg::Bitrate => o.bitrate_kbps = Some(p.value()?),
             ShareArg::NoAudio => o.no_audio = true,
-            ShareArg::Port => o.port = p.value()?,
             ShareArg::Open => o.open = true,
-        }
-    }
-    if o.to.is_empty() {
-        return Err(p.error("at least one --to NAME|ADDR is required"));
-    }
-    Ok(Command::Share(o))
-}
-
-fn parse_browse(mut p: Parser<BrowseArg>) -> Result<Command, Error> {
-    let mut o = BrowseOptions {
-        url: String::new(),
-        to: Vec::new(),
-        latency_ms: None,
-        size: None,
-        fps: None,
-        bitrate_kbps: None,
-        no_audio: false,
-        profile: None,
-        visible: false,
-        reload: None,
-        browser: None,
-    };
-    let mut url = None;
-    while let Some(arg) = p.param()? {
-        match arg {
-            BrowseArg::To => o.to.push(p.value()?),
-            BrowseArg::Latency => o.latency_ms = Some(p.value()?),
-            BrowseArg::Size => o.size = Some(p.value()?),
-            BrowseArg::Fps => o.fps = Some(p.value()?),
-            BrowseArg::Bitrate => o.bitrate_kbps = Some(p.value()?),
-            BrowseArg::NoAudio => o.no_audio = true,
-            BrowseArg::Profile => o.profile = Some(p.value()?),
-            BrowseArg::Visible => o.visible = true,
-            BrowseArg::Reload => {
+            ShareArg::Port => o.player.port = Some(p.value()?),
+            ShareArg::WaitForViewer => o.player.wait_for_viewer = true,
+            ShareArg::NewToken => o.player.new_token = true,
+            ShareArg::Profile => page.profile = Some(p.value()?),
+            ShareArg::Visible => page.visible = true,
+            ShareArg::Reload => {
                 let min: f64 = p.value()?;
                 if !(min.is_finite() && min > 0.0 && min <= 7.0 * 24.0 * 60.0) {
                     return Err(p.error("--reload takes minutes (> 0)"));
                 }
-                o.reload = Some(Duration::from_secs_f64(min * 60.0));
+                page.reload = Some(Duration::from_secs_f64(min * 60.0));
             }
-            BrowseArg::Browser => o.browser = Some(p.value()?),
-            BrowseArg::Url => url = Some(p.value::<String>()?),
+            ShareArg::Browser => page.browser = Some(p.value()?),
+            ShareArg::Url => url = Some(p.value::<String>()?),
         }
     }
-    o.url = url.ok_or_else(|| p.error("missing URL"))?;
     if o.to.is_empty() {
         return Err(p.error("at least one --to NAME|ADDR is required"));
     }
-    Ok(Command::Browse(o))
+    let browser = has_browser_target(&o.to);
+    if !browser && o.player != BrowserOptions::default() {
+        return Err(p.error(PLAYER_ONLY));
+    }
+    match url {
+        Some(url) => {
+            if o.open && !browser {
+                return Err(p.error(
+                    "--open opens the share page (without URL) or the --to browser player page",
+                ));
+            }
+            page.url = url;
+            o.page = Some(page);
+        }
+        None if page != PageOptions::default() => {
+            return Err(p.error(
+                "--visible, --profile, --reload and --browser are for 'share URL' (tvpipe's own browser)",
+            ));
+        }
+        None => {}
+    }
+    Ok(Command::Share(o))
 }
 
 fn parse_pipeline(mut p: Parser<PipelineArg>) -> Result<Command, Error> {
@@ -997,8 +964,6 @@ mod tests {
             "60",
             "--size",
             "1280x720",
-            "--port",
-            "8123",
             "--open",
             "--no-audio",
         ])
@@ -1006,16 +971,18 @@ mod tests {
         let Command::Share(o) = cmd else { panic!() };
         assert_eq!(o.to, ["Office TV", "cafe TV"]);
         assert_eq!(o.fps, Some(Ratio::integer(60)));
-        assert_eq!((o.port, o.open, o.no_audio), (8123, true, true));
+        // Without URL, --open opens the share page.
+        assert_eq!((o.open, o.no_audio, o.page), (true, true, None));
+        assert_eq!(o.player, BrowserOptions::default());
         assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
         assert!(parse_from(&["share"]).is_err());
-        assert!(parse_from(&["share", "--to", "tv", "--port", "70000"]).is_err());
+        assert!(parse_from(&["share", "https://x"]).is_err());
     }
 
     #[test]
-    fn browse_options() {
+    fn share_url_options() {
         let (_, cmd) = parse_from(&[
-            "browser",
+            "share",
             "https://example.com/dash",
             "--to",
             "TV",
@@ -1030,26 +997,124 @@ mod tests {
             "/tmp/p",
             "--browser",
             "/opt/chrome",
+            "--open",
+            "--port",
+            "8123",
+            "--wait-for-viewer",
+            "--new-token",
         ])
         .unwrap();
-        let Command::Browse(o) = cmd else { panic!() };
-        assert_eq!(o.url, "https://example.com/dash");
+        let Command::Share(o) = cmd else { panic!() };
         assert_eq!(o.to, ["TV", "browser"]);
-        assert_eq!(o.reload, Some(Duration::from_secs(30)));
-        assert!(o.visible && !o.no_audio);
-        assert_eq!(o.profile.as_deref(), Some(std::path::Path::new("/tmp/p")));
-        assert_eq!(
-            o.browser.as_deref(),
-            Some(std::path::Path::new("/opt/chrome"))
-        );
         assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
-        let (_, cmd) = parse_from(&["browser", "--to", "TV", "file:///tmp/x.html"]).unwrap();
-        let Command::Browse(o) = cmd else { panic!() };
-        assert_eq!((o.reload, o.visible, o.profile), (None, false, None));
-        assert!(parse_from(&["browser", "--to", "TV"]).is_err());
-        assert!(parse_from(&["browser", "https://example.com"]).is_err());
-        assert!(parse_from(&["browser", "https://x", "--to", "TV", "--reload", "0"]).is_err());
-        assert!(parse_from(&["browser", "https://x", "--to", "TV", "--reload", "-1"]).is_err());
+        assert!(o.open && !o.no_audio);
+        assert_eq!(
+            o.player,
+            BrowserOptions {
+                port: Some(8123),
+                open: false,
+                wait_for_viewer: true,
+                new_token: true,
+            }
+        );
+        assert_eq!(
+            o.page,
+            Some(PageOptions {
+                url: "https://example.com/dash".into(),
+                profile: Some("/tmp/p".into()),
+                visible: true,
+                reload: Some(Duration::from_secs(30)),
+                browser: Some("/opt/chrome".into()),
+            })
+        );
+        let (_, cmd) = parse_from(&["share", "--to", "TV", "file:///tmp/x.html"]).unwrap();
+        let Command::Share(o) = cmd else { panic!() };
+        let page = o.page.unwrap();
+        assert_eq!(page.url, "file:///tmp/x.html");
+        assert_eq!(
+            (page.reload, page.visible, page.profile),
+            (None, false, None)
+        );
+        let err = |args: &[&str]| parse_from(args).unwrap_err().to_string();
+        assert!(err(&["share", "https://x", "--to", "TV", "--reload", "0"]).contains("--reload"));
+        assert!(parse_from(&["share", "https://x", "--to", "TV", "--reload", "-1"]).is_err());
+        // URL-only options without a URL.
+        for opt in [
+            &["--visible"][..],
+            &["--profile", "/tmp/p"],
+            &["--reload", "5"],
+            &["--browser", "/opt/chrome"],
+        ] {
+            let mut args = vec!["share", "--to", "TV"];
+            args.extend_from_slice(opt);
+            assert!(
+                err(&args).contains("'share URL'"),
+                "{opt:?}: {}",
+                err(&args)
+            );
+        }
+        // With a URL there is no share page: --open is the player's.
+        assert!(err(&["share", "https://x", "--to", "TV", "--open"]).contains("--open"));
+        assert!(parse_from(&["share", "https://x", "--to", "browser", "--open"]).is_ok());
+    }
+
+    /// The player options mean the same in every subcommand and need
+    /// `--to browser` everywhere.
+    #[test]
+    fn player_options_everywhere() {
+        let player = |args: &[&str]| -> BrowserOptions {
+            match parse_from(args).unwrap().1 {
+                Command::Play(o) | Command::TestPattern(o) => o.browser,
+                Command::Share(o) => BrowserOptions {
+                    open: o.open,
+                    ..o.player
+                },
+                other => panic!("{other:?}"),
+            }
+        };
+        let want = BrowserOptions {
+            port: Some(9000),
+            open: true,
+            wait_for_viewer: true,
+            new_token: true,
+        };
+        let opts = [
+            "--port",
+            "9000",
+            "--open",
+            "--wait-for-viewer",
+            "--new-token",
+        ];
+        for cmd in [
+            &["play", "--to", "browser", "x.mp4"][..],
+            &["test-pattern", "--to", "browser"],
+            &["preview"],
+            &["share", "--to", "browser"],
+            &["share", "https://example.com", "--to", "browser"],
+        ] {
+            let mut args = cmd.to_vec();
+            args.extend_from_slice(&opts);
+            assert_eq!(player(&args), want, "{cmd:?}");
+        }
+        for cmd in [
+            &["play", "--to", "tv", "x.mp4"][..],
+            &["test-pattern", "--to", "tv"],
+            &["share", "--to", "tv"],
+            &["share", "https://example.com", "--to", "tv"],
+        ] {
+            for opt in [
+                &["--port", "9000"][..],
+                &["--wait-for-viewer"],
+                &["--new-token"],
+            ] {
+                let mut args = cmd.to_vec();
+                args.extend_from_slice(opt);
+                let e = parse_from(&args).unwrap_err().to_string();
+                assert!(e.contains("--to browser"), "{args:?}: {e}");
+            }
+        }
+        // `browser` is no subcommand any more.
+        assert!(parse_from(&["browser", "https://x", "--to", "tv"]).is_err());
     }
 
     #[test]

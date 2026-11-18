@@ -48,8 +48,7 @@ tvpipe pair NAME|ADDR [--pin PIN]
 tvpipe unpair NAME|ADDR
 tvpipe play --to NAME|ADDR [--to ...] [OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)
 tvpipe test-pattern --to NAME|ADDR [OPTIONS]
-tvpipe share --to NAME|ADDR [--open] [--port PORT] [OPTIONS]
-tvpipe browser URL --to NAME|ADDR [--visible] [--profile DIR] [--reload MIN] [OPTIONS]
+tvpipe share [URL] --to NAME|ADDR [--open] [OPTIONS]
 tvpipe preview [--open] [--port PORT] [OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]
 tvpipe debug-pipeline [OPTIONS] INPUT
 ```
@@ -98,23 +97,23 @@ tvpipe share --to TV --open
 16.4+, Firefox 130+).  Tick "share audio" in Chrome's picker for sound.  The
 stream takes the TV's screen shape with the capture centered (black bars), at
 the capture's size up to what the TV allows.  Stopping the share or closing the
-page ends the session.
+page ends the session.  `--open` opens the page for you.
 
-### A Web Page On The TV (`browser`)
+### A Web Page On The TV (`share URL`)
 
 ```sh
 # A dashboard on the TV, reloaded every 30 minutes
-tvpipe browser https://status.example.com --to TV --reload 30
+tvpipe share https://status.example.com --to TV --reload 30
 
 # A page that needs a login: log in once in the window, keep the profile
-tvpipe browser https://grafana.example.com --to TV --visible --profile ~/tvpipe-grafana
-tvpipe browser https://grafana.example.com --to TV --profile ~/tvpipe-grafana
+tvpipe share https://grafana.example.com --to TV --visible --profile ~/tvpipe-grafana
+tvpipe share https://grafana.example.com --to TV --profile ~/tvpipe-grafana
 
 # A local file, also in a browser tab here
-tvpipe browser ./slides.html --to TV --to browser
+tvpipe share ./slides.html --to TV --to browser --open
 ```
 
-`browser` starts a Chromium-based browser of its own (Chrome, Edge, Chromium or
+With a URL, `share` starts a Chromium-based browser of its own (Chrome, Edge, Chromium or
 Brave; `--browser PATH` or `$TVPIPE_BROWSER` picks one), headless unless
 `--visible`, opens URL at exactly the stream's size (the TV's screen shape, at
 most 1920x1080 or `--size`) and shares that tab with its sound through the same
@@ -125,7 +124,9 @@ one, deleted afterwards (or by the next run if tvpipe was killed), or
 If the page navigates or reloads, it shares again; if the page or the browser
 crashes, it is started again.  Closing the window (`--visible`) or Ctrl-C ends
 the session and quits the browser.  The start takes about a second, a reload
-or navigation leaves a gap of about half a second.
+or navigation leaves a gap of about half a second.  `--visible`, `--profile`,
+`--reload` and `--browser` only exist with a URL; without one there is no
+browser of tvpipe's.
 
 Sites that refuse automated browsers do not work: tvpipe does not hide that
 its browser is automated, and reports the site's 401/403/429.  Video calls are
@@ -179,6 +180,10 @@ Useful `play` options:
 | `--loop` | | loop the input |
 | `--realtime` / `--no-realtime` | real time for files | pace the input |
 | `--open`, `--port PORT`, `--wait-for-viewer`, `--new-token` | port 8765 | the `--to browser` page |
+
+The `--to browser` options are the same for `play`, `test-pattern`,
+`preview` and `share`, and need `--to browser` (`share --open` without a URL
+also opens the share page).
 
 ### When ffmpeg is used
 

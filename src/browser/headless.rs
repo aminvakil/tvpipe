@@ -1,4 +1,4 @@
-//! `tvpipe browser URL`: a browser of its own that shows URL and shares
+//! `tvpipe share URL`: a browser of its own that shows URL and shares
 //! its tab into the share pipeline.
 //!
 //! [`Headless::start`] starts the browser (`launch`) on `about:blank`,
@@ -921,7 +921,7 @@ fn report_status(url: &str, status: u64, text: &str) {
     if refusal {
         error!(
             "browser: {url} answered {status} {text}: the site refuses this browser. Sites \
-             that refuse automated browsers do not work with 'tvpipe browser' (it does not \
+             that refuse automated browsers do not work with 'tvpipe share URL' (it does not \
              hide that it is automated); log in with --visible --profile DIR if it needs a login"
         );
     } else {

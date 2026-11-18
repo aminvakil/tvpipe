@@ -142,7 +142,7 @@ they get to fill their screen, so sinks report their screen shape
 fits any shape) and the page centers the capture in a frame of that shape,
 or keeps the capture's shape when only browser players watch.
 
-**Headless browser** (`tvpipe browser URL`) starts a Chromium-based browser
+**Headless browser** (`tvpipe share URL`) starts a Chromium-based browser
 of its own (a separate profile, headless unless `--visible`) and drives it
 over the DevTools protocol. Its viewport is the stream size, so the tab fills
 the frame. After every navigation the capture script is evaluated in the
@@ -345,7 +345,7 @@ Everything is platform-neutral except these, each with no crate and every
   [`docs/measurements.md`](docs/measurements.md#windows-timer-resolution).
 - **Paths:** `cfg(target_os)` for the config directory and for the
   well-known browser install paths and the browsers' own profile
-  directories, which `tvpipe browser --profile` refuses
+  directories, which `tvpipe share URL --profile` refuses
   (`src/browser/platform.rs`).
 
 Other Windows differences (UDP `ConnectionReset`, `shutdown` not waking a

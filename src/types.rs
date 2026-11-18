@@ -111,7 +111,7 @@ pub struct Capabilities {
     pub preferred_latency_ms: Option<u32>,
     /// The shape of the receiver's screen, reduced (e.g. `(16, 9)`): it
     /// stretches pictures of another shape to fill it, so senders that
-    /// choose their own frame size (`share`, `browser`) match it and pad.
+    /// choose their own frame size (`share`) match it and pad.
     /// TVs that do not say report [`DEFAULT_DISPLAY_ASPECT`]. `None`: any
     /// shape, the receiver fits the picture into its window itself (the
     /// browser player).

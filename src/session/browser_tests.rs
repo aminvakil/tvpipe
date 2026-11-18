@@ -107,8 +107,8 @@ fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
         fps: None,
         bitrate_kbps: None,
         no_audio: false,
-        port: 0,
         open: false,
+        ..ShareOptions::default()
     };
     let r = if real.is_some() {
         share_with(o, &connect_one, stop_requested, &hook)

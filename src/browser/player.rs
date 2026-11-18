@@ -180,7 +180,7 @@ pub fn capabilities(opts: &PlayerOptions) -> Capabilities {
         min_latency_ms: None,
         preferred_latency_ms: Some(opts.latency_ms),
         // Any shape: the page fits the picture into its window, so
-        // `share`/`browser` with only browsers keep the source's shape.
+        // `share` with only browsers keep the source's shape.
         display_aspect: None,
     }
 }

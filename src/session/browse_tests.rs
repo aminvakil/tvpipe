@@ -1,4 +1,4 @@
-//! `browser` end to end with the browser replaced by fake pages (the Rust
+//! `share URL` end to end with the browser replaced by fake pages (the Rust
 //! one from `browser::share::tests`): the receivers connect first, the
 //! page is sized from them, a page that goes away (a navigation) is
 //! replaced by the next one on the same timeline, and the session ends
@@ -13,22 +13,18 @@ use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
 use crate::browser::share::tests::{spawn_page, PageScript, PageSeen};
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
-use crate::cli::BrowseOptions;
+use crate::cli::PageOptions;
 use crate::codec::json::Value;
 
-fn browse_opts(to: Vec<String>) -> BrowseOptions {
-    BrowseOptions {
-        url: "http://127.0.0.1:1/".into(),
+fn browse_opts(to: Vec<String>) -> ShareOptions {
+    ShareOptions {
         to,
         latency_ms: Some(100),
-        size: None,
-        fps: None,
-        bitrate_kbps: None,
-        no_audio: false,
-        profile: None,
-        visible: false,
-        reload: None,
-        browser: None,
+        page: Some(PageOptions {
+            url: "http://127.0.0.1:1/".into(),
+            ..PageOptions::default()
+        }),
+        ..ShareOptions::default()
     }
 }
 
@@ -95,7 +91,7 @@ fn pages_to_cast_and_airplay_across_a_navigation() {
         });
         Ok(Box::new(FakeBrowser(Some(t), seen.clone())))
     };
-    let o = BrowseOptions {
+    let o = ShareOptions {
         // Small, so the built-in encoder in the fake page is quick.
         size: Some(Size {
             width: 320,
@@ -149,7 +145,7 @@ fn page_size_follows_the_receivers_and_a_browser_failure_stops_them() {
             "browser: cannot open x: net::ERR_NAME_NOT_RESOLVED",
         ))
     };
-    let o = BrowseOptions {
+    let o = ShareOptions {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
     };
@@ -191,7 +187,7 @@ fn a_browser_that_fails_later_fails_the_session() {
         });
         Ok(Box::new(()))
     };
-    let o = BrowseOptions {
+    let o = ShareOptions {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
     };
@@ -206,7 +202,7 @@ fn a_browser_that_fails_later_fails_the_session() {
 //
 // TVPIPE_TEST_CHROME=/path/to/chrome cargo test --release chrome_browser -- --ignored --nocapture
 //
-// `tvpipe browser` on a local test page (a moving clock and a 440 Hz
+// `tvpipe share URL` on a local test page (a moving clock and a 440 Hz
 // tone, reloaded every 4 s by --reload to exercise sharing again) to the
 // fake Cast receiver and the `--to browser` player, watched by a second
 // headless Chrome for TVPIPE_TEST_BROWSER_SECS (default 6): the player
@@ -466,7 +462,7 @@ fn chrome_browser_survives_crashes() {
         }));
         Ok(Box::new(h))
     };
-    let o = BrowseOptions {
+    let o = ShareOptions {
         size: Some(Size {
             width: 640,
             height: 360,

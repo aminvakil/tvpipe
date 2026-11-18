@@ -1,4 +1,4 @@
-//! `tvpipe browser URL` (W13): the share
+//! `tvpipe share URL` (W13): the share
 //! pipeline with tvpipe's own browser as the page.
 //!
 //! 1. Resolve and connect the receivers first: the stream's size is the
@@ -18,7 +18,6 @@ use std::any::Any;
 use super::*;
 use crate::browser::headless::{self, Headless, HeadlessOptions};
 use crate::browser::launch::{self, LaunchOptions};
-use crate::cli::BrowseOptions;
 
 /// The page's size without `--size`, before the receivers' shape.
 const BROWSE_SIZE: Size = Size {
@@ -31,11 +30,16 @@ const BROWSE_FPS: Ratio = Ratio::integer(30);
 /// dropped (the tests start fake pages instead of a browser).
 type Launcher<'a> = &'a dyn Fn(&ShareServer, (u32, u32)) -> Result<Box<dyn Any>>;
 
-pub(super) fn browse(opts: BrowseOptions) -> Result<()> {
-    let url = headless::page_url(&opts.url)?;
+/// `share URL`.
+pub(super) fn browse(opts: ShareOptions) -> Result<()> {
+    let page = opts
+        .page
+        .clone()
+        .ok_or_else(|| Error::usage("share: no URL"))?;
+    let url = headless::page_url(&page.url)?;
     headless::check_url(&url)?;
     // Problems with the browser before any receiver is bothered.
-    let bin = launch::find_browser(opts.browser.as_deref())?;
+    let bin = launch::find_browser(page.browser.as_deref())?;
     debug!("browser: using {}", bin.display());
     // Profiles (and browsers) a killed tvpipe left behind.
     launch::sweep_stale_profiles();
@@ -43,7 +47,7 @@ pub(super) fn browse(opts: BrowseOptions) -> Result<()> {
         warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
     }
     interrupt::watch_stdin();
-    let o = opts.clone();
+    let o = page;
     let launcher = move |server: &ShareServer, viewport: (u32, u32)| -> Result<Box<dyn Any>> {
         let h = Headless::start(
             HeadlessOptions {
@@ -64,9 +68,9 @@ pub(super) fn browse(opts: BrowseOptions) -> Result<()> {
     browse_with(&opts, &connect_one, interrupt::requested, &launcher)
 }
 
-/// `browser` with the connector, stop request and page source given.
+/// `share URL` with the connector, stop request and page source given.
 pub(super) fn browse_with(
-    opts: &BrowseOptions,
+    opts: &ShareOptions,
     connect: Connector<'_>,
     stop: fn() -> bool,
     launch: Launcher<'_>,
@@ -99,14 +103,9 @@ pub(super) fn browse_with(
     // The offer: --size/--fps/--bitrate or 1920x1080@30; the ANSWERs
     // and AirPlay's canvas narrow it.
     let offer = ShareOffer::new(&ShareOptions {
-        to: Vec::new(),
-        latency_ms: opts.latency_ms,
         size: Some(opts.size.unwrap_or(BROWSE_SIZE)),
         fps: Some(fps),
-        bitrate_kbps: opts.bitrate_kbps,
-        no_audio: opts.no_audio,
-        port: 0,
-        open: false,
+        ..opts.clone()
     });
     let d = Desired {
         size: offer.size,
@@ -119,7 +118,7 @@ pub(super) fn browse_with(
     cast_opts.latency_ms = budget.cast_ms;
     configure_browsers(
         &mut targets,
-        &BrowserOptions::default(),
+        &player_options(opts),
         budget.browser_ms,
         audio,
     );

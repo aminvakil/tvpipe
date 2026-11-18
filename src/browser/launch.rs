@@ -1,4 +1,4 @@
-//! Finding and starting a Chromium-based browser for `tvpipe browser`.
+//! Finding and starting a Chromium-based browser for `tvpipe share URL`.
 //!
 //! - [`find_browser`]: `--browser PATH` (or a name on `PATH`, or a macOS
 //!   `.app`), `$TVPIPE_BROWSER`, the well-known install paths
