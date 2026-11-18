@@ -941,6 +941,7 @@ impl SliceEnc {
 
         // P_Skip if the skip prediction leaves nothing worth coding.
         r.luma_pred(x0, y0, skip_mv, &mut pred);
+        let skip_pred = pred;
         let skip_sad = sad16(&src, &pred, 0, 16);
         let qstep = 0.625 * 2f64.powf(qp as f64 / 6.0);
         if (skip_sad as f64) < 256.0 * qstep * 0.5 {
@@ -1010,21 +1011,51 @@ impl SliceEnc {
             qp,
         };
 
-        // Intra alternative: when its SATD cost is in reach, decide by
-        // SSD + λ · bits.
+        // Rate-distortion checks against P_Skip (when its prediction is
+        // close) and intra (when its SATD cost is in reach).
+        let ls = lambda_ssd16(qp);
         let (mode16, cost16) = self.best_i16(&src, mx, my);
         let intra_bias = (lambda * 8) / 16;
-        if (cost16.saturating_add(intra_bias) as u64) * 2 < inter_cost as u64 * 3 {
-            let ls = lambda_ssd16(qp);
+        let try_intra = (cost16.saturating_add(intra_bias) as u64) * 2 < inter_cost as u64 * 3;
+        let try_skip = !skippable && (skip_sad as f64) < 256.0 * qstep;
+        if !try_intra && !try_skip {
+            if skippable {
+                self.info[idx].nz = [0; 16];
+                return None;
+            }
+            return Some(c);
+        }
+        let bits = if skippable {
+            1
+        } else {
+            self.mb_bits(&c, mx, my, true, qp)
+        };
+        let mut j_best =
+            (self.ssd_luma(&src, mx, my) + self.ssd_chroma(&srcc, mx, my)) * 16 + ls * bits as u64;
+        let mut use_skip = false;
+        let mut skip_predc = [[0u8; 64]; 2];
+        if try_skip {
+            r.chroma_pred(x0, y0, skip_mv, &mut skip_predc);
+            let mut ssd = 0u64;
+            for (a, b) in src.iter().zip(&skip_pred) {
+                let d = *a as i32 - *b as i32;
+                ssd += (d * d) as u64;
+            }
+            for (sc, pc) in srcc.iter().zip(&skip_predc) {
+                for (a, b) in sc.iter().zip(pc) {
+                    let d = *a as i32 - *b as i32;
+                    ssd += (d * d) as u64;
+                }
+            }
+            let j_skip = ssd * 16 + ls;
+            if j_skip < j_best {
+                j_best = j_skip;
+                use_skip = true;
+            }
+        }
+        if try_intra {
             let inter_px = (self.save_luma(mx, my), self.save_chroma(mx, my));
             let inter_info = self.info[idx];
-            let bits = if skippable {
-                1
-            } else {
-                self.mb_bits(&c, mx, my, true, qp)
-            };
-            let j_inter = (self.ssd_luma(&src, mx, my) + self.ssd_chroma(&srcc, mx, my)) * 16
-                + ls * bits as u64;
             let ci = self.code_intra(
                 &src,
                 &srcc,
@@ -1039,12 +1070,26 @@ impl SliceEnc {
             );
             let j_intra = (self.ssd_luma(&src, mx, my) + self.ssd_chroma(&srcc, mx, my)) * 16
                 + ls * self.mb_bits(&ci, mx, my, true, qp) as u64;
-            if j_intra < j_inter {
+            if j_intra < j_best {
                 return Some(ci);
             }
             Self::store::<16>(&mut self.rec[0], mx, my, &inter_px.0);
             self.restore_chroma(mx, my, &inter_px.1);
             self.info[idx] = inter_info;
+        }
+        if use_skip {
+            Self::store::<16>(&mut self.rec[0], mx, my, &skip_pred);
+            self.restore_chroma(mx, my, &skip_predc);
+            self.info[idx] = MbInfo {
+                intra: false,
+                nz: [0; 16],
+                nzc: [[0; 4]; 2],
+                i4: [intra::I4_DC; 16],
+                mv: [skip_mv[0] as i16, skip_mv[1] as i16],
+                refi: 0,
+                qp,
+            };
+            return None;
         }
         if skippable {
             self.info[idx].nz = [0; 16];
