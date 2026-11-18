@@ -61,6 +61,8 @@ pub struct Behaviour {
     pub teardown_eof: bool,
     /// Send `forceKeyFrame` on the event channel once video flows.
     pub force_keyframe: bool,
+    /// Omit the `X-Apple-*` timing headers (like the modelled LG).
+    pub no_timing_headers: bool,
 }
 
 impl Default for Behaviour {
@@ -71,6 +73,7 @@ impl Default for Behaviour {
             nack_after: Some(5),
             teardown_eof: false,
             force_keyframe: false,
+            no_timing_headers: false,
         }
     }
 }
@@ -183,7 +186,11 @@ fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
                 return Ok(());
             }
         }
-        let resp = handle(&req, ctx);
+        let mut resp = handle(&req, ctx);
+        if ctx.behaviour.no_timing_headers {
+            resp.headers.remove("X-Apple-RequestReceivedTimestamp");
+            resp.headers.remove("X-Apple-ProcessingTime");
+        }
         conn.send_response(&resp)?;
     }
 }
@@ -221,6 +228,7 @@ fn handle(req: &Request, ctx: &Arc<Ctx>) -> Response {
             let mut out = Plist::dict();
             if session_keys {
                 ctx.session.store(true, Ordering::Release);
+                ctx.close_data.store(false, Ordering::Release);
                 out = out.with("eventPort", event_server(ctx) as i64).with(
                     "timingPeerInfo",
                     Plist::dict().with("ClockID", CLOCK_ID as i64),

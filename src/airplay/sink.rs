@@ -88,13 +88,31 @@ pub type SecureMirrorSink = MirrorSink<SecureStream<TcpStream>>;
 /// PTP to NTP on a fresh connection when PTP fails (§2.5).
 pub fn connect_mirror(target: &pair::Target, opts: &MirrorOptions) -> Result<SecureMirrorSink> {
     let store = crate::airplay::credentials::Store::open_default()?;
-    let mut opts = opts.clone();
-    loop {
+    connect_with(target.label(), opts, || {
         let control = pair::connect(target, &store)?;
         let secret = control.shared.secret().to_vec();
         let client: SecureClient = control.client;
-        match Session::establish(client, control.addr, secret, true, &opts) {
-            Ok(s) => return Ok(MirrorSink::new(target.label(), s, &opts)),
+        Ok((client, control.addr, secret, true))
+    })
+}
+
+/// A fresh authenticated control connection: client, peer, shared
+/// secret, HAP profile.
+pub type Connected<S> = (crate::net::rtsp::RtspClient<S>, SocketAddr, Vec<u8>, bool);
+
+/// [`connect_mirror`] over any connector: establishes the session, and
+/// when PTP fails tears it down and retries once with NTP on a new
+/// connection (§2.5).
+pub fn connect_with<S: ControlStream>(
+    name: String,
+    opts: &MirrorOptions,
+    mut connect: impl FnMut() -> Result<Connected<S>>,
+) -> Result<MirrorSink<S>> {
+    let mut opts = opts.clone();
+    loop {
+        let (client, peer, secret, hap) = connect()?;
+        match Session::establish(client, peer, secret, hap, &opts) {
+            Ok(s) => return Ok(MirrorSink::new(name, s, &opts)),
             Err(SetupError::PtpFailed(e)) if opts.ptp => {
                 warn!("airplay: PTP setup failed ({e}); retrying with NTP");
                 opts.ptp = false;
@@ -950,17 +968,14 @@ mod tests {
     use crate::util::vectors;
 
     fn connect(fake: &FakeMirror, opts: &MirrorOptions) -> MirrorSink<TcpStream> {
-        let tcp = TcpStream::connect(fake.addr).unwrap();
-        let s = Session::establish(
-            RtspClient::new(tcp),
-            fake.addr,
-            fake.secret.clone(),
-            true,
-            opts,
-        )
-        .map_err(SetupError::into_error)
-        .unwrap();
-        MirrorSink::new("fake".into(), s, opts)
+        try_connect(fake, opts).unwrap()
+    }
+
+    fn try_connect(fake: &FakeMirror, opts: &MirrorOptions) -> Result<MirrorSink<TcpStream>> {
+        connect_with("fake".into(), opts, || {
+            let tcp = TcpStream::connect(fake.addr).unwrap();
+            Ok((RtspClient::new(tcp), fake.addr, fake.secret.clone(), true))
+        })
     }
 
     fn avcc() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
@@ -1224,6 +1239,42 @@ mod tests {
         );
         assert!(!sink.wants_keyframe());
         sink.stop().unwrap();
+    }
+
+    #[test]
+    fn ptp_without_anchor_falls_back_to_ntp() {
+        let fake = FakeMirror::start(Behaviour {
+            no_timing_headers: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        assert!(matches!(sink.session.timeline, Timeline::Ntp));
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 3);
+        sink.stop().unwrap();
+        let r = fake.rec();
+        let protocols: Vec<&str> = r
+            .setup_bodies
+            .iter()
+            .filter_map(|b| b.get("timingProtocol").and_then(Plist::as_str))
+            .collect();
+        assert_eq!(protocols, ["PTP", "NTP"]);
+        // The failed PTP session was released before the retry.
+        let first_teardown = r
+            .requests
+            .iter()
+            .position(|q| q.starts_with("TEARDOWN"))
+            .unwrap();
+        let second_info = r
+            .requests
+            .iter()
+            .skip(1)
+            .position(|q| q == "GET /info")
+            .unwrap()
+            + 1;
+        assert!(first_teardown < second_info, "{:?}", r.requests);
+        assert!(r.video.iter().any(|p| p.kind == 0));
     }
 
     #[test]
