@@ -65,7 +65,14 @@ pub(super) fn browse(opts: ShareOptions) -> Result<()> {
         )?;
         Ok(Box::new(h))
     };
-    browse_with(&opts, &connect_one, interrupt::requested, &launcher)
+    let rejoin = Rejoin::system(opts.reconnect);
+    browse_rejoin(
+        &opts,
+        &connect_one,
+        interrupt::requested,
+        &launcher,
+        Some(&rejoin),
+    )
 }
 
 /// `share URL` with the connector, stop request and page source given.
@@ -75,6 +82,17 @@ pub(super) fn browse_with(
     stop: fn() -> bool,
     launch: Launcher<'_>,
 ) -> Result<()> {
+    browse_rejoin(opts, connect, stop, launch, None)
+}
+
+/// `browse_with` with the reconnect hooks.
+fn browse_rejoin(
+    opts: &ShareOptions,
+    connect: Connector<'_>,
+    stop: fn() -> bool,
+    launch: Launcher<'_>,
+    rejoin: Option<&Rejoin>,
+) -> Result<()> {
     crate::util::timer::raise_resolution();
     let mut server = ShareServer::bind(0)?;
     server.set_rejoin(true);
@@ -82,7 +100,7 @@ pub(super) fn browse_with(
         server.set_end_reason(&e.to_string());
         e
     };
-    let mut targets = resolve_all(&opts.to).map_err(|e| fail(&mut server, e))?;
+    let mut targets = resolve_all(&opts.to, rejoin).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     let pcm = RawAudioSpec {
         sample_rate: builtin::pattern_sample_rate(
@@ -127,8 +145,8 @@ pub(super) fn browse_with(
         audio,
         ..Default::default()
     };
-    let sinks =
-        connect_all(&targets, connect, &cast_opts, &mirror).map_err(|e| fail(&mut server, e))?;
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)
+        .map_err(|e| fail(&mut server, e))?;
     if stop() {
         stop_all(sinks);
         return Ok(());

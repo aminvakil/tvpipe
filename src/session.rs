@@ -656,12 +656,17 @@ fn keep_working<T>(what: &str, results: Vec<(String, Result<T>)>) -> Result<Vec<
     }
 }
 
-/// Resolves every `--to` in parallel (discovery browses for names).
-fn resolve_all(queries: &[String]) -> Result<Vec<Target>> {
+/// Resolves every `--to` in parallel (discovery browses for names), with
+/// the reconnect hooks' resolver when there are some.
+fn resolve_all(queries: &[String], rejoin: Option<&Rejoin>) -> Result<Vec<Target>> {
+    let resolve: &(dyn Fn(&str) -> Result<Target> + Sync) = match rejoin {
+        Some(r) => &*r.resolve,
+        None => &resolve_target,
+    };
     let results = std::thread::scope(|s| {
         let handles: Vec<_> = queries
             .iter()
-            .map(|q| s.spawn(move || resolve_target(q)))
+            .map(|q| s.spawn(move || resolve(q)))
             .collect();
         queries
             .iter()
@@ -677,17 +682,27 @@ fn resolve_all(queries: &[String]) -> Result<Vec<Target>> {
     keep_working("resolved", results)
 }
 
-/// Connects every target in parallel.
+/// Connects every target in parallel; with `rejoin`, the sinks reconnect
+/// when their receiver drops out (`session::rejoin`).
 fn connect_all(
     targets: &[Target],
     connect: Connector<'_>,
     opts: &CastOptions,
     mirror: &crate::airplay::session::MirrorOptions,
+    rejoin: Option<&Rejoin>,
 ) -> Result<Vec<Box<dyn Sink>>> {
     let results: Vec<(String, Result<Box<dyn Sink>>)> = std::thread::scope(|s| {
         let handles: Vec<_> = targets
             .iter()
-            .map(|t| s.spawn(move || connect(t, opts, mirror)))
+            .map(|t| {
+                s.spawn(move || {
+                    let sink = connect(t, opts, mirror)?;
+                    Ok(match rejoin {
+                        Some(r) => rejoin::wrap(t, sink, r, opts, mirror),
+                        None => sink,
+                    })
+                })
+            })
             .collect();
         targets
             .iter()
@@ -838,7 +853,8 @@ fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
     if opts.input != InputSpec::Stdin {
         interrupt::watch_stdin();
     }
-    play_with(opts, io, &connect_one, interrupt::requested)
+    let rejoin = Rejoin::system(opts.reconnect);
+    play_rejoin(opts, io, &connect_one, interrupt::requested, Some(&rejoin))
 }
 
 /// `play` with the connector and the stop request (Ctrl-C, SIGTERM, `q`)
@@ -848,6 +864,18 @@ fn play_with(
     io: GameIo,
     connect: Connector<'_>,
     stop: fn() -> bool,
+) -> Result<()> {
+    play_rejoin(opts, io, connect, stop, None)
+}
+
+/// `play_with` with the reconnect hooks (`None`: no reconnecting; names
+/// are resolved by discovery).
+fn play_rejoin(
+    opts: PlayOptions,
+    io: GameIo,
+    connect: Connector<'_>,
+    stop: fn() -> bool,
+    rejoin: Option<&Rejoin>,
 ) -> Result<()> {
     // Also here for the tests, which do not go through `main`.
     crate::util::timer::raise_resolution();
@@ -932,7 +960,7 @@ fn play_with(
             }
         }
     }
-    let mut targets = resolve_all(&opts.to)?;
+    let mut targets = resolve_all(&opts.to, rejoin)?;
     // The built-in test pattern's beep: 44.1 kHz when AirPlay listens.
     let pattern_rate =
         builtin::pattern_sample_rate(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
@@ -959,7 +987,7 @@ fn play_with(
         audio,
         ..Default::default()
     };
-    let sinks = connect_all(&targets, connect, &cast_opts, &mirror)?;
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)?;
     if stop() {
         stop_all(sinks);
         return Ok(());
@@ -1181,7 +1209,14 @@ fn share(opts: ShareOptions) -> Result<()> {
         warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
     }
     interrupt::watch_stdin();
-    share_with(opts, &connect_one, interrupt::requested, &|_| {})
+    let rejoin = Rejoin::system(opts.reconnect);
+    share_rejoin(
+        opts,
+        &connect_one,
+        interrupt::requested,
+        &|_| {},
+        Some(&rejoin),
+    )
 }
 
 /// `share` with the connector and stop request given, and a hook that
@@ -1195,6 +1230,17 @@ fn share_with(
     connect: Connector<'_>,
     stop: fn() -> bool,
     on_listening: &dyn Fn(&ShareServer),
+) -> Result<()> {
+    share_rejoin(opts, connect, stop, on_listening, None)
+}
+
+/// `share_with` with the reconnect hooks.
+fn share_rejoin(
+    opts: ShareOptions,
+    connect: Connector<'_>,
+    stop: fn() -> bool,
+    on_listening: &dyn Fn(&ShareServer),
+    rejoin: Option<&Rejoin>,
 ) -> Result<()> {
     crate::util::timer::raise_resolution();
     let mut server = ShareServer::bind(0)?;
@@ -1212,7 +1258,7 @@ fn share_with(
         server.set_end_reason(&e.to_string());
         e
     };
-    let mut targets = resolve_all(&opts.to).map_err(|e| fail(&mut server, e))?;
+    let mut targets = resolve_all(&opts.to, rejoin).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     // One PCM stream for both families: 44.1 kHz when AirPlay listens.
     let pcm = RawAudioSpec {
@@ -1274,8 +1320,8 @@ fn share_with(
         ..Default::default()
     };
     server.set_status("connecting", "", &names);
-    let sinks =
-        connect_all(&targets, connect, &cast_opts, &mirror).map_err(|e| fail(&mut server, e))?;
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)
+        .map_err(|e| fail(&mut server, e))?;
     if stop() {
         stop_all(sinks);
         return Ok(());
@@ -1719,12 +1765,18 @@ fn stream(
 }
 
 mod browse;
+mod rejoin;
+
+use rejoin::Rejoin;
 
 #[cfg(test)]
 mod browse_tests;
 
 #[cfg(test)]
 mod multi_tests;
+
+#[cfg(test)]
+mod rejoin_tests;
 
 #[cfg(test)]
 mod share_tests;
@@ -1843,6 +1895,7 @@ mod tests {
     pub(super) fn opts() -> PlayOptions {
         PlayOptions {
             to: vec!["tv".into()],
+            reconnect: Duration::ZERO,
             browser: Default::default(),
             latency_ms: None,
             size: None,

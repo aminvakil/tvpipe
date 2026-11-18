@@ -45,6 +45,7 @@ enum UnpairArg {
 #[derive(Copy, Clone)]
 enum PlayArg {
     To,
+    Reconnect,
     Latency,
     Size,
     Fps,
@@ -67,6 +68,7 @@ enum PlayArg {
 #[derive(Copy, Clone)]
 enum ShareArg {
     To,
+    Reconnect,
     Latency,
     Size,
     Fps,
@@ -146,6 +148,26 @@ const fn to<A>(id: A) -> Opt<A> {
         .long("to")
         .value("NAME|ADDR")
         .help("Receiver to stream to (repeat for several)")
+}
+
+/// How long a receiver that dropped out is reconnected by default.
+pub const DEFAULT_RECONNECT: Duration = Duration::from_secs(120);
+
+const fn reconnect<A>(id: A) -> Opt<A> {
+    Opt::new(id)
+        .long("reconnect")
+        .value("SECS")
+        .default_value("120")
+        .help("Reconnect a receiver that drops out for this long (by name: found again, e.g. at a new address; 0: off)")
+}
+
+/// `--reconnect SECS`.
+fn reconnect_secs<A: Copy + 'static>(p: &mut Parser<A>) -> Result<Duration, Error> {
+    let secs: f64 = p.value()?;
+    if !(secs.is_finite() && (0.0..=86_400.0).contains(&secs)) {
+        return Err(p.error("--reconnect takes seconds (0 to 86400)"));
+    }
+    Ok(Duration::from_secs_f64(secs))
 }
 
 // The `--to browser` player page's options, the same in every subcommand
@@ -269,7 +291,7 @@ macro_rules! play_opts {
     };
 }
 
-static PLAY_OPTS: &[Opt<PlayArg>] = play_opts!(to(PlayArg::To));
+static PLAY_OPTS: &[Opt<PlayArg>] = play_opts!(to(PlayArg::To), reconnect(PlayArg::Reconnect));
 
 static PLAY: Cli<PlayArg> = Cli::new("play")
     .about("Mirror a file, URL, capture device or raw game input")
@@ -314,6 +336,7 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
     .usage("[URL] --to NAME|ADDR [OPTIONS]")
     .opts(&[
         to(ShareArg::To),
+        reconnect(ShareArg::Reconnect),
         Opt::new(ShareArg::Latency)
             .long("latency")
             .value("MS")
@@ -494,6 +517,8 @@ impl FromStr for RawAudioSpec {
 #[derive(Debug, Clone)]
 pub struct PlayOptions {
     pub to: Vec<String>,
+    /// `--reconnect`: how long a lost receiver is reconnected (zero: off).
+    pub reconnect: Duration,
     /// For `--to browser` receivers.
     pub browser: BrowserOptions,
     pub latency_ms: Option<u32>,
@@ -529,6 +554,8 @@ pub struct BrowserOptions {
 #[derive(Debug, Clone, Default)]
 pub struct ShareOptions {
     pub to: Vec<String>,
+    /// `--reconnect` (zero, the `Default`: off).
+    pub reconnect: Duration,
     pub latency_ms: Option<u32>,
     pub size: Option<Size>,
     pub fps: Option<Ratio>,
@@ -706,6 +733,7 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
     let test_pattern = mode == Mode::TestPattern;
     let mut o = PlayOptions {
         to: Vec::new(),
+        reconnect: DEFAULT_RECONNECT,
         browser: BrowserOptions::default(),
         latency_ms: None,
         size: None,
@@ -737,6 +765,7 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
         let Some(arg) = p.param()? else { break };
         match arg {
             PlayArg::To => o.to.push(p.value()?),
+            PlayArg::Reconnect => o.reconnect = reconnect_secs(&mut p)?,
             PlayArg::Latency => o.latency_ms = Some(p.value()?),
             PlayArg::Size => o.size = Some(p.value()?),
             PlayArg::Fps => o.fps = Some(p.value()?),
@@ -783,12 +812,16 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
 }
 
 fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
-    let mut o = ShareOptions::default();
+    let mut o = ShareOptions {
+        reconnect: DEFAULT_RECONNECT,
+        ..ShareOptions::default()
+    };
     let mut page = PageOptions::default();
     let mut url = None;
     while let Some(arg) = p.param()? {
         match arg {
             ShareArg::To => o.to.push(p.value()?),
+            ShareArg::Reconnect => o.reconnect = reconnect_secs(&mut p)?,
             ShareArg::Latency => o.latency_ms = Some(p.value()?),
             ShareArg::Size => o.size = Some(p.value()?),
             ShareArg::Fps => o.fps = Some(p.value()?),
@@ -1115,6 +1148,32 @@ mod tests {
         }
         // `browser` is no subcommand any more.
         assert!(parse_from(&["browser", "https://x", "--to", "tv"]).is_err());
+    }
+
+    #[test]
+    fn reconnect_option() {
+        let get = |args: &[&str]| match parse_from(args).unwrap().1 {
+            Command::Play(o) | Command::TestPattern(o) => o.reconnect,
+            Command::Share(o) => o.reconnect,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(get(&["play", "--to", "tv", "x.mp4"]), DEFAULT_RECONNECT);
+        assert_eq!(get(&["share", "--to", "tv"]), DEFAULT_RECONNECT);
+        let secs = Duration::from_secs;
+        assert_eq!(
+            get(&["test-pattern", "--to", "tv", "--reconnect", "0"]),
+            secs(0)
+        );
+        assert_eq!(get(&["share", "--to", "tv", "--reconnect", "30"]), secs(30));
+        assert_eq!(
+            get(&["play", "--to", "tv", "--reconnect", "1.5", "x.mp4"]),
+            Duration::from_millis(1500)
+        );
+        for bad in ["-1", "x", "inf", "100000"] {
+            assert!(parse_from(&["play", "--to", "tv", "--reconnect", bad, "x.mp4"]).is_err());
+        }
+        // `preview` streams to the browser only.
+        assert!(parse_from(&["preview", "--reconnect", "5"]).is_err());
     }
 
     #[test]
