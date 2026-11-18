@@ -759,6 +759,14 @@ impl<S: ControlStream> MirrorSink<S> {
         let status = Self::queue_video(&self.shared, items, p.idr);
         if status == SinkStatus::Accepted && p.idr {
             m.video.need_codec = false;
+            if self
+                .session
+                .signals
+                .keyframe_requested
+                .swap(false, Ordering::AcqRel)
+            {
+                debug!("airplay: keyframe request served");
+            }
         }
         Ok(status)
     }
@@ -880,7 +888,15 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
     }
 
     fn wants_keyframe(&self) -> bool {
-        self.media.is_none() || self.shared.need_key.load(Ordering::Acquire)
+        // Before start, after a dropped frame, or when the receiver asked
+        // (`forceKeyFrame`): the fanout then skips to the next IDR.
+        self.media.is_none()
+            || self.shared.need_key.load(Ordering::Acquire)
+            || self
+                .session
+                .signals
+                .keyframe_requested
+                .load(Ordering::Acquire)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -1184,6 +1200,29 @@ mod tests {
             }
         }
         assert!(finished);
+        sink.stop().unwrap();
+    }
+
+    #[test]
+    fn receiver_keyframe_request() {
+        let fake = FakeMirror::start(Behaviour {
+            force_keyframe: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), None).unwrap();
+        let (_, sps, pps) = avcc();
+        assert!(sink.push(&video(0, &sps, &pps)).unwrap() == SinkStatus::Accepted);
+        wait_for("forceKeyFrame", || sink.wants_keyframe());
+        // A non-IDR leaves the request pending; the next IDR serves it.
+        sink.push(&video(1, &sps, &pps)).unwrap();
+        assert!(sink.wants_keyframe());
+        assert_eq!(
+            sink.push(&video(15, &sps, &pps)).unwrap(),
+            SinkStatus::Accepted
+        );
+        assert!(!sink.wants_keyframe());
         sink.stop().unwrap();
     }
 

@@ -59,6 +59,8 @@ pub struct Behaviour {
     pub nack_after: Option<usize>,
     /// Close the control connection instead of answering TEARDOWN.
     pub teardown_eof: bool,
+    /// Send `forceKeyFrame` on the event channel once video flows.
+    pub force_keyframe: bool,
 }
 
 impl Default for Behaviour {
@@ -68,6 +70,7 @@ impl Default for Behaviour {
             close_after_packets: None,
             nack_after: Some(5),
             teardown_eof: false,
+            force_keyframe: false,
         }
     }
 }
@@ -299,6 +302,18 @@ fn event_server(ctx: &Arc<Ctx>) -> u16 {
             .body("application/x-apple-binary-plist", body);
         if conn.request(&req).is_ok_and(|r| r.status == 200) {
             ctx.rec.lock().unwrap().event_replies += 1;
+        }
+        if ctx.behaviour.force_keyframe {
+            while ctx.rec.lock().unwrap().video.is_empty() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            let body = Plist::dict().with("type", "forceKeyFrame").to_bytes();
+            let req = Request::new("POST", "/command", crate::net::http::Version::Rtsp10)
+                .header("CSeq", "2")
+                .body("application/x-apple-binary-plist", body);
+            if conn.request(&req).is_ok_and(|r| r.status == 200) {
+                ctx.rec.lock().unwrap().event_replies += 1;
+            }
         }
         // Keep the channel open until the sender closes it.
         let _ = conn.read_request();
