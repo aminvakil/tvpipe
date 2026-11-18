@@ -1,8 +1,10 @@
 # Share page protocol (`tvpipe share`)
 
 The protocol between tvpipe and a capture script (`src/browser/capture.js`)
-running in a browser: tvpipe's share page (`tvpipe share`), or the page
-tvpipe's own browser shows and injects the script into (`tvpipe share URL`).
+running in a browser: tvpipe's share page (`tvpipe share`), the page
+tvpipe's own browser shows and injects the script into (`tvpipe share URL`),
+or the capture page tvpipe's own browser opens to capture the desktop
+(`tvpipe screen`, [`screen.md`](screen.md)).
 Version 1. Using them: [Sharing a tab or screen](https://mitsuhiko.github.io/tvpipe/manual/share/) and
 [A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/).
 
@@ -12,7 +14,9 @@ Version 1. Using them: [Sharing a tab or screen](https://mitsuhiko.github.io/tvp
   new token every run anyway; `--port` is the `--to browser` player's),
   and prints `http://127.0.0.1:PORT/?t=TOKEN`. `TOKEN` is 16 random bytes
   in hex, new for every run.
-- `GET /?t=TOKEN`: the share page. `GET /capture.js`: the capture script
+- `GET /?t=TOKEN`: the share page. `GET /screen?t=TOKEN`: the capture
+  page of `tvpipe screen` (`screen.html`: `capture.js` and a status line;
+  tvpipe starts the capture in it). `GET /capture.js`: the capture script
   (static, no token). `GET /fonts/NAME.woff2`: the page's fonts
   (`src/browser/fonts/`, static, no token). `GET /ws?t=TOKEN`: the
   WebSocket (RFC 6455, no extensions, no subprotocol). Every request
@@ -67,7 +71,7 @@ Page → tvpipe:
 |---|---|
 | `hello` | `version` (1), `clock` (the page's media clock, µs), `agent` (user agent), `features` (what the browser has; informational) |
 | `capture` | `width`, `height` (of the first frame; the track's settings if none comes within 1.5 s), `fps` (or null), `audio` (bool: an audio track was shared), `surface` (`browser`/`window`/`monitor`), `label` |
-| `stats` | `fps`, `sourceFps`, `kbps`, `audioKbps`, `encodeMs`, `dropped`, `repeated`, `keyRequests`, `queue`, `buffered`, `codec`, `width`, `height` (logged at `--debug`) |
+| `stats` | `fps`, `sourceFps`, `kbps`, `audioKbps`, `audioPeak` (the loudest sample since the last stats, 0–1), `encodeMs`, `dropped`, `repeated`, `keyRequests`, `queue`, `buffered`, `codec`, `width`, `height` (logged at `--debug`; sound that stays at peak 0 for 10 s is noted once) |
 | `ended` | `reason` |
 | `log` | `level` (`error`/`warn`/`info`), `message` (shown in tvpipe's log) |
 
@@ -155,7 +159,7 @@ are dropped above the same threshold.
 | | Chrome / Edge | Safari 26 (macOS 26) | Firefox 160 |
 |---|---|---|---|
 | getDisplayMedia offers | tabs, windows, screens | windows, screens (no tabs) | windows, screens (no tabs) |
-| Sound | tab audio (system audio on Windows) | none | none (`share URL`: the tab's sound, see below) |
+| Sound | tab audio; with a screen the system's (Windows, macOS 14.2+; Linux only with a feature switch), with a window its app's (Windows 11, macOS 14.2+): [`screen.md`](screen.md) | none | none (`share URL`: the tab's sound, see below) |
 | Video engine | page (MediaStreamTrackProcessor) | worker (track moved to a worker, MediaStreamTrackProcessor there) | page (`<video>` + VideoFrame) |
 | Tested | headless, CDP-driven, real tab capture | WebDriver, synthetic stream (picker needs a human) | headless, BiDi-driven, its own tab captured (below) |
 
@@ -215,6 +219,8 @@ const c = tvpipeCapture.connect(wsUrl, {
   preferCurrentTab: true,          // getDisplayMedia hint (headless mode)
   selfBrowserSurface: 'include',   // default 'exclude' (the share page)
   localAudio: false,               // keep playing tab audio locally
+  surface: 'monitor',              // the picker's preselected kind (displaySurface)
+  windowAudio: 'window',           // a window's sound: its app's ('window'), 'system', 'exclude'
   profiles: ['42E0', '4D40', '6400'],
   worker: true,                    // false: keep the video engine on the page
 });
@@ -229,11 +235,14 @@ CDP `Runtime.evaluate` with `userGesture: true` plus Chrome's
 auto-accept flags in the headless mode).
 
 `tvpipe share URL` evaluates `capture.js` and then `src/browser/headless.js`
-in the page after every navigation. That one connects with
-`preferCurrentTab`, `selfBrowserSurface: 'include'`, no local audio, and
-calls `captureDisplay()` once the `config` arrives; its state is in
-`globalThis.__tvpipe` (`connecting`, `capturing`, `sharing`, `ended` with
-an `error`), which tvpipe polls. The tab must be allowed to reach
+in the page after every navigation. That one is called with the WebSocket
+URL and connect options (default: `preferCurrentTab`,
+`selfBrowserSurface: 'include'`, no local audio; `tvpipe screen` passes
+`surface`, `windowAudio: 'window'`, `selfBrowserSurface: 'exclude'` and
+local audio) and calls `captureDisplay()` once the `config` arrives; its
+state is in `globalThis.__tvpipe` (`connecting`, `capturing`, `sharing`,
+`ended` with an `error`, and `stopped` when the user stopped the capture
+in the browser: `Capture.stoppedInBrowser`), which tvpipe polls. The tab must be allowed to reach
 `ws://127.0.0.1`: tvpipe bypasses the page's CSP (`Page.setBypassCSP`)
 and grants every origin Chrome's Local Network Access permission
 (`loopbackNetwork`; without it an https page fails with

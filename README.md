@@ -17,6 +17,8 @@ tvpipe discover                                        # find receivers
 tvpipe pair "Living Room"                              # Apple TV only, once
 tvpipe play --to "Living Room" movie.mp4               # a file or URL
 tvpipe play --to "Living Room" --to Kitchen movie.mp4  # two TVs, one encode
+tvpipe screen --to Kitchen                             # the screen, with sound
+tvpipe screen --to Kitchen --window Keynote            # one window
 tvpipe share --to Kitchen --open                       # a browser tab or the screen
 tvpipe share https://status.example.com --to Kitchen   # a web page
 ```
@@ -47,6 +49,8 @@ await play("movie.mp4", { to: "Living Room" });
 
 - Plays files and URLs, and mirrors cameras, capture cards and the screen
   through ffmpeg; suitable MP4/MOV/MKV files are sent without re-encoding.
+- Mirrors a screen or a single window with the computer's sound, captured
+  by a Chromium-based browser it starts (or by ffmpeg).
 - Shares a browser tab, window or screen, or puts a web page on the TV in a
   headless browser of its own.
 - Sends to several receivers at once, on one timeline, and reconnects one

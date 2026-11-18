@@ -94,6 +94,21 @@ clang for aarch64-pc-windows-msvc), ffmpeg 8.1 (BtbN
 `ffmpeg-n8.1-latest-winarm64-gpl-8.1.zip`, unpacked to `C:\tvp\ffmpeg`),
 and updated stable Rust 1.99.1 -> 1.100.0.
 
+## `tvpipe screen` (verified 2026-11-19)
+
+Details and sources in [`screen.md`](screen.md).
+
+| | Browser engine | `--engine ffmpeg` |
+|---|---|---|
+| macOS 26.6, Chrome 157 | screen 29.8 fps + system sound; `--window` + its app's sound; the browser started with `open` (else the sound is silent) | avfoundation, no sound |
+| Windows 11 ARM64 VM, Edge 157 | screen + system sound; `--window` + its app's sound; Ctrl-C through `console-event.ps1` quits Edge | ddagrab (works in the VM), no sound |
+| Linux, Docker (Xvfb, openbox, PulseAudio null sink, Chromium 156) | screen and `--window` with the system sound (PulseAudio monitor); Chromium needed `--no-sandbox` in the container (a `--browser` wrapper) | x11grab + `@DEFAULT_MONITOR@`, also `--window` |
+| Linux Wayland | untested (the portal dialog picks) | refused |
+
+In the VM: build into a directory of its own (`TVPIPE_VM=C:\tvp-screen`)
+when another worktree uses `C:\tvp`; `console-event.ps1 -Exe ... -Log ...`
+runs it.
+
 ## Repeating it
 
 Windows (from macOS or Linux, needs zig and the rustup targets):

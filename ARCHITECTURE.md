@@ -13,6 +13,9 @@ detail lives in `docs/`:
 - [`cross-platform.md`](docs/cross-platform.md): what was checked on which
   OS.
 - [`meet.md`](docs/meet.md): presenting into video calls.
+- [`screen.md`](docs/screen.md): sharing a screen or a window with
+  sound (`tvpipe screen`): Chrome's capture per OS, the ffmpeg fallback,
+  native APIs assessed.
 - [`airplay-mirroring.md`](docs/airplay-mirroring.md): the clean-room
   AirPlay mirroring spec.
 
@@ -165,6 +168,18 @@ re-shares, reloads crashed pages, restarts a dead browser, and quits it
 and deletes the temporary profile at the end. Nothing is disguised: sites
 that refuse automated browsers do not work. For users:
 [A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/).
+
+**Screen capture** (`tvpipe screen`) uses the same machinery for the
+desktop: tvpipe's own browser (a small normal window, since desktop
+capture does not work headless) opens a capture page of the share
+server, and `getDisplayMedia` is answered by Chrome's `--auto-select-*`
+switches (the main screen, `Screen N`, or a window whose title contains
+a string) with the system sound ticked; a window gets its app's sound
+where the OS allows (macOS 14.2+, Windows 11). Once it shares, the window
+is minimized and the stream is `share`'s. Without such a browser (or
+with `--engine ffmpeg`) ffmpeg captures, with per-OS input arguments
+built as strings (sound only on Linux). Why, and what works on which OS:
+[`docs/screen.md`](docs/screen.md).
 
 The WebSocket, HTTP bits, base64 and the DevTools client are hand-rolled;
 the pages are static files embedded in the binary.
@@ -388,6 +403,13 @@ Everything is platform-neutral except these, each with no crate and every
   well-known browser install paths (Chromium-based and Firefox) and the
   browsers' own profile directories, which `tvpipe share URL --profile` refuses
   (`src/browser/platform.rs`).
+- **Starting `tvpipe screen`'s browser on macOS** (`src/browser/platform.rs`,
+  `own_app_command`): through `open -n -g -a APP --args ...` instead of
+  as a child. macOS gives screen and system-audio recording to the
+  "responsible" app; as tvpipe's child the browser counts as the
+  terminal, whose missing "System Audio Recording" permission made the
+  sound silent. A command, not an OS API; quitting it goes over DevTools
+  (then `kill` by pid).
 
 Other Windows differences (UDP `ConnectionReset`, `shutdown` not waking a
 blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in portable code; see
