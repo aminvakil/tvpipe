@@ -1,7 +1,7 @@
 # W9 Passthrough sources + encoded SLRW (options A + B)
 
 Status: done; Apple TV B-frame experiment waits for the human
-(`STREAMLIB_EXPERIMENT_BFRAMES`). Owns `src/media/{mp4,input,passthrough}.rs` (new),
+(`TVPIPE_EXPERIMENT_BFRAMES`). Owns `src/media/{mp4,input,passthrough}.rs` (new),
 `src/media/{slrw,rawin}.rs` (extend), `examples/slrw-gen.rs`,
 `tests/fixtures/media/**`. Don't edit `session.rs` until W7 has merged; the
 lead tells you, then you wire `media::input` in.

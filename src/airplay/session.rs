@@ -179,7 +179,7 @@ impl Default for MirrorOptions {
         MirrorOptions {
             latency_ms: None,
             audio: true,
-            name: "streamlib".into(),
+            name: "tvpipe".into(),
             ptp: true,
         }
     }

@@ -1405,7 +1405,7 @@ mod tests {
     /// Generates a short file with ffmpeg; `None` if ffmpeg is unusable.
     fn media_file(name: &str, audio: bool) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
         let (bin, _) = crate::media::ffmpeg::tests::real_ffmpeg()?;
-        let dir = std::env::temp_dir().join(format!("streamlib-session-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tvpipe-session-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         let path = dir.join(name);
         let mut cmd = StdCommand::new(&bin);
@@ -1476,7 +1476,7 @@ mod tests {
     /// A file x264 made without B-frames (1 s, GOP 15, AAC-LC 48 kHz).
     fn passthrough_file(name: &str) -> Option<std::path::PathBuf> {
         let (bin, _) = crate::media::ffmpeg::tests::real_ffmpeg()?;
-        let dir = std::env::temp_dir().join(format!("streamlib-session-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tvpipe-session-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         let path = dir.join(name);
         let ok = StdCommand::new(&bin)
@@ -1499,7 +1499,7 @@ mod tests {
         ok.then_some(path)
     }
 
-    const NO_FFMPEG: &str = "/nonexistent/streamlib-test/ffmpeg";
+    const NO_FFMPEG: &str = "/nonexistent/tvpipe-test/ffmpeg";
 
     fn is_adts(data: &[u8]) -> bool {
         data.len() > 7 && data[0] == 0xff && data[1] & 0xf6 == 0xf0

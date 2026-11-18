@@ -46,7 +46,7 @@ pub fn enabled(level: Level) -> bool {
 #[doc(hidden)]
 pub fn write(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
     let elapsed = START.get_or_init(Instant::now).elapsed();
-    let module = module.strip_prefix("streamlib::").unwrap_or(module);
+    let module = module.strip_prefix("tvpipe::").unwrap_or(module);
     let mut err = std::io::stderr().lock();
     let _ = writeln!(
         err,

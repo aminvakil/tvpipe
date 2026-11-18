@@ -11,7 +11,7 @@ Confidence tags used below:
 
 - **[HW]** observed on the dev Apple TV 4K (AppleTV6,2, tvOS 26.6.1,
   `AirTunes/960.13.1`, "Livingroom (2)") on 2026-11-18 with a HAP pairing
-  made by streamlib (`X-Apple-HKP: 3`), FairPlay, PTP and ALAC audio. The session was accepted end to end (all requests 200, data channel open,
+  made by tvpipe (`X-Apple-HKP: 3`), FairPlay, PTP and ALAC audio. The session was accepted end to end (all requests 200, data channel open,
 receiver audio statistics reported), and on 2026-11-18 a person watching
 the TV confirmed picture and sound for three variants (§13).
 - **[REF]** what the reference sender does and what its authors report as
@@ -88,7 +88,7 @@ Session sequence (control-first ordering; §4 has every message):
 The pairing outcome selects one of two profiles for everything after it:
 
 - **HAP profile**: pair-verify was the HomeKit-style TLV8 exchange and the
-  control connection is now ChaCha20-Poly1305 framed (what streamlib does
+  control connection is now ChaCha20-Poly1305 framed (what tvpipe does
   today). Video uses ChaCha20-Poly1305 keyed from the pair-verify shared
   secret, audio uses ChaCha20-Poly1305 with a random key sent in SETUP, the
   event channel is encrypted, PTP timing is available. **This is the Apple
@@ -103,7 +103,7 @@ Let `S` be the 32-byte X25519 shared secret of the pair-verify that keyed
 the current control connection (`Control::shared`).
 
 [HW] Pair-verify must use the same `X-Apple-HKP` value family that the
-pairing was created with. A streamlib pairing (created with `X-Apple-HKP: 3`)
+pairing was created with. A tvpipe pairing (created with `X-Apple-HKP: 3`)
 verifies with only `X-Apple-HKP: 3`; the same keys presented with
 `X-Apple-HKP: 5` (the screen-capture pairing type) plus
 `X-Apple-Client-Name`, `X-Apple-Client-ID` and `X-Apple-PD: 1` fail with
@@ -185,7 +185,7 @@ negative, reinterpret as u64). Bits: `0x800` PCM 44.1k/16/2, `0x40000` ALAC
 (PCM→0x800, ALAC→0x40000, AAC-LC→0x400000, AAC-ELD→0x1000000). A present
 but zero mask means "unknown": use ALAC.
 
-Selection for streamlib: ALAC if bit `0x40000` is set; else AAC-ELD if
+Selection for tvpipe: ALAC if bit `0x40000` is set; else AAC-ELD if
 `0x1000000` is set and an AAC-ELD encoder is available; else fail with a
 clear error ("receiver only offers AAC-ELD"). The dev Apple TV sends
 `screenStream = 0x1440800` (PCM, ALAC, AAC-LC, AAC-ELD) [HW]. The reference
@@ -263,7 +263,7 @@ The sender picks one pair of playout leads for the session:
 | explicit (user) | L | L | floor(L × 44.1) |
 
 The reference picks "wireless" when the control connection's local
-interface is Wi-Fi (an OS query); streamlib cannot ask the OS portably, so
+interface is Wi-Fi (an OS query); tvpipe cannot ask the OS portably, so
 use "normal" by default and let the user override (or choose "wireless"
 when unsure; it only costs latency). Explicit values are clamped to
 5–2000 ms. ms → samples always truncates (`floor(ms × 44100 / 1000)`).
@@ -340,7 +340,7 @@ application/x-apple-binary-plist`. Full examples (bplist hex plus XML) in
 
 | Key | Type | Value |
 |---|---|---|
-| `deviceID` | string | a sender id formatted as a MAC, six uppercase hex pairs with colons, first octet `02` (locally administered), e.g. `02:34:73:DA:E2:DF`. The reference takes the first 12 hex digits of a UUID generated per control connection and forces the first octet to `02`, so the value changes every run; it is not related to the pairing identity and need not match anything sent in pair-setup/verify [HW: a fresh random value per run was accepted with streamlib's stored pairing]. Deriving it from the controller id is also fine. |
+| `deviceID` | string | a sender id formatted as a MAC, six uppercase hex pairs with colons, first octet `02` (locally administered), e.g. `02:34:73:DA:E2:DF`. The reference takes the first 12 hex digits of a UUID generated per control connection and forces the first octet to `02`, so the value changes every run; it is not related to the pairing identity and need not match anything sent in pair-setup/verify [HW: a fresh random value per run was accepted with tvpipe's stored pairing]. Deriving it from the controller id is also fine. |
 | `macAddress` | string | same as `deviceID` |
 | `sessionUUID` | string | random UUID v4, lowercase; reused in `RECORD`'s `Session:` header |
 | `sourceVersion` | string | `980.71.1` |
@@ -929,7 +929,7 @@ apply the strictly-increasing rule (§6.3).
 No codec configuration (magic cookie) is sent; the receiver derives it from
 `ct`/`spf`/`sr`. ffmpeg's ALAC encoder always produces 4096-sample frames
 (not configurable), so it cannot be used directly; produce 352-sample ALAC
-frames from PCM in streamlib, at least as verbatim frames (§8.7). AAC-ELD
+frames from PCM in tvpipe, at least as verbatim frames (§8.7). AAC-ELD
 needs an external encoder (ffmpeg `libfdk_aac`, profile `aac_eld`,
 480-sample frames).
 
@@ -1312,7 +1312,7 @@ file are zeroed.
 
 Observed on the dev Apple TV 4K (AppleTV6,2, tvOS 26.6.1,
 AirTunes/960.13.1), 2026-11-18 01:10–01:12, HAP pair-verify with
-streamlib's stored pairing, PTP, ChaCha20-Poly1305 video and audio, a
+tvpipe's stored pairing, PTP, ChaCha20-Poly1305 video and audio, a
 1280×720 30 fps H.264 test pattern and a 440 Hz tone, 20 s per run. A
 person watching the TV reported **picture and sound in all three runs**:
 
@@ -1376,7 +1376,7 @@ TLV8 transient pair-setup, which `X-Apple-HKP` value [REF]:
   other value once if the first is refused with one of the statuses above
   before M2.
 - SRP password for transient pair-setup: the reference uses the **empty**
-  password (its test receiver does the same), while streamlib (after
+  password (its test receiver does the same), while tvpipe (after
   pyatv) uses `3939`. Which one real third-party receivers expect is
   unverified; the dev Apple TV requires PIN pairing and could not settle
   it. If a transient pair-setup fails at M4 with an authentication error,

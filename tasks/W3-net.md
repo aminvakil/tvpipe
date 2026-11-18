@@ -25,11 +25,11 @@ open (no such responder was visible on 2026-11-17). Owns `src/net/**`, `src/airp
       (status line, headers, Content-Length bodies, chunked for HTTP) over
       any `Read + Write`, so it works on TCP and on W5's encrypted stream.
       Size limits on headers/bodies.
-- [x] `streamlib discover [--json] [--timeout] [--interface]`: put the
+- [x] `tvpipe discover [--json] [--timeout] [--interface]`: put the
       command body in `net::discover::run(timeout, json, interfaces)`
       (or similar) in your module; the lead wires it into `session.rs`.
 
-Done when: `streamlib discover` lists real devices on this network (run
+Done when: `tvpipe discover` lists real devices on this network (run
 it!), plus parsing fixtures. Capture real responses for fixtures (scrub
 nothing that's needed but replace serials/MACs with fakes).
 

@@ -3,12 +3,12 @@
 //! [`StreamingSink`]. See `scripts/receivers/cast-receiver.sh`.
 //!
 //! ```sh
-//! STREAMLIB_CAST_ADDR=127.0.0.1:8010 STREAMLIB_CAST_SECS=10 \
+//! TVPIPE_CAST_ADDR=127.0.0.1:8010 TVPIPE_CAST_SECS=10 \
 //!     cargo test cast::receiver_loop -- --ignored --nocapture
 //! ```
 //!
-//! `STREAMLIB_CAST_LOSS=0.02` puts a relay in the media path that drops
-//! 2% of the packets in each direction; `STREAMLIB_CAST_AUDIO=0` sends
+//! `TVPIPE_CAST_LOSS=0.02` puts a relay in the media path that drops
+//! 2% of the packets in each direction; `TVPIPE_CAST_AUDIO=0` sends
 //! video only.
 //!
 //! The ffmpeg output is parsed here only because the W4 demuxer is not
@@ -28,7 +28,7 @@ use crate::types::{
 use crate::util::ratio::Ratio;
 
 fn ffmpeg() -> String {
-    std::env::var("STREAMLIB_FFMPEG").unwrap_or_else(|_| {
+    std::env::var("TVPIPE_FFMPEG").unwrap_or_else(|_| {
         if std::path::Path::new("/opt/homebrew/bin/ffmpeg").exists() {
             "/opt/homebrew/bin/ffmpeg".into()
         } else {
@@ -129,7 +129,7 @@ pub fn ogg_opus_packets(data: &[u8]) -> Vec<Vec<u8>> {
 }
 
 fn generate(secs: u64, size: &str) -> (Vec<u8>, Vec<u8>) {
-    let dir = std::env::temp_dir().join(format!("streamlib-cast-loop-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("tvpipe-cast-loop-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let h264 = dir.join("v.h264");
     let opus = dir.join("a.opus");
@@ -250,16 +250,16 @@ fn lossy_relay(receiver: SocketAddr, loss: f64) -> (SocketAddr, Arc<AtomicBool>)
 #[test]
 #[ignore = "needs a Cast receiver (scripts/receivers/cast-receiver.sh)"]
 fn openscreen_receiver_loop() {
-    let addr: SocketAddr = std::env::var("STREAMLIB_CAST_ADDR")
+    let addr: SocketAddr = std::env::var("TVPIPE_CAST_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8010".into())
         .parse()
         .unwrap();
-    let secs: u64 = std::env::var("STREAMLIB_CAST_SECS")
+    let secs: u64 = std::env::var("TVPIPE_CAST_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
-    let audio = std::env::var("STREAMLIB_CAST_AUDIO").map_or(true, |v| v != "0");
-    let loss: f64 = std::env::var("STREAMLIB_CAST_LOSS")
+    let audio = std::env::var("TVPIPE_CAST_AUDIO").map_or(true, |v| v != "0");
+    let loss: f64 = std::env::var("TVPIPE_CAST_LOSS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
@@ -282,7 +282,7 @@ fn openscreen_receiver_loop() {
     if loss > 0.0 {
         // The ANSWER's port is only known after connect, so the relay
         // targets the receiver's default Cast Streaming port.
-        let port = std::env::var("STREAMLIB_CAST_UDP_PORT")
+        let port = std::env::var("TVPIPE_CAST_UDP_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(2344);

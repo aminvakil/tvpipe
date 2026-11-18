@@ -1119,11 +1119,11 @@ pub(crate) mod tests {
 mod preview {
     use super::*;
 
-    /// Writes one pattern frame as raw I420 to `$STREAMLIB_PATTERN_OUT`.
+    /// Writes one pattern frame as raw I420 to `$TVPIPE_PATTERN_OUT`.
     #[test]
     #[ignore = "writes a preview frame"]
     fn pattern_preview() {
-        let out = std::env::var("STREAMLIB_PATTERN_OUT").expect("STREAMLIB_PATTERN_OUT");
+        let out = std::env::var("TVPIPE_PATTERN_OUT").expect("TVPIPE_PATTERN_OUT");
         let p = TestPattern::new(
             Size {
                 width: 1280,

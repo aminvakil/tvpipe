@@ -1,4 +1,4 @@
-//! streamlib: low-latency mirroring to AirPlay and Google Cast receivers.
+//! tvpipe: low-latency mirroring to AirPlay and Google Cast receivers.
 
 // Modules are filled in by the workstreams; until they are wired into the
 // CLI, much of their API is unused from `main`.

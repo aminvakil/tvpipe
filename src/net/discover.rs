@@ -1,4 +1,4 @@
-//! `streamlib discover` and `--to NAME` resolution (PLAN §4, §6).
+//! `tvpipe discover` and `--to NAME` resolution (PLAN §4, §6).
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;

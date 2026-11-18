@@ -2,7 +2,7 @@
 
 Status: accepted by the human (2026-11-18). A Ctrl-C/SIGTERM stop exits with status 130 after teardown; `q` + Enter exits with 0.
 code only; `cfg(target_os)` only for config paths"). **The human has the
-final say**; dropping this means Ctrl-C ends streamlib without STOP or
+final say**; dropping this means Ctrl-C ends tvpipe without STOP or
 TEARDOWN.
 
 ## Problem
@@ -13,7 +13,7 @@ whole foreground process group (Windows: CTRL_C_EVENT to every process on
 the console). The default action kills the process immediately. std has no
 API to install a handler or ignore the signal, so a std-only program cannot
 run any teardown on Ctrl-C. The suggested fallback ("ffmpeg gets SIGINT,
-exits, and we tear down on its EOF") does not work: streamlib receives the
+exits, and we tear down on its EOF") does not work: tvpipe receives the
 same signal and dies at the same moment.
 
 ## Decision

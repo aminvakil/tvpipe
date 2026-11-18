@@ -170,7 +170,7 @@ pub fn connect(addr: SocketAddr, name: &str, opts: &CastOptions) -> Result<Strea
     let app = launch(&channel)?;
     let suffix = u32::from_be_bytes(random_array()?) % 1_000_000;
     let control = Control {
-        local_id: format!("streamlib-{suffix}"),
+        local_id: format!("tvpipe-{suffix}"),
         transport_id: app.transport_id.clone().unwrap_or_default(),
         session_id: app.session_id.clone().unwrap_or_default(),
     };

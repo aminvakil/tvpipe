@@ -31,7 +31,7 @@ and frames sent in presentation order, so in practice **no B-frames**.
 4. **Audio**: resampling and encoding to Opus/AAC for Cast; ALAC for AirPlay
    is already "free" (verbatim ALAC from PCM, confirmed on the Apple TV).
 5. **Capture** (`-f avfoundation`, `gdigrab`, …): platform code we don't
-   want in streamlib anyway.
+   want in tvpipe anyway.
 
 ## Options
 
@@ -103,7 +103,7 @@ Run with `scripts/receivers/cast-receiver.sh run` (openscreen's
 `cast_receiver`, the ffmpeg + SDL build) and
 
 ```sh
-STREAMLIB_PT_KIND=bframes STREAMLIB_PT_ORDER=dts \
+TVPIPE_PT_KIND=bframes TVPIPE_PT_ORDER=dts \
     cargo test media::input::experiments -- --ignored --nocapture
 ```
 
@@ -151,10 +151,10 @@ Follow-up (W9, after the wiring):
   (`media/cast/encoding/audio_encoder.cc`), and `CastOptions` can offer
   AAC alone. A file with AAC that could pass is offered AAC only; an
   encoding game's PCM goes through `media::aacenc` to Cast. On openscreen
-  both play without decode errors (`slrw-gen --encoded --exec streamlib
+  both play without decode errors (`slrw-gen --encoded --exec tvpipe
   play --ffmpeg /bogus ...`: 180 video and 281 AAC frames, 3 keyframe
   requests honoured).
-- B-frames on hardware: `STREAMLIB_EXPERIMENT_BFRAMES=dts` (or `pts`)
+- B-frames on hardware: `TVPIPE_EXPERIMENT_BFRAMES=dts` (or `pts`)
   makes `play FILE` pass files with B-frames through in decode order,
   stamped with decode (or presentation) times. Unset, they go through
   ffmpeg.

@@ -1,9 +1,9 @@
 //! Sample SLRW generator: writes moving color bars and a sine tone, paced
-//! in real time, to stdout. Feed it to streamlib's game input:
+//! in real time, to stdout. Feed it to tvpipe's game input:
 //!
 //! ```text
 //! cargo run --example slrw-gen -- --size 640x360 --fps 30 --seconds 5 |
-//!     streamlib debug-pipeline --raw-video 640x360@30:rgba --raw-audio 48000:2:s16le -
+//!     tvpipe debug-pipeline --raw-video 640x360@30:rgba --raw-audio 48000:2:s16le -
 //! ```
 //!
 //! Options: `--size WxH` (default 640x360), `--fps N` (30), `--rate HZ`
@@ -14,15 +14,15 @@
 //! `--encoded` sends H.264 instead (decision 0008), the way a game with
 //! its own hardware encoder would. This example uses ffmpeg (libx264,
 //! no B-frames) as that encoder, so it needs ffmpeg in `PATH` (or
-//! `$STREAMLIB_FFMPEG`); streamlib itself then runs without ffmpeg for
+//! `$TVPIPE_FFMPEG`); tvpipe itself then runs without ffmpeg for
 //! video:
 //!
 //! ```text
 //! cargo run --example slrw-gen -- --encoded --no-audio |
-//!     streamlib play --to TV --raw-video 640x360@30:h264 -
+//!     tvpipe play --to TV --raw-video 640x360@30:h264 -
 //! ```
 //!
-//! `--exec PROGRAM ARGS...` (the rest of the command line) runs streamlib
+//! `--exec PROGRAM ARGS...` (the rest of the command line) runs tvpipe
 //! as a child, like a game would: SLRW goes to its stdin and keyframe
 //! requests come back on its stdout. On a request the example restarts its
 //! encoder, which starts with an IDR (an engine would call its encoder's
@@ -30,7 +30,7 @@
 //!
 //! ```text
 //! cargo run --example slrw-gen -- --encoded --gop 300 --exec \
-//!     streamlib play --to TV --raw-video 640x360@30:h264 --raw-audio 48000:2:s16le -
+//!     tvpipe play --to TV --raw-video 640x360@30:h264 --raw-audio 48000:2:s16le -
 //! ```
 //!
 //! `--gop N` sets the encoder's keyframe interval in frames (default 2 s).
@@ -151,7 +151,7 @@ fn frame(o: &Opts, n: u64, buf: &mut [u8]) {
 }
 
 fn ffmpeg_bin() -> String {
-    std::env::var("STREAMLIB_FFMPEG").unwrap_or_else(|_| "ffmpeg".into())
+    std::env::var("TVPIPE_FFMPEG").unwrap_or_else(|_| "ffmpeg".into())
 }
 
 /// NAL unit types in an Annex B buffer.
@@ -276,7 +276,7 @@ fn run(o: &Opts) -> io::Result<()> {
         let out = BufWriter::with_capacity(1 << 20, out.lock());
         return generate(o, out, None);
     }
-    // Like a game: streamlib as a child, SLRW on its stdin, keyframe
+    // Like a game: tvpipe as a child, SLRW on its stdin, keyframe
     // requests on its stdout.
     let mut child = Command::new(&o.exec[0])
         .args(&o.exec[1..])

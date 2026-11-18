@@ -110,7 +110,7 @@ encodable("heartbeat PING", source_id="sender-0", destination_id="receiver-0",
           namespace=HB, payload_type=pb.CastMessage.STRING, payload_utf8='{"type":"PING"}')
 encodable("connection CONNECT", source_id="sender-0", destination_id="receiver-0",
           namespace=CONN, payload_type=pb.CastMessage.STRING,
-          payload_utf8='{"type":"CONNECT","userAgent":"streamlib"}')
+          payload_utf8='{"type":"CONNECT","userAgent":"tvpipe"}')
 encodable("receiver LAUNCH", source_id="sender-0", destination_id="receiver-0",
           namespace=RECV, payload_type=pb.CastMessage.STRING,
           payload_utf8='{"type":"LAUNCH","requestId":1,"appId":"0F5096E8"}')

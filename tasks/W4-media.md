@@ -3,7 +3,7 @@
 Status: done (clock, fanout and the fps tweak wait for merge from `w4-media`). Owns `src/media/**`, `examples/slrw-gen.rs`,
 `tests/fixtures/media/**`.
 
-- [x] `ffmpeg.rs`: locate ffmpeg (`--ffmpeg`, `$STREAMLIB_FFMPEG`, PATH),
+- [x] `ffmpeg.rs`: locate ffmpeg (`--ffmpeg`, `$TVPIPE_FFMPEG`, PATH),
       `-encoders` probe, argv builder from `EncodePlan` + input spec (PLAN
       §5.1, per-encoder low-latency flags), spawn with stdout pipe, stderr
       pump thread into the logger, kill/wait on drop.
@@ -22,7 +22,7 @@ Status: done (clock, fanout and the fps tweak wait for merge from `w4-media`). O
 - [x] `clock.rs`: media clock mapping first pts to `Instant`.
 - [x] `fanout.rs`: bounded per-sink queues + one thread per sink;
       keyframe-skip when full or when the sink `wants_keyframe()`.
-- [x] `streamlib debug-pipeline`: put the command body in
+- [x] `tvpipe debug-pipeline`: put the command body in
       `media::debug::run(&PipelineOptions)` in your module (prints stream
       info and pts/keyframe/size per frame); the lead wires it into
       `session.rs` (`Command::DebugPipeline(o) => crate::media::debug::run(&o)`).

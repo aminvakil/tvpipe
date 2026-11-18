@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn ffmpeg() -> Option<String> {
-    let bin = std::env::var("STREAMLIB_FFMPEG").unwrap_or_else(|_| {
+    let bin = std::env::var("TVPIPE_FFMPEG").unwrap_or_else(|_| {
         if std::path::Path::new("/opt/homebrew/bin/ffmpeg").exists() {
             "/opt/homebrew/bin/ffmpeg".into()
         } else {
@@ -105,7 +105,7 @@ fn encode_all(enc: &mut Encoder, pcm: &[i16]) -> Vec<Vec<u8>> {
 }
 
 fn tmp(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("streamlib-aacenc-{}-{name}", std::process::id()))
+    std::env::temp_dir().join(format!("tvpipe-aacenc-{}-{name}", std::process::id()))
 }
 
 /// Decodes ADTS with ffmpeg to interleaved s16.

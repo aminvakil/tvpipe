@@ -6,7 +6,7 @@
 //! config directory ([`config_dir`]):
 //!
 //! ```text
-//! # streamlib AirPlay credentials: private, do not share
+//! # tvpipe AirPlay credentials: private, do not share
 //! controller = 5B3C1A0E-...-UUID
 //! seed = <64 hex digits>
 //!
@@ -38,19 +38,25 @@ use crate::util::hex;
 pub const FILE_NAME: &str = "credentials.txt";
 
 /// Overrides the config directory (tests, portable installs).
-pub const CONFIG_DIR_ENV: &str = "STREAMLIB_CONFIG_DIR";
+pub const CONFIG_DIR_ENV: &str = "TVPIPE_CONFIG_DIR";
 
-/// The platform config directory for streamlib: `$STREAMLIB_CONFIG_DIR`,
-/// else `$XDG_CONFIG_HOME/streamlib` (or `~/.config/streamlib`) on unix,
-/// `~/Library/Application Support/streamlib` on macOS, and
-/// `%APPDATA%\streamlib` on Windows. Computed from environment variables
+/// The platform config directory for tvpipe: `$TVPIPE_CONFIG_DIR`,
+/// else `$XDG_CONFIG_HOME/tvpipe` (or `~/.config/tvpipe`) on unix,
+/// `~/Library/Application Support/tvpipe` on macOS, and
+/// `%APPDATA%\tvpipe` on Windows. Computed from environment variables
 /// only.
 pub fn config_dir() -> Result<PathBuf> {
     if let Some(dir) = env_path(CONFIG_DIR_ENV) {
         return Ok(dir);
     }
+    // Unit tests never touch the user's real credentials; the hardware
+    // tests (which set TVPIPE_ATV) do on purpose.
+    #[cfg(test)]
+    if std::env::var_os("TVPIPE_ATV").is_none() {
+        return Ok(std::env::temp_dir().join(format!("tvpipe-test-config-{}", std::process::id())));
+    }
     platform_config_dir()
-        .map(|d| d.join("streamlib"))
+        .map(|d| d.join("tvpipe"))
         .ok_or_else(|| Error::not_found("credentials: cannot determine the config directory"))
 }
 
@@ -79,7 +85,39 @@ fn platform_config_dir() -> Option<PathBuf> {
 
 /// The default store path: `config_dir()/credentials.txt`.
 pub fn default_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join(FILE_NAME))
+    let dir = config_dir()?;
+    if env_path(CONFIG_DIR_ENV).is_none() {
+        migrate_legacy_dir(&dir);
+    }
+    Ok(dir.join(FILE_NAME))
+}
+
+/// The project used to be called `streamlib`; move its config directory
+/// (with the pairing credentials) to the new name once, so nobody has to
+/// pair again. Best effort: on failure the old directory stays and is
+/// ignored.
+fn migrate_legacy_dir(dir: &std::path::Path) {
+    if dir.exists() {
+        return;
+    }
+    let Some(old) = platform_config_dir().map(|d| d.join("streamlib")) else {
+        return;
+    };
+    if !old.is_dir() {
+        return;
+    }
+    match std::fs::rename(&old, dir) {
+        Ok(()) => info!(
+            "moved the old config directory {} to {}",
+            old.display(),
+            dir.display()
+        ),
+        Err(e) => warn!(
+            "cannot move the old config directory {} to {}: {e}",
+            old.display(),
+            dir.display()
+        ),
+    }
 }
 
 /// Our long-term controller identity.
@@ -211,7 +249,7 @@ pub struct Store {
     pub receivers: Vec<Receiver>,
 }
 
-const HEADER: &str = "# streamlib AirPlay credentials: private, do not share\n";
+const HEADER: &str = "# tvpipe AirPlay credentials: private, do not share\n";
 
 impl Store {
     /// Loads the store at `path`, creating a new identity (and saving it)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks `streamlib debug-pipeline --raw` against `ffprobe -show_packets`.
+# Checks `tvpipe debug-pipeline --raw` against `ffprobe -show_packets`.
 #
 # For several ffmpeg-generated files, the frames our demuxer reports
 # (stream, pts in ms, keyframe flag, size) must equal ffprobe's packets of
@@ -9,7 +9,7 @@
 # counts, keyframe spacing and monotonic timestamps, and SLRW game input
 # end to end with examples/slrw-gen.
 #
-# Usage: scripts/check-pipeline.sh [path/to/streamlib]
+# Usage: scripts/check-pipeline.sh [path/to/tvpipe]
 # Requires ffmpeg, ffprobe and python3.
 set -euo pipefail
 
@@ -18,7 +18,7 @@ if [[ $# -ge 1 ]]; then
   bin="$1"
 else
   (cd "$root" && cargo build --quiet --all-targets)
-  bin="$root/target/debug/streamlib"
+  bin="$root/target/debug/tvpipe"
 fi
 gen="$root/target/debug/examples/slrw-gen"
 tmp="$(mktemp -d)"

@@ -2,7 +2,7 @@
 
 ## 2026-11-18: Apple TV 4K (AppleTV6,2, tvOS 26.6.1) "Livingroom (2)"
 
-Setup: `streamlib test-pattern --encoder builtin` (built-in H.264,
+Setup: `tvpipe test-pattern --encoder builtin` (built-in H.264,
 1280x720@30, 2764 kbit/s), default latency profile ("wireless": video
 lead 100 ms, audio 170 ms), Wi-Fi sender (MacBook Pro), TV in its normal
 picture mode. Burned-in clock = UTC wallclock at frame generation.

@@ -227,11 +227,11 @@ mod tests {
     }
 
     /// Live check against a real receiver:
-    /// `STREAMLIB_LIVE_AIRPLAY=192.168.1.34:7000 cargo test live_ -- --ignored`
+    /// `TVPIPE_LIVE_AIRPLAY=192.168.1.34:7000 cargo test live_ -- --ignored`
     #[test]
     #[ignore]
     fn live_info_over_tcp() {
-        let Some(addr) = std::env::var_os("STREAMLIB_LIVE_AIRPLAY") else {
+        let Some(addr) = std::env::var_os("TVPIPE_LIVE_AIRPLAY") else {
             return;
         };
         let addr = addr.to_string_lossy().into_owned();

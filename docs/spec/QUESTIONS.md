@@ -12,7 +12,7 @@ accepted it at protocol level.
 
 1. §4.5/§4.6/§4.7: does any receiver time out between the audio SETUP
    (#2) and the video SETUP (#3), or between SETUP #3 and the first codec
-   packet / first `/feedback`? streamlib must start ffmpeg after it knows
+   packet / first `/feedback`? tvpipe must start ffmpeg after it knows
    the canvas, so it sends SETUP #2 in its connect phase and SETUP #3 when
    the encoder's first output is ready (gap ~0.1 s here, up to ~1–2 s with
    slow inputs). [Gap allowed; `/feedback` starts right after SETUP #3.]
@@ -50,7 +50,7 @@ accepted it at protocol level.
    `X-Apple-HKP`; modelled legacy receivers treat its absence as type 3.
    Only TLV8 pairing requests to such receivers use `X-Apple-HKP: 3`.
    Spec: Appendix A (first paragraph).
-5. Appendix A: "try TLV8 transient pair-setup with HKP 3": streamlib's
+5. Appendix A: "try TLV8 transient pair-setup with HKP 3": tvpipe's
    existing transient pair-setup sends `X-Apple-HKP: 4`. Which is right
    for third-party receivers? [Unchanged: the HAP fallback is W5's
    `pair::connect`.]
@@ -61,7 +61,7 @@ accepted it at protocol level.
    pair-setup and the pair-verify after it. It matters for LG-like TVs (the
    model rejects non-3). The reference retries the other value once on an
    early rejection. Also: the reference uses an empty SRP password for
-   transient pairing, streamlib uses `3939`; unverified which real
+   transient pairing, tvpipe uses `3939`; unverified which real
    third-party receivers want. Spec: Appendix A ("TLV8 transient
    pair-setup").
 6. §5.0/§5.2/§5.3: legacy profile **without** FairPlay (feature 14

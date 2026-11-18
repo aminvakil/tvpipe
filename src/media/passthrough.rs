@@ -1182,7 +1182,7 @@ pub(crate) mod tests {
         let Some((bin, _)) = crate::media::ffmpeg::tests::real_ffmpeg() else {
             return;
         };
-        let out = std::env::temp_dir().join(format!("streamlib-pt-{}.mkv", std::process::id()));
+        let out = std::env::temp_dir().join(format!("tvpipe-pt-{}.mkv", std::process::id()));
         let ok = std::process::Command::new(bin)
             .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
             .arg(fixture("bframes.mp4"))

@@ -1,4 +1,4 @@
-# streamlib — Plan
+# tvpipe — Plan
 
 A single, dependency-light Rust CLI that takes a video+audio source (a file, a
 URL, or raw frames from a game) and mirrors it with the lowest achievable
@@ -27,7 +27,7 @@ Status: planning. Nothing is implemented yet.
   ("replication"). Receivers will not be frame-locked to each other.
 - **Two primary use cases:**
   1. Mirror a video file (or any ffmpeg-readable source) in real time.
-  2. Mirror a game that feeds raw frames and PCM into `streamlib`.
+  2. Mirror a game that feeds raw frames and PCM into `tvpipe`.
 
 ### Non-goals (for now)
 
@@ -46,7 +46,7 @@ Status: planning. Nothing is implemented yet.
 
 | Constraint | Consequence |
 |---|---|
-| Rust, single binary | `cargo build` produces `streamlib`; `ffmpeg` is the only runtime requirement |
+| Rust, single binary | `cargo build` produces `tvpipe`; `ffmpeg` is the only runtime requirement |
 | Minimal deps | Allowed: `argument`, `rustls` (ring backend, no default features), `ring`. Anything else needs a written justification in `docs/deps.md` |
 | No async runtime | `std::thread` + blocking sockets + channels. One thread per session/socket role |
 | Cross-platform | Only `std::net`, `std::process`, `std::fs`. mDNS is implemented by hand, without OS services |
@@ -198,10 +198,10 @@ src/
 ## 4. CLI
 
 ```
-streamlib discover [--timeout SECS] [--json]
-streamlib pair NAME|ADDR [--pin PIN]          # interactive PIN if omitted
-streamlib unpair NAME|ADDR
-streamlib play --to NAME|ADDR [--to ...]      # repeatable: replication
+tvpipe discover [--timeout SECS] [--json]
+tvpipe pair NAME|ADDR [--pin PIN]          # interactive PIN if omitted
+tvpipe unpair NAME|ADDR
+tvpipe play --to NAME|ADDR [--to ...]      # repeatable: replication
                [--latency MS]                  # target playout delay (default ~150–250)
                [--size WxH] [--fps N] [--bitrate KBPS]
                [--encoder auto|x264|videotoolbox|nvenc|qsv|vaapi|mf]
@@ -209,14 +209,14 @@ streamlib play --to NAME|ADDR [--to ...]      # repeatable: replication
                [--raw-video WxH@FPS:PIXFMT] [--raw-audio RATE:CH:FMT]   # game mode, SLRW on stdin
                [--ffmpeg PATH] [-- FFMPEG_INPUT_ARGS...]                # escape hatch
                INPUT | -
-streamlib test-pattern --to ...                # ffmpeg testsrc2 + burned-in wallclock for latency measurement
+tvpipe test-pattern --to ...                # ffmpeg testsrc2 + burned-in wallclock for latency measurement
 ```
 
 Notes:
 - `NAME` matches discovery names case-insensitively, and unique prefixes are
   accepted. `ADDR` skips discovery.
-- Credentials live in the platform config dir: `$XDG_CONFIG_HOME/streamlib`,
-  `~/Library/Application Support/streamlib`, or `%APPDATA%\streamlib`. The
+- Credentials live in the platform config dir: `$XDG_CONFIG_HOME/tvpipe`,
+  `~/Library/Application Support/tvpipe`, or `%APPDATA%\tvpipe`. The
   path is computed from env vars, with no crate.
 - Exit codes: 0 ok, 1 runtime error, 2 usage error (from `argument`).
 
@@ -252,18 +252,18 @@ ffmpeg -hide_banner -nostats -loglevel warning
   or an in-process encoder. Out of scope until M9; use a fixed bitrate.
 - `--` passes extra input args straight to ffmpeg (for example
   `-f avfoundation -i 1:0` or `-f gdigrab -i desktop`), so any capture source
-  ffmpeg supports works without platform code in `streamlib`.
+  ffmpeg supports works without platform code in `tvpipe`.
 
 ### 5.2 Game input (SLRW)
 
-The game spawns `streamlib play --raw-video 1920x1080@60:rgba --raw-audio
+The game spawns `tvpipe play --raw-video 1920x1080@60:rgba --raw-audio
 48000:2:s16le -` and writes a trivial framing to its stdin:
 
 ```
 "SLRW" magic once, then repeated: u8 kind (1=video,2=audio,0=end) | u64 pts_us | u32 len | payload
 ```
 
-`streamlib` opens two localhost TCP listeners, starts ffmpeg with
+`tvpipe` opens two localhost TCP listeners, starts ffmpeg with
 `-f rawvideo ... -i tcp://127.0.0.1:A -f s16le ... -i tcp://127.0.0.1:B`, and
 copies the payloads across. This works the same way on every OS, without fd
 passing or named pipes. `pts_us` lets us detect drift and drop late frames
@@ -509,7 +509,7 @@ attribution).
 
 ### Licensing stance
 
-- Intended license for `streamlib`: **Apache-2.0** (matching `argument`),
+- Intended license for `tvpipe`: **Apache-2.0** (matching `argument`),
   provided every line is written clean or ported from permissive sources.
 - **Fallback**: if the clean-room FairPlay stalls, port doubletake's FairPlay
   module into `src/airplay/fairplay/` under LGPL-3.0-or-later. The distributed
@@ -588,7 +588,7 @@ Honest caveats (this is not legal advice):
    | Samsung TV (year TBD) | AirPlay 2, Cast if 2023–2025 with 2026 update | available |
    | Google TV Streamer / Chromecast | Cast | to acquire if TVs lack Cast mirroring |
 
-5. **Latency measurement**: `streamlib test-pattern` burns a millisecond
+5. **Latency measurement**: `tvpipe test-pattern` burns a millisecond
    wallclock and a frame counter into the video. Photograph the sender's screen
    and the TV together (or point a phone at both). Record the results in
    `docs/latency.md` per device and setting.
@@ -601,11 +601,11 @@ Each milestone has an exit criterion that a human can verify.
 
 | # | Milestone | Exit criterion |
 |---|---|---|
-| M0 | Scaffold: crate, CLI skeleton, core types (§3), log, CI on mac/linux/windows | `streamlib --help` works; CI green; types reviewed and frozen |
+| M0 | Scaffold: crate, CLI skeleton, core types (§3), log, CI on mac/linux/windows | `tvpipe --help` works; CI green; types reviewed and frozen |
 | M1 | Foundations: AES/CTR/CBC, bigint, SRP, TLV8, bplist, JSON, protobuf, DNS codec | all KATs pass on 3 OSes |
-| M2 | Discovery | `streamlib discover` lists Apple TV, LG, Samsung, and any Cast device, merged per device |
-| M3 | Media pipeline | `streamlib debug-pipeline FILE` prints frames with pts/keyframe; ffmpeg→demux overhead measured; game SLRW input works with a sample generator |
-| M4 | AirPlay pairing + secure channel | `streamlib pair "Apple TV"` with PIN; reconnect with pair-verify; encrypted `/info` round-trip |
+| M2 | Discovery | `tvpipe discover` lists Apple TV, LG, Samsung, and any Cast device, merged per device |
+| M3 | Media pipeline | `tvpipe debug-pipeline FILE` prints frames with pts/keyframe; ffmpeg→demux overhead measured; game SLRW input works with a sample generator |
+| M4 | AirPlay pairing + secure channel | `tvpipe pair "Apple TV"` with PIN; reconnect with pair-verify; encrypted `/info` round-trip |
 | M5 | FairPlay (clean-room) | all spec vectors pass; byte-identical against the oracle under fuzzing; real Apple TV accepts m3/m4 |
 | M6 | AirPlay mirror video | test pattern and a file visibly mirror on the Apple TV; latency measured |
 | M7 | AirPlay audio + sync | ALAC audio in sync (±40 ms) on the Apple TV; Samsung and LG tried, quirks documented |

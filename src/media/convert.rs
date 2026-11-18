@@ -547,8 +547,8 @@ mod oracle {
             }
         }
         let dir = std::env::temp_dir();
-        let inp = dir.join(format!("streamlib-conv-{}.rgba", std::process::id()));
-        let out = dir.join(format!("streamlib-conv-{}.yuv", std::process::id()));
+        let inp = dir.join(format!("tvpipe-conv-{}.rgba", std::process::id()));
+        let out = dir.join(format!("tvpipe-conv-{}.yuv", std::process::id()));
         std::fs::write(&inp, &rgba).unwrap();
         let o = Command::new(ff)
             .args([

@@ -928,12 +928,12 @@ mod tests {
         assert!(plutil >= 3 && exact >= 5, "plutil {plutil} exact {exact}");
     }
 
-    /// With `STREAMLIB_BPLIST_OUT=<dir>`, writes our re-encoding of every
+    /// With `TVPIPE_BPLIST_OUT=<dir>`, writes our re-encoding of every
     /// fixture there so an external tool can check it, e.g.
     /// `plutil -lint <dir>/*.bplist` (done by scripts/vectors/bplist_check.sh).
     #[test]
     fn write_reencodings_for_external_check() {
-        let Some(dir) = std::env::var_os("STREAMLIB_BPLIST_OUT") else {
+        let Some(dir) = std::env::var_os("TVPIPE_BPLIST_OUT") else {
             return;
         };
         std::fs::create_dir_all(&dir).unwrap();

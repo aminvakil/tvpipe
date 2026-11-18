@@ -23,9 +23,9 @@ use crate::types::{
 use crate::util::ratio::Ratio;
 
 /// Environment variable naming the ffmpeg binary.
-pub const FFMPEG_ENV: &str = "STREAMLIB_FFMPEG";
+pub const FFMPEG_ENV: &str = "TVPIPE_FFMPEG";
 
-/// Finds ffmpeg: an explicit path, then `$STREAMLIB_FFMPEG`, then `PATH`.
+/// Finds ffmpeg: an explicit path, then `$TVPIPE_FFMPEG`, then `PATH`.
 pub fn locate(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p.to_owned());
@@ -35,7 +35,7 @@ pub fn locate(explicit: Option<&Path>) -> Result<PathBuf> {
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
     find_in_path("ffmpeg", &path).ok_or_else(|| {
-        Error::not_found("ffmpeg not found in PATH (use --ffmpeg PATH or $STREAMLIB_FFMPEG)")
+        Error::not_found("ffmpeg not found in PATH (use --ffmpeg PATH or $TVPIPE_FFMPEG)")
     })
 }
 
@@ -1057,7 +1057,7 @@ pub(crate) mod tests {
     /// paced on its own (badly interleaved files made `-re` lag).
     #[test]
     fn paced_local_file_opens_one_input_per_stream() {
-        let dir = std::env::temp_dir().join(format!("streamlib-ffmpeg-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tvpipe-ffmpeg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("movie.mov");
         std::fs::write(&file, b"x").unwrap();

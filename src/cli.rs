@@ -67,7 +67,7 @@ enum PipelineArg {
     Input,
 }
 
-static CLI: Cli<Top> = Cli::new("streamlib")
+static CLI: Cli<Top> = Cli::new("tvpipe")
     .version(env!("CARGO_PKG_VERSION"))
     .about("Low-latency mirroring of video and audio to AirPlay and Google Cast receivers.")
     .opts(&[
@@ -209,7 +209,7 @@ static PLAY: Cli<PlayArg> = Cli::new("play")
         .help("File or URL; '-' for SLRW raw input on stdin")])
     .after_help(
         "Arguments after '--' are passed to ffmpeg as input arguments, e.g.\n  \
-         streamlib play --to TV -- -f avfoundation -i 1:0",
+         tvpipe play --to TV -- -f avfoundation -i 1:0",
     );
 
 static TEST_PATTERN: Cli<PlayArg> = Cli::new("test-pattern")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Turn a `streamlib --debug discover` log into a scrubbed fixture file.
+"""Turn a `tvpipe --debug discover` log into a scrubbed fixture file.
 
-    streamlib --debug discover --timeout 6 2> capture.log
+    tvpipe --debug discover --timeout 6 2> capture.log
     python3 tests/fixtures/net/scrub.py capture.log > tests/fixtures/net/NAME.txt
 
 Packets are deduplicated and identifiers are replaced in place by fakes of
@@ -127,7 +127,7 @@ def main():
                     replacements += [(plain, fplain), (plain.lower(), fplain.lower())]
     # Longest first so that ids embedded in longer ids are handled whole.
     replacements.sort(key=lambda r: -len(r[0]))
-    print("# Scrubbed mDNS responses captured with `streamlib --debug discover`;")
+    print("# Scrubbed mDNS responses captured with `tvpipe --debug discover`;")
     print("# see scrub.py. One block per distinct packet.")
     for ip, pkt in packets:
         data = bytes(pkt)

@@ -36,7 +36,7 @@ Integration notes: `docs/decisions/0007-airplay-mirror-sink.md`. The Apple
 TV accepts the whole session (protocol level); picture/sound confirmation
 by the human pending.
 
-Done when: `streamlib play --to "Livingroom (2)" FILE` and
-`streamlib test-pattern --to "Livingroom (2)"` show picture and play sound
+Done when: `tvpipe play --to "Livingroom (2)" FILE` and
+`tvpipe test-pattern --to "Livingroom (2)"` show picture and play sound
 on the Apple TV (human confirms), Ctrl-C leaves mirroring cleanly; later
 Samsung/LG.

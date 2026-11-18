@@ -43,7 +43,7 @@ it, or with a minimal private HTTP helper you delete once W3's lands).
       round-trip against an in-process fake receiver built on
       `crypto::srp::SrpServer`, so CI covers the protocol without hardware.
 
-Done when: `streamlib pair "Livingroom (2)"` pairs with the Apple TV
+Done when: `tvpipe pair "Livingroom (2)"` pairs with the Apple TV
 (192.168.1.34, AppleTV6,2) with a human typing the PIN; a later run
 re-verifies with stored credentials and fetches `/info` over the encrypted
 channel; the local fake-receiver loop is green in `cargo test`.
@@ -67,14 +67,14 @@ doubletake/UxPlay/RPiPlay/playfair/airfry/RottingApple.
   { client: RtspClient<SecureStream<TcpStream>>, shared, addr, auth }`.
   `connect` pair-verifies with stored credentials, else tries transient
   pair-setup, else fails with an Auth error telling the user to run
-  `streamlib pair`. `control.shared.secret()` is the pair-verify X25519
+  `tvpipe pair`. `control.shared.secret()` is the pair-verify X25519
   secret (32 bytes) or the transient SRP key (64 bytes) for stream keys;
   `airplay::secure::Keys::derive(secret, salt, write_info, read_info)`
   derives other channel keys (events, data stream).
 - `airplay::info::get_info(&mut control.client)` → `Info`;
   `info.capabilities()` → `types::Capabilities` (audio formats are a
   placeholder, ALAC 44.1 kHz stereo, until S2 specifies `audioFormats`).
-- Credentials: `credentials.txt` in the config dir; `STREAMLIB_CONFIG_DIR`
+- Credentials: `credentials.txt` in the config dir; `TVPIPE_CONFIG_DIR`
   overrides the directory.
 - `unpair` only forgets the local record; removing the pairing on the
   receiver (HAP remove-pairing) is not implemented (no public reference
@@ -89,4 +89,4 @@ doubletake/UxPlay/RPiPlay/playfair/airfry/RottingApple.
   44.1 kHz stereo. Real display size and audio formats have to come from
   elsewhere (S2/W7). `Info::supported_formats` keeps the per-stream
   bitmasks raw.
-  Ignored tests `hardware_*` in `airplay/pair.rs` (env `STREAMLIB_ATV`).
+  Ignored tests `hardware_*` in `airplay/pair.rs` (env `TVPIPE_ATV`).

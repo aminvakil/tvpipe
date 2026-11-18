@@ -530,8 +530,8 @@ mod tests {
             SocketAddr::V4(a) => a,
             SocketAddr::V6(_) => unreachable!(),
         };
-        let svc = n("_streamlib-test._tcp.local");
-        let inst = n("Fake TV._streamlib-test._tcp.local");
+        let svc = n("_tvpipe-test._tcp.local");
+        let inst = n("Fake TV._tvpipe-test._tcp.local");
         let host = n("fake-tv.local");
         let thread = {
             let (inst, host) = (inst.clone(), host.clone());

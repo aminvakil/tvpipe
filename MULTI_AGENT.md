@@ -1,4 +1,4 @@
-# Building streamlib with multiple agents
+# Building tvpipe with multiple agents
 
 How a team of coding agents (plus one human) could build `PLAN.md` in
 parallel without stepping on each other or on the clean-room rules.
@@ -76,7 +76,7 @@ Each card becomes a task file in `tasks/` (or an issue):
     for both protocols; device merging.
   - Local-address selection; HTTP/RTSP request/response framing that works on
     a plain stream or our encrypted wrapper.
-  - Done when: `streamlib discover` against the real network, plus parsing
+  - Done when: `tvpipe discover` against the real network, plus parsing
     fixtures of captured responses.
 - **W4 Media**:
   - ffmpeg locate/probe/argv builder from `EncodePlan`.
@@ -141,7 +141,7 @@ the lead approves. Implementers can add private helpers freely.
   A proposal for anything else goes in `docs/deps.md`, and the lead and human
   decide.
 - **Logs over guesses**: on hardware, agents ask the human to run
-  `streamlib --debug …` and attach the log or capture, instead of guessing
+  `tvpipe --debug …` and attach the log or capture, instead of guessing
   at receiver behaviour.
 - **No silent spec gaps**: if a clean implementer needs a fact the spec lacks,
   it files a question in `docs/spec/QUESTIONS.md`. The spec writer answers by

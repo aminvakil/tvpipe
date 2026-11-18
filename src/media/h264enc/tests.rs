@@ -27,7 +27,7 @@ pub(crate) fn ffmpeg() -> Option<PathBuf> {
 
 fn tmp_path(name: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
-    p.push(format!("streamlib-h264enc-{}-{}", std::process::id(), name));
+    p.push(format!("tvpipe-h264enc-{}-{}", std::process::id(), name));
     p
 }
 

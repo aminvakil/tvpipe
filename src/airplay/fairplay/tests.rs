@@ -395,7 +395,7 @@ fn fuzz_no_panic() {
 /// cargo test fairplay::tests::differential -- --ignored
 /// ```
 ///
-/// Uses `STREAMLIB_FP_ORACLE` or `~/.cache/streamlib-oracle/fp/fporacle`;
+/// Uses `TVPIPE_FP_ORACLE` or `~/.cache/streamlib-oracle/fp/fporacle`;
 /// skips when neither exists.
 #[test]
 #[ignore]
@@ -403,7 +403,7 @@ fn differential_oracle() {
     use std::io::{BufRead, BufReader, Write as _};
     use std::process::{Command, Stdio};
 
-    let path = std::env::var_os("STREAMLIB_FP_ORACLE")
+    let path = std::env::var_os("TVPIPE_FP_ORACLE")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME")
@@ -431,7 +431,7 @@ fn differential_oracle() {
         random_fill(&mut v).unwrap();
         v
     };
-    let n: usize = std::env::var("STREAMLIB_FP_ROUNDS")
+    let n: usize = std::env::var("TVPIPE_FP_ROUNDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(500);
@@ -477,7 +477,7 @@ fn differential_oracle() {
 /// channel (uses the real credential store, like the CLI):
 ///
 /// ```text
-/// STREAMLIB_ATV=192.168.1.34 cargo test hardware_fp_setup -- --ignored --nocapture
+/// TVPIPE_ATV=192.168.1.34 cargo test hardware_fp_setup -- --ignored --nocapture
 /// ```
 #[test]
 #[ignore]
@@ -485,8 +485,8 @@ fn hardware_fp_setup() {
     use crate::airplay::credentials::Store;
     use crate::airplay::pair;
 
-    let Ok(target) = std::env::var("STREAMLIB_ATV") else {
-        eprintln!("STREAMLIB_ATV not set; skipping");
+    let Ok(target) = std::env::var("TVPIPE_ATV") else {
+        eprintln!("TVPIPE_ATV not set; skipping");
         return;
     };
     let target = pair::resolve(&target).unwrap();

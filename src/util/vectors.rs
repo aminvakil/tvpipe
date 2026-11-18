@@ -138,6 +138,6 @@ mod tests {
     #[test]
     fn sample_file() {
         let blocks = load("sample.txt");
-        assert_eq!(blocks[0].hex("data"), b"streamlib");
+        assert_eq!(blocks[0].hex("data"), b"tvpipe");
     }
 }

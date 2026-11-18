@@ -457,7 +457,7 @@ pub(crate) mod tests {
     fn lan_capture_table() {
         let table = crate::net::discover::to_table(&lan_devices());
         let path = vectors::path("tests/fixtures/net/lan-airplay.table");
-        if std::env::var_os("STREAMLIB_UPDATE_FIXTURES").is_some() {
+        if std::env::var_os("TVPIPE_UPDATE_FIXTURES").is_some() {
             std::fs::write(&path, &table).unwrap();
         }
         let want = std::fs::read_to_string(path).unwrap();

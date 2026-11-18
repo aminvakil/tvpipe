@@ -368,9 +368,9 @@ pub enum ReorderStamp {
 }
 
 /// Environment variable for the B-frame experiment: `dts` or `pts`.
-pub const REORDER_EXPERIMENT_ENV: &str = "STREAMLIB_EXPERIMENT_BFRAMES";
+pub const REORDER_EXPERIMENT_ENV: &str = "TVPIPE_EXPERIMENT_BFRAMES";
 
-/// `$STREAMLIB_EXPERIMENT_BFRAMES`: pass files with B-frames through
+/// `$TVPIPE_EXPERIMENT_BFRAMES`: pass files with B-frames through
 /// anyway (decode order, stamped as said), to try receivers
 /// (docs/ffmpeg-optional.md). Unset: B-frames go through ffmpeg.
 pub fn reorder_experiment() -> Option<ReorderStamp> {
@@ -1960,20 +1960,20 @@ pub(crate) mod tests {
 /// `scripts/receivers/cast-receiver.sh`), frames sent in decode order.
 ///
 /// ```sh
-/// STREAMLIB_PT_KIND=bframes STREAMLIB_PT_ORDER=pts \
+/// TVPIPE_PT_KIND=bframes TVPIPE_PT_ORDER=pts \
 ///     cargo test media::input::experiments -- --ignored --nocapture
 /// ```
 ///
-/// - `STREAMLIB_CAST_ADDR` (default `127.0.0.1:8010`), `STREAMLIB_PT_SECS`
-///   (10), `STREAMLIB_PT_LATENCY` (playout delay, 400 ms).
-/// - `STREAMLIB_PT_KIND`: `bf0` (no B-frames), `bframes` (x264 `-bf 3`,
-///   B-pyramid), or `STREAMLIB_PT_FILE` for any MP4/MKV file.
-/// - `STREAMLIB_PT_ORDER`: the timestamp each frame carries: `pts` (its
+/// - `TVPIPE_CAST_ADDR` (default `127.0.0.1:8010`), `TVPIPE_PT_SECS`
+///   (10), `TVPIPE_PT_LATENCY` (playout delay, 400 ms).
+/// - `TVPIPE_PT_KIND`: `bf0` (no B-frames), `bframes` (x264 `-bf 3`,
+///   B-pyramid), or `TVPIPE_PT_FILE` for any MP4/MKV file.
+/// - `TVPIPE_PT_ORDER`: the timestamp each frame carries: `pts` (its
 ///   presentation time; the Cast sink keeps RTP timestamps increasing, so
 ///   reordered frames get bumped ones) or `dts` (its decode time).
-/// - `STREAMLIB_PT_AUDIO=1`: also send the file's audio (AAC-LC for the
+/// - `TVPIPE_PT_AUDIO=1`: also send the file's audio (AAC-LC for the
 ///   generated files) if the receiver chose a matching codec;
-///   `STREAMLIB_PT_ADTS=1` wraps AAC access units in ADTS headers.
+///   `TVPIPE_PT_ADTS=1` wraps AAC access units in ADTS headers.
 #[cfg(test)]
 mod experiments {
     use super::*;
@@ -2005,11 +2005,11 @@ mod experiments {
 
     fn generate(kind: &str, secs: u32) -> PathBuf {
         let (bin, _) = crate::media::ffmpeg::tests::real_ffmpeg().expect("ffmpeg");
-        let path = std::env::temp_dir().join(format!("streamlib-pt-{kind}-{secs}.mp4"));
+        let path = std::env::temp_dir().join(format!("tvpipe-pt-{kind}-{secs}.mp4"));
         let bf: &[&str] = match kind {
             "bf0" => &["-bf", "0", "-tune", "zerolatency"],
             "bframes" => &["-bf", "3", "-b-pyramid", "normal"],
-            other => panic!("unknown STREAMLIB_PT_KIND {other}"),
+            other => panic!("unknown TVPIPE_PT_KIND {other}"),
         };
         let ok = std::process::Command::new(bin)
             .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
@@ -2031,14 +2031,12 @@ mod experiments {
     #[test]
     #[ignore = "needs a Cast receiver (scripts/receivers/cast-receiver.sh)"]
     fn passthrough_to_cast_receiver() {
-        let addr: std::net::SocketAddr = env("STREAMLIB_CAST_ADDR", "127.0.0.1:8010")
-            .parse()
-            .unwrap();
-        let secs: u32 = env("STREAMLIB_PT_SECS", "10").parse().unwrap();
-        let order = env("STREAMLIB_PT_ORDER", "pts");
-        let path = match std::env::var("STREAMLIB_PT_FILE") {
+        let addr: std::net::SocketAddr = env("TVPIPE_CAST_ADDR", "127.0.0.1:8010").parse().unwrap();
+        let secs: u32 = env("TVPIPE_PT_SECS", "10").parse().unwrap();
+        let order = env("TVPIPE_PT_ORDER", "pts");
+        let path = match std::env::var("TVPIPE_PT_FILE") {
             Ok(p) => PathBuf::from(p),
-            Err(_) => generate(&env("STREAMLIB_PT_KIND", "bf0"), secs),
+            Err(_) => generate(&env("TVPIPE_PT_KIND", "bf0"), secs),
         };
         crate::log::set_level(Level::Debug);
         let info = passthrough::probe(&path).unwrap();
@@ -2053,12 +2051,12 @@ mod experiments {
             info.video_kbps
         );
         let opts = CastOptions {
-            latency_ms: env("STREAMLIB_PT_LATENCY", "400").parse().unwrap(),
+            latency_ms: env("TVPIPE_PT_LATENCY", "400").parse().unwrap(),
             max_width: info.video.width,
             max_height: info.video.height,
             max_fps: Ratio::integer(30),
             max_bitrate_kbps: 8000,
-            audio: env("STREAMLIB_PT_AUDIO", "0") == "1",
+            audio: env("TVPIPE_PT_AUDIO", "0") == "1",
             ..CastOptions::default()
         };
         let mut sink = connect(addr, "cast-receiver", &opts).expect("connect");
@@ -2084,7 +2082,7 @@ mod experiments {
                 let Some(a) = &audio else { continue };
                 let due = start + ticks_to_duration(f.dts, a.sample_rate);
                 std::thread::sleep(due.saturating_duration_since(Instant::now()));
-                let data = if env("STREAMLIB_PT_ADTS", "0") == "1" {
+                let data = if env("TVPIPE_PT_ADTS", "0") == "1" {
                     Arc::from(adts(&a.config, &f.frame.data))
                 } else {
                     f.frame.data.clone()
@@ -2123,16 +2121,14 @@ mod experiments {
     }
 
     /// Checks a recorded encoded-SLRW stream (e.g. from
-    /// `slrw-gen --encoded > x.slrw`): `STREAMLIB_SLRW_FILE=x.slrw
-    /// STREAMLIB_SLRW_VIDEO=640x360@30:h264 [STREAMLIB_SLRW_AUDIO=48000:2:s16le]`.
+    /// `slrw-gen --encoded > x.slrw`): `TVPIPE_SLRW_FILE=x.slrw
+    /// TVPIPE_SLRW_VIDEO=640x360@30:h264 [TVPIPE_SLRW_AUDIO=48000:2:s16le]`.
     #[test]
-    #[ignore = "needs STREAMLIB_SLRW_FILE"]
+    #[ignore = "needs TVPIPE_SLRW_FILE"]
     fn slrw_encoded_file() {
-        let path = std::env::var("STREAMLIB_SLRW_FILE").expect("STREAMLIB_SLRW_FILE");
-        let video: RawVideoSpec = env("STREAMLIB_SLRW_VIDEO", "640x360@30:h264")
-            .parse()
-            .unwrap();
-        let audio: Option<RawAudioSpec> = std::env::var("STREAMLIB_SLRW_AUDIO")
+        let path = std::env::var("TVPIPE_SLRW_FILE").expect("TVPIPE_SLRW_FILE");
+        let video: RawVideoSpec = env("TVPIPE_SLRW_VIDEO", "640x360@30:h264").parse().unwrap();
+        let audio: Option<RawAudioSpec> = std::env::var("TVPIPE_SLRW_AUDIO")
             .ok()
             .map(|a| a.parse().unwrap());
         let families = if audio.is_some() {

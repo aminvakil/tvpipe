@@ -1537,8 +1537,7 @@ mod tests {
 
     #[test]
     fn rotated_track() {
-        let tmp =
-            std::env::temp_dir().join(format!("streamlib-mp4-rot-{}.mp4", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("tvpipe-mp4-rot-{}.mp4", std::process::id()));
         let ok = std::process::Command::new("ffmpeg")
             .args([
                 "-hide_banner",

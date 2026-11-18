@@ -934,10 +934,10 @@ mod tests {
     fn builder_cast_messages() {
         let connect = Value::object()
             .with("type", "CONNECT")
-            .with("userAgent", "streamlib");
+            .with("userAgent", "tvpipe");
         assert_eq!(
             connect.to_string(),
-            r#"{"type":"CONNECT","userAgent":"streamlib"}"#
+            r#"{"type":"CONNECT","userAgent":"tvpipe"}"#
         );
         let launch = Value::object()
             .with("type", "LAUNCH")

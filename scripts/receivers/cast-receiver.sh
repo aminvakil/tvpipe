@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds and runs openscreen's standalone Cast Streaming receiver
-# (`cast_receiver`, BSD-3) as a local test receiver for streamlib.
+# (`cast_receiver`, BSD-3) as a local test receiver for tvpipe.
 #
 #   scripts/receivers/cast-receiver.sh build        # fetch + build (headless)
 #   scripts/receivers/cast-receiver.sh build-av     # build with ffmpeg + SDL2
@@ -10,7 +10,7 @@
 #
 # Then, in another terminal:
 #
-#   STREAMLIB_CAST_ADDR=127.0.0.1:8010 STREAMLIB_CAST_SECS=10 \
+#   TVPIPE_CAST_ADDR=127.0.0.1:8010 TVPIPE_CAST_SECS=10 \
 #       cargo test cast::receiver_loop -- --ignored --nocapture
 #
 # The headless build uses openscreen's dummy player, which logs every frame
@@ -28,7 +28,7 @@ set -euo pipefail
 ROOT="${OPENSCREEN_ROOT:-$HOME/.cache/checkouts/chromium.googlesource.com}"
 OS_DIR="$ROOT/openscreen"
 DEPOT="$ROOT/depot_tools"
-STATE="${XDG_STATE_HOME:-$HOME/.cache}/streamlib/cast-receiver"
+STATE="${XDG_STATE_HOME:-$HOME/.cache}/tvpipe/cast-receiver"
 PORT="${CAST_RECEIVER_PORT:-8010}"
 
 fetch() {

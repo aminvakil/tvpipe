@@ -1,4 +1,4 @@
-//! `streamlib pair` / `unpair` (PLAN §4) and [`connect`], the
+//! `tvpipe pair` / `unpair` (PLAN §4) and [`connect`], the
 //! authenticated control connection the mirroring sink (W7) starts from.
 //!
 //! `connect` opens the control port, pair-verifies with stored
@@ -209,7 +209,7 @@ pub fn connect(target: &Target, store: &Store) -> Result<Control> {
         .map_err(|e| {
             if e.kind() == ErrorKind::Auth {
                 Error::auth(format!(
-                    "{} requires pairing: run `streamlib pair {:?}` ({})",
+                    "{} requires pairing: run `tvpipe pair {:?}` ({})",
                     target.label(),
                     target.label(),
                     e.message()
@@ -535,7 +535,7 @@ mod tests {
         let store = Store::open(&path).unwrap();
         let err = connect(&target(&fake), &store).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Auth);
-        assert!(err.message().contains("streamlib pair"), "{err}");
+        assert!(err.message().contains("tvpipe pair"), "{err}");
     }
 
     #[test]
@@ -600,15 +600,15 @@ mod tests {
 /// real credential store, like the CLI):
 ///
 /// ```text
-/// STREAMLIB_ATV=192.168.1.34 cargo test hardware_pair -- --ignored --nocapture
-/// STREAMLIB_ATV=192.168.1.34 cargo test hardware_verify -- --ignored --nocapture
+/// TVPIPE_ATV=192.168.1.34 cargo test hardware_pair -- --ignored --nocapture
+/// TVPIPE_ATV=192.168.1.34 cargo test hardware_verify -- --ignored --nocapture
 /// ```
 #[cfg(test)]
 mod hardware {
     use super::*;
 
     fn atv() -> Option<Target> {
-        let addr = parse_addr(&std::env::var("STREAMLIB_ATV").ok()?)?;
+        let addr = parse_addr(&std::env::var("TVPIPE_ATV").ok()?)?;
         crate::log::set_level(crate::log::Level::Trace);
         Some(Target { addr, device: None })
     }

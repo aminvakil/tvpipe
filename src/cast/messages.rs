@@ -33,7 +33,7 @@ pub const MIRRORING_APP_ID: &str = "0F5096E8";
 /// The Cast Streaming receiver app, audio only.
 pub const MIRRORING_AUDIO_APP_ID: &str = "85CDB22F";
 
-const USER_AGENT: &str = concat!("streamlib/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("tvpipe/", env!("CARGO_PKG_VERSION"));
 
 /// `CONNECT` on `tp.connection` from `source` to `destination`.
 pub fn connect(source: &str, destination: &str) -> CastMessage {

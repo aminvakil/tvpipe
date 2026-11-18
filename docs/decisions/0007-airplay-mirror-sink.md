@@ -11,7 +11,7 @@ use crate::airplay::sink::connect_mirror;
 let opts = MirrorOptions {
     latency_ms: opts.latency_ms, // --latency; None = normal profile (75/85 ms)
     audio,                       // whether the encode carries audio
-    ..Default::default()         // name "streamlib", PTP allowed
+    ..Default::default()         // name "tvpipe", PTP allowed
 };
 let sink = connect_mirror(&airplay::pair::Target { addr, device }, &opts)?;
 ```

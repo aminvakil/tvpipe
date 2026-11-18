@@ -28,7 +28,7 @@ Header unchanged (`u8 kind | u64 pts_us | u32 len`, little-endian, 0002).
   otherwise AVCC with 4-byte big-endian lengths. Other bits are reserved:
   writers set 0, readers ignore them. `pts_us` is the presentation time
   and must increase (no B-frames: decode order = presentation order). The
-  keyframe flag is a hint; streamlib also checks for an IDR NAL unit and
+  keyframe flag is a hint; tvpipe also checks for an IDR NAL unit and
   trusts that.
 - **`h264-config`** (4): `format` 0: an `avcC` record
   (AVCDecoderConfigurationRecord, ISO/IEC 14496-15 §5.3.3.1); `format` 1:
@@ -38,7 +38,7 @@ Header unchanged (`u8 kind | u64 pts_us | u32 len`, little-endian, 0002).
   again is fine; a different one after streaming started is an error
   (receivers were set up with the first). `pts_us` is ignored.
 - **`control`** (5): `flags` bit 0 (`0x01`): the game reads keyframe
-  requests on its end of streamlib's stdout (below). Other bits reserved.
+  requests on its end of tvpipe's stdout (below). Other bits reserved.
   May appear anywhere; the last one wins. `pts_us` is ignored.
 - Audio stays kind 2 (PCM, `--raw-audio`).
 
@@ -49,15 +49,15 @@ exactly 4 for `control`.
 
 When a receiver needs a keyframe (a sink joining, a queue overflow, a PLI
 or loss on Cast), and the game enabled it with a `control` record,
-streamlib writes the ASCII line
+tvpipe writes the ASCII line
 
 ```
 keyframe\n
 ```
 
-to **its stdout**. The game spawned streamlib and already holds both ends
+to **its stdout**. The game spawned tvpipe and already holds both ends
 of its stdio, so this needs no port, no fd passing and no platform code;
-streamlib writes nothing else to stdout in `play` (logs go to stderr).
+tvpipe writes nothing else to stdout in `play` (logs go to stderr).
 Requests are coalesced and rate-limited (at most one per 200 ms while a
 receiver keeps asking); the game should make its next frame an IDR. A game
 that does not read stdout must not enable the channel: the line would end

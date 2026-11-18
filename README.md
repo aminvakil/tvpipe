@@ -1,4 +1,4 @@
-# streamlib
+# tvpipe
 
 A small, cross-platform Rust command line tool for low-latency mirroring of
 video and audio to **AirPlay** and **Google Cast** receivers.

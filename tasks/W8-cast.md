@@ -64,7 +64,7 @@ How to run the receiver loop:
 ```sh
 scripts/receivers/cast-receiver.sh build      # once; ~3 GB of deps
 scripts/receivers/cast-receiver.sh run        # terminal 1
-STREAMLIB_CAST_SECS=10 STREAMLIB_CAST_LOSS=0.02 \
+TVPIPE_CAST_SECS=10 TVPIPE_CAST_LOSS=0.02 \
     cargo test cast::receiver_loop -- --ignored --nocapture   # terminal 2
 ```
 

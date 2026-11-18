@@ -1,4 +1,4 @@
-//! `streamlib debug-pipeline`: runs ffmpeg and the demuxer and prints the
+//! `tvpipe debug-pipeline`: runs ffmpeg and the demuxer and prints the
 //! stream info and one line per frame.
 //!
 //! Output (stdout), one record per line, `key=value` fields:

@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/../.."
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
-STREAMLIB_BPLIST_OUT="$out" cargo test -q codec::bplist::tests::write_reencodings_for_external_check >/dev/null
+TVPIPE_BPLIST_OUT="$out" cargo test -q codec::bplist::tests::write_reencodings_for_external_check >/dev/null
 plutil -lint "$out"/*.bplist
 for f in "$out"/*.bplist; do
   orig=tests/fixtures/codec/bplist/$(basename "$f")
