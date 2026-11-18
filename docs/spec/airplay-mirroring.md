@@ -1295,8 +1295,8 @@ ChaCha, and verbatim ALAC plays. Receiver statistics (`rrmt`) for each run:
 0 lost packets, ~60 late packets and ~16 glitches per 5 s report (likely
 the test harness's tone pacing; not investigated). In all three runs the
 Apple TV closed the control connection instead of answering `TEARDOWN`
-(earlier, shorter sessions got a 200 after ~750 ms, with and without
-FairPlay differing only by chance), so treat EOF after `TEARDOWN` as a
+(earlier 5–12 s sessions with FairPlay got a 200 after ~750 ms; run 1
+here had FairPlay and still got EOF, so this is not FairPlay-related), so treat EOF after `TEARDOWN` as a
 completed teardown.
 
 Open:
