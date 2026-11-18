@@ -1263,7 +1263,7 @@ mod tests {
 
     /// Streams 1.3 s of 30 fps video and audio to the fake receiver.
     fn stream(sink: &mut MirrorSink<TcpStream>, frames: u64) -> Vec<SinkStatus> {
-        stream_with_stall(sink, frames, None)
+        stream_with_stall(sink, frames, None).0
     }
 
     /// Like `stream`, but the source stalls for `stall.1` before frame
@@ -1273,10 +1273,11 @@ mod tests {
         sink: &mut MirrorSink<TcpStream>,
         frames: u64,
         stall: Option<(u64, Duration)>,
-    ) -> Vec<SinkStatus> {
+    ) -> (Vec<SinkStatus>, Duration) {
         let (_, sps, pps) = avcc();
         let t0 = Instant::now();
         let mut out = Vec::new();
+        let mut late = Duration::ZERO;
         let mut a = 0u64;
         for i in 0..frames {
             let mut due = t0 + Duration::from_micros(i * 33_333);
@@ -1288,6 +1289,7 @@ mod tests {
             if let Some(d) = due.checked_duration_since(Instant::now()) {
                 std::thread::sleep(d);
             }
+            late = late.max(Instant::now().saturating_duration_since(due));
             out.push(sink.push(&video(i, &sps, &pps)).unwrap());
             // Audio up to this video frame's time.
             while a * 352 * 90_000 / 44_100 <= i * 3000 {
@@ -1295,7 +1297,7 @@ mod tests {
                 a += 1;
             }
         }
-        out
+        (out, late)
     }
 
     #[test]
@@ -1639,20 +1641,38 @@ mod tests {
         let mut sink = connect(&fake, &MirrorOptions::default());
         sink.start(&video_info(), Some(&audio_info())).unwrap();
         let stall = Duration::from_millis(400);
-        stream_with_stall(&mut sink, 84, Some((36, stall)));
+        // `late`: the most a push came after its due time (a loaded
+        // machine oversleeping), on top of the stall.
+        let (_, late) = stream_with_stall(&mut sink, 84, Some((36, stall)));
         wait_for("sync after the stall", || fake.rec().sync.len() >= 3);
         sink.stop().unwrap();
         let r = fake.rec();
-        // RTP: consecutive frames 352 apart except one gap of ~0.4 s.
-        let gaps: Vec<u32> = r
+        // RTP: consecutive frames 352 apart except for a gap of the shift
+        // at every re-anchor: the stall (0.4 s), and on a loaded machine
+        // any push more than MAX_LATENESS late. On an idle machine (`late`
+        // ~0) that is exactly one gap of 0.4 s.
+        let gaps_ms: Vec<f64> = r
             .audio
             .windows(2)
             .map(|w| w[1].1.wrapping_sub(w[0].1))
             .filter(|&d| d != 352)
+            .map(|d| d.wrapping_sub(352) as f64 * 1000.0 / 44_100.0)
             .collect();
-        assert_eq!(gaps.len(), 1, "{gaps:?}");
-        let gap_ms = (gaps[0] - 352) as f64 * 1000.0 / 44_100.0;
-        assert!((300.0..450.0).contains(&gap_ms), "gap {gap_ms} ms");
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let (late_ms, stall_ms) = (ms(late) + 10.0, ms(stall));
+        let stalls = gaps_ms.iter().filter(|&&g| g >= 300.0).count();
+        assert_eq!(stalls, 1, "{gaps_ms:?}, {late:?} late");
+        for &g in &gaps_ms {
+            let max = if g >= 300.0 {
+                stall_ms + late_ms
+            } else {
+                late_ms
+            };
+            assert!(
+                (ms(MAX_LATENESS) - 10.0..=max).contains(&g),
+                "{gaps_ms:?}, {late:?} late"
+            );
+        }
         // Every sync packet: (rtp_play, T ns). All on one line.
         let points: Vec<(u32, u64)> = r
             .sync
