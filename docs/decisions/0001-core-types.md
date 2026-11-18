@@ -2,7 +2,8 @@
 
 Status: accepted by lead, pending human review (checkpoint 1).
 
-Frozen interfaces (changes need a new decision record):
+Frozen interfaces (changes need a new decision record; amended by 0010
+`Sink::set_clock` and 0013 `Capabilities::display_aspect`):
 
 - `src/types.rs`: `TrackKind`, `AudioFamily`, `VideoCodec`, `AudioCodec`,
   `EncodedFrame`, `VideoInfo`, `AudioInfo`, `AudioFormat`, `Capabilities`,
