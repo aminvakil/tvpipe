@@ -208,53 +208,44 @@ fn watch(eval: &mut dyn FnMut(&str) -> Value, report: &Report) {
 // ---------------------------------------------------------------------------
 // Chrome (DevTools protocol)
 
-/// A minimal DevTools-protocol client over our WebSocket (enough to drive
-/// the share page; W13 owns the real one).
-pub(super) struct Cdp {
-    rx: crate::net::websocket::Receiver<std::net::TcpStream, std::net::TcpStream>,
-    tx: crate::net::websocket::Sender<std::net::TcpStream>,
-    id: i64,
+/// Chrome for the tests: `browser::launch` with a temporary profile, the
+/// tab set up by `browser::headless::attach` (the production code), on
+/// `url`. Dropping it quits Chrome and deletes the profile.
+pub(super) struct Chrome {
+    browser: crate::browser::launch::Browser,
+    session: String,
+    _profile: crate::browser::launch::Profile,
 }
 
-impl Cdp {
+impl Chrome {
+    /// A command on the tab's session; its `result`.
     pub(super) fn call(&mut self, method: &str, params: Value) -> Value {
-        use crate::net::websocket::Message;
-        self.id += 1;
-        let msg = Value::object()
-            .with("id", self.id)
-            .with("method", method)
-            .with("params", params);
-        self.tx.send_text(&msg.to_json()).unwrap();
-        loop {
-            let Message::Text(t) = self.rx.read_message().unwrap() else {
-                continue;
-            };
-            let v = Value::parse(&t).unwrap();
-            if v.get("id").and_then(Value::as_i64) == Some(self.id) {
-                return v;
-            }
-        }
+        self.browser
+            .cdp()
+            .call(Some(&self.session), method, params)
+            .unwrap_or_else(|e| panic!("{method}: {e}"))
     }
 
     /// Evaluates a function body as if the user clicked (transient
     /// activation); awaits a returned promise.
     pub(super) fn eval(&mut self, body: &str) -> Value {
-        let r = self.call(
-            "Runtime.evaluate",
-            Value::object()
-                .with("expression", format!("(async () => {{ {body} }})()"))
-                .with("awaitPromise", true)
-                .with("userGesture", true)
-                .with("returnByValue", true),
-        );
-        r.get("result")
-            .and_then(|r| r.get("result"))
-            .and_then(|r| r.get("value"))
-            .cloned()
-            .unwrap_or_else(|| {
-                eprintln!("eval {body}: {r}");
+        self.browser
+            .cdp()
+            .evaluate(
+                &self.session,
+                &format!("(async () => {{ {body} }})()"),
+                true,
+                true,
+                Duration::from_secs(30),
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("eval {body}: {e}");
                 Value::Null
             })
+    }
+
+    pub(super) fn profile_dir(&self) -> std::path::PathBuf {
+        self._profile.dir().to_path_buf()
     }
 }
 
@@ -270,78 +261,25 @@ fn viewport() -> (u32, u32) {
     (v.width, v.height)
 }
 
-/// Starts Chrome on `url` (headless, tab capture auto-accepted) and
-/// connects to the page's DevTools target.
-pub(super) fn chrome(bin: &str, url: &str, dir: &std::path::Path) -> (std::process::Child, Cdp) {
-    let _ = std::fs::remove_dir_all(dir);
-    std::fs::create_dir_all(dir).unwrap();
-    let headless = std::env::var("TVPIPE_TEST_CHROME_HEADED").is_err();
-    let (vw, vh) = viewport();
-    let mut cmd = std::process::Command::new(bin);
-    if headless {
-        cmd.arg("--headless=new");
-    }
-    let child = cmd
-        .arg("--remote-debugging-port=0")
-        .arg(format!("--user-data-dir={}", dir.display()))
-        .args(["--no-first-run", "--no-default-browser-check"])
-        .args([
-            "--auto-accept-this-tab-capture",
-            "--autoplay-policy=no-user-gesture-required",
-        ])
-        // A WxH viewport at scale 1 on a WxH screen (headless tab capture
-        // is clamped to the screen, 800x600 by default; the window has 87
-        // px of chrome above the content).
-        .args([
-            format!("--window-size={vw},{}", vh + 87),
-            format!("--screen-info={{0,0 {vw}x{vh}}}"),
-            "--force-device-scale-factor=1".into(),
-        ])
-        .arg(url)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let port_file = dir.join("DevToolsActivePort");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let port: u16 = loop {
-        if let Some(p) = std::fs::read_to_string(&port_file)
-            .ok()
-            .and_then(|s| s.lines().next().and_then(|l| l.parse().ok()))
-        {
-            break p;
-        }
-        assert!(Instant::now() < deadline, "Chrome did not start");
-        std::thread::sleep(Duration::from_millis(50));
+/// Starts Chrome on `url` (headless unless TVPIPE_TEST_CHROME_HEADED,
+/// tab capture auto-accepted).
+pub(super) fn chrome(bin: &str, url: &str) -> Chrome {
+    let profile = crate::browser::launch::Profile::temporary().unwrap();
+    let opts = crate::browser::launch::LaunchOptions {
+        bin: bin.into(),
+        viewport: viewport(),
+        visible: std::env::var("TVPIPE_TEST_CHROME_HEADED").is_ok(),
     };
-    let ws = loop {
-        let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let mut c = Conn::new(tcp);
-        let resp = c
-            .request(
-                &Request::new("GET", "/json/list", Version::Http11)
-                    .header("Host", format!("127.0.0.1:{port}")),
-            )
-            .unwrap();
-        let list = Value::parse(std::str::from_utf8(&resp.body).unwrap()).unwrap();
-        let found = list.as_array().unwrap().iter().find_map(|t| {
-            let u = t.get("url")?.as_str()?;
-            (t.get("type")?.as_str()? == "page" && u.starts_with("http://127.0.0.1"))
-                .then(|| t.get("webSocketDebuggerUrl")?.as_str().map(str::to_owned))?
-        });
-        if let Some(ws) = found {
-            break ws;
-        }
-        assert!(Instant::now() < deadline, "no page target");
-        std::thread::sleep(Duration::from_millis(100));
+    let browser = crate::browser::launch::Browser::launch(&opts, &profile).unwrap();
+    let (_, session) = crate::browser::headless::attach(&browser, opts.viewport).unwrap();
+    let mut c = Chrome {
+        browser,
+        session,
+        _profile: profile,
     };
-    let (rx, tx) = crate::net::websocket::connect(
-        &ws,
-        Duration::from_secs(10),
-        crate::net::websocket::Limits::default(),
-    )
-    .unwrap();
-    (child, Cdp { rx, tx, id: 0 })
+    let r = c.call("Page.navigate", Value::object().with("url", url));
+    assert!(r.get("errorText").is_none(), "{url}: {r}");
+    c
 }
 
 /// The real capture script in headless Chrome: tab capture of the share
@@ -354,9 +292,8 @@ fn chrome_share_to_fakes() {
         return;
     };
     share_in_browser(move |url, report| {
-        let dir = std::env::temp_dir().join(format!("tvpipe-chrome-{}", std::process::id()));
-        let (mut child, mut cdp) = chrome(&bin, &url, &dir);
-        let mut eval = |s: &str| cdp.eval(s);
+        let mut chrome = chrome(&bin, &url);
+        let mut eval = |s: &str| chrome.eval(s);
         let deadline = Instant::now() + Duration::from_secs(20);
         while eval("return !!(window.tvpipeShare && window.tvpipeShare.config)")
             != Value::Bool(true)
@@ -396,9 +333,7 @@ fn chrome_share_to_fakes() {
         );
         report.lock().unwrap().push(format!("captureDisplay: {r}"));
         watch(&mut eval, &report);
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = std::fs::remove_dir_all(&dir);
+        drop(chrome);
     });
 }
 

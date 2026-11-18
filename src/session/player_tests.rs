@@ -338,7 +338,7 @@ fn a_late_tab_shares_the_cast_timeline() {
 // TVPIPE_TEST_PLAYER_SHOT=PATH (Chrome): a screenshot with the statistics
 // (the page's clock next to the pattern's burned-in clock).
 
-fn browser_secs() -> u64 {
+pub(super) fn browser_secs() -> u64 {
     std::env::var("TVPIPE_TEST_BROWSER_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -394,7 +394,7 @@ fn preview_in_browser(drive: impl FnOnce(String) + Send + 'static) {
 }
 
 /// Watches the page for the test's duration and checks what it did.
-fn watch_player(eval: &mut dyn FnMut(&str) -> Value) {
+pub(super) fn watch_player(eval: &mut dyn FnMut(&str) -> Value) {
     let t0 = Instant::now();
     let deadline = t0 + Duration::from_secs(20);
     while eval("return !!(window.tvpipePlayer && tvpipePlayer.config)") != Value::Bool(true) {
@@ -439,26 +439,17 @@ fn chrome_player() {
         return;
     };
     preview_in_browser(move |url| {
-        let dir = std::env::temp_dir().join(format!("tvpipe-player-{}", std::process::id()));
-        let (mut child, mut cdp) =
-            super::browser_tests::chrome(&bin, &format!("{url}&stats=1"), &dir);
-        watch_player(&mut |s| cdp.eval(s));
+        let mut chrome = super::browser_tests::chrome(&bin, &format!("{url}&stats=1"));
+        watch_player(&mut |s| chrome.eval(s));
         if let Ok(path) = std::env::var("TVPIPE_TEST_PLAYER_SHOT") {
-            let r = cdp.call(
+            let r = chrome.call(
                 "Page.captureScreenshot",
                 Value::object().with("format", "png"),
             );
-            let data = r
-                .get("result")
-                .and_then(|r| r.get("data"))
-                .and_then(Value::as_str)
-                .unwrap();
+            let data = r.get("data").and_then(Value::as_str).unwrap();
             std::fs::write(&path, crate::net::base64::decode(data).unwrap()).unwrap();
             eprintln!("wrote {path}");
         }
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = std::fs::remove_dir_all(&dir);
     });
 }
 
@@ -620,39 +611,30 @@ fn chrome_player_reconnects_to_the_next_run() {
         ..PlayerOptions::default()
     };
     let url = format!("http://127.0.0.1:{port}/?t=0123456789abcdef0123456789abcdef");
-    let browser: Arc<Mutex<Option<(std::process::Child, super::browser_tests::Cdp)>>> =
-        Arc::default();
-    let dir = std::env::temp_dir().join(format!("tvpipe-player-rc-{}", std::process::id()));
+    let browser: Arc<Mutex<Option<super::browser_tests::Chrome>>> = Arc::default();
     let mut drawn = Vec::new();
     for run in 0..2 {
         STOP.store(false, Ordering::SeqCst);
-        let (b, o, u, d, bin) = (
-            browser.clone(),
-            page.clone(),
-            url.clone(),
-            dir.clone(),
-            bin.clone(),
-        );
+        let (b, o, u, bin) = (browser.clone(), page.clone(), url.clone(), bin.clone());
         let connect =
             move |_: &Target, _: &CastOptions, _: &MirrorOptions| -> Result<Box<dyn Sink>> {
                 let sink = BrowserSink::bind(&o, never)?;
                 let mut g = b.lock().unwrap();
                 if g.is_none() {
-                    *g = Some(super::browser_tests::chrome(&bin, &u, &d));
+                    *g = Some(super::browser_tests::chrome(&bin, &u));
                 }
                 Ok(Box::new(sink))
             };
         let b = browser.clone();
         let watcher = std::thread::spawn(move || {
             let t0 = Instant::now();
-            let start =
-                |b: &Arc<Mutex<Option<(std::process::Child, super::browser_tests::Cdp)>>>| {
-                    b.lock().unwrap().as_mut().map(|(_, cdp)| {
-                        cdp.eval("return window.tvpipePlayer ? tvpipePlayer.stats.drawn : 0")
-                            .as_f64()
-                            .unwrap_or(0.0)
-                    })
-                };
+            let start = |b: &Arc<Mutex<Option<super::browser_tests::Chrome>>>| {
+                b.lock().unwrap().as_mut().map(|c| {
+                    c.eval("return window.tvpipePlayer ? tvpipePlayer.stats.drawn : 0")
+                        .as_f64()
+                        .unwrap_or(0.0)
+                })
+            };
             let mut first = None;
             let r = loop {
                 std::thread::sleep(Duration::from_millis(200));
@@ -679,9 +661,5 @@ fn chrome_player_reconnects_to_the_next_run() {
         drawn.push(n);
     }
     assert!(drawn[1] > drawn[0]);
-    if let Some((mut child, _)) = browser.lock().unwrap().take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(browser.lock().unwrap().take());
 }
