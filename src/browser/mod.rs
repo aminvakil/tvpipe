@@ -11,11 +11,13 @@
 //! - [`headless`]: `tvpipe share URL` (W13), a browser of tvpipe's own
 //!   that shares its tab through the same capture script ([`launch`]
 //!   starts it, [`cdp`] drives it over the DevTools protocol).
+//! - [`fonts`]: the fonts the share page uses, compiled in.
 //! - [`platform`]: opening a URL with the OS's opener and the browsers'
 //!   install paths (the one place with `cfg(target_os)` in this module,
 //!   like a config path).
 
 pub mod cdp;
+pub mod fonts;
 pub mod headless;
 pub mod launch;
 pub mod layout;

@@ -183,9 +183,9 @@ fn watch(eval: &mut dyn FnMut(&str) -> Value, report: &Report) {
         }
         let s = eval(
             "return JSON.stringify({stats: window.tvpipeLastStats || null, \
-             log: document.getElementById('log').innerText, \
-             capture: document.getElementById('capture').innerText, \
-             plan: document.getElementById('plan').innerText})",
+             log: [...document.getElementById('log').children].map(e => e.textContent).join('\\n'), \
+             capture: document.getElementById('capture').textContent, \
+             plan: document.getElementById('plan').textContent})",
         );
         report
             .lock()

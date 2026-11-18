@@ -1,12 +1,12 @@
 //! `tvpipe share`: the page server and the input it feeds (protocol in
 //! docs/share-protocol.md).
 //!
-//! [`ShareServer`] serves the share page and `capture.js` on 127.0.0.1
-//! and accepts the page's WebSocket at `/ws`. Every request must carry
-//! the session's random token (`?t=`) and a loopback `Host` (no DNS
-//! rebinding). Several pages may connect (a reload, a second tab); the
-//! first that starts a capture becomes the source, later ones are told
-//! `busy`. The session then sends the page its encode `plan` and turns
+//! [`ShareServer`] serves the share page, `capture.js` and the page's
+//! fonts on 127.0.0.1 and accepts the page's WebSocket at `/ws`. The page
+//! and the socket need the session's random token (`?t=`), every request
+//! a loopback `Host` (no DNS rebinding). Several pages may connect (a
+//! reload, a second tab); the first that starts a capture becomes the
+//! source, later ones are told `busy`. The session then sends the page its encode `plan` and turns
 //! the server into a [`ShareInput`], which feeds the page's records into
 //! the encoded-SLRW state (`media::input::EncodedState`): passthrough
 //! H.264, PCM for AirPlay, `aacenc` AAC for Cast. Keyframe requests go
@@ -26,6 +26,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::browser::fonts;
 use crate::browser::protocol::{self, CaptureInfo, PageConfig, PageMsg, SharePlan};
 use crate::cli::{RawAudioSpec, RawVideoSpec};
 use crate::codec::json::Value;
@@ -147,6 +148,7 @@ impl Shared {
                 "image/x-icon",
                 Vec::new(),
             )),
+            p if p.starts_with("/fonts/") => fonts::reply(p),
             _ if !token_ok => Reply::Response(httpd::error_response(
                 403,
                 "Forbidden (open the URL tvpipe printed)",

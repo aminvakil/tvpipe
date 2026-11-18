@@ -1,71 +1,198 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tvpipe share</title>
+<link rel="preload" href="/fonts/plex-sans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/michroma.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/sixtyfour.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('tvpipe-theme') || 'auto'; } catch (e) {}</script>
 <style>
-  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f5f5f7; --card: #fff; --mute: #6e6e73; --accent: #0a66d8; --bad: #c62828; --ok: #2e7d32; }
-  @media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #1c1c1e; --card: #2c2c2e; --mute: #a1a1a6; --accent: #4c9bff; --bad: #ff6b6b; --ok: #5fd068; } }
+  /* The look of the tvpipe website and manual (site/static/style.css). */
+  @font-face { font-family: "Sixtyfour"; src: url(/fonts/sixtyfour.woff2) format("woff2"); font-display: block; }
+  @font-face { font-family: "Michroma"; src: url(/fonts/michroma.woff2) format("woff2"); font-display: block; }
+  @font-face { font-family: "IBM Plex Sans"; src: url(/fonts/plex-sans.woff2) format("woff2"); font-weight: 300 700; font-display: block; }
+  @font-face { font-family: "IBM Plex Mono"; src: url(/fonts/plex-mono-400.woff2) format("woff2"); font-weight: 400; font-display: block; }
+  @font-face { font-family: "IBM Plex Mono"; src: url(/fonts/plex-mono-500.woff2) format("woff2"); font-weight: 500; font-display: block; }
+
+  :root {
+    color-scheme: light;
+    --bg: #FFFFFF; --ink: #172B46; --ink-2: rgba(23, 43, 70, .7); --ink-3: rgba(23, 43, 70, .48);
+    --rule: rgba(23, 43, 70, .12); --panel: #F5F6F8; --accent: #E8743B; --bad: #C0392B;
+    --btn-bg: #172B46; --btn-ink: #FFFFFF; --logo-ink: #172B46; --logo-screen: #FFFFFF;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0D1828; --ink: #E8ECF2; --ink-2: rgba(232, 236, 242, .72); --ink-3: rgba(232, 236, 242, .46);
+    --rule: rgba(232, 236, 242, .11); --panel: #13223A; --bad: #FF7A6B;
+    --btn-bg: #E8743B; --btn-ink: #0D1828; --logo-ink: #E8ECF2; --logo-screen: #0D1828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root[data-theme="auto"] {
+      color-scheme: dark;
+      --bg: #0D1828; --ink: #E8ECF2; --ink-2: rgba(232, 236, 242, .72); --ink-3: rgba(232, 236, 242, .46);
+      --rule: rgba(232, 236, 242, .11); --panel: #13223A; --bad: #FF7A6B;
+      --btn-bg: #E8743B; --btn-ink: #0D1828; --logo-ink: #E8ECF2; --logo-screen: #0D1828;
+    }
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); }
-  main { max-width: 560px; margin: 48px auto; padding: 0 16px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .sub { color: var(--mute); margin: 0 0 20px; }
-  .card { background: var(--card); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-  .state { font-weight: 600; }
-  .state.ok { color: var(--ok); } .state.bad { color: var(--bad); }
-  button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; background: var(--accent); color: #fff; }
-  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-  button:disabled { opacity: .45; cursor: default; }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  label { color: var(--mute); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
-  dt { color: var(--mute); } dd { margin: 0; font-variant-numeric: tabular-nums; }
-  #log { color: var(--mute); font-size: 13px; white-space: pre-wrap; margin: 0; max-height: 160px; overflow: auto; }
+  html { background: var(--bg); color: var(--ink); }
+  body { margin: 0; font: 400 15px/1.6 "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .lbl { font: 400 9.5px/1.5 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+
+  .top { display: grid; grid-template-columns: 1fr 1fr 1fr auto; column-gap: 32px; align-items: start;
+         max-width: 920px; margin: 0 auto; padding: 26px 32px 22px; border-bottom: 1px solid var(--rule); }
+  .mark { display: flex; align-items: center; gap: 12px; }
+  .mark svg { width: 34px; height: auto; }
+  .mark span { font: 15px "Sixtyfour", monospace; font-variation-settings: "SCAN" 60; letter-spacing: -.02em; }
+  .mark span b { font-weight: 400; color: var(--accent); }
+  .pair { font-size: 11px; line-height: 1.45; }
+  .pair span { display: block; color: var(--ink-3); }
+  .theme { display: flex; gap: 2px; margin-top: -4px; }
+  .theme button { font: 400 9.5px/1 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase;
+                  background: none; border: 0; color: var(--ink-3); padding: 6px 7px; cursor: pointer; border-radius: 2px; }
+  .theme button[aria-pressed="true"] { color: var(--ink); background: var(--panel); }
+
+  main { max-width: 920px; margin: 0 auto; padding: 0 32px 64px; }
+  .row { display: grid; grid-template-columns: 200px minmax(0, 1fr); column-gap: 40px; }
+  .row > .meta .lbl { display: block; margin-bottom: 8px; }
+  .ph { padding: 56px 0 48px; }
+  h1 { font: 400 26px/1.3 "Michroma", sans-serif; letter-spacing: -.01em; margin: 0 0 18px; }
+  .state { font-weight: 500; font-size: 15px; display: flex; align-items: center; gap: 9px; }
+  .state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .state.ok::before { background: var(--accent); }
+  .state.streaming::before { animation: pulse 1.6s ease-in-out infinite; }
+  .state.bad { color: var(--bad); } .state.bad::before { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .state.streaming::before { animation: none; } }
+  #message { font-size: 17px; font-weight: 300; line-height: 1.55; margin: 0 0 26px; min-height: 1.55em; }
+  #message.bad { color: var(--bad); }
+  .buttons { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+  button.btn { font: 400 10.5px/1 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase;
+               padding: 15px 22px; border-radius: 3px; border: 0; cursor: pointer; background: var(--panel); color: var(--ink); }
+  button.btn.primary { background: var(--btn-bg); color: var(--btn-ink); }
+  button.btn:hover:not(:disabled) { filter: brightness(1.08); }
+  button.btn:disabled { opacity: .4; cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label.check { display: inline-flex; gap: 9px; align-items: center; font-size: 14px; color: var(--ink-2); cursor: pointer; }
+  label.check input { accent-color: var(--accent); margin: 0; }
+  .note { margin-top: 26px; padding: 18px 20px; background: var(--panel); border-radius: 4px; font-size: 14.5px; color: var(--ink-2); }
+  .note b { color: var(--ink); font-weight: 600; }
+  .note ol { margin: 8px 0; padding-left: 20px; }
+
+  .sec { border-top: 1px solid var(--rule); padding-top: 22px; }
+  summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; }
+  summary::-webkit-details-marker { display: none; }
+  summary .lbl { color: var(--ink); }
+  summary::after { content: "+"; font: 400 15px/1 "IBM Plex Mono", monospace; color: var(--accent); }
+  details[open] summary::after { content: "\2212"; }
+  details .hint { font-size: 13px; color: var(--ink-3); margin: 6px 0 0; }
+  dl { display: grid; grid-template-columns: max-content 1fr; margin: 22px 0 0; font-size: 14px; }
+  dt, dd { padding: 9px 0; border-bottom: 1px solid var(--rule); }
+  dt { color: var(--ink-3); padding-right: 32px; }
+  dd { margin: 0; font: 400 13px/1.6 "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; padding-top: 10px; }
+  #log { margin: 22px 0 0; padding: 14px 16px; background: var(--panel); border-radius: 4px; color: var(--ink-2);
+         font: 400 12.5px/1.65 "IBM Plex Mono", monospace; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+  #log:empty { display: none; }
   #log .error { color: var(--bad); }
-  .note { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(10,102,216,.08); }
-  .note ol { margin: 6px 0 0; padding-left: 20px; }
+
+  @media (max-width: 720px) {
+    .top { grid-template-columns: 1fr auto; padding: 18px 20px; }
+    .top .pair { display: none; }
+    main { padding: 0 20px 48px; }
+    .row { grid-template-columns: 1fr; }
+    .row > .meta { margin-bottom: 14px; }
+    .ph { padding-top: 32px; }
+  }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo" viewBox="0 0 560 520">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <g style="stroke:var(--logo-ink)" stroke-width="12"><line x1="208" y1="118" x2="152" y2="62"/><line x1="256" y1="118" x2="322" y2="40"/></g>
+      <g style="fill:var(--logo-ink)"><circle cx="152" cy="62" r="14"/><circle cx="322" cy="40" r="14"/><path d="M180 137 A52 30 0 0 1 284 137 Z"/><path d="M92 474 A19 19 0 0 0 130 474 Z"/><path d="M334 474 A19 19 0 0 0 372 474 Z"/></g>
+      <rect x="23" y="137" width="419" height="331" rx="48" style="stroke:var(--logo-ink);fill:var(--logo-screen)" stroke-width="16"/>
+      <path d="M92 180 Q211 168 330 180 Q350 182 352 202 Q360 301 352 400 Q350 420 330 422 Q211 434 92 422 Q72 420 70 400 Q62 301 70 202 Q72 182 92 180 Z" style="stroke:var(--logo-ink)" stroke-width="14"/>
+      <circle cx="390" cy="222" r="17" fill="#E8743B"/><circle cx="390" cy="272" r="12" fill="#E8743B"/>
+      <g stroke-width="14">
+        <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z" style="stroke:var(--logo-screen)" stroke-width="40"/>
+        <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z" fill="#E8743B" style="stroke:var(--logo-ink)"/>
+        <ellipse cx="445" cy="322" rx="55" ry="13" style="fill:var(--logo-screen);stroke:var(--logo-ink)"/>
+        <line x1="182" y1="262" x2="182" y2="310" style="stroke:var(--logo-ink)" stroke-width="16"/>
+      </g>
+      <g stroke="#E8743B" stroke-width="13" transform="translate(12 0)"><path d="M492 225 C492 205 464 195 464 160 C464 136 482 120 502 120 C522 120 536 135 533 155 C531 170 518 177 507 175"/><path d="M470 290 C468 262 492 252 506 242 C520 230 524 214 518 200"/></g>
+    </g>
+  </symbol>
+</svg>
+
+<header class="top">
+  <div class="mark"><svg viewBox="0 0 560 520" aria-hidden="true"><use href="#logo"/></svg><span>tv<b>pipe</b></span></div>
+  <div class="pair">tvpipe<span>Share</span></div>
+  <div class="pair">Receivers<span id="receivers">–</span></div>
+  <div class="theme" role="group" aria-label="Colour theme">
+    <button data-t="light">Light</button><button data-t="dark">Dark</button><button data-t="auto">Auto</button>
+  </div>
+</header>
+
 <main>
-  <h1>tvpipe share</h1>
-  <p class="sub">Choose a tab, window or screen to show on the TV.</p>
-
-  <div class="card">
-    <div class="row" style="justify-content: space-between">
-      <span class="state" id="state">Connecting to tvpipe…</span>
-      <span id="receivers" class="sub" style="margin:0"></span>
+  <section class="row ph">
+    <div class="meta"><span class="lbl">Status</span><span class="state" id="state">Connecting to tvpipe…</span></div>
+    <div class="body">
+      <h1>Share a tab, window or screen</h1>
+      <p id="message"></p>
+      <div class="buttons">
+        <button id="share" class="btn primary" disabled>Share…</button>
+        <button id="stop" class="btn" disabled>Stop</button>
+      </div>
+      <label id="localLabel" class="check"><input type="checkbox" id="local"> Keep tab audio playing here</label>
+      <div id="howto" class="note" hidden></div>
     </div>
-    <p id="message" class="sub" style="margin:6px 0 14px"></p>
-    <div class="row">
-      <button id="share" disabled>Share…</button>
-      <button id="stop" class="secondary" disabled>Stop</button>
-      <label id="localLabel"><input type="checkbox" id="local"> keep tab audio playing here</label>
-    </div>
-    <div id="howto" class="note" hidden></div>
-  </div>
+  </section>
 
-  <div class="card">
-    <dl>
-      <dt>Capture</dt><dd id="capture">–</dd>
-      <dt>Stream</dt><dd id="plan">–</dd>
-      <dt>Encoder</dt><dd id="codec">–</dd>
-      <dt>Frame rate</dt><dd id="fps">–</dd>
-      <dt>Bitrate</dt><dd id="kbps">–</dd>
-      <dt>Encode delay</dt><dd id="delay">–</dd>
-      <dt>Dropped</dt><dd id="dropped">–</dd>
-    </dl>
-  </div>
-
-  <div class="card"><pre id="log"></pre></div>
+  <section class="row sec">
+    <div class="meta"></div>
+    <details class="body" id="details">
+      <summary><span class="lbl">Details</span></summary>
+      <p class="hint">The capture, the encoder and the log, for finding problems.</p>
+      <dl>
+        <dt>Capture</dt><dd id="capture">–</dd>
+        <dt>Stream</dt><dd id="plan">–</dd>
+        <dt>Encoder</dt><dd id="codec">–</dd>
+        <dt>Frame rate</dt><dd id="fps">–</dd>
+        <dt>Bitrate</dt><dd id="kbps">–</dd>
+        <dt>Encode delay</dt><dd id="delay">–</dd>
+        <dt>Dropped</dt><dd id="dropped">–</dd>
+      </dl>
+      <pre id="log"></pre>
+    </details>
+  </section>
 </main>
 <script src="/capture.js"></script>
 <script>
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
+
+  // The colour theme, as on the website: light, dark or the system's.
+  var themes = document.querySelectorAll('.theme button');
+  function theme(t) {
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem('tvpipe-theme', t); } catch (e) {}
+    themes.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.t === t)); });
+  }
+  theme(document.documentElement.dataset.theme || 'auto');
+  themes.forEach(function (b) { b.onclick = function () { theme(b.dataset.t); }; });
+
+  // The details stay open or closed across reloads.
+  var details = $('details');
+  try { details.open = localStorage.getItem('tvpipe-share-details') === '1'; } catch (e) {}
+  details.addEventListener('toggle', function () {
+    try { localStorage.setItem('tvpipe-share-details', details.open ? '1' : '0'); } catch (e) {}
+  });
+
   var logEl = $('log');
   function log(text, cls) {
     var line = document.createElement('div');
@@ -73,11 +200,12 @@
     line.textContent = new Date().toLocaleTimeString() + '  ' + text;
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
+    if (cls === 'error') { $('message').textContent = text; $('message').className = 'bad'; }
   }
   function state(text, cls, message) {
     $('state').textContent = text;
     $('state').className = 'state ' + (cls || '');
-    if (message !== undefined) $('message').textContent = message;
+    if (message !== undefined) { $('message').textContent = message; $('message').className = cls === 'bad' ? 'bad' : ''; }
   }
   if (!window.tvpipeCapture) { state('capture.js did not load', 'bad'); return; }
   var f = tvpipeCapture.features();
@@ -108,18 +236,19 @@
   window.tvpipeShare = cap;
   var ended = false;
   function receivers(list) {
-    $('receivers').textContent = list && list.length ? '→ ' + list.join(', ') : '';
+    $('receivers').textContent = list && list.length ? list.join(', ') : '–';
   }
   cap.on('open', function () { state('Connected', '', 'Waiting for tvpipe…'); });
   cap.on('config', function (c) {
     receivers(c.receivers);
-    if (!missing.length && !ended) $('share').disabled = false;
+    if (missing.length) { state('Unsupported', 'bad', 'This browser lacks ' + missing.join(', ') + '.'); return; }
+    if (!ended) $('share').disabled = false;
     state('Ready', 'ok', 'Press Share and pick what to show' +
       (c.audio && f.audio ? ' (keep "Also share tab audio" ticked for sound).' : '.'));
   });
   cap.on('status', function (s) {
     receivers(s.receivers);
-    var cls = s.state === 'streaming' ? 'ok' : s.state === 'error' ? 'bad' : '';
+    var cls = s.state === 'streaming' ? 'ok streaming' : s.state === 'error' ? 'bad' : '';
     var names = { waiting: 'Ready', connecting: 'Connecting to the TV…', streaming: 'Streaming', error: 'Error' };
     state(names[s.state] || s.state, cls, s.message || '');
   });

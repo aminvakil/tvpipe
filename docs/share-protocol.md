@@ -12,10 +12,12 @@ Version 1.
   and prints `http://127.0.0.1:PORT/?t=TOKEN`. `TOKEN` is 16 random bytes
   in hex, new for every run.
 - `GET /?t=TOKEN`: the share page. `GET /capture.js`: the capture script
-  (static, no token). `GET /ws?t=TOKEN`: the WebSocket (RFC 6455, no
-  extensions, no subprotocol). Every request needs a `Host` of
-  `127.0.0.1:PORT`, `localhost:PORT` or `[::1]:PORT` (421 otherwise:
-  DNS rebinding), the page and the socket need the token (403).
+  (static, no token). `GET /fonts/NAME.woff2`: the page's fonts
+  (`src/browser/fonts/`, static, no token). `GET /ws?t=TOKEN`: the
+  WebSocket (RFC 6455, no extensions, no subprotocol). Every request
+  needs a `Host` of `127.0.0.1:PORT`, `localhost:PORT` or `[::1]:PORT`
+  (421 otherwise: DNS rebinding), the page and the socket need the token
+  (403).
 - `http://127.0.0.1` is a secure context in Chrome, Safari and Firefox, so
   `getDisplayMedia` and WebCodecs are available without TLS.
 - Largest message: 16 MiB.
