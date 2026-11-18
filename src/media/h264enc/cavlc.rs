@@ -3,13 +3,15 @@
 //! Sources: ITU-T H.264 §7.3.5.3.2 (syntax), §9.2 (parsing process:
 //! coeff_token §9.2.1, levels §9.2.2, total_zeros/run_before §9.2.3).
 
+#[cfg(test)]
 use super::bits::BitWriter;
+use super::bits::{BitCounter, BitSink};
 use super::tables::{nc_class, COEFF_TOKEN, RUN_BEFORE, TOTAL_ZEROS, TOTAL_ZEROS_CHROMA_DC};
 
 /// Writes one residual block. `coeffs` are levels in scan order, of length
 /// maxNumCoeff (16, 15 or 4); `nc` is the coeff_token context (−1 for
 /// chroma DC). Returns TotalCoeff.
-pub fn write_block(w: &mut BitWriter, coeffs: &[i32], nc: i32) -> u32 {
+pub fn write_block<W: BitSink>(w: &mut W, coeffs: &[i32], nc: i32) -> u32 {
     let max = coeffs.len();
     // Non-zero levels from the highest frequency down, with the zero runs
     // that precede each.
@@ -99,7 +101,7 @@ pub fn write_block(w: &mut BitWriter, coeffs: &[i32], nc: i32) -> u32 {
 /// level_prefix / level_suffix for a levelCode (§9.2.2.1, inverted).
 /// Callers keep |level| ≤ 2047 so the 12-bit escape always suffices.
 #[inline]
-fn write_level(w: &mut BitWriter, code: u32, suffix_len: u32) {
+fn write_level<W: BitSink>(w: &mut W, code: u32, suffix_len: u32) {
     if suffix_len == 0 {
         if code < 14 {
             w.put(code + 1, 1);
@@ -121,9 +123,9 @@ fn write_level(w: &mut BitWriter, code: u32, suffix_len: u32) {
 
 /// Bits [`write_block`] would produce (for mode decisions).
 pub fn block_bits(coeffs: &[i32], nc: i32) -> usize {
-    let mut w = BitWriter::with_capacity(64);
+    let mut w = BitCounter::default();
     write_block(&mut w, coeffs, nc);
-    w.bit_len()
+    w.bits
 }
 
 #[cfg(test)]

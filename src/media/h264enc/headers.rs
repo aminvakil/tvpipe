@@ -6,7 +6,7 @@
 //! (Constrained Baseline: constraint_set0_flag and constraint_set1_flag),
 //! Table E-3..E-5 (colour description codes).
 
-use super::bits::BitWriter;
+use super::bits::{BitSink, BitWriter};
 
 /// log2(MaxFrameNum).
 pub const LOG2_MAX_FRAME_NUM: u32 = 8;

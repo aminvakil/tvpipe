@@ -11,7 +11,7 @@
 //! derivation), §8.4.1.1 (P_Skip vectors), §8.4.1.3 (vector prediction),
 //! §9.2.1 (nC), §6.4.11 (neighbouring locations).
 
-use super::bits::{se_len, BitWriter};
+use super::bits::{se_len, BitCounter, BitSink, BitWriter};
 use super::cavlc::write_block;
 use super::headers::SliceHeader;
 use super::inter::{sad16, satd16, RefPic};
@@ -1016,7 +1016,7 @@ impl SliceEnc {
         let ls = lambda_ssd16(qp);
         let (mode16, cost16) = self.best_i16(&src, mx, my);
         let intra_bias = (lambda * 8) / 16;
-        let try_intra = (cost16.saturating_add(intra_bias) as u64) * 2 < inter_cost as u64 * 3;
+        let try_intra = (cost16.saturating_add(intra_bias) as u64) * 4 < inter_cost as u64 * 5;
         let try_skip = !skippable && (skip_sad as f64) < 256.0 * qstep;
         if !try_intra && !try_skip {
             if skippable {
@@ -1155,16 +1155,16 @@ impl SliceEnc {
 
     /// Bits of a macroblock's layer (for rate-distortion decisions).
     fn mb_bits(&self, c: &Coded, mx: usize, my: usize, p: bool, qp: u8) -> u32 {
-        let mut bw = BitWriter::with_capacity(512);
+        let mut bc = BitCounter::default();
         let mut qp_pred = qp;
-        self.write_mb_to(&mut bw, c, mx, my, p, qp, &mut qp_pred);
-        bw.bit_len() as u32
+        self.write_mb_to(&mut bc, c, mx, my, p, qp, &mut qp_pred);
+        bc.bits as u32
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write_mb_to(
+    fn write_mb_to<W: BitSink>(
         &self,
-        bw: &mut BitWriter,
+        bw: &mut W,
         c: &Coded,
         mx: usize,
         my: usize,

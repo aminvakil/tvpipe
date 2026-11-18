@@ -4,13 +4,92 @@
 //! Sources: ITU-T H.264 §7.2 (u(n), ue(v), se(v)), §9.1 (Exp-Golomb),
 //! §7.3.2.11 (rbsp_trailing_bits), §7.4.1 (emulation_prevention_three_byte).
 
+/// Something bits can be written to: a [`BitWriter`], or a
+/// [`BitCounter`] that only adds up lengths (for mode decisions).
+pub trait BitSink {
+    /// Writes the low `nbits` (≤ 32) bits of `value`.
+    fn put(&mut self, nbits: u32, value: u32);
+    /// Pads with zero bits to the next byte boundary.
+    fn align_zero(&mut self);
+
+    #[inline]
+    fn flag(&mut self, b: bool) {
+        self.put(1, b as u32);
+    }
+
+    /// ue(v) for `v` up to `u32::MAX - 1`.
+    #[inline]
+    fn ue(&mut self, v: u32) {
+        let code = v as u64 + 1;
+        let len = 64 - code.leading_zeros();
+        // len - 1 leading zeros, then `code` in `len` bits.
+        if len <= 16 {
+            self.put(2 * len - 1, code as u32);
+        } else {
+            self.put(len - 1, 0);
+            self.put(len, code as u32);
+        }
+    }
+
+    /// se(v).
+    #[inline]
+    fn se(&mut self, v: i32) {
+        self.ue(se_code_num(v));
+    }
+}
+
+/// Counts bits.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BitCounter {
+    pub bits: usize,
+}
+
+impl BitSink for BitCounter {
+    #[inline]
+    fn put(&mut self, nbits: u32, _value: u32) {
+        self.bits += nbits as usize;
+    }
+
+    #[inline]
+    fn align_zero(&mut self) {
+        self.bits = self.bits.div_ceil(8) * 8;
+    }
+}
+
 /// Accumulates bits MSB first.
 #[derive(Debug, Default, Clone)]
 pub struct BitWriter {
     buf: Vec<u8>,
     acc: u64,
-    /// Bits pending in `acc` (always < 8 between calls).
+    /// Bits pending in `acc` (always < 32 between calls).
     n: u32,
+}
+
+impl BitSink for BitWriter {
+    #[inline]
+    fn put(&mut self, nbits: u32, value: u32) {
+        debug_assert!(nbits <= 32);
+        if nbits == 0 {
+            return;
+        }
+        let v = (value as u64) & ((1u64 << nbits) - 1);
+        self.acc = (self.acc << nbits) | v;
+        self.n += nbits;
+        if self.n >= 32 {
+            self.n -= 32;
+            self.buf
+                .extend_from_slice(&((self.acc >> self.n) as u32).to_be_bytes());
+            self.acc &= (1u64 << self.n) - 1;
+        }
+    }
+
+    fn align_zero(&mut self) {
+        let r = self.n % 8;
+        if r != 0 {
+            self.put(8 - r, 0);
+        }
+        self.flush_bytes();
+    }
 }
 
 impl BitWriter {
@@ -37,16 +116,8 @@ impl BitWriter {
         self.buf.len() * 8 + self.n as usize
     }
 
-    /// Writes the low `nbits` (≤ 32) bits of `value`.
-    #[inline]
-    pub fn put(&mut self, nbits: u32, value: u32) {
-        debug_assert!(nbits <= 32);
-        if nbits == 0 {
-            return;
-        }
-        let v = (value as u64) & ((1u64 << nbits) - 1);
-        self.acc = (self.acc << nbits) | v;
-        self.n += nbits;
+    /// Moves whole pending bytes into the buffer.
+    fn flush_bytes(&mut self) {
         while self.n >= 8 {
             self.n -= 8;
             self.buf.push((self.acc >> self.n) as u8);
@@ -54,40 +125,8 @@ impl BitWriter {
         self.acc &= (1u64 << self.n) - 1;
     }
 
-    #[inline]
-    pub fn flag(&mut self, b: bool) {
-        self.put(1, b as u32);
-    }
-
-    /// ue(v) for `v` up to `u32::MAX - 1`.
-    #[inline]
-    pub fn ue(&mut self, v: u32) {
-        let code = v as u64 + 1;
-        let len = 64 - code.leading_zeros();
-        // len - 1 leading zeros, then `code` in `len` bits.
-        if len <= 16 {
-            self.put(2 * len - 1, code as u32);
-        } else {
-            self.put(len - 1, 0);
-            self.put(len, code as u32);
-        }
-    }
-
-    /// se(v).
-    #[inline]
-    pub fn se(&mut self, v: i32) {
-        self.ue(se_code_num(v));
-    }
-
     pub fn is_aligned(&self) -> bool {
-        self.n == 0
-    }
-
-    /// Pads with zero bits to the next byte boundary.
-    pub fn align_zero(&mut self) {
-        if self.n != 0 {
-            self.put(8 - self.n, 0);
-        }
+        self.n % 8 == 0
     }
 
     /// rbsp_trailing_bits(): a one bit, then zeros to the byte boundary.
@@ -96,7 +135,8 @@ impl BitWriter {
         self.align_zero();
     }
 
-    /// The bytes written; only whole bytes (call [`trailing`] first).
+    /// The bytes written; only whole bytes after [`trailing`] or
+    /// [`align_zero`](BitSink::align_zero).
     ///
     /// [`trailing`]: BitWriter::trailing
     pub fn bytes(&self) -> &[u8] {
@@ -168,6 +208,25 @@ fn escape_into(out: &mut Vec<u8>, rbsp: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counter_matches_writer() {
+        let mut w = BitWriter::new();
+        let mut c = BitCounter::default();
+        for v in [0u32, 5, 77, 1 << 20, 3] {
+            w.ue(v);
+            c.ue(v);
+            w.put(7, v);
+            c.put(7, v);
+        }
+        w.se(-9);
+        c.se(-9);
+        assert_eq!(w.bit_len(), c.bits);
+        w.align_zero();
+        c.align_zero();
+        assert_eq!(w.bit_len(), c.bits);
+        assert_eq!(w.bytes().len() * 8, c.bits);
+    }
 
     #[test]
     fn exp_golomb() {
