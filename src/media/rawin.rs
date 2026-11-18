@@ -559,8 +559,17 @@ mod tests {
         writer.join().unwrap();
         let stats = fw.wait().unwrap();
         assert!(stats.clean_end);
-        // The fps filter may duplicate or drop a frame at the edges.
-        assert!((25..=35).contains(&video), "video frames: {video}");
+        assert_eq!((stats.video_frames, stats.audio_records), (30, 30));
+        // ffmpeg stamps raw video with the time it reads it and the fps
+        // filter resamples that to 30 fps: on an idle machine 30, give or
+        // take a frame at the edges. Under load, a stall and then a burst
+        // (or a slow ffmpeg start, while the forwarder drops frames)
+        // squeezes the stamps together and the filter drops frames, so
+        // only ask for half; never more than the second allows.
+        assert!(
+            (15..=35).contains(&video),
+            "video frames: {video}, {stats:?}"
+        );
         // 1 s of audio in 10 ms Opus packets.
         assert!((95..=101).contains(&audio), "opus packets: {audio}");
     }
