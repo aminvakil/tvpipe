@@ -1262,16 +1262,7 @@ fn share_with(
         bitrate_kbps: opts.bitrate_kbps.unwrap_or(offer.bitrate_kbps),
         latency_ms: opts.latency_ms.unwrap_or(DEFAULT_LATENCY_MS),
     };
-    let mut cast_opts = cast_options(&d, audio);
-    cast_opts.max_width = offer.size.width;
-    cast_opts.max_height = offer.size.height;
-    cast_opts.max_fps = offer.fps;
-    cast_opts.max_bitrate_kbps = offer.bitrate_kbps;
-    if let Some(f) = input::encoded_cast_audio(Some(&pcm)).filter(|_| audio) {
-        cast_opts.audio_codecs = vec![AudioCodec::AacLc];
-        cast_opts.audio_sample_rate = f.sample_rate;
-        cast_opts.audio_channels = f.channels;
-    }
+    let mut cast_opts = share_cast_options(&d, &offer, audio, &pcm);
     let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
     configure_browsers(
@@ -1299,29 +1290,7 @@ fn share_with(
     let limits = receiver_limits(&caps);
     // The receivers' screen shape: the stream has it, the capture is
     // centered inside (bars), since receivers stretch to fill.
-    let aspects: Vec<Option<(u32, u32)>> = caps.iter().map(|c| c.display_aspect).collect();
-    let aspect = layout::output_aspect(&aspects);
-    let mut shapes: Vec<(u32, u32)> = aspects
-        .iter()
-        .map(|a| a.unwrap_or(layout::DEFAULT_ASPECT))
-        .collect();
-    shapes.dedup();
-    if shapes.len() > 1 {
-        warn!(
-            "share: the receivers' screens differ in shape ({}); streaming {}:{}, the others stretch it",
-            shapes
-                .iter()
-                .map(|(w, h)| format!("{w}:{h}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            aspect.0,
-            aspect.1
-        );
-    }
-    let max = (
-        caps.iter().map(|c| c.max_width).min().unwrap_or(0),
-        caps.iter().map(|c| c.max_height).min().unwrap_or(0),
-    );
+    let (aspect, max) = screen_shape(&caps);
     let d = Desired {
         size: opts.size.unwrap_or_else(|| {
             let (width, height) = layout::output_size((cap.width, cap.height), aspect, max);
@@ -1329,16 +1298,7 @@ fn share_with(
         }),
         ..d
     };
-    let planned = plan(&d, Encoder::Auto, &caps, false).map(|mut p| {
-        if opts.bitrate_kbps.is_none() {
-            let size = Size {
-                width: p.video.width,
-                height: p.video.height,
-            };
-            p.video.bitrate_kbps = p.video.bitrate_kbps.min(default_bitrate(size, p.video.fps));
-        }
-        p
-    });
+    let planned = share_plan(&d, &caps, opts.bitrate_kbps.is_some());
     let (families, warnings) = if audio {
         input::encoded_audio_families(Some(&pcm), &named)
     } else {
@@ -1415,6 +1375,71 @@ fn share_with(
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+/// The Cast offer of a page-encoded stream (`share`, `browser`): the
+/// upper bounds of `offer`, AAC from the page's PCM.
+fn share_cast_options(
+    d: &Desired,
+    offer: &ShareOffer,
+    audio: bool,
+    pcm: &RawAudioSpec,
+) -> CastOptions {
+    let mut cast_opts = cast_options(d, audio);
+    cast_opts.max_width = offer.size.width;
+    cast_opts.max_height = offer.size.height;
+    cast_opts.max_fps = offer.fps;
+    cast_opts.max_bitrate_kbps = offer.bitrate_kbps;
+    if let Some(f) = input::encoded_cast_audio(Some(pcm)).filter(|_| audio) {
+        cast_opts.audio_codecs = vec![AudioCodec::AacLc];
+        cast_opts.audio_sample_rate = f.sample_rate;
+        cast_opts.audio_channels = f.channels;
+    }
+    cast_opts
+}
+
+/// The stream's shape (the receivers' screens, which stretch what they
+/// get; a warning when they differ) and the tightest size limit.
+fn screen_shape(caps: &[&Capabilities]) -> ((u32, u32), (u32, u32)) {
+    let aspects: Vec<Option<(u32, u32)>> = caps.iter().map(|c| c.display_aspect).collect();
+    let aspect = layout::output_aspect(&aspects);
+    let mut shapes: Vec<(u32, u32)> = aspects
+        .iter()
+        .map(|a| a.unwrap_or(layout::DEFAULT_ASPECT))
+        .collect();
+    shapes.dedup();
+    if shapes.len() > 1 {
+        warn!(
+            "share: the receivers' screens differ in shape ({}); streaming {}:{}, the others stretch it",
+            shapes
+                .iter()
+                .map(|(w, h)| format!("{w}:{h}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            aspect.0,
+            aspect.1
+        );
+    }
+    let max = (
+        caps.iter().map(|c| c.max_width).min().unwrap_or(0),
+        caps.iter().map(|c| c.max_height).min().unwrap_or(0),
+    );
+    (aspect, max)
+}
+
+/// The encode plan of a page-encoded stream: without `--bitrate`, the
+/// default for the planned size (not the offer's).
+fn share_plan(d: &Desired, caps: &[&Capabilities], bitrate_given: bool) -> Result<EncodePlan> {
+    plan(d, Encoder::Auto, caps, false).map(|mut p| {
+        if !bitrate_given {
+            let size = Size {
+                width: p.video.width,
+                height: p.video.height,
+            };
+            p.video.bitrate_kbps = p.video.bitrate_kbps.min(default_bitrate(size, p.video.fps));
+        }
+        p
+    })
 }
 
 /// `--latency` bounds (AirPlay accepts 5–2000 ms, Cast 1–5000 ms; the
