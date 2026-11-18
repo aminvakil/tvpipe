@@ -209,9 +209,35 @@ runs with the automatic leads).
 
 **Partial failures.** A `--to` that cannot be resolved or connected is
 logged and left out; the session goes on with the others and fails only
-when none is left. Targets resolve and connect in parallel. A sink failing
-mid-stream, or a receiver ending the session, removes that sink; the
-session ends when every receiver is gone.
+when none is left. Targets resolve and connect in parallel. A receiver
+ending the session, or a sink failing mid-stream for another reason than
+a lost connection, removes that sink; the session ends when every
+receiver is gone.
+
+**Reconnecting** (`--reconnect SECS`, default 120 s, `src/session/rejoin.rs`).
+A sink whose connection is lost (an `Io`, `Closed` or `Timeout` error
+from `push`) keeps its place in the fanout: its frames are dropped while
+a worker thread connects again with backoff (1 s, doubling to 30 s)
+until the window ends. A receiver given by name is resolved again with
+the same protocol (`cast:NAME`, `airplay:NAME`), since a TV that changed
+its address is only found by mDNS; an address is retried as it is. The
+new connection runs the whole setup again (Cast: TLS, LAUNCH, an OFFER
+from the session's options with only the running audio codec; AirPlay:
+pair-verify with the stored credentials, FairPlay, SETUP), must take the
+running stream (codec, size, frame rate, audio family; else it stays
+dropped, logged), gets the session clock and the running stream's
+`VideoInfo`/`AudioInfo`, and starts at a keyframe the wrapper asks the
+fanout (and so the input) for. The other sinks never notice. How a loss
+is told from the receiver ending the session:
+
+| | Ended (not reconnected) | Lost (reconnected) |
+|---|---|---|
+| Cast | `CLOSE` from the app, a status without the mirroring app | control channel closed without `CLOSE`, heartbeat timeout, no RTCP for 5 s while RTP goes out, UDP unreachable |
+| AirPlay | the receiver closes the video data connection (EOF or a reset over unread frames) | control connection broken, write timeouts, no answer to `/feedback` for 7 s, other data-connection errors |
+
+A receiver that vanished cannot close a connection, so a close is taken
+as the receiver's decision; whether an Apple TV that changes its address
+closes its connections first is untested on hardware.
 
 ## Browser Player
 
@@ -239,7 +265,8 @@ stalls the others. The rules:
 - When a sink needs a keyframe (after a PLI, loss, or a full writer), it
   drops non-key video until the next IDR and forwards the request to the
   input.
-- A failed sink is removed and the others continue.
+- A failed sink is removed and the others continue; one that lost its
+  receiver is first reconnected (see [Several Receivers](#several-receivers)).
 
 ## Discovery
 

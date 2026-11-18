@@ -202,6 +202,7 @@ tvpipe discover [--timeout SECS] [--json]
 tvpipe pair NAME|ADDR [--pin PIN]          # interactive PIN if omitted
 tvpipe unpair NAME|ADDR
 tvpipe play --to NAME|ADDR [--to ...]      # repeatable: replication
+               [--reconnect SECS]              # reconnect dropped receivers (default 120, 0 off)
                [--latency MS]                  # target playout delay (default ~150–250)
                [--size WxH] [--fps N] [--bitrate KBPS]
                [--encoder auto|x264|videotoolbox|nvenc|qsv|vaapi|mf]

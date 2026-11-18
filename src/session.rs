@@ -20,7 +20,8 @@
 //!    (`FfmpegInput`) after planning the encode from the user's options
 //!    and the sinks' capabilities. ffmpeg is only located when needed.
 //! 4. Push every frame through the fanout; while a sink wants a keyframe,
-//!    ask the input for one (only an encoding game can).
+//!    ask the input for one (only an encoding game can). A receiver that
+//!    drops out is reconnected meanwhile (`rejoin`, `--reconnect`).
 //! 5. Tear down on EOF (after one playout delay, so the tail plays), on
 //!    Ctrl-C / SIGTERM / `q` (see `util::interrupt`, without draining), or
 //!    when every receiver has ended the session. Every sink's `stop()` runs

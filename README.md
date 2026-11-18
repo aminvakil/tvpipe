@@ -69,6 +69,13 @@ command with `--help` to see all of its options.
 A device that advertises both protocols uses Cast unless you write
 `airplay:`. You can repeat `--to` to stream to several receivers at once.
 
+A receiver that drops out mid-stream (it left the Wi-Fi, or got a new
+address) is reconnected for up to `--reconnect SECS` (default 120, `0`
+turns it off) while the others keep playing: one given by name is looked
+up again, one given as an address is retried there. It comes back at the
+next keyframe, in step with the others. A receiver whose user stopped
+mirroring is left alone.
+
 ### Inputs
 
 ```sh
@@ -173,6 +180,7 @@ Useful `play` options:
 
 | Option | Default | |
 |---|---|---|
+| `--reconnect SECS` | 120 s | how long a receiver that dropped out is reconnected (`0`: off; also `share`) |
 | `--latency MS` | Cast 300 ms; AirPlay automatic (video 100, audio 170 ms); both 300 ms when mixed; browser alone 100 ms | playout delay, the same on every receiver (5–2000) |
 | `--size WxH`, `--fps N`, `--bitrate KBPS` | from the input and the receivers | output limits |
 | `--encoder` | `auto` | `builtin`, `x264`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `mf` |
