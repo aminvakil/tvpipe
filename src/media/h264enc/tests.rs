@@ -717,3 +717,36 @@ fn parameter_set_vectors() {
         assert_eq!(enc.avcc(), b.hex("avcc"), "{}", b.name());
     }
 }
+
+#[test]
+#[ignore]
+fn bench_fixed_qp() {
+    let Some(ff) = ffmpeg() else { return };
+    let (w, h) = (1280u32, 720u32);
+    let qp: u8 = std::env::var("H264ENC_QP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
+    for src in ["mandelbrot", "testsrc2"] {
+        let frames = lavfi_frames(&ff, src, w, h, 120);
+        let mut enc = Encoder::new(Config {
+            width: w,
+            height: h,
+            qp: Some(qp),
+            threads: 1,
+            ..Config::default()
+        })
+        .unwrap();
+        let mut bytes = 0;
+        let mut ps = 0.0;
+        for f in &frames {
+            bytes += enc.encode(f, false).unwrap().data.len();
+            ps += psnr(&f.y, &enc.recon().unwrap().y);
+        }
+        eprintln!(
+            "{src} qp {qp}: {:.1} dB {:.0} kbps",
+            ps / 120.0,
+            bytes as f64 * 8.0 / 2.0 / 1000.0
+        );
+    }
+}

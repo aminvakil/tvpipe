@@ -276,45 +276,69 @@ pub fn to_i420(
             if data.len() < stride * (h - 1) + w * bpp {
                 return Err(Error::malformed("convert: frame buffer too short"));
             }
-            let (ri, gi, bi) = match fmt {
-                PixelFormat::Rgba | PixelFormat::Rgb24 => (0, 1, 2),
-                _ => (2, 1, 0),
-            };
             let k = Coeffs::new(spec);
-            let px = |x: usize, y: usize| -> (i32, i32, i32) {
-                let o = y * stride + x * bpp;
-                (
-                    data[o + ri] as i32,
-                    data[o + gi] as i32,
-                    data[o + bi] as i32,
-                )
-            };
-            for y in 0..h {
-                let yo = y * w;
-                for x in 0..w {
-                    let (r, g, b) = px(x, y);
-                    out.y[yo + x] = k.y(r, g, b);
-                }
-            }
-            for cy in 0..ch {
-                let (y0, y1) = (2 * cy, (2 * cy + 1).min(h - 1));
-                for cx in 0..cw {
-                    let (x0, x1) = (2 * cx, (2 * cx + 1).min(w - 1));
-                    let (mut r, mut g, mut b) = (0, 0, 0);
-                    for (xx, yy) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
-                        let p = px(xx, yy);
-                        r += p.0;
-                        g += p.1;
-                        b += p.2;
-                    }
-                    let (u, v) = k.uv4(r, g, b);
-                    out.u[cy * cw + cx] = u;
-                    out.v[cy * cw + cx] = v;
-                }
+            match fmt {
+                PixelFormat::Rgba => rgb_rows::<4, 0, 2>(&k, data, stride, &mut out),
+                PixelFormat::Bgra => rgb_rows::<4, 2, 0>(&k, data, stride, &mut out),
+                PixelFormat::Rgb24 => rgb_rows::<3, 0, 2>(&k, data, stride, &mut out),
+                _ => rgb_rows::<3, 2, 0>(&k, data, stride, &mut out),
             }
         }
     }
     Ok(out)
+}
+
+/// Packed RGB → I420, two rows at a time. `BPP` bytes per pixel, red at
+/// byte `R`, blue at byte `B`, green at 1. The caller checked the sizes.
+fn rgb_rows<const BPP: usize, const R: usize, const B: usize>(
+    k: &Coeffs,
+    data: &[u8],
+    stride: usize,
+    out: &mut Yuv420Frame,
+) {
+    let (w, h) = (out.width as usize, out.height as usize);
+    let cw = out.chroma_width();
+    let row = |y: usize| &data[y * stride..y * stride + w * BPP];
+    let px = |r: &[u8], x: usize| -> (i32, i32, i32) {
+        let p = &r[x * BPP..x * BPP + 3];
+        (p[R] as i32, p[1] as i32, p[B] as i32)
+    };
+    for (cy, (yy, (uu, vv))) in out
+        .y
+        .chunks_mut(2 * w)
+        .zip(out.u.chunks_exact_mut(cw).zip(out.v.chunks_exact_mut(cw)))
+        .enumerate()
+    {
+        let y0 = 2 * cy;
+        let y1 = (y0 + 1).min(h - 1);
+        let (r0, r1) = (row(y0), row(y1));
+        let (ya, yb) = yy.split_at_mut(w);
+        for cx in 0..cw {
+            let x0 = 2 * cx;
+            let x1 = (x0 + 1).min(w - 1);
+            let a = px(r0, x0);
+            let b = px(r0, x1);
+            let c = px(r1, x0);
+            let d = px(r1, x1);
+            ya[x0] = k.y(a.0, a.1, a.2);
+            if x1 != x0 {
+                ya[x1] = k.y(b.0, b.1, b.2);
+            }
+            if y1 != y0 {
+                yb[x0] = k.y(c.0, c.1, c.2);
+                if x1 != x0 {
+                    yb[x1] = k.y(d.0, d.1, d.2);
+                }
+            }
+            let (u, v) = k.uv4(
+                a.0 + b.0 + c.0 + d.0,
+                a.1 + b.1 + c.1 + d.1,
+                a.2 + b.2 + c.2 + d.2,
+            );
+            uu[cx] = u;
+            vv[cx] = v;
+        }
+    }
 }
 
 /// Bilinear resampling of one plane (sample centres aligned).
@@ -554,5 +578,33 @@ mod oracle {
             let tol = if i < ys { 1 } else { 2 };
             assert!(a.abs_diff(*b) <= tol, "sample {i}: ours {a} ffmpeg {b}");
         }
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// `cargo test --release -- --ignored --nocapture convert_speed`.
+    #[test]
+    #[ignore]
+    fn convert_speed() {
+        let (w, h) = (1920u32, 1080u32);
+        let rgba: Vec<u8> = (0..w * h * 4).map(|i| (i * 7 % 251) as u8).collect();
+        let n = 50;
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(
+                to_i420(PixelFormat::Rgba, w, h, &rgba, None, ColorSpec::default()).unwrap(),
+            );
+        }
+        let rgb_ms = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        let f = to_i420(PixelFormat::Rgba, w, h, &rgba, None, ColorSpec::default()).unwrap();
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(scale(&f, 1280, 720).unwrap());
+        }
+        let scale_ms = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        eprintln!("1080p rgba->i420 {rgb_ms:.2} ms, 1080p->720p scale {scale_ms:.2} ms");
     }
 }
