@@ -18,6 +18,8 @@ checklist as it lands pieces on `main`.
 | [W10 AAC-LC encoder](W10-aac-encoder.md) | subagent `w10-aac` | `w10-aac` / `../streamlib-w10` | done (not yet wired into Cast) |
 | [W11 H.264 encoder](W11-h264-encoder.md) | subagent `w11-h264enc` | `w11-h264enc` / `../streamlib-w11` | in progress |
 | M10 replication (shared timeline, one budget) | subagent `multi-receiver` | `multi-receiver` / `../streamlib-multi-receiver` | in review (decision 0010); Office TV + local openscreen receiver tested; AirPlay+Cast mixed on hardware pending |
+| [W12 share a browser tab](W12-browser-share.md) | subagent `w12-share` | `w12-share` / `../streamlib-w12` | in progress |
+| W13 `tvpipe browser URL` (headless Chrome + CDP) | — | — | after W12 |
 | S1 FairPlay spec | — | — | dropped for now (LGPL port, decision 0005) |
 | [S2 AirPlay mirroring spec (dirty)](S2-airplay-mirroring-spec.md) | subagent `s2-spec` | `s2-spec` / `../streamlib-s2` | merged (reviewed); Q1-Q6 answered |
 
