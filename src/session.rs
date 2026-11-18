@@ -14,10 +14,11 @@
 //!    game.
 //! 3. Choose the input (`media::input`): a file that fits every receiver
 //!    is sent unchanged (`PassthroughInput`), `--raw-video ...:h264` reads
-//!    the game's H.264 (`SlrwEncodedInput`), everything else is encoded by
-//!    ffmpeg (`FfmpegInput`) after planning the encode from the user's
-//!    options and the sinks' capabilities. ffmpeg is only located when
-//!    needed.
+//!    the game's H.264 (`SlrwEncodedInput`), raw SLRW and the test pattern
+//!    use the built-in encoder (`media::builtin`) with `--encoder builtin`
+//!    or when ffmpeg is missing, everything else is encoded by ffmpeg
+//!    (`FfmpegInput`) after planning the encode from the user's options
+//!    and the sinks' capabilities. ffmpeg is only located when needed.
 //! 4. Push every frame through the fanout; while a sink wants a keyframe,
 //!    ask the input for one (only an encoding game can).
 //! 5. Tear down on EOF (after one playout delay, so the tail plays), on
@@ -34,6 +35,7 @@ use std::time::{Duration, Instant};
 use crate::cast::{self, CastOptions};
 use crate::cli::{Command, InputSpec, PlayOptions, Size};
 use crate::error::{Error, Result};
+use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
 use crate::media::ffmpeg::{self, Source};
 use crate::media::input::{
@@ -647,8 +649,74 @@ fn file_input_info(fi: &passthrough::FileInfo) -> InputInfo {
 enum Route {
     Passthrough(std::path::PathBuf, passthrough::PassPlan),
     Encoded,
+    /// Raw SLRW or the test pattern through `media::h264enc`.
+    Builtin,
     Ffmpeg,
 }
+
+/// Whether raw SLRW input or the test pattern goes through the built-in
+/// encoder instead of ffmpeg: when asked (`--encoder builtin`), or with
+/// `--encoder auto` when ffmpeg is missing (or, for the test pattern,
+/// lacks `drawtext` for the wallclock).
+fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Result<bool> {
+    let raw = opts.input == InputSpec::Stdin && !encoded;
+    let pattern = opts.input == InputSpec::TestPattern;
+    let builtin = match opts.encoder {
+        _ if encoded => false,
+        Encoder::Builtin if raw || pattern => true,
+        Encoder::Builtin => {
+            return Err(Error::usage(
+                "--encoder builtin encodes raw SLRW input (-) and test-pattern; \
+                 files, URLs and capture devices need ffmpeg",
+            ))
+        }
+        Encoder::Auto if raw => match tools.get() {
+            Ok(_) => false,
+            Err(e) => {
+                info!("{e}; encoding the raw input with the built-in H.264 encoder");
+                true
+            }
+        },
+        Encoder::Auto if pattern => match tools.get() {
+            Ok((_, probe)) if probe.has_filter("drawtext") => false,
+            Ok(_) => {
+                info!("ffmpeg lacks the drawtext filter; using the built-in test pattern");
+                true
+            }
+            Err(e) => {
+                info!("{e}; using the built-in test pattern and H.264 encoder");
+                true
+            }
+        },
+        _ => false,
+    };
+    if builtin && raw {
+        let v = opts
+            .raw_video
+            .as_ref()
+            .ok_or_else(|| Error::usage("raw input (-) needs --raw-video WxH@FPS:PIXFMT"))?;
+        if !builtin::supported_pix_fmt(&v.pix_fmt) {
+            return Err(Error::unsupported(format!(
+                "the built-in encoder cannot read {:?} frames (rgba, bgra, rgb0, bgr0, rgb24, \
+                 bgr24, nv12, yuv420p) and ffmpeg is {}",
+                v.pix_fmt,
+                if opts.encoder == Encoder::Builtin {
+                    "not used with --encoder builtin"
+                } else {
+                    "not available"
+                }
+            )));
+        }
+    }
+    Ok(builtin)
+}
+
+/// Connects every target (the tests substitute fakes).
+type Connector<'a> = &'a dyn Fn(
+    &[Target],
+    &CastOptions,
+    &crate::airplay::session::MirrorOptions,
+) -> Result<Vec<Box<dyn Sink>>>;
 
 /// The game's ends of our stdio (SLRW in, keyframe requests out).
 struct GameIo {
@@ -667,6 +735,10 @@ fn play(opts: PlayOptions) -> Result<()> {
 }
 
 fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
+    play_with(opts, io, &connect_all)
+}
+
+fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>) -> Result<()> {
     if !interrupt::install() {
         warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
     }
@@ -694,6 +766,7 @@ fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
             "--raw-video ...:h264 reads SLRW from stdin (-)",
         ));
     }
+    let builtin = use_builtin(&opts, encoded, &mut tools)?;
     let candidate = input::passthrough_candidate(&opts);
     let probed = candidate.as_deref().map(passthrough::probe);
     let input = match &opts.input {
@@ -753,24 +826,34 @@ fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
             }
         }
     }
-    if encoded && audio {
-        if let Some(f) = input::encoded_cast_audio(opts.raw_audio.as_ref()) {
-            cast_opts.audio_codecs = vec![AudioCodec::AacLc];
-            cast_opts.audio_sample_rate = f.sample_rate;
-            cast_opts.audio_channels = f.channels;
-        }
-    }
     let targets = opts
         .to
         .iter()
         .map(|q| resolve_target(q))
         .collect::<Result<Vec<_>>>()?;
+    // The built-in test pattern's beep: 44.1 kHz when AirPlay listens.
+    let pattern_rate =
+        builtin::pattern_sample_rate(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
+    let pattern_audio = builtin::pattern_audio(pattern_rate);
+    let game_audio = match &opts.input {
+        InputSpec::TestPattern if builtin => Some(&pattern_audio),
+        InputSpec::Stdin if encoded || builtin => opts.raw_audio.as_ref(),
+        _ => None,
+    };
+    if audio {
+        // In-process audio for Cast is AAC (media::aacenc).
+        if let Some(f) = game_audio.and_then(|a| input::encoded_cast_audio(Some(a))) {
+            cast_opts.audio_codecs = vec![AudioCodec::AacLc];
+            cast_opts.audio_sample_rate = f.sample_rate;
+            cast_opts.audio_channels = f.channels;
+        }
+    }
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: opts.latency_ms,
         audio,
         ..Default::default()
     };
-    let sinks = connect_all(&targets, &cast_opts, &mirror)?;
+    let sinks = connect(&targets, &cast_opts, &mirror)?;
     if interrupt::requested() {
         stop_all(sinks);
         return Ok(());
@@ -782,6 +865,7 @@ fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
         sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
     let route = match (&candidate, &probed) {
         _ if encoded => Route::Encoded,
+        _ if builtin => Route::Builtin,
         (Some(path), Some(probed)) => match input::decide_file(probed, &opts, &named) {
             input::FileDecision::Passthrough { info: fi, plan } => {
                 info!(
@@ -840,6 +924,52 @@ fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
                 },
             )?;
             Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
+        }
+        Route::Builtin => {
+            // Audio is planned like the encoded-SLRW path's, below.
+            let plan = plan(&d, Encoder::Builtin, &caps, false)?;
+            info!(
+                "plan: {}x{}@{} {} kbit/s, gop {}, latency {} ms (built-in encoder)",
+                plan.video.width,
+                plan.video.height,
+                plan.video.fps,
+                plan.video.bitrate_kbps,
+                plan.video.gop,
+                plan.latency_ms
+            );
+            let out = VideoOut {
+                size: Size {
+                    width: plan.video.width,
+                    height: plan.video.height,
+                },
+                fps: plan.video.fps,
+                bitrate_kbps: plan.video.bitrate_kbps,
+                gop: plan.video.gop,
+            };
+            let (families, warnings) =
+                input::encoded_audio_families(game_audio.filter(|_| audio), &named);
+            for w in warnings {
+                warn!("{w}");
+            }
+            let i = if opts.input == InputSpec::TestPattern {
+                BuiltinInput::test_pattern(out, pattern_rate, families, interrupt::requested)?
+            } else {
+                let video_in = opts
+                    .raw_video
+                    .clone()
+                    .ok_or_else(|| Error::usage("--raw-video missing"))?;
+                BuiltinInput::open_slrw(
+                    io.stdin,
+                    BuiltinOptions {
+                        video_in,
+                        video_out: out,
+                        audio: opts.raw_audio.clone().filter(|_| audio),
+                        audio_families: families,
+                        threads: 0,
+                    },
+                )?
+            };
+            Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
         }
         Route::Ffmpeg => {
             let plan = plan(&d, opts.encoder, &caps, audio)?;
@@ -1493,6 +1623,298 @@ mod tests {
         assert!(back
             .split(|&b| b == b'\n')
             .all(|l| l.is_empty() || l == b"keyframe"));
+    }
+
+    /// Ends the session after `left` video frames (the test pattern never
+    /// ends by itself).
+    struct FinishAfter {
+        inner: Box<dyn Sink>,
+        left: usize,
+    }
+
+    impl Sink for FinishAfter {
+        fn name(&self) -> &str {
+            self.inner.name()
+        }
+        fn capabilities(&self) -> &Capabilities {
+            self.inner.capabilities()
+        }
+        fn start(
+            &mut self,
+            v: &crate::types::VideoInfo,
+            a: Option<&crate::types::AudioInfo>,
+        ) -> Result<()> {
+            self.inner.start(v, a)
+        }
+        fn push(&mut self, f: &crate::types::EncodedFrame) -> Result<crate::types::SinkStatus> {
+            if f.track == TrackKind::Video {
+                if self.left == 0 {
+                    return Ok(crate::types::SinkStatus::Finished);
+                }
+                self.left -= 1;
+            }
+            self.inner.push(f)
+        }
+        fn wants_keyframe(&self) -> bool {
+            self.inner.wants_keyframe()
+        }
+        fn stop(&mut self) -> Result<()> {
+            self.inner.stop()
+        }
+    }
+
+    /// Cast targets as usual, AirPlay ones to a fake mirror receiver
+    /// (which skips pairing); each sink ends after `limit` video frames.
+    fn fake_connector(
+        fake: Option<&crate::airplay::fake_mirror::FakeMirror>,
+        limit: Option<usize>,
+        targets: &[Target],
+        cast_opts: &CastOptions,
+        mirror: &crate::airplay::session::MirrorOptions,
+    ) -> Result<Vec<Box<dyn Sink>>> {
+        let mut out: Vec<Box<dyn Sink>> = Vec::new();
+        for t in targets {
+            let sink: Box<dyn Sink> = match t {
+                Target::Cast { addr, name } => Box::new(cast::connect(*addr, name, cast_opts)?),
+                Target::AirPlay { .. } => {
+                    let fake = fake.expect("fake AirPlay receiver");
+                    let (addr, secret) = (fake.addr, fake.secret.clone());
+                    Box::new(crate::airplay::sink::connect_with(
+                        "fake".into(),
+                        mirror,
+                        || {
+                            let tcp = std::net::TcpStream::connect(addr).unwrap();
+                            Ok((
+                                crate::net::rtsp::RtspClient::new(tcp),
+                                addr,
+                                secret.clone(),
+                                true,
+                            ))
+                        },
+                    )?)
+                }
+            };
+            out.push(match limit {
+                Some(left) => Box::new(FinishAfter { inner: sink, left }),
+                None => sink,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Paced raw RGBA SLRW (like `slrw-gen`), 1 s at 30 fps with PCM.
+    fn raw_game_io(rate: u32) -> GameIo {
+        use crate::media::builtin::tests::{rgba_bars, Paced};
+        use crate::media::slrw::{self, Kind};
+        let mut chunks = std::collections::VecDeque::new();
+        let mut head = Vec::new();
+        slrw::write_magic(&mut head).unwrap();
+        chunks.push_back((Duration::ZERO, head));
+        let per_frame = rate as usize / 30;
+        for i in 0..30u64 {
+            let pts = 1_000_000 + i * 33_333;
+            let mut rec = Vec::new();
+            slrw::write_packet(&mut rec, Kind::Video, pts, &rgba_bars(320, 180, i)).unwrap();
+            let pcm: Vec<u8> = (0..per_frame * 2)
+                .flat_map(|k| (((k as f64 * 0.07).sin() * 5000.0) as i16).to_le_bytes())
+                .collect();
+            slrw::write_packet(&mut rec, Kind::Audio, pts, &pcm).unwrap();
+            chunks.push_back((Duration::from_micros(i * 33_333), rec));
+        }
+        let mut end = Vec::new();
+        slrw::write_packet(&mut end, Kind::End, 0, &[]).unwrap();
+        chunks.push_back((Duration::from_millis(1000), end));
+        GameIo {
+            stdin: Box::new(Paced::new(chunks)),
+            stdout: Box::new(std::io::sink()),
+        }
+    }
+
+    fn raw_opts(to: String, rate: u32) -> PlayOptions {
+        PlayOptions {
+            to: vec![to],
+            latency_ms: Some(100),
+            ffmpeg: Some(NO_FFMPEG.into()),
+            raw_video: Some("320x180@30:rgba".parse().unwrap()),
+            raw_audio: Some(format!("{rate}:2:s16le").parse().unwrap()),
+            input: InputSpec::Stdin,
+            ..opts()
+        }
+    }
+
+    /// The H.264 a Cast receiver got decodes (when ffmpeg is around).
+    fn check_decodes(
+        frames: &std::collections::BTreeMap<
+            crate::cast::rtp::FrameId,
+            crate::cast::fake_receiver::Frame,
+        >,
+    ) {
+        let Some((bin, _)) = crate::media::ffmpeg::tests::real_ffmpeg() else {
+            return;
+        };
+        let stream: Vec<u8> = frames.values().flat_map(|f| f.data.clone()).collect();
+        let mut child = StdCommand::new(bin)
+            .args(["-v", "error", "-f", "h264", "-i", "-", "-f", "null", "-"])
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(&stream).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success() && out.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn raw_slrw_to_cast_without_ffmpeg() {
+        use crate::cast::fake_receiver::{FakeReceiver, Options};
+        let rx = FakeReceiver::spawn(Options::default());
+        let connect =
+            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+                fake_connector(None, None, t, c, m)
+            };
+        play_with(
+            raw_opts(rx.addr.to_string(), 48_000),
+            raw_game_io(48_000),
+            &connect,
+        )
+        .unwrap();
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        assert!(st.stopped, "STOP not received");
+        let offer = st.offer.as_ref().unwrap().to_string();
+        assert!(
+            offer.contains("\"aac\"") && !offer.contains("\"opus\""),
+            "{offer}"
+        );
+        let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
+        let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
+        assert!((27..=30).contains(&v.frames.len()), "{}", v.frames.len());
+        assert!(v.frames.values().next().unwrap().keyframe);
+        assert!((44..=48).contains(&a.frames.len()), "{}", a.frames.len());
+        assert!(a.frames.values().all(|f| is_adts(&f.data)));
+        check_decodes(&v.frames);
+    }
+
+    #[test]
+    fn test_pattern_to_cast_builtin() {
+        use crate::cast::fake_receiver::{FakeReceiver, Options};
+        let rx = FakeReceiver::spawn(Options::default());
+        let connect =
+            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+                fake_connector(None, Some(20), t, c, m)
+            };
+        let o = PlayOptions {
+            to: vec![rx.addr.to_string()],
+            latency_ms: Some(100),
+            size: Some(Size {
+                width: 640,
+                height: 360,
+            }),
+            encoder: Encoder::Builtin,
+            ..opts()
+        };
+        let io = GameIo {
+            stdin: Box::new(std::io::empty()),
+            stdout: Box::new(std::io::sink()),
+        };
+        play_with(o, io, &connect).unwrap();
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        assert!(st.stopped, "STOP not received");
+        let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
+        let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
+        assert!((18..=20).contains(&v.frames.len()), "{}", v.frames.len());
+        assert!(!a.frames.is_empty());
+        check_decodes(&v.frames);
+    }
+
+    #[test]
+    fn raw_slrw_and_test_pattern_to_airplay_without_ffmpeg() {
+        use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
+        // Raw SLRW, --encoder auto with a bogus ffmpeg.
+        let fake = FakeMirror::start(Behaviour::default());
+        let connect =
+            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+                fake_connector(Some(&fake), None, t, c, m)
+            };
+        let to = format!("airplay:{}", fake.addr);
+        play_with(raw_opts(to.clone(), 44_100), raw_game_io(44_100), &connect).unwrap();
+        {
+            let r = fake.rec();
+            assert!(r.teardown);
+            let frames = r.video.iter().filter(|p| p.kind == 0).count();
+            assert!((27..=30).contains(&frames), "{frames}");
+            assert!(r.video.iter().any(|p| p.kind == 1), "codec packet");
+            assert!(r.video.iter().find(|p| p.kind == 0).unwrap().idr);
+            // 44100 samples in 352-sample PCM frames.
+            assert!((120..=126).contains(&r.audio.len()), "{}", r.audio.len());
+        }
+        // The test pattern, built in because ffmpeg is missing.
+        let fake = FakeMirror::start(Behaviour::default());
+        let connect =
+            |t: &[Target], c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+                fake_connector(Some(&fake), Some(15), t, c, m)
+            };
+        let o = PlayOptions {
+            to: vec![format!("airplay:{}", fake.addr)],
+            latency_ms: Some(100),
+            ffmpeg: Some(NO_FFMPEG.into()),
+            ..opts()
+        };
+        let io = GameIo {
+            stdin: Box::new(std::io::empty()),
+            stdout: Box::new(std::io::sink()),
+        };
+        play_with(o, io, &connect).unwrap();
+        let r = fake.rec();
+        assert!(r.teardown);
+        let frames = r.video.iter().filter(|p| p.kind == 0).count();
+        assert!((13..=15).contains(&frames), "{frames}");
+        assert!(!r.audio.is_empty());
+    }
+
+    #[test]
+    fn builtin_needs_raw_or_pattern() {
+        let o = PlayOptions {
+            encoder: Encoder::Builtin,
+            input: InputSpec::Path("x.mp4".into()),
+            ..opts()
+        };
+        let mut tools = Tools::new(None);
+        assert!(use_builtin(&o, false, &mut tools).is_err());
+        let o = PlayOptions {
+            encoder: Encoder::Builtin,
+            input: InputSpec::Stdin,
+            raw_video: Some("64x64@30:yuyv422".parse().unwrap()),
+            ..opts()
+        };
+        let e = use_builtin(&o, false, &mut tools).unwrap_err();
+        assert!(e.to_string().contains("cannot read"), "{e}");
+        let o = PlayOptions {
+            raw_video: Some("64x64@30:bgra".parse().unwrap()),
+            ..o
+        };
+        assert!(use_builtin(&o, false, &mut tools).unwrap());
+        // Encoded SLRW never goes through the encoder.
+        assert!(!use_builtin(&o, true, &mut tools).unwrap());
+        // Auto with a bogus ffmpeg falls back to the built-in encoder.
+        let bogus = std::path::PathBuf::from(NO_FFMPEG);
+        let mut tools = Tools::new(Some(&bogus));
+        let o = PlayOptions {
+            encoder: Encoder::Auto,
+            ..o
+        };
+        assert!(use_builtin(&o, false, &mut tools).unwrap());
+        let o = PlayOptions {
+            input: InputSpec::TestPattern,
+            ..o
+        };
+        assert!(use_builtin(&o, false, &mut tools).unwrap());
     }
 
     #[test]
