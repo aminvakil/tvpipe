@@ -110,19 +110,22 @@ impl RateControl {
             }
         } else {
             let t = (self.target - buf / 4.0).clamp(self.target / 4.0, 1.5 * self.target);
-            let k = match (self.k_p, self.cplx_p) {
-                (Some(k), Some(c)) => {
+            match (self.k_p, self.cplx_p) {
+                (Some(k), c) => {
                     // Scale the model with the change in temporal activity,
                     // damped (bits do not grow linearly with it).
-                    k * (self.cplx_now / c).powf(0.5).clamp(0.25, 4.0)
+                    let k = match c {
+                        Some(c) => k * (self.cplx_now / c).powf(0.5).clamp(0.25, 4.0),
+                        None => k,
+                    };
+                    let q = Self::qp_for(k, t);
+                    match self.last_p_qp {
+                        Some(last) => q.clamp(last - 2.0, last + 4.0),
+                        None => q,
+                    }
                 }
-                (Some(k), None) => k,
-                (None, _) => self.k_i.map(|k| k / 4.0).unwrap_or(1.0),
-            };
-            let q = Self::qp_for(k, t);
-            match self.last_p_qp {
-                Some(last) => q.clamp(last - 2.0, last + 4.0),
-                None => q,
+                // First P frame: a little coarser than the IDR before it.
+                (None, _) => self.last_qp + 2.0,
             }
         };
         let q = qp.round().clamp(QP_MIN as f64, QP_MAX as f64);
@@ -149,9 +152,6 @@ impl RateControl {
                 Some(old) => 0.5 * old + 0.5 * k,
                 None => k,
             });
-            if self.k_p.is_none() {
-                self.k_p = Some(k / 4.0);
-            }
         } else {
             // Normalise K to the complexity it was measured at.
             self.k_p = Some(match (self.k_p, self.cplx_p) {

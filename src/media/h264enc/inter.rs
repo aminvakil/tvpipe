@@ -312,23 +312,50 @@ pub fn sad16(src: &[u8; 256], r: &[u8], off: usize, stride: usize) -> u32 {
     s
 }
 
-/// SATD of a 16x16 block against a prediction.
+/// SATD of a 16x16 block against a prediction: the sum over its 4x4
+/// blocks of the absolute 4x4 Hadamard coefficients, halved.
+///
+/// Rows are transformed first (groups of four columns), then the vertical
+/// stage uses |a + b| + |a − b| = 2 · max(|a|, |b|), which also absorbs
+/// the halving; that stage runs over all 16 columns at once. Values stay
+/// within ±4080, so 16-bit lanes suffice.
 #[inline]
 pub fn satd16(src: &[u8; 256], pred: &[u8; 256]) -> u32 {
-    let mut s = 0;
-    for by in 0..4 {
-        for bx in 0..4 {
-            let mut d = [0i32; 16];
-            for y in 0..4 {
-                for x in 0..4 {
-                    let i = (by * 4 + y) * 16 + bx * 4 + x;
-                    d[y * 4 + x] = src[i] as i32 - pred[i] as i32;
-                }
+    let mut sum = 0u32;
+    for strip in 0..4 {
+        let mut t = [[0i16; 16]; 4];
+        for (r, tr) in t.iter_mut().enumerate() {
+            let o = (strip * 4 + r) * 16;
+            let a = &src[o..o + 16];
+            let b = &pred[o..o + 16];
+            let mut d = [0i16; 16];
+            for x in 0..16 {
+                d[x] = a[x] as i16 - b[x] as i16;
             }
-            s += super::transform::satd4(&d);
+            for g in 0..4 {
+                let p = &d[g * 4..g * 4 + 4];
+                let s01 = p[0] + p[1];
+                let d01 = p[0] - p[1];
+                let s23 = p[2] + p[3];
+                let d23 = p[2] - p[3];
+                tr[g * 4] = s01 + s23;
+                tr[g * 4 + 1] = s01 - s23;
+                tr[g * 4 + 2] = d01 - d23;
+                tr[g * 4 + 3] = d01 + d23;
+            }
         }
+        let mut acc = [0u16; 16];
+        for x in 0..16 {
+            let s01 = t[0][x] + t[1][x];
+            let d01 = t[0][x] - t[1][x];
+            let s23 = t[2][x] + t[3][x];
+            let d23 = t[2][x] - t[3][x];
+            acc[x] = s01.unsigned_abs().max(s23.unsigned_abs())
+                + d01.unsigned_abs().max(d23.unsigned_abs());
+        }
+        sum += acc.iter().map(|&v| v as u32).sum::<u32>();
     }
-    s
+    sum
 }
 
 #[cfg(test)]
@@ -348,6 +375,24 @@ mod tests {
         r.y.extend_edges();
         r.build_half();
         r
+    }
+
+    #[test]
+    fn satd16_matches_satd4() {
+        let src: [u8; 256] = core::array::from_fn(|i| (i * 37 % 251) as u8);
+        let pred: [u8; 256] = core::array::from_fn(|i| (i * 11 % 241) as u8);
+        let mut want = 0;
+        for by in 0..4 {
+            for bx in 0..4 {
+                let d: [i32; 16] = core::array::from_fn(|k| {
+                    let i = (by * 4 + k / 4) * 16 + bx * 4 + k % 4;
+                    src[i] as i32 - pred[i] as i32
+                });
+                let h = super::super::transform::hadamard4(&d);
+                want += h.iter().map(|v| v.unsigned_abs()).sum::<u32>();
+            }
+        }
+        assert_eq!(satd16(&src, &pred), want / 2);
     }
 
     #[test]

@@ -515,9 +515,9 @@ pub(crate) fn lavfi_frames(ff: &PathBuf, src: &str, w: u32, h: u32, n: u32) -> V
 fn bench_quality() {
     let Some(ff) = ffmpeg() else { return };
     let (w, h) = (1280u32, 720u32);
-    for src in ["testsrc2", "mandelbrot", "cellauto=rule=110", "smptehdbars"] {
+    for src in ["testsrc2", "mandelbrot", "gradients=speed=0.02"] {
         let frames = lavfi_frames(&ff, src, w, h, 120);
-        for kbps in [2000u32, 4000, 8000, 16000] {
+        for kbps in [2000u32, 4000, 8000] {
             let mut enc = Encoder::new(Config {
                 width: w,
                 height: h,
@@ -562,7 +562,7 @@ fn bench_trace() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(4000);
     let (w, h) = (1280u32, 720u32);
-    let frames = lavfi_frames(&ff, &src, w, h, 60);
+    let frames = lavfi_frames(&ff, &src, w, h, 120);
     let mut enc = Encoder::new(Config {
         width: w,
         height: h,
@@ -582,4 +582,40 @@ fn bench_trace() {
             enc.last_stats()
         );
     }
+}
+
+/// Single-threaded profile target: `H264ENC_N=200 cargo test --release
+/// -- --ignored bench_profile`.
+#[test]
+#[ignore]
+fn bench_profile() {
+    let Some(ff) = ffmpeg() else { return };
+    let n: usize = std::env::var("H264ENC_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+    let (w, h) = (1920u32, 1080u32);
+    let src = std::env::var("H264ENC_SRC").unwrap_or("synth".into());
+    let frames = if src == "synth" {
+        (0..30).map(|t| synth(w, h, t)).collect()
+    } else {
+        lavfi_frames(&ff, &src, w, h, 30)
+    };
+    let mut enc = Encoder::new(Config {
+        width: w,
+        height: h,
+        fps: Ratio::integer(30),
+        bitrate_kbps: 12000,
+        threads: 1,
+        ..Config::default()
+    })
+    .unwrap();
+    let start = std::time::Instant::now();
+    for i in 0..n {
+        enc.encode(&frames[i % frames.len()], false).unwrap();
+    }
+    eprintln!(
+        "1080p single thread: {:.1} fps",
+        n as f64 / start.elapsed().as_secs_f64()
+    );
 }
