@@ -565,6 +565,10 @@ pub(crate) mod tests {
         let again = Store::parse(Path::new("x"), &text).unwrap();
         assert_eq!(again.receivers[1], r);
         assert!(!again.receivers[0].raw);
+        // Saved by a Windows editor: CRLF line ends read the same.
+        let crlf = Store::parse(Path::new("x"), &text.replace('\n', "\r\n")).unwrap();
+        assert_eq!(crlf.receivers, again.receivers);
+        assert_eq!(crlf.identity.id, again.identity.id);
     }
 
     #[test]
