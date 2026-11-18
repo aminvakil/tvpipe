@@ -91,6 +91,22 @@ fn lambda16(qp: u8) -> u32 {
     (v.round() as u32).max(1)
 }
 
+/// λ for SSD costs, 0.85 · 2^((qp − 12) / 3) (the reference encoder's
+/// mode-decision λ), in 1/16 units.
+fn lambda_ssd16(qp: u8) -> u64 {
+    let v = 0.85 * 16.0 * 2f64.powf((qp.min(51) as f64 - 12.0) / 3.0);
+    (v.round() as u64).max(1)
+}
+
+/// Copies the chroma part of `from` into `to`.
+fn merge_chroma(to: &mut Coded, from: &Coded) {
+    to.chroma_mode = from.chroma_mode;
+    to.cdc = from.cdc;
+    to.cac = from.cac;
+    to.nzc = from.nzc;
+    to.cbp_chroma = from.cbp_chroma;
+}
+
 #[inline]
 fn chroma_qp(qp: u8) -> u8 {
     CHROMA_QP[qp.min(51) as usize]
@@ -332,6 +348,7 @@ impl SliceEnc {
             mode16,
             cost16,
             f.tools.i4x4,
+            f.hdr.p,
         )
     }
 
@@ -352,6 +369,9 @@ impl SliceEnc {
         best
     }
 
+    /// Intra macroblock: chroma first (independent of the luma mode), then
+    /// Intra_16x16 or Intra_4x4, chosen by SSD + λ · bits when their SATD
+    /// costs are close.
     #[allow(clippy::too_many_arguments)]
     fn code_intra(
         &mut self,
@@ -364,19 +384,36 @@ impl SliceEnc {
         mode16: u8,
         cost16: u32,
         try_i4: bool,
+        p: bool,
     ) -> Coded {
+        let mut ch = Coded::new(Kind::I16(mode16));
+        self.code_intra_chroma(srcc, mx, my, qp, &mut ch);
         let mut c = if try_i4 {
             let i16_cost = cost16 + (lambda * 6) / 16;
-            let (c4, cost4) = self.code_i4(src, mx, my, qp, lambda, i16_cost);
-            if cost4 < i16_cost {
-                c4
-            } else {
+            let (mut c4, cost4) = self.code_i4(src, mx, my, qp, lambda, i16_cost + i16_cost / 4);
+            if cost4 == u32::MAX {
                 self.code_i16(src, mx, my, qp, mode16)
+            } else {
+                let ls = lambda_ssd16(qp);
+                merge_chroma(&mut c4, &ch);
+                let j4 =
+                    self.ssd_luma(src, mx, my) * 16 + ls * self.mb_bits(&c4, mx, my, p, qp) as u64;
+                let px4 = self.save_luma(mx, my);
+                let mut c16 = self.code_i16(src, mx, my, qp, mode16);
+                merge_chroma(&mut c16, &ch);
+                let j16 =
+                    self.ssd_luma(src, mx, my) * 16 + ls * self.mb_bits(&c16, mx, my, p, qp) as u64;
+                if j4 < j16 {
+                    Self::store::<16>(&mut self.rec[0], mx, my, &px4);
+                    c4
+                } else {
+                    c16
+                }
             }
         } else {
             self.code_i16(src, mx, my, qp, mode16)
         };
-        self.code_intra_chroma(srcc, mx, my, qp, &mut c);
+        merge_chroma(&mut c, &ch);
         let info = &mut self.info[my * self.mb_w + mx];
         *info = MbInfo {
             intra: true,
@@ -388,6 +425,41 @@ impl SliceEnc {
             qp,
         };
         c
+    }
+
+    fn save_luma(&self, mx: usize, my: usize) -> [u8; 256] {
+        let mut out = [0u8; 256];
+        for r in 0..16 {
+            out[r * 16..r * 16 + 16]
+                .copy_from_slice(&self.rec[0].row(my * 16 + r)[mx * 16..mx * 16 + 16]);
+        }
+        out
+    }
+
+    fn ssd_luma(&self, src: &[u8; 256], mx: usize, my: usize) -> u64 {
+        let mut s = 0u64;
+        for r in 0..16 {
+            let rec = &self.rec[0].row(my * 16 + r)[mx * 16..mx * 16 + 16];
+            for (a, b) in src[r * 16..r * 16 + 16].iter().zip(rec) {
+                let d = *a as i32 - *b as i32;
+                s += (d * d) as u64;
+            }
+        }
+        s
+    }
+
+    fn ssd_chroma(&self, srcc: &[[u8; 64]; 2], mx: usize, my: usize) -> u64 {
+        let mut s = 0u64;
+        for (src, p) in srcc.iter().zip(&self.rec[1..]) {
+            for r in 0..8 {
+                let rec = &p.row(my * 8 + r)[mx * 8..mx * 8 + 8];
+                for (a, b) in src[r * 8..r * 8 + 8].iter().zip(rec) {
+                    let d = *a as i32 - *b as i32;
+                    s += (d * d) as u64;
+                }
+            }
+        }
+        s
     }
 
     fn code_pcm(&mut self, src: &[u8; 256], srcc: &[[u8; 64]; 2], mx: usize, my: usize) -> Coded {
@@ -917,11 +989,43 @@ impl SliceEnc {
         let (mv, inter_cost) =
             self.motion_search(r, &src, x0, y0, mvp, &cands, lambda, &f.tools, f.mv_limit);
 
-        // Intra alternative.
+        // Inter coding.
+        r.luma_pred(x0, y0, mv, &mut pred);
+        r.chroma_pred(x0, y0, mv, &mut predc);
+        let mut c = Coded::new(Kind::Inter);
+        c.mv = mv;
+        c.mvd = [mv[0] - mvp[0], mv[1] - mvp[1]];
+        let rec = self.code_inter_luma(&src, &pred, qp, &mut c);
+        Self::store::<16>(&mut self.rec[0], mx, my, &rec);
+        self.code_chroma_residual(&srcc, &predc, mx, my, qp, Deadzone::Inter, &mut c);
+        let skippable = mv == skip_mv && c.cbp_luma == 0 && c.cbp_chroma == 0;
+        let idx = my * self.mb_w + mx;
+        self.info[idx] = MbInfo {
+            intra: false,
+            nz: c.nz,
+            nzc: c.nzc,
+            i4: [intra::I4_DC; 16],
+            mv: [mv[0] as i16, mv[1] as i16],
+            refi: 0,
+            qp,
+        };
+
+        // Intra alternative: when its SATD cost is in reach, decide by
+        // SSD + λ · bits.
         let (mode16, cost16) = self.best_i16(&src, mx, my);
         let intra_bias = (lambda * 8) / 16;
-        if cost16.saturating_add(intra_bias) < inter_cost {
-            return Some(self.code_intra(
+        if (cost16.saturating_add(intra_bias) as u64) * 2 < inter_cost as u64 * 3 {
+            let ls = lambda_ssd16(qp);
+            let inter_px = (self.save_luma(mx, my), self.save_chroma(mx, my));
+            let inter_info = self.info[idx];
+            let bits = if skippable {
+                1
+            } else {
+                self.mb_bits(&c, mx, my, true, qp)
+            };
+            let j_inter = (self.ssd_luma(&src, mx, my) + self.ssd_chroma(&srcc, mx, my)) * 16
+                + ls * bits as u64;
+            let ci = self.code_intra(
                 &src,
                 &srcc,
                 mx,
@@ -931,29 +1035,19 @@ impl SliceEnc {
                 mode16,
                 cost16,
                 f.tools.i4x4,
-            ));
+                true,
+            );
+            let j_intra = (self.ssd_luma(&src, mx, my) + self.ssd_chroma(&srcc, mx, my)) * 16
+                + ls * self.mb_bits(&ci, mx, my, true, qp) as u64;
+            if j_intra < j_inter {
+                return Some(ci);
+            }
+            Self::store::<16>(&mut self.rec[0], mx, my, &inter_px.0);
+            self.restore_chroma(mx, my, &inter_px.1);
+            self.info[idx] = inter_info;
         }
-
-        r.luma_pred(x0, y0, mv, &mut pred);
-        r.chroma_pred(x0, y0, mv, &mut predc);
-        let mut c = Coded::new(Kind::Inter);
-        c.mv = mv;
-        c.mvd = [mv[0] - mvp[0], mv[1] - mvp[1]];
-        let rec = self.code_inter_luma(&src, &pred, qp, &mut c);
-        Self::store::<16>(&mut self.rec[0], mx, my, &rec);
-        self.code_chroma_residual(&srcc, &predc, mx, my, qp, Deadzone::Inter, &mut c);
-        let info = MbInfo {
-            intra: false,
-            nz: c.nz,
-            nzc: c.nzc,
-            i4: [intra::I4_DC; 16],
-            mv: [mv[0] as i16, mv[1] as i16],
-            refi: 0,
-            qp,
-        };
-        self.info[my * self.mb_w + mx] = info;
-        if mv == skip_mv && c.cbp_luma == 0 && c.cbp_chroma == 0 {
-            self.info[my * self.mb_w + mx].nz = [0; 16];
+        if skippable {
+            self.info[idx].nz = [0; 16];
             return None;
         }
         Some(c)
@@ -1009,8 +1103,31 @@ impl SliceEnc {
     }
 
     fn write_mb(&mut self, c: &Coded, mx: usize, my: usize, p: bool, qp: u8, qp_pred: &mut u8) {
-        let intra_off = if p { 5 } else { 0 };
         let mut bw = std::mem::take(&mut self.bw);
+        self.write_mb_to(&mut bw, c, mx, my, p, qp, qp_pred);
+        self.bw = bw;
+    }
+
+    /// Bits of a macroblock's layer (for rate-distortion decisions).
+    fn mb_bits(&self, c: &Coded, mx: usize, my: usize, p: bool, qp: u8) -> u32 {
+        let mut bw = BitWriter::with_capacity(512);
+        let mut qp_pred = qp;
+        self.write_mb_to(&mut bw, c, mx, my, p, qp, &mut qp_pred);
+        bw.bit_len() as u32
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_mb_to(
+        &self,
+        bw: &mut BitWriter,
+        c: &Coded,
+        mx: usize,
+        my: usize,
+        p: bool,
+        qp: u8,
+        qp_pred: &mut u8,
+    ) {
+        let intra_off = if p { 5 } else { 0 };
         match c.kind {
             Kind::Pcm => {
                 bw.ue(intra_off + 25);
@@ -1028,7 +1145,6 @@ impl SliceEnc {
                         }
                     }
                 }
-                self.bw = bw;
                 return;
             }
             Kind::I16(mode) => {
@@ -1075,7 +1191,7 @@ impl SliceEnc {
         // residual_luma
         if is16 {
             let nc = self.nc_luma(mx, my, &c.nz, 0, 0);
-            write_block(&mut bw, &c.luma_dc, nc);
+            write_block(bw, &c.luma_dc, nc);
         }
         for (blk, &(bx, by)) in BLK_XY.iter().enumerate() {
             if c.cbp_luma & (1 << (blk / 4)) == 0 {
@@ -1084,25 +1200,24 @@ impl SliceEnc {
             let nc = self.nc_luma(mx, my, &c.nz, bx, by);
             let b = by * 4 + bx;
             if is16 {
-                write_block(&mut bw, &c.luma[b][1..], nc);
+                write_block(bw, &c.luma[b][1..], nc);
             } else {
-                write_block(&mut bw, &c.luma[b], nc);
+                write_block(bw, &c.luma[b], nc);
             }
         }
         if c.cbp_chroma != 0 {
             for comp in 0..2 {
-                write_block(&mut bw, &c.cdc[comp], -1);
+                write_block(bw, &c.cdc[comp], -1);
             }
         }
         if c.cbp_chroma == 2 {
             for comp in 0..2 {
                 for b in 0..4 {
                     let nc = self.nc_chroma(mx, my, comp, &c.nzc[comp], b);
-                    write_block(&mut bw, &c.cac[comp][b][1..], nc);
+                    write_block(bw, &c.cac[comp][b][1..], nc);
                 }
             }
         }
-        self.bw = bw;
     }
 }
 
