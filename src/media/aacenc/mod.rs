@@ -16,7 +16,7 @@
 //! Owner: W10.
 
 mod bits;
-mod encoder;
+pub(crate) mod encoder;
 mod huffman;
 mod mdct;
 #[rustfmt::skip]

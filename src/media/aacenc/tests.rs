@@ -237,6 +237,26 @@ fn fuzz_inputs_stay_in_bounds() {
     }
 }
 
+/// The reservoir starts empty, so every prefix of the stream stays within
+/// the target rate (and every AU within the decoder buffer).
+#[test]
+fn rate_never_exceeds_target() {
+    for (kind, br) in [("noise", 64000u32), ("music", 96000), ("chirp", 32000)] {
+        let pcm = signal(kind, 48000, 2, 60);
+        let mut e = Encoder::new(48000, 2, br).unwrap();
+        let mut total = 0usize;
+        for (i, f) in pcm.chunks(2048).enumerate() {
+            total += e.encode(f).unwrap().len() * 8;
+            let allowed = (i + 1) as f64 * br as f64 * 1024.0 / 48000.0;
+            assert!(
+                total as f64 <= allowed,
+                "{kind}: {total} > {allowed} after {i}"
+            );
+        }
+        assert!(total as f64 > 0.8 * 60.0 * br as f64 * 1024.0 / 48000.0 || kind == "chirp");
+    }
+}
+
 /// Round trips through ffmpeg; returns (SNR dB, kbit/s).
 fn roundtrip(ffmpeg: &str, kind: &str, rate: u32, channels: u8, bitrate: u32) -> (f64, f64) {
     let frames = (rate as usize * 3) / FRAME_LEN;
@@ -395,4 +415,108 @@ fn aacenc_diag() {
             seqs[f + 2]
         );
     }
+}
+
+/// A loud burst after near-silence: block switching must keep the
+/// pre-echo (error before the attack) far below the burst.
+#[test]
+fn oracle_pre_echo() {
+    let Some(ff) = ffmpeg() else {
+        eprintln!("ffmpeg not found; skipping");
+        return;
+    };
+    let rate = 48000;
+    let frames = 30;
+    let attack = 15 * FRAME_LEN + 300;
+    let mut rng = Lcg(5);
+    let pcm: Vec<i16> = (0..frames * FRAME_LEN)
+        .map(|i| {
+            let quiet = 0.003 * (std::f64::consts::TAU * 440.0 * i as f64 / rate as f64).sin();
+            let burst = if i >= attack {
+                0.7 * rng.noise() * 0.9995f64.powi((i - attack) as i32)
+            } else {
+                0.0
+            };
+            ((quiet + burst) * 32767.0) as i16
+        })
+        .collect();
+    let mut e = Encoder::new(rate, 1, 96000).unwrap();
+    let mut seqs = Vec::new();
+    let mut aus = Vec::new();
+    for f in pcm.chunks(FRAME_LEN) {
+        aus.push(e.encode(f).unwrap());
+        seqs.push(e.core.last_seq());
+    }
+    aus.extend(e.flush());
+    assert!(seqs.contains(&encoder::Seq::EightShort), "{seqs:?}");
+    let adts: Vec<u8> = aus.iter().flat_map(|a| e.adts(a)).collect();
+    let dec = decode(&ff, &adts, "preecho");
+    let d = e.delay_samples();
+    let err = |r: std::ops::Range<usize>| {
+        r.map(|i| (pcm[i] as f64 - dec[i + d] as f64).powi(2))
+            .sum::<f64>()
+    };
+    let energy = |r: std::ops::Range<usize>| r.map(|i| (pcm[i] as f64).powi(2)).sum::<f64>();
+    // A short window (256 samples) spreads its noise over its whole span,
+    // so look before the window holding the attack.
+    let pre = err(attack - 1024..attack - 256) / 768.0;
+    let burst = energy(attack..attack + 768) / 768.0;
+    let ratio = 10.0 * (burst / pre.max(1e-9)).log10();
+    eprintln!("pre-echo {ratio:.1} dB below the burst");
+    assert!(ratio > 60.0, "pre-echo only {ratio:.1} dB below the burst");
+}
+
+/// SNR on a real recording: `AACENC_INPUT=file.raw` (s16le, 48 kHz,
+/// stereo), optionally `AACENC_BITRATE`. Also reports ffmpeg's own AAC
+/// encoder (run as a black box) on the same input for reference.
+#[test]
+#[ignore]
+fn aacenc_file_report() {
+    let (Some(ff), Ok(path)) = (ffmpeg(), std::env::var("AACENC_INPUT")) else {
+        eprintln!("needs ffmpeg and AACENC_INPUT; skipping");
+        return;
+    };
+    let br: u32 = std::env::var("AACENC_BITRATE").map_or(128000, |s| s.parse().unwrap());
+    let raw = std::fs::read(&path).unwrap();
+    let mut pcm: Vec<i16> = raw
+        .chunks_exact(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    pcm.truncate(pcm.len() / 2048 * 2048);
+    let mut e = Encoder::new(48000, 2, br).unwrap();
+    let t = std::time::Instant::now();
+    let aus = encode_all(&mut e, &pcm);
+    let el = t.elapsed().as_secs_f64();
+    let bytes: usize = aus.iter().map(|a| a.len()).sum();
+    let secs = pcm.len() as f64 / 2.0 / 48000.0;
+    let adts: Vec<u8> = aus.iter().flat_map(|a| e.adts(a)).collect();
+    let dec = decode(&ff, &adts, "file");
+    eprintln!(
+        "ours:   SNR {:.1} dB at {:.1} kbit/s, {:.0}x realtime",
+        snr(&pcm, &dec, 2, e.delay_samples()),
+        bytes as f64 * 8.0 / secs / 1000.0,
+        secs / el
+    );
+    // Reference: ffmpeg's encoder, aligned by searching the delay.
+    let out = tmp("ref.aac");
+    let st = Command::new(&ff)
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "s16le"])
+        .args(["-ar", "48000", "-ac", "2", "-i", &path, "-c:a", "aac"])
+        .args(["-b:a", &br.to_string(), "-f", "adts"])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let adts = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+    let dec = decode(&ff, &adts, "ref");
+    let best = (0..3000)
+        .map(|d| (snr(&pcm[..pcm.len().min(480000)], &dec, 2, d), d))
+        .fold((f64::MIN, 0), |a, b| if b.0 > a.0 { b } else { a });
+    eprintln!(
+        "ffmpeg: SNR {:.1} dB at {:.1} kbit/s (delay {})",
+        snr(&pcm, &dec, 2, best.1),
+        adts.len() as f64 * 8.0 / secs / 1000.0,
+        best.1
+    );
 }

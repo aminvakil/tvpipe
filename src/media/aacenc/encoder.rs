@@ -87,7 +87,6 @@ pub struct Core {
     state: Vec<ChannelState>,
     prev_seq: Seq,
     next_short: bool,
-    next_attack: Option<usize>,
     // Rate control.
     mean_bits: f64,
     mean_acc: f64,
@@ -100,6 +99,7 @@ pub struct Core {
     bands: Vec<Band>,
     ms: Vec<bool>,
     group_len: Vec<usize>,
+    short_spec: Vec<[[f32; 128]; 8]>,
     tmp: Vec<f32>,
     pow_q: [f32; 256],
     pow_g: [f32; 256],
@@ -224,7 +224,6 @@ impl Core {
                 .collect(),
             prev_seq: Seq::OnlyLong,
             next_short: false,
-            next_attack: None,
             mean_bits,
             mean_acc: 0.0,
             reservoir: 0,
@@ -235,6 +234,7 @@ impl Core {
             bands: Vec::new(),
             ms: Vec::new(),
             group_len: Vec::new(),
+            short_spec: Vec::new(),
             tmp: vec![0.0; 2048],
             pow_q,
             pow_g,
@@ -255,7 +255,6 @@ impl Core {
         // Block switching: the block being coded was decided last time;
         // decide the next one from the lookahead.
         let cur_short = self.next_short;
-        let cur_attack = self.next_attack;
         let mut attack = None;
         for st in &self.state {
             if let Some(w) = detect_attack(&st.buf) {
@@ -263,7 +262,6 @@ impl Core {
             }
         }
         self.next_short = attack.is_some();
-        self.next_attack = attack;
         let seq = if cur_short {
             Seq::EightShort
         } else if self.next_short {
@@ -278,24 +276,6 @@ impl Core {
             Seq::OnlyLong
         };
         self.prev_seq = seq;
-
-        self.group_len.clear();
-        if seq == Seq::EightShort {
-            match cur_attack {
-                Some(a) => {
-                    if a > 0 {
-                        self.group_len.push(a);
-                    }
-                    self.group_len.push(1);
-                    if a < 7 {
-                        self.group_len.push(7 - a);
-                    }
-                }
-                None => self.group_len.extend_from_slice(&[2, 2, 2, 2]),
-            }
-        } else {
-            self.group_len.push(1);
-        }
 
         self.analyze(seq);
         self.code_frame(seq)
@@ -323,6 +303,41 @@ impl Core {
         } else {
             (self.swb_long, self.nb_long, &self.ath_long)
         };
+        // Transforms.
+        self.short_spec.resize(self.channels, [[0f32; 128]; 8]);
+        for ch in 0..self.channels {
+            let buf = &self.state[ch].buf;
+            if short {
+                for (w, out) in self.short_spec[ch].iter_mut().enumerate() {
+                    let off = 448 + 128 * w;
+                    let z = &mut self.tmp[..256];
+                    for i in 0..256 {
+                        z[i] = buf[off + i] * self.win_short[i];
+                    }
+                    self.mdct_short.forward(z, out);
+                }
+            } else {
+                let win = match seq {
+                    Seq::LongStart => &self.win_start,
+                    Seq::LongStop => &self.win_stop,
+                    _ => &self.win_long,
+                };
+                let z = &mut self.tmp[..2048];
+                for i in 0..2048 {
+                    z[i] = buf[i] * win[i];
+                }
+                let c = &mut self.chans[ch];
+                c.x.resize(1024, 0.0);
+                self.mdct_long.forward(z, &mut c.x);
+            }
+        }
+        self.group_len.clear();
+        if short {
+            group_windows(&self.short_spec, &mut self.group_len);
+        } else {
+            self.group_len.push(1);
+        }
+
         // Band layout.
         self.bands.clear();
         let mut base = 0;
@@ -340,20 +355,11 @@ impl Core {
         let norm = if short { 1.0 / 256.0 } else { 1.0 / 2048.0 };
 
         for ch in 0..self.channels {
-            let buf = &self.state[ch].buf;
             let c = &mut self.chans[ch];
-            c.x.resize(1024, 0.0);
             if short {
-                let mut spec = [[0f32; 128]; 8];
-                for (w, out) in spec.iter_mut().enumerate() {
-                    let off = 448 + 128 * w;
-                    let z = &mut self.tmp[..256];
-                    for i in 0..256 {
-                        z[i] = buf[off + i] * self.win_short[i];
-                    }
-                    self.mdct_short.forward(z, out);
-                }
                 // Interleave: group, sfb, window, bin.
+                c.x.resize(1024, 0.0);
+                let spec = &self.short_spec[ch];
                 let mut k = 0;
                 let mut w0 = 0;
                 for &glen in &self.group_len {
@@ -367,17 +373,6 @@ impl Core {
                     }
                     w0 += glen;
                 }
-            } else {
-                let win = match seq {
-                    Seq::LongStart => &self.win_start,
-                    Seq::LongStop => &self.win_stop,
-                    _ => &self.win_long,
-                };
-                let z = &mut self.tmp[..2048];
-                for i in 0..2048 {
-                    z[i] = buf[i] * win[i];
-                }
-                self.mdct_long.forward(z, &mut c.x);
             }
             c.q.resize(1024, 0);
             let nbands = self.bands.len();
@@ -867,6 +862,34 @@ impl Core {
         self.q_base = (self.q_base + KI * err).clamp(T_MIN as f64, T_MAX as f64);
         w.finish()
     }
+}
+
+/// Groups consecutive short windows of similar energy (all channels),
+/// so quiet windows before an attack get their own scalefactors.
+fn group_windows(spec: &[[[f32; 128]; 8]], out: &mut Vec<usize>) {
+    let mut e = [0f32; 8];
+    for ch in spec {
+        for (w, win) in ch.iter().enumerate() {
+            e[w] += win.iter().map(|v| v * v).sum::<f32>();
+        }
+    }
+    // Floor: about 1 LSB rms per sample, so silence groups together.
+    let floor = 256.0 * 128.0 * spec.len() as f32;
+    let (mut lo, mut hi) = (e[0].max(floor), e[0].max(floor));
+    let mut len = 1;
+    for &v in &e[1..] {
+        let v = v.max(floor);
+        let (nlo, nhi) = (lo.min(v), hi.max(v));
+        if nhi > 4.0 * nlo {
+            out.push(len);
+            len = 1;
+            (lo, hi) = (v, v);
+        } else {
+            len += 1;
+            (lo, hi) = (nlo, nhi);
+        }
+    }
+    out.push(len);
 }
 
 /// Finds an attack in the block after the one being coded (`buf[1024..]`):
