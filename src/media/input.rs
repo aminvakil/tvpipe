@@ -49,12 +49,12 @@ use crate::util::interrupt;
 use crate::util::time::ticks_to_duration;
 
 /// How often blocking waits look at the stop flag.
-const STOP_POLL: Duration = Duration::from_millis(50);
+pub(crate) const STOP_POLL: Duration = Duration::from_millis(50);
 /// After a stop request, ffmpeg gets this long to exit by itself before
 /// it is killed (it got SIGINT too).
 const KILL_GRACE: Duration = Duration::from_millis(300);
 /// Keyframe requests to the game are at most this frequent.
-const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(200);
+pub(crate) const KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_millis(200);
 /// PCM frame size for AirPlay (what the ffmpeg path produces, too).
 pub const AIRPLAY_PCM_FRAME_SAMPLES: u32 = 352;
 /// Audio whose pts drifts this far from its sample count resyncs.
@@ -955,7 +955,9 @@ impl FamilyAudio {
     }
 }
 
-struct EncodedState {
+/// The encoded-SLRW timeline and audio paths (decision 0008), shared with
+/// `media::builtin`, which feeds it the access units it encodes.
+pub(crate) struct EncodedState {
     video: RawVideoSpec,
     audio: Option<RawAudioSpec>,
     families: Vec<FamilyAudio>,
@@ -1017,32 +1019,14 @@ impl SlrwEncodedInput {
                 },
                 audio: Vec::new(),
             },
-            st: EncodedState {
-                video: opts.video,
-                audio: opts.audio,
-                families: Vec::new(),
-                avcc: None,
-                first_sps: None,
-                started: false,
-                origin_us: None,
-                last_video_pts: None,
-                bumped: false,
-                flag_mismatch: false,
-                dropped_before_key: 0,
-                out: VecDeque::new(),
-                back_out: opts.back_channel,
-                back: None,
-                ended: false,
-            },
+            st: EncodedState::new(
+                opts.video,
+                opts.audio,
+                &opts.audio_families,
+                opts.back_channel,
+            )?,
             stop,
         };
-        if let Some(a) = &me.st.audio {
-            if a.sample_fmt == "s16le" && a.channels > 0 {
-                for &(family, how) in &opts.audio_families {
-                    me.st.families.push(FamilyAudio::new(family, how, a)?);
-                }
-            }
-        }
         while !me.st.started {
             if me.st.ended {
                 return Err(Error::closed(
@@ -1083,8 +1067,59 @@ impl SlrwEncodedInput {
 }
 
 impl EncodedState {
+    pub(crate) fn new(
+        video: RawVideoSpec,
+        audio: Option<RawAudioSpec>,
+        audio_families: &[(AudioFamily, AudioOut)],
+        back_out: Option<Box<dyn Write + Send>>,
+    ) -> Result<EncodedState> {
+        let mut families = Vec::new();
+        if let Some(a) = &audio {
+            if a.sample_fmt == "s16le" && a.channels > 0 {
+                for &(family, how) in audio_families {
+                    families.push(FamilyAudio::new(family, how, a)?);
+                }
+            }
+        }
+        Ok(EncodedState {
+            video,
+            audio,
+            families,
+            avcc: None,
+            first_sps: None,
+            started: false,
+            origin_us: None,
+            last_video_pts: None,
+            bumped: false,
+            flag_mismatch: false,
+            dropped_before_key: 0,
+            out: VecDeque::new(),
+            back_out,
+            back: None,
+            ended: false,
+        })
+    }
+
+    /// Fixes media time 0 (for records already relative to it).
+    pub(crate) fn set_origin(&mut self, us: u64) {
+        self.origin_us = Some(us);
+    }
+
+    pub(crate) fn started(&self) -> bool {
+        self.started
+    }
+
+    pub(crate) fn ended(&self) -> bool {
+        self.ended
+    }
+
+    /// The next frame ready for the fanout.
+    pub(crate) fn pop(&mut self) -> Option<EncodedFrame> {
+        self.out.pop_front()
+    }
+
     /// The game's stream ended: emit what the encoders still hold.
-    fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         if !self.ended {
             self.ended = true;
             for f in &mut self.families {
@@ -1093,7 +1128,7 @@ impl EncodedState {
         }
     }
 
-    fn stream_info(&self) -> Result<StreamInfo> {
+    pub(crate) fn stream_info(&self) -> Result<StreamInfo> {
         let avcc = self
             .avcc
             .clone()
@@ -1161,7 +1196,7 @@ impl EncodedState {
         Ok(())
     }
 
-    fn handle(&mut self, p: Packet) -> Result<()> {
+    pub(crate) fn handle(&mut self, p: Packet) -> Result<()> {
         match p.kind {
             Kind::End => self.end(),
             Kind::Video => {
