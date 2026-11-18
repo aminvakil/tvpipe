@@ -127,6 +127,35 @@
     'registerProcessor("tvpipe-pcm", TvpipePcm);'
   ].join('\n');
 
+  // Background tabs throttle timers (to 1/s, later 1/min), and the share
+  // page is in the background while another tab is shared. Ticks from a
+  // worker arrive as messages, which are not throttled; plain intervals
+  // are the fallback (e.g. a page whose CSP forbids blob workers).
+  var TICKER = 'var t=null;onmessage=function(e){clearInterval(t);if(e.data>0)t=setInterval(function(){postMessage(0)},e.data)}';
+  function every(ms, fn) {
+    var w = null, id = null;
+    var fallback = function () {
+      if (w) { w.terminate(); w = null; }
+      if (id === null) id = setInterval(fn, ms);
+    };
+    try {
+      var url = URL.createObjectURL(new Blob([TICKER], { type: 'text/javascript' }));
+      w = new Worker(url);
+      URL.revokeObjectURL(url);
+      w.onmessage = fn;
+      w.onerror = fallback;
+      w.postMessage(ms);
+    } catch (e) {
+      fallback();
+    }
+    return function () {
+      if (w) w.terminate();
+      if (id !== null) clearInterval(id);
+      w = null;
+      id = null;
+    };
+  }
+
   function Capture(url, opts) {
     this.url = url;
     this.opts = opts || {};
@@ -340,8 +369,8 @@
       self.encoder.configure(cfg);
       self._log('info', 'encoding ' + cfg.codec + ' ' + plan.width + 'x' + plan.height + '@' + plan.fps + ' ' + Math.round(plan.bitrate / 1000) + ' kbit/s');
       self._videoSource(self.stream.getVideoTracks()[0]);
-      self.timers.push(setInterval(function () { self._idle(); }, IDLE_REPEAT_MS / 2));
-      self.timers.push(setInterval(function () { self._reportStats(); }, STATS_MS));
+      self.timers.push(every(IDLE_REPEAT_MS / 2, function () { self._idle(); }));
+      self.timers.push(every(STATS_MS, function () { self._reportStats(); }));
       return self._startAudio(plan).catch(function (e) {
         self._log('warn', 'no audio: ' + (e && e.message || e));
       });
@@ -383,7 +412,7 @@
       var cb = function () { grab(); if (!self.stopped) v.requestVideoFrameCallback(cb); };
       v.requestVideoFrameCallback(cb);
     } else {
-      this.timers.push(setInterval(grab, Math.max(5, this.frameUs / 1000)));
+      this.timers.push(every(Math.max(5, Math.round(this.frameUs / 1000)), grab));
     }
   };
 
@@ -493,6 +522,7 @@
     }
     this.lastChunkTs = chunk.timestamp;
     this.ws.send(record(KIND_H264, chunk.timestamp, [new Uint8Array([flags]), data]));
+    if (flags & FLAG_KEY) this.sentKey = true;
     this.stats.bytes += data.length;
     this.stats.chunks++;
     this.stats.latencySum += (clock() - chunk.timestamp) / 1000;
@@ -514,7 +544,9 @@
         processorOptions: { rate: rate, channels: ch, chunk: Math.round(rate / 100) }
       });
       node.port.onmessage = function (e) {
-        if (self.stopped || self.ws.readyState !== 1) return;
+        // Nothing before the first keyframe went out (tvpipe's timeline
+        // starts there).
+        if (self.stopped || self.ws.readyState !== 1 || !self.sentKey) return;
         var pcm = new Uint8Array(e.data);
         var dur = pcm.length / (2 * ch) / rate * 1e6;
         if (self.ws.bufferedAmount > MAX_BUFFERED) { self.stats.audioDropped++; return; }
@@ -582,7 +614,7 @@
   Capture.prototype._teardown = function () {
     if (this.stopped) return;
     this.stopped = true;
-    this.timers.forEach(function (t) { clearInterval(t); });
+    this.timers.forEach(function (cancel) { cancel(); });
     this.timers = [];
     if (this.reader) this.reader.cancel().catch(function () {});
     if (this.stream) this.stream.getTracks().forEach(function (t) { t.stop(); });

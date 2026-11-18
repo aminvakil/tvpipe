@@ -46,6 +46,8 @@ const CLIENT_POLL: Duration = Duration::from_millis(200);
 /// How long the page may take from the plan to its first keyframe.
 const FIRST_KEYFRAME_TIMEOUT: Duration = Duration::from_secs(15);
 const LAG_REPORT: Duration = Duration::from_secs(5);
+/// Video records left out of the final lag summary (encoder warm-up).
+const LAG_WARMUP: u64 = 30;
 
 /// What happened on the source page's socket.
 enum Event {
@@ -511,6 +513,7 @@ struct Lag {
     n: u64,
     sum_ms: f64,
     max_ms: f64,
+    seen: u64,
     total_n: u64,
     total_sum_ms: f64,
     total_max_ms: f64,
@@ -523,9 +526,13 @@ impl Lag {
         self.n += 1;
         self.sum_ms += ms;
         self.max_ms = self.max_ms.max(ms);
-        self.total_n += 1;
-        self.total_sum_ms += ms;
-        self.total_max_ms = self.total_max_ms.max(ms);
+        self.seen += 1;
+        // The totals leave out the encoder's warm-up.
+        if self.seen > LAG_WARMUP {
+            self.total_n += 1;
+            self.total_sum_ms += ms;
+            self.total_max_ms = self.total_max_ms.max(ms);
+        }
         if now.duration_since(since) >= LAG_REPORT {
             debug!(
                 "share: {:.1} fps from the page, capture to tvpipe avg {:.1} ms, max {:.1} ms",
@@ -535,6 +542,7 @@ impl Lag {
             );
             *self = Lag {
                 since: Some(now),
+                seen: self.seen,
                 total_n: self.total_n,
                 total_sum_ms: self.total_sum_ms,
                 total_max_ms: self.total_max_ms,
@@ -609,6 +617,9 @@ impl ShareInput {
 
     fn packet(&mut self, mut p: Packet) -> Result<()> {
         match p.kind {
+            // Audio from before the first keyframe (the encoder starting
+            // up) would only make the session's clock start that late.
+            Kind::Audio if !self.st.started() => return Ok(()),
             Kind::H264Config if p.payload.first() == Some(&slrw::CONFIG_AVCC) => {
                 let cfg = h264::AvcConfig::parse(&p.payload[1..])?;
                 self.length_size = cfg.length_size as usize;
@@ -687,8 +698,9 @@ impl Input for ShareInput {
         let l = &self.lag;
         if l.total_n > 0 {
             info!(
-                "share: {} video frames; capture to tvpipe avg {:.1} ms, max {:.1} ms",
-                l.total_n,
+                "share: {} video frames; capture to tvpipe avg {:.1} ms, max {:.1} ms \
+                 (after the first {LAG_WARMUP})",
+                l.seen,
                 l.total_sum_ms / l.total_n as f64,
                 l.total_max_ms
             );

@@ -86,6 +86,8 @@
 
   var ws = location.origin.replace(/^http/, 'ws') + '/ws' + location.search;
   var cap = tvpipeCapture.connect(ws, {});
+  // For automation and debugging (the console, tests driving Chrome).
+  window.tvpipeShare = cap;
   var ended = false;
   function receivers(list) {
     $('receivers').textContent = list && list.length ? '→ ' + list.join(', ') : '';
