@@ -95,6 +95,9 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const OPUS_FRAME_SAMPLES: u32 = 480;
 const AAC_FRAME_SAMPLES: u32 = 1024;
 const AUDIO_KBPS: u32 = 128;
+/// How long the session waits for every sink's `start()` before it pulls
+/// the input anyway.
+const SINK_START_WAIT: Duration = Duration::from_secs(5);
 
 // ---------------------------------------------------------------------------
 // Targets
@@ -1083,6 +1086,14 @@ fn stream(
         }
     };
 
+    // Pull the first frame only once every sink is set up: live inputs
+    // (the built-in encoder, games) start their clock with it, so nothing
+    // piles up in the queues of sinks still in start().
+    let ready = Instant::now();
+    if !fanout.wait_started(SINK_START_WAIT, interrupt::requested) && !interrupt::requested() {
+        warn!("a receiver is slow to start; streaming anyway");
+    }
+    debug!("sinks started in {} ms", ready.elapsed().as_millis());
     let t0 = Instant::now();
     let mut frames = [0u64; 2];
     let mut input_error = None;
@@ -1793,9 +1804,9 @@ mod tests {
         );
         let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
         let a = st.streams.iter().find(|s| s.codec == "aac").unwrap();
-        assert!((27..=30).contains(&v.frames.len()), "{}", v.frames.len());
+        assert!((22..=30).contains(&v.frames.len()), "{}", v.frames.len());
         assert!(v.frames.values().next().unwrap().keyframe);
-        assert!((44..=48).contains(&a.frames.len()), "{}", a.frames.len());
+        assert!((36..=48).contains(&a.frames.len()), "{}", a.frames.len());
         assert!(a.frames.values().all(|f| is_adts(&f.data)));
         check_decodes(&v.frames);
     }
@@ -1848,11 +1859,13 @@ mod tests {
             let r = fake.rec();
             assert!(r.teardown);
             let frames = r.video.iter().filter(|p| p.kind == 0).count();
-            assert!((27..=30).contains(&frames), "{frames}");
+            // Records the game sends before the session starts pulling
+            // (while the sink sets up) are dropped.
+            assert!((22..=30).contains(&frames), "{frames}");
             assert!(r.video.iter().any(|p| p.kind == 1), "codec packet");
             assert!(r.video.iter().find(|p| p.kind == 0).unwrap().idr);
-            // 44100 samples in 352-sample PCM frames.
-            assert!((120..=126).contains(&r.audio.len()), "{}", r.audio.len());
+            // Up to 44100 samples in 352-sample PCM frames.
+            assert!((95..=126).contains(&r.audio.len()), "{}", r.audio.len());
         }
         // The test pattern, built in because ffmpeg is missing.
         let fake = FakeMirror::start(Behaviour::default());
@@ -1876,6 +1889,83 @@ mod tests {
         let frames = r.video.iter().filter(|p| p.kind == 0).count();
         assert!((13..=15).contains(&frames), "{frames}");
         assert!(!r.audio.is_empty());
+    }
+
+    /// Records when each video frame reaches the sink; `start()` takes
+    /// as long as an AirPlay SETUP.
+    struct ArrivalSink {
+        caps: Capabilities,
+        arrivals: std::sync::Arc<std::sync::Mutex<Vec<(Instant, u64)>>>,
+        left: usize,
+    }
+
+    impl Sink for ArrivalSink {
+        fn name(&self) -> &str {
+            "arrivals"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.caps
+        }
+        fn start(
+            &mut self,
+            _v: &crate::types::VideoInfo,
+            _a: Option<&crate::types::AudioInfo>,
+        ) -> Result<()> {
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(())
+        }
+        fn push(&mut self, f: &crate::types::EncodedFrame) -> Result<crate::types::SinkStatus> {
+            if f.track == TrackKind::Video {
+                if self.left == 0 {
+                    return Ok(crate::types::SinkStatus::Finished);
+                }
+                self.left -= 1;
+                self.arrivals.lock().unwrap().push((Instant::now(), f.pts));
+            }
+            Ok(crate::types::SinkStatus::Accepted)
+        }
+        fn wants_keyframe(&self) -> bool {
+            false
+        }
+        fn stop(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A live input must not run ahead while a sink is still starting:
+    /// frames reach the sink on their pts schedule from the first one, no
+    /// burst of backlog (which the sink's clock would turn into latency;
+    /// seen as ~230 ms on the Apple TV).
+    #[test]
+    fn live_input_waits_for_slow_sink_start() {
+        let out = VideoOut {
+            size: Size {
+                width: 160,
+                height: 90,
+            },
+            fps: Ratio::integer(30),
+            bitrate_kbps: 300,
+            gop: 30,
+        };
+        let input = BuiltinInput::test_pattern(out, 48_000, vec![], interrupt::requested).unwrap();
+        let arrivals = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = ArrivalSink {
+            caps: caps(1920, 1080, 60, 10_000),
+            arrivals: arrivals.clone(),
+            left: 15,
+        };
+        stream(Box::new(input), 0, vec![Box::new(sink)]).unwrap();
+        let a = arrivals.lock().unwrap();
+        assert_eq!(a.len(), 15);
+        let (t0, p0) = a[0];
+        for &(t, pts) in a.iter() {
+            let due = Duration::from_micros((pts - p0) * 1000 / 90);
+            let at = t - t0;
+            assert!(
+                at + Duration::from_millis(40) >= due,
+                "pts {due:?} arrived at {at:?}"
+            );
+        }
     }
 
     #[test]

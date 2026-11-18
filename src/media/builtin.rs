@@ -76,6 +76,13 @@ pub fn supported_pix_fmt(name: &str) -> bool {
 /// Something that yields SLRW records: the game's stream or the pattern.
 pub trait PacketSource: Send + 'static {
     fn next_packet(&mut self) -> io::Result<Option<Packet>>;
+
+    /// Whether the source can be held back until the session wants
+    /// frames (a generator). Otherwise (a game) records that arrive
+    /// earlier are read and dropped.
+    fn waits(&self) -> bool {
+        false
+    }
 }
 
 impl<R: Read + Send + 'static> PacketSource for SlrwReader<R> {
@@ -94,6 +101,7 @@ struct Counters {
     frames: AtomicU64,
     dropped_rate: AtomicU64,
     dropped_busy: AtomicU64,
+    dropped_early: AtomicU64,
     encoded: AtomicU64,
     encode_us: AtomicU64,
 }
@@ -104,6 +112,8 @@ pub struct BuiltinInput {
     st: EncodedState,
     info: StreamInfo,
     keyframe: Arc<AtomicBool>,
+    /// Set by the first `next_frame`: media time 0 starts then.
+    go: Arc<AtomicBool>,
     last_request: Option<Instant>,
     counters: Arc<Counters>,
     what: &'static str,
@@ -202,6 +212,7 @@ impl BuiltinInput {
         let (job_tx, job_rx) = mpsc::sync_channel::<Job>(VIDEO_QUEUE);
         let keyframe = Arc::new(AtomicBool::new(false));
         let counters = Arc::new(Counters::default());
+        let go = Arc::new(AtomicBool::new(false));
         let in_spec = opts.video_in.clone();
         {
             let (tx, keyframe, counters) = (tx.clone(), keyframe.clone(), counters.clone());
@@ -211,37 +222,41 @@ impl BuiltinInput {
                 .map_err(|e| Error::io("spawn encoder thread", e))?;
         }
         {
-            let counters = counters.clone();
+            let (counters, go) = (counters.clone(), go.clone());
             let frame_bytes = fmt.frame_size(opts.video_in.size.width, opts.video_in.size.height);
             let in_fps = opts.video_in.fps;
             std::thread::Builder::new()
                 .name("builtin-reader".into())
-                .spawn(move || read_loop(src, frame_bytes, in_fps, out.fps, job_tx, tx, counters))
+                .spawn(move || {
+                    let gate = Gate { go, stop };
+                    read_loop(
+                        src,
+                        frame_bytes,
+                        in_fps,
+                        out.fps,
+                        job_tx,
+                        tx,
+                        counters,
+                        gate,
+                    )
+                })
                 .map_err(|e| Error::io("spawn SLRW reader", e))?;
         }
-        let mut me = BuiltinInput {
+        // The stream info is known from the encoder: no need to wait for a
+        // first frame (which would then sit in a queue while the sinks
+        // start, and every later frame would be that much late to the
+        // sinks' clocks).
+        Ok(BuiltinInput {
             rx,
             info: st.stream_info()?,
             st,
             keyframe,
+            go,
             last_request: None,
             counters,
             what,
             stop,
-        };
-        // Wait for the first picture (an IDR), like the encoded path.
-        while !me.st.started() {
-            if me.st.ended() {
-                return Err(Error::closed(
-                    "slrw: the game's stream ended before the first video frame",
-                ));
-            }
-            if !me.pump()? {
-                return Err(Error::closed("stopped before the first video frame"));
-            }
-        }
-        me.info = me.st.stream_info()?;
-        Ok(me)
+        })
     }
 
     /// Handles one event; `false` on a stop request.
@@ -269,7 +284,32 @@ impl BuiltinInput {
     }
 }
 
+/// Holds media time 0 back until the session pulls the first frame.
+struct Gate {
+    go: Arc<AtomicBool>,
+    stop: StopFn,
+}
+
+impl Gate {
+    fn open(&self) -> bool {
+        self.go.load(Ordering::Acquire)
+    }
+
+    /// Waits until open; `false` on a stop request.
+    fn wait(&self) -> bool {
+        while !self.open() {
+            if (self.stop)() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        true
+    }
+}
+
 /// Reader thread: records → (rate-limited) encoder jobs and audio events.
+/// Media time starts with the first record after the gate opened.
+#[allow(clippy::too_many_arguments)]
 fn read_loop(
     mut src: impl PacketSource,
     frame_bytes: usize,
@@ -278,7 +318,11 @@ fn read_loop(
     jobs: SyncSender<Job>,
     events: SyncSender<io::Result<Option<Packet>>>,
     counters: Arc<Counters>,
+    gate: Gate,
 ) {
+    if src.waits() && !gate.wait() {
+        return;
+    }
     let mut origin: Option<u64> = None;
     let mut last_kept: Option<u64> = None;
     // Frames closer than this to the last kept one are skipped when the
@@ -309,6 +353,10 @@ fn read_loop(
                     break;
                 }
                 counters.frames.fetch_add(1, Ordering::Relaxed);
+                if !gate.open() {
+                    counters.dropped_early.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
                 let pts_us = rel(&mut origin);
                 if last_kept.is_some_and(|l| pts_us < l + min_gap_us) {
                     counters.dropped_rate.fetch_add(1, Ordering::Relaxed);
@@ -326,6 +374,7 @@ fn read_loop(
                     Err(TrySendError::Disconnected(_)) => break,
                 }
             }
+            Kind::Audio if !gate.open() => {}
             Kind::Audio => {
                 let pts_us = rel(&mut origin);
                 let p = Packet { pts_us, ..p };
@@ -413,6 +462,7 @@ impl Input for BuiltinInput {
     }
 
     fn next_frame(&mut self) -> Result<Option<EncodedFrame>> {
+        self.go.store(true, Ordering::Release);
         loop {
             if let Some(f) = self.st.pop() {
                 return Ok(Some(f));
@@ -446,11 +496,13 @@ impl Input for BuiltinInput {
         let c = &self.counters;
         let encoded = c.encoded.load(Ordering::Relaxed);
         debug!(
-            "builtin: {} frames in, {} encoded ({:.1} ms each), {} dropped for the frame rate, \
+            "builtin: {} frames in, {} encoded ({:.1} ms each), {} dropped before the start, \
+             {} for the frame rate, \
              {} while the encoder was busy",
             c.frames.load(Ordering::Relaxed),
             encoded,
             c.encode_us.load(Ordering::Relaxed) as f64 / encoded.max(1) as f64 / 1000.0,
+            c.dropped_early.load(Ordering::Relaxed),
             c.dropped_rate.load(Ordering::Relaxed),
             c.dropped_busy.load(Ordering::Relaxed),
         );
@@ -678,6 +730,10 @@ impl TestPattern {
 }
 
 impl PacketSource for TestPattern {
+    fn waits(&self) -> bool {
+        true
+    }
+
     fn next_packet(&mut self) -> io::Result<Option<Packet>> {
         let start = *self.start.get_or_insert_with(Instant::now);
         let (v, a) = (self.video_due_us(), self.audio_due_us());
@@ -862,15 +918,17 @@ pub(crate) mod tests {
             .iter()
             .filter(|f| f.track == TrackKind::Video)
             .collect();
-        // 30 frames at 60 fps cut to 30 fps.
-        assert!((13..=15).contains(&video.len()), "{}", video.len());
+        // 30 frames at 60 fps cut to 30 fps (the first may come before
+        // the first next_frame call and be dropped).
+        assert!((11..=15).contains(&video.len()), "{}", video.len());
         assert!(video[0].keyframe && video[0].pts == 0);
         assert!(video.windows(2).all(|p| p[1].pts > p[0].pts));
         let pcm = frames
             .iter()
             .filter(|f| f.track == TrackKind::Audio(AudioFamily::AirPlay))
             .count();
-        assert_eq!(pcm, 30 * 800 / 352);
+        // (A record or two may arrive before the first next_frame call.)
+        assert!((50..=30 * 800 / 352).contains(&pcm), "{pcm}");
         assert!(input.request_keyframe());
         Box::new(input).finish(true).unwrap();
     }
@@ -903,23 +961,100 @@ pub(crate) mod tests {
             .err()
             .unwrap();
         assert!(e.to_string().contains("cannot read"), "{e}");
+        // Errors in the stream surface from next_frame.
+        let first = |s: Vec<u8>, pix: &str| {
+            let mut i = BuiltinInput::open_slrw_with(io::Cursor::new(s), opts(pix), never).unwrap();
+            i.next_frame().map(|f| f.is_some())
+        };
         // A short frame.
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
         slrw::write_packet(&mut s, Kind::Video, 0, &[0; 100]).unwrap();
-        assert!(BuiltinInput::open_slrw_with(io::Cursor::new(s), opts("rgba"), never).is_err());
+        assert!(first(s, "rgba").is_err());
         // Encoded records in raw mode.
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
         slrw::write_h264(&mut s, 0, true, false, &[0, 0, 0, 1, 0x65]).unwrap();
-        let e = BuiltinInput::open_slrw_with(io::Cursor::new(s), opts("rgba"), never)
-            .err()
-            .unwrap();
+        let e = first(s, "rgba").unwrap_err();
         assert!(e.to_string().contains("raw mode"), "{e}");
-        // Ends before any frame.
+        // Ends before any frame: just the end.
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
-        assert!(BuiltinInput::open_slrw_with(io::Cursor::new(s), opts("nv12"), never).is_err());
+        assert!(!first(s, "nv12").unwrap());
+    }
+
+    /// Opens late (like a session whose sinks take a while to start) and
+    /// checks that no frame is ahead of its pts on the clock that starts
+    /// with the first `next_frame`: nothing generated or read before was
+    /// queued up (that would add the start-up time to the latency).
+    fn assert_on_schedule(mut input: BuiltinInput, frames: usize) {
+        std::thread::sleep(Duration::from_millis(300));
+        let go = Instant::now();
+        let mut video = Vec::new();
+        while video.len() < frames {
+            let Some(f) = input.next_frame().unwrap() else {
+                break;
+            };
+            if f.track == TrackKind::Video {
+                video.push((go.elapsed(), f.pts));
+            }
+        }
+        assert!(video.len() >= frames / 2, "{}", video.len());
+        assert!(video[0].0 < Duration::from_millis(100), "{:?}", video[0]);
+        assert_eq!(video[0].1, 0);
+        for &(at, pts) in &video {
+            let due = Duration::from_micros(pts * 1000 / 90);
+            assert!(
+                at + Duration::from_millis(40) >= due,
+                "frame with pts {due:?} out at {at:?}"
+            );
+            assert!(at < due + Duration::from_millis(150), "{at:?} vs {due:?}");
+        }
+        Box::new(input).finish(false).unwrap();
+    }
+
+    #[test]
+    fn test_pattern_starts_with_the_session() {
+        let out = VideoOut {
+            size: Size {
+                width: 160,
+                height: 90,
+            },
+            fps: Ratio::integer(30),
+            bitrate_kbps: 500,
+            gop: 30,
+        };
+        let input = BuiltinInput::test_pattern(out, 48_000, vec![], never).unwrap();
+        assert_on_schedule(input, 15);
+    }
+
+    #[test]
+    fn raw_slrw_starts_with_the_session() {
+        let opts = BuiltinOptions {
+            video_in: RawVideoSpec {
+                size: Size {
+                    width: 64,
+                    height: 36,
+                },
+                fps: Ratio::integer(60),
+                pix_fmt: "rgba".into(),
+            },
+            video_out: VideoOut {
+                size: Size {
+                    width: 64,
+                    height: 36,
+                },
+                fps: Ratio::integer(60),
+                bitrate_kbps: 500,
+                gop: 30,
+            },
+            audio: None,
+            audio_families: vec![],
+            threads: 1,
+        };
+        // 0.8 s of game frames, starting right away.
+        let input = BuiltinInput::open_slrw_with(raw_stream(48, 64, 36), opts, never).unwrap();
+        assert_on_schedule(input, 20);
     }
 
     #[test]

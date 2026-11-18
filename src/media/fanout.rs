@@ -18,6 +18,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 use crate::media::source::StreamInfo;
@@ -76,6 +77,8 @@ struct State {
     abort: bool,
     /// The sink thread is gone; drop everything.
     dead: bool,
+    /// `start()` returned (successfully or not).
+    started: bool,
     /// What the sink's `wants_keyframe()` said when last polled (before
     /// pushing a video frame).
     sink_wants_key: bool,
@@ -125,6 +128,7 @@ impl Fanout {
                     closed: false,
                     abort: false,
                     dead: false,
+                    started: false,
                     sink_wants_key: false,
                     stats: SinkStats::default(),
                 }),
@@ -139,8 +143,11 @@ impl Fanout {
                     let end = run_sink(sink, &video, audio.as_ref(), &thread_shared);
                     let mut st = thread_shared.lock();
                     st.dead = true;
+                    st.started = true;
                     st.queue.clear();
                     st.bytes = 0;
+                    drop(st);
+                    thread_shared.cond.notify_all();
                     end
                 })
                 .map_err(|e| Error::io("spawn sink thread", e))?;
@@ -194,6 +201,32 @@ impl Fanout {
             drop(st);
             h.shared.cond.notify_one();
         }
+    }
+
+    /// Waits until every sink's `start()` returned, at most `timeout`
+    /// (polling `stop`). A live source pulled before that piles up frames
+    /// in the queues of sinks that are still setting up, and they anchor
+    /// their clocks on the stale first one: the backlog would become
+    /// latency. Returns whether all sinks started in time.
+    pub fn wait_started(&self, timeout: Duration, stop: fn() -> bool) -> bool {
+        let until = Instant::now() + timeout;
+        for h in &self.sinks {
+            let mut st = h.shared.lock();
+            while !st.started {
+                let now = Instant::now();
+                if now >= until || stop() {
+                    return false;
+                }
+                let wait = (until - now).min(Duration::from_millis(50));
+                st = h
+                    .shared
+                    .cond
+                    .wait_timeout(st, wait)
+                    .map(|(g, _)| g)
+                    .unwrap_or_else(|e| e.into_inner().0);
+            }
+        }
+        true
     }
 
     /// Whether some running sink is waiting for a keyframe: it just
@@ -282,7 +315,10 @@ fn run_sink(
     shared: &Shared,
 ) -> SinkEnd {
     let name = sink.name().to_owned();
-    if let Err(e) = sink.start(video, audio) {
+    let started = sink.start(video, audio);
+    shared.lock().started = true;
+    shared.cond.notify_all();
+    if let Err(e) = started {
         error!("{name}: start failed: {e}");
         let _ = sink.stop();
         return SinkEnd::Failed(e);
@@ -662,5 +698,73 @@ mod tests {
         assert_eq!(videos(&log), [0, 1]);
         assert!(log.stopped.load(Ordering::SeqCst));
         assert!(olog.stopped.load(Ordering::SeqCst));
+    }
+
+    /// A sink whose `start()` takes a while (an AirPlay SETUP) or fails.
+    struct SlowStart {
+        caps: Capabilities,
+        delay: std::time::Duration,
+        fail: bool,
+    }
+
+    impl Sink for SlowStart {
+        fn name(&self) -> &str {
+            "slow"
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.caps
+        }
+        fn start(&mut self, _v: &VideoInfo, _a: Option<&AudioInfo>) -> Result<()> {
+            std::thread::sleep(self.delay);
+            if self.fail {
+                return Err(Error::protocol("no"));
+            }
+            Ok(())
+        }
+        fn push(&mut self, _f: &EncodedFrame) -> Result<SinkStatus> {
+            Ok(SinkStatus::Accepted)
+        }
+        fn wants_keyframe(&self) -> bool {
+            false
+        }
+        fn stop(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn waits_for_sinks_to_start() {
+        let never = || false;
+        let slow = |ms, fail| -> Box<dyn Sink> {
+            Box::new(SlowStart {
+                caps: caps(AudioFamily::Cast),
+                delay: Duration::from_millis(ms),
+                fail,
+            })
+        };
+        let f = Fanout::new(
+            vec![slow(150, false), slow(10, false)],
+            &info(),
+            FanoutConfig::default(),
+        )
+        .unwrap();
+        let t0 = Instant::now();
+        assert!(f.wait_started(Duration::from_secs(5), never));
+        assert!(
+            t0.elapsed() >= Duration::from_millis(140),
+            "{:?}",
+            t0.elapsed()
+        );
+        assert!(t0.elapsed() < Duration::from_secs(2));
+        f.close(false);
+        // A failed start counts as done; a hanging one times out.
+        let f = Fanout::new(vec![slow(20, true)], &info(), FanoutConfig::default()).unwrap();
+        assert!(f.wait_started(Duration::from_secs(5), never));
+        f.close(false);
+        let f = Fanout::new(vec![slow(400, false)], &info(), FanoutConfig::default()).unwrap();
+        let t0 = Instant::now();
+        assert!(!f.wait_started(Duration::from_millis(100), never));
+        assert!(t0.elapsed() < Duration::from_millis(300));
+        f.close(false);
     }
 }
