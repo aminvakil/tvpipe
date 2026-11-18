@@ -67,6 +67,24 @@ pub fn write(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
         );
         return;
     }
+    // Messages quote peers (receiver names, pages over a tunnel): no
+    // terminal escape sequences get through.
+    let mut msg = args.to_string();
+    if msg
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        msg = msg
+            .chars()
+            .map(|c| {
+                if c.is_control() && c != '\n' && c != '\t' {
+                    '?'
+                } else {
+                    c
+                }
+            })
+            .collect();
+    }
     let mut err = std::io::stderr().lock();
     let _ = writeln!(
         err,
@@ -75,7 +93,7 @@ pub fn write(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
         elapsed.subsec_millis(),
         level.label(),
         module,
-        args
+        msg
     );
 }
 

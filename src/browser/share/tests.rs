@@ -26,6 +26,9 @@ pub(crate) struct PageScript {
     pub send_ended: bool,
     /// Replace the first video record with this message.
     pub bad_record: Option<Vec<u8>>,
+    /// Come as a browser over the tunnel would: this `Host`, and
+    /// `https://HOST` as `Origin`.
+    pub public_host: Option<String>,
 }
 
 impl Default for PageScript {
@@ -37,6 +40,7 @@ impl Default for PageScript {
             audio: true,
             send_ended: true,
             bad_record: None,
+            public_host: None,
         }
     }
 }
@@ -80,12 +84,33 @@ pub(crate) fn spawn_page(ws_url: String, script: PageScript) -> JoinHandle<PageS
 
 fn run_page(ws_url: &str, script: PageScript) -> PageSeen {
     let seen: Seen = Arc::default();
-    let (mut rx, tx) = websocket::connect(
-        ws_url,
-        Duration::from_secs(10),
-        websocket::Limits::default(),
-    )
-    .expect("page connect");
+    let (mut rx, tx) = match &script.public_host {
+        None => websocket::connect(
+            ws_url,
+            Duration::from_secs(10),
+            websocket::Limits::default(),
+        )
+        .expect("page connect"),
+        Some(host) => {
+            let u = websocket::WsUrl::parse(ws_url).unwrap();
+            let tcp = TcpStream::connect((u.host.as_str(), u.port)).unwrap();
+            let url = websocket::WsUrl {
+                host: host.clone(),
+                port: 80,
+                path: u.path,
+            };
+            let origin = format!("https://{host}");
+            let (tcp, rest) =
+                websocket::client_handshake(tcp, &url, &[("Origin", origin.as_str())]).unwrap();
+            websocket::pair(
+                tcp,
+                rest,
+                websocket::Role::Client,
+                websocket::Limits::default(),
+            )
+            .unwrap()
+        }
+    };
     let s2 = seen.clone();
     let reader = std::thread::spawn(move || loop {
         let msg = rx.read_message();

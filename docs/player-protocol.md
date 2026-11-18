@@ -34,6 +34,11 @@ The share page's rules ([`share-protocol.md`](share-protocol.md)), with one more
   web pages cannot open it even if they learnt the token. Clients without
   an `Origin` (not browsers) are let in.
 - Pages send at most 64 KiB per message (all text).
+- `--tunnel` also serves the page on a public https host
+  ([tunnels.md](tunnels.md)): a `Host` of that name, a token of its own
+  (new every run), `Origin` `https://HOST`, at most 4 tabs that way, and
+  `410` once `--tunnel-ttl` is over. Its URL asks for `delay=300` (or the
+  session's playout delay, if larger).
 
 Any number of tabs may connect. Each gets the current `status` and, once
 the stream started, the `config` right away, then records from the next
@@ -56,6 +61,7 @@ Page → tvpipe:
 |---|---|
 | `hello` | `version`, `agent`, `features` (informational, logged at `-v`) |
 | `ping` | `t` (the page's clock); answered with `pong` |
+| `ack` | `bytes`: record bytes (binary message lengths) received since the socket opened, every 32 KiB |
 | `keyframe` | `reason`: the decoder failed or fell behind; video for this tab skips to the next keyframe |
 | `stats` | every 2 s (logged at `-v`): `fps`, `delayMs`, `lateMs`, drops, audio counters, `rttMs`, … |
 | `log` | `level`, `message` (errors and warnings go to tvpipe's log) |
@@ -106,6 +112,11 @@ plays the samples) at `pts_us + latency`.
   and a writer thread, so `Sink::push` never blocks. A full queue drops
   the frame and the tab waits for the next keyframe; the others go on. A
   tab whose socket stalls for 5 s is dropped.
+- **In flight.** A tab that sends `ack` has at most 256 KiB of record
+  bytes written but not acknowledged; beyond that its frames are dropped
+  the same way. Behind a tunnel the socket does not stall when a viewer
+  falls behind (the relay buffers), and every viewer shares the relay's
+  link, so this keeps one slow viewer from holding up the others.
 - **Keyframes.** A tab starts at a keyframe. The sink reports
   `wants_keyframe` only while *no* tab is playing (the first tab, or all
   tabs recovering): the fanout answers it by skipping video for the whole

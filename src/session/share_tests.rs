@@ -342,3 +342,70 @@ fn browser_players_follow_the_capture() {
     assert!(content(&plan).0 > 0, "{plan}");
     rx.shutdown();
 }
+
+/// A capture over the tunnel waits for the local yes: the first one is
+/// turned down (its page is told), the next one is shown, with at least
+/// the remote latency floor.
+#[test]
+fn remote_shares_wait_for_the_local_yes() {
+    let latencies = Mutex::new(Vec::new());
+    let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
+        match t {
+            Target::Browser(o) => {
+                latencies.lock().unwrap().push(o.latency_ms);
+                let o = PlayerOptions {
+                    port: Some(0),
+                    ..(**o).clone()
+                };
+                Ok(Box::new(BrowserSink::bind(&o, never)?))
+            }
+            _ => connect_one(t, c, m),
+        }
+    };
+    type Pages = std::sync::Arc<Mutex<Option<JoinHandle<(PageSeen, PageSeen)>>>>;
+    let pages: Pages = Default::default();
+    let p = pages.clone();
+    let hook = move |server: &ShareServer| -> Result<Box<dyn std::any::Any>> {
+        let public = server.publish("remote.example", None, None).unwrap();
+        let token = public.rsplit("t=").next().unwrap().to_owned();
+        let local = server.ws_url();
+        let ws = format!("{}?t={token}", local.split('?').next().unwrap());
+        let script = PageScript {
+            frames: 3,
+            audio: false,
+            public_host: Some("remote.example".into()),
+            ..PageScript::default()
+        };
+        *p.lock().unwrap() = Some(std::thread::spawn(move || {
+            let first = spawn_page(ws.clone(), script.clone()).join().unwrap();
+            let second = spawn_page(ws, script).join().unwrap();
+            (first, second)
+        }));
+        Ok(Box::new(()))
+    };
+    let asked = Mutex::new(Vec::<CaptureInfo>::new());
+    let approve = |cap: &CaptureInfo, _gone: &dyn Fn() -> bool| {
+        let mut a = asked.lock().unwrap();
+        a.push(cap.clone());
+        a.len() > 1
+    };
+    let o = ShareOptions {
+        no_audio: true,
+        ..share_opts(vec!["browser".into()])
+    };
+    share_rejoin(o, &connect, never, &hook, None, ShareKind::Page, &approve).unwrap();
+    let (first, second) = pages.lock().unwrap().take().unwrap().join().unwrap();
+    assert!(first.plan.is_none(), "{first:?}");
+    assert_eq!(
+        first.end.as_deref(),
+        Some("the host did not accept the share")
+    );
+    assert!(second.plan.is_some(), "{second:?}");
+    let asked = asked.lock().unwrap();
+    assert_eq!(asked.len(), 2);
+    let remote = asked[0].remote.as_ref().unwrap();
+    assert_eq!(remote.peer, None);
+    assert!(remote.agent.contains("Chrome/131"), "{remote:?}");
+    // --latency 100 was asked for; a remote share gets the floor.
+    assert_eq!(*latencies.lock().unwrap(), vec![REMOTE_SHARE_LATENCY_MS]);
+}

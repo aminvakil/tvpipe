@@ -19,6 +19,7 @@
 //!   install paths (the one place with `cfg(target_os)` in this module,
 //!   like a config path).
 
+pub mod access;
 pub mod bidi;
 pub mod cdp;
 pub mod fonts;

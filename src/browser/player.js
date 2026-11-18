@@ -148,6 +148,9 @@
   // Socket
 
   var ws = null, retries = 0, pingTimer = null, statsTimer = null;
+  // Record bytes received and last acknowledged: tvpipe limits what is
+  // in flight to each tab, so one slow viewer cannot hold up a tunnel.
+  var rxBytes = 0, ackedBytes = 0, ACK_EVERY = 32768;
   function send(obj) {
     if (ws && ws.readyState === 1) {
       try { ws.send(JSON.stringify(obj)); } catch (e) { /* closing */ }
@@ -163,6 +166,8 @@
     ws.onopen = function () {
       retries = 0;
       samples = [];
+      rxBytes = 0;
+      ackedBytes = 0;
       send({
         type: 'hello', version: VERSION, agent: navigator.userAgent,
         features: {
@@ -184,6 +189,11 @@
         try { m = JSON.parse(e.data); } catch (err) { return; }
         onText(m);
       } else {
+        rxBytes += e.data.byteLength;
+        if (rxBytes - ackedBytes >= ACK_EVERY) {
+          ackedBytes = rxBytes;
+          send({ type: 'ack', bytes: rxBytes });
+        }
         onRecord(e.data);
       }
     };

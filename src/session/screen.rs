@@ -76,6 +76,8 @@ pub(super) fn screen(opts: ScreenOptions) -> Result<()> {
         &launcher,
         Some(&rejoin),
         ShareKind::Screen,
+        // The page is tvpipe's own: nothing comes over a tunnel.
+        &|_, _| false,
     )
 }
 
@@ -102,7 +104,15 @@ pub(super) fn screen_with(
     stop: fn() -> bool,
     source: ShareSource<'_>,
 ) -> Result<()> {
-    share_rejoin(opts, connect, stop, source, None, ShareKind::Screen)
+    share_rejoin(
+        opts,
+        connect,
+        stop,
+        source,
+        None,
+        ShareKind::Screen,
+        &|_, _| false,
+    )
 }
 
 /// The ffmpeg engine: `play` with this OS's capture arguments.

@@ -26,6 +26,14 @@ Version 1. Using them: [Sharing a tab or screen](https://mitsuhiko.github.io/tvp
 - `http://127.0.0.1` is a secure context in Chrome, Safari and Firefox, so
   `getDisplayMedia` and WebCodecs are available without TLS.
 - Largest message: 16 MiB.
+- `tvpipe share --tunnel` also serves the page on a public https host
+  ([tunnels.md](tunnels.md)) with its own per-run token; there the socket
+  also needs `https://HOST` as `Origin`, and the link answers `410` once
+  `--tunnel-ttl` (default 60 min) is over. A `capture` from there waits
+  for the local user's `y` (or `--yes`) before the receivers connect; the
+  page shows `status` `connecting` meanwhile, and a share turned down gets
+  `end` and a close. A remote share has a playout delay of at least
+  300 ms.
 
 ## Flow
 

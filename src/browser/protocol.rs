@@ -82,6 +82,18 @@ pub struct CaptureInfo {
     /// `browser`, `window` or `monitor` (displaySurface).
     pub surface: Option<String>,
     pub label: Option<String>,
+    /// Set by tvpipe (not the page): the capture came over the tunnel.
+    pub remote: Option<Remote>,
+}
+
+/// Who shares over the tunnel (`share --tunnel`), for the local
+/// confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Remote {
+    /// The visitor's address, as the tunnel reports it.
+    pub peer: Option<String>,
+    /// The page's user agent (from its `hello`; the page says so itself).
+    pub agent: String,
 }
 
 /// A text message from the page.
@@ -142,6 +154,7 @@ pub fn parse_page(text: &str) -> Result<PageMsg> {
                 audio: v.get("audio").and_then(Value::as_bool).unwrap_or(false),
                 surface: opt_str(&v, "surface"),
                 label: opt_str(&v, "label"),
+                remote: None,
             })
         }
         "stats" => PageMsg::Stats(v),

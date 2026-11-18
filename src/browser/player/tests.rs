@@ -210,8 +210,8 @@ fn http(addr: u16, raw: &str) -> String {
 #[test]
 fn page_server_checks_token_host_and_origin() {
     let sink = BrowserSink::bind(&PlayerOptions::default(), never).unwrap();
-    let port = sink.shared.port;
-    let token = sink.shared.token.clone();
+    let port = sink.shared.access.port();
+    let token = sink.shared.access.token().to_owned();
     let get = |target: &str, host: &str, extra: &str| {
         http(
             port,
@@ -248,6 +248,32 @@ fn page_server_checks_token_host_and_origin() {
     s.read_exact(&mut head).unwrap();
     assert_eq!(&head, b"HTTP/1.1 101");
     assert!(get("/ws?t=1", &here, upgrade).starts_with("HTTP/1.1 403"));
+
+    // --tunnel: the public host with its own token and origin.
+    let public = "abc.opentunnel.xyz";
+    assert!(get(&format!("/?t={token}"), public, "").starts_with("HTTP/1.1 421"));
+    let ptoken = sink.shared.access.publish(public, None, None).unwrap();
+    assert!(get(&format!("/?t={ptoken}"), public, "").starts_with("HTTP/1.1 200"));
+    assert!(get(&format!("/?t={token}"), public, "").starts_with("HTTP/1.1 403"));
+    assert!(get(&format!("/?t={ptoken}"), &here, "").starts_with("HTTP/1.1 403"));
+    let pws = format!("/ws?t={ptoken}");
+    for origin in [
+        format!("http://{here}"),
+        format!("http://{public}"),
+        "https://evil.example".into(),
+    ] {
+        let r = get(&pws, public, &format!("{upgrade}Origin: {origin}\r\n"));
+        assert!(r.starts_with("HTTP/1.1 403"), "{origin}: {r}");
+    }
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(
+        s,
+        "GET {pws} HTTP/1.1\r\nHost: {public}\r\n{upgrade}Origin: https://{public}\r\n\r\n"
+    )
+    .unwrap();
+    s.read_exact(&mut head).unwrap();
+    assert_eq!(&head, b"HTTP/1.1 101");
 }
 
 #[test]
@@ -420,6 +446,86 @@ fn a_stalled_tab_never_blocks_push() {
     drop(page);
 }
 
+/// A page that acknowledges what it got (`ack`) has at most
+/// MAX_IN_FLIGHT unacknowledged bytes: a viewer whose acks stop (a slow
+/// link behind a tunnel) skips frames, the others get every one.
+#[test]
+fn acknowledging_tabs_have_a_limited_amount_in_flight() {
+    let clock = Arc::new(MediaClock::new());
+    let mut sink = started(&clock);
+    let mut a = Page::connect(&sink);
+    let mut b = Page::connect(&sink);
+    wait_viewers(&sink, 2);
+    sink.start(&video_info(), None).unwrap();
+    a.text("config");
+    b.text("config");
+    let sized = |pts: u64, key: bool, n: usize| {
+        let mut data = vec![0u8; n];
+        let len = (n - 4) as u32;
+        data[..4].copy_from_slice(&len.to_be_bytes());
+        data[4] = if key { 0x65 } else { 0x41 };
+        EncodedFrame {
+            track: TrackKind::Video,
+            pts,
+            keyframe: key,
+            data: data.into(),
+        }
+    };
+    let shared = sink.shared.clone();
+    let acked = |i: usize| shared.lock().tabs[i].queue.acked.load(Ordering::Relaxed);
+    let wait_acked = |i: usize, want: u64| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while acked(i) != want || !shared.lock().tabs[i].queue.acking.load(Ordering::Relaxed) {
+            assert!(Instant::now() < deadline, "tab {i}: acked {}", acked(i));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let ack = |p: &Page, bytes: u64| {
+        p.tx.send_text(&format!(r#"{{"type":"ack","bytes":{bytes}}}"#))
+            .unwrap();
+    };
+    ack(&a, 0);
+    ack(&b, 0);
+    wait_acked(0, 0);
+    wait_acked(1, 0);
+    // Record bytes: 13 of header, 1 of flags, the access unit.
+    let record = |n: usize| (n + 14) as u64;
+    let (mut a_got, mut b_got) = (0u64, 0u64);
+    sink.push(&sized(0, true, 100_000)).unwrap();
+    assert!(a.record().payload[0] & slrw::H264_KEYFRAME != 0);
+    assert!(b.record().payload[0] & slrw::H264_KEYFRAME != 0);
+    a_got += record(100_000);
+    b_got += record(100_000);
+    ack(&a, a_got);
+    wait_acked(0, a_got);
+    let mut b_frames = 0;
+    for i in 1..=8u64 {
+        sink.push(&sized(i * 3000, false, 64 << 10)).unwrap();
+        a.record();
+        a_got += record(64 << 10);
+        ack(&a, a_got);
+        wait_acked(0, a_got);
+        if b_got <= MAX_IN_FLIGHT as u64 {
+            b.record();
+            b_got += record(64 << 10);
+            b_frames += 1;
+        }
+    }
+    // B got the keyframe and deltas up to the limit, then nothing.
+    assert_eq!(b_frames, 3);
+    assert!(b.quiet(Duration::from_millis(200)));
+    assert!(sink.shared.lock().tabs[1].waiting_key);
+    assert!(sink.shared.lock().tabs[1].dropped > 0);
+    // Once B catches up, it resumes at the next keyframe.
+    ack(&b, b_got);
+    wait_acked(1, b_got);
+    sink.push(&sized(30_000, false, 1000)).unwrap();
+    sink.push(&sized(33_000, true, 1000)).unwrap();
+    assert!(b.record().payload[0] & slrw::H264_KEYFRAME != 0);
+    assert_eq!(a.record().payload[0] & slrw::H264_KEYFRAME, 0);
+    sink.stop().unwrap();
+}
+
 #[test]
 fn waits_for_a_viewer_or_a_stop() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -490,7 +596,7 @@ fn the_url_uses_the_given_token_and_the_fixed_port_or_another() {
         ..PlayerOptions::default()
     };
     let sink = BrowserSink::bind(&opts, never).unwrap();
-    assert_ne!(sink.shared.port, DEFAULT_PORT);
+    assert_ne!(sink.shared.access.port(), DEFAULT_PORT);
     assert!(
         sink.url().ends_with(&format!("/?t={token}")),
         "{}",

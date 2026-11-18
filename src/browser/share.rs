@@ -26,8 +26,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::browser::access::{Access, Via};
 use crate::browser::fonts;
-use crate::browser::protocol::{self, CaptureInfo, PageConfig, PageMsg, SharePlan};
+use crate::browser::protocol::{self, CaptureInfo, PageConfig, PageMsg, Remote, SharePlan};
 use crate::cli::{RawAudioSpec, RawVideoSpec};
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
@@ -40,6 +41,7 @@ use crate::media::slrw::{self, Kind, Packet};
 use crate::media::source::StreamInfo;
 use crate::net::http::Request;
 use crate::net::httpd::{self, Reply};
+use crate::net::tunnel::{self, Tunnel};
 use crate::net::websocket::{self, close_code, Message, Role, Sender};
 use crate::types::{AudioFamily, EncodedFrame};
 
@@ -99,8 +101,7 @@ struct State {
 }
 
 struct Shared {
-    token: String,
-    port: u16,
+    access: Access,
     state: Mutex<State>,
     cv: Condvar,
     events: SyncSender<Event>,
@@ -118,26 +119,10 @@ impl Shared {
     }
 
     fn handle(self: &Arc<Self>, req: &Request) -> Reply {
-        let host = req.headers.get("host").unwrap_or("");
-        let port = self.port;
-        let host_ok = [
-            format!("127.0.0.1:{port}"),
-            format!("localhost:{port}"),
-            format!("[::1]:{port}"),
-        ]
-        .iter()
-        .any(|h| h.eq_ignore_ascii_case(host));
-        if !host_ok {
-            return Reply::Response(httpd::error_response(421, "Misdirected Request"));
-        }
-        if req.method != "GET" && req.method != "HEAD" {
-            return Reply::Response(httpd::error_response(405, "Method Not Allowed"));
-        }
-        let (path, query) = req.target.split_once('?').unwrap_or((&req.target, ""));
-        let token_ok = query.split('&').any(|kv| {
-            kv.strip_prefix("t=")
-                .is_some_and(|t| crate::crypto::ring::ct_eq(t.as_bytes(), self.token.as_bytes()))
-        });
+        let (via, path, token_ok) = match self.access.check(req, &["/capture.js", "/favicon.ico"]) {
+            Ok(c) => (c.via, c.path, c.token_ok),
+            Err(r) => return Reply::Response(r),
+        };
         match path {
             "/capture.js" => Reply::Response(httpd::response(
                 200,
@@ -162,16 +147,31 @@ impl Shared {
                 "text/html; charset=utf-8",
                 PAGE_HTML.as_bytes().to_vec(),
             )),
-            "/screen" => Reply::Response(httpd::response(
+            // tvpipe's own capture of this machine's screen: never over a
+            // tunnel.
+            "/screen" if via == Via::Local => Reply::Response(httpd::response(
                 200,
                 "OK",
                 "text/html; charset=utf-8",
                 SCREEN_HTML.as_bytes().to_vec(),
             )),
+            // Over the tunnel only the page's own origin (here any page
+            // may connect: `share URL` injects the script into any site).
+            "/ws"
+                if via == Via::Public && !self.access.origin_ok(via, req.headers.get("origin")) =>
+            {
+                Reply::Response(httpd::error_response(403, "Forbidden origin"))
+            }
             "/ws" if websocket::is_upgrade(req) => match websocket::server_response(req) {
                 Ok(resp) => {
                     let me = self.clone();
-                    Reply::Upgrade(resp, Box::new(move |tcp, rest| me.client(tcp, rest)))
+                    // Over the tunnel: who it is, for the confirmation.
+                    let remote = (via == Via::Public)
+                        .then(|| self.access.remote_peer(httpd::current_peer()));
+                    Reply::Upgrade(
+                        resp,
+                        Box::new(move |tcp, rest| me.client(tcp, rest, remote)),
+                    )
                 }
                 Err(e) => {
                     debug!("share: bad upgrade: {e}");
@@ -189,7 +189,9 @@ impl Shared {
     }
 
     /// One page connection, on its own thread until it closes.
-    fn client(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>) {
+    /// `remote`: it came over the tunnel (with the visitor's address if
+    /// known).
+    fn client(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>, remote: Option<Option<String>>) {
         if tcp.set_read_timeout(Some(CLIENT_POLL)).is_err() {
             return;
         }
@@ -209,8 +211,16 @@ impl Shared {
             }
             id
         };
-        debug!("share: page {id} connected");
+        debug!(
+            "share: page {id} connected{}",
+            if remote.is_some() {
+                " over the tunnel"
+            } else {
+                ""
+            }
+        );
         let mut clock = None;
+        let mut page_agent = String::new();
         let why = loop {
             if self.lock().shutdown {
                 break "tvpipe stopped".to_owned();
@@ -233,9 +243,14 @@ impl Shared {
                             );
                         }
                         clock = Some((Instant::now(), clock_us));
+                        page_agent.clone_from(&agent);
                         self.lock().agent = agent;
                     }
-                    Ok(PageMsg::Capture(info)) => {
+                    Ok(PageMsg::Capture(mut info)) => {
+                        info.remote = remote.clone().map(|peer| Remote {
+                            peer,
+                            agent: page_agent.clone(),
+                        });
                         let mut st = self.lock();
                         if st.rejoin && st.active != Some(id) {
                             // The newest capture is the source (the old
@@ -354,6 +369,8 @@ pub struct ShareServer {
     events: Receiver<Event>,
     url: String,
     end_reason: String,
+    /// `--tunnel` ([`ShareServer::expose`]).
+    tunnel: Option<Box<dyn Tunnel>>,
 }
 
 impl ShareServer {
@@ -376,8 +393,7 @@ impl ShareServer {
         let http = httpd::Server::bind(listener_addr, handler)?;
         let port = http.local_addr().port();
         let shared = Arc::new(Shared {
-            token: token.clone(),
-            port,
+            access: Access::new("share", port, token.clone()),
             state: Mutex::new(State::default()),
             cv: Condvar::new(),
             events: tx,
@@ -389,7 +405,55 @@ impl ShareServer {
             events,
             url: format!("http://127.0.0.1:{port}/?t={token}"),
             end_reason: "tvpipe stopped".into(),
+            tunnel: None,
         })
+    }
+
+    /// Also serves the page on a public URL (docs/tunnels.md) that lets
+    /// people in for `ttl`, and returns it: anyone who has it can ask to
+    /// share to the receivers.
+    pub fn expose(&mut self, ttl: Option<Duration>, stop: &dyn Fn() -> bool) -> Result<String> {
+        let t = tunnel::start(self.shared.access.port(), stop)?;
+        let url = self.publish(t.host(), ttl, t.peer_lookup())?;
+        self.tunnel = Some(t);
+        Ok(url)
+    }
+
+    /// Accepts `host` as the page's public host (what [`expose`]
+    /// does once the tunnel is up; tests call it directly).
+    ///
+    /// [`expose`]: Self::expose
+    pub fn publish(
+        &self,
+        host: &str,
+        ttl: Option<Duration>,
+        peers: Option<tunnel::PeerLookup>,
+    ) -> Result<String> {
+        let token = self.shared.access.publish(host, ttl, peers)?;
+        Ok(format!("https://{host}/?t={token}"))
+    }
+
+    /// Whether the capture [`wait_capture`](Self::wait_capture) returned
+    /// is still there (its page did not go away).
+    pub fn capture_pending(&self) -> bool {
+        self.shared.lock().capture.is_some()
+    }
+
+    /// Turns the capture [`wait_capture`](Self::wait_capture) returned
+    /// down: its page is told `reason` and closed, and the next capture
+    /// may take its place.
+    pub fn decline(&self, reason: &str) {
+        let mut st = self.shared.lock();
+        if st.streaming {
+            return;
+        }
+        if let Some(id) = st.active.take() {
+            st.capture = None;
+            if let Some((_, s)) = st.clients.iter().find(|(c, _)| *c == id) {
+                let _ = s.send_text(&protocol::end(reason));
+                let _ = s.close(close_code::POLICY, reason);
+            }
+        }
     }
 
     /// Keep streaming when the source page goes away, until another page
@@ -421,7 +485,8 @@ impl ShareServer {
     pub fn ws_url(&self) -> String {
         format!(
             "ws://127.0.0.1:{}/ws?t={}",
-            self.shared.port, self.shared.token
+            self.shared.access.port(),
+            self.shared.access.token()
         )
     }
 
@@ -429,7 +494,8 @@ impl ShareServer {
     pub fn screen_url(&self) -> String {
         format!(
             "http://127.0.0.1:{}/screen?t={}",
-            self.shared.port, self.shared.token
+            self.shared.access.port(),
+            self.shared.access.token()
         )
     }
 
@@ -658,7 +724,11 @@ impl ShareHandle {
 
     /// The WebSocket URL a capture script connects to.
     pub fn ws_url(&self) -> String {
-        format!("ws://127.0.0.1:{}/ws?t={}", self.0.port, self.0.token)
+        format!(
+            "ws://127.0.0.1:{}/ws?t={}",
+            self.0.access.port(),
+            self.0.access.token()
+        )
     }
 
     /// Whether pages get their `config` at once (the session knows what
@@ -965,7 +1035,7 @@ impl Input for ShareInput {
 }
 
 /// "Chrome/131", "Safari/18.1", "Firefox/133" from a user agent.
-fn browser_name(agent: &str) -> String {
+pub(crate) fn browser_name(agent: &str) -> String {
     let find = |name: &str| {
         agent.split_whitespace().find_map(|t| {
             t.strip_prefix(name)

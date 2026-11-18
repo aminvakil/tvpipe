@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use crate::browser::layout;
 use crate::browser::player::{BrowserSink, PlayerOptions};
-use crate::browser::protocol::{PageConfig, SharePlan};
+use crate::browser::protocol::{CaptureInfo, PageConfig, SharePlan};
 use crate::browser::share::{ShareInputOptions, ShareServer};
 use crate::cast::{self, CastOptions};
 use crate::cli::{
@@ -87,6 +87,8 @@ const AIRPLAY_PORT: u16 = 7000;
 /// the in-flight window a few times per 5 minutes at 200 ms (each costing
 /// up to a GOP); docs/measurements.md. `--latency` goes lower on good networks.
 pub const DEFAULT_LATENCY_MS: u32 = 300;
+/// The least playout delay of a share over the tunnel (docs/tunnels.md).
+pub const REMOTE_SHARE_LATENCY_MS: u32 = 300;
 /// Largest default output (an input larger than this is scaled down).
 const DEFAULT_MAX_SIZE: Size = Size {
     width: 1920,
@@ -628,6 +630,8 @@ fn configure_browsers(targets: &mut [Target], opts: &BrowserOptions, latency_ms:
                 wait_for_viewer: opts.wait_for_viewer,
                 latency_ms,
                 audio,
+                tunnel: opts.tunnel,
+                tunnel_ttl: opts.tunnel_ttl,
             };
         }
     }
@@ -1254,6 +1258,7 @@ fn share(opts: ShareOptions) -> Result<()> {
     }
     interrupt::watch_stdin();
     let rejoin = Rejoin::system(opts.reconnect);
+    let yes = opts.yes;
     share_rejoin(
         opts,
         &connect_one,
@@ -1261,6 +1266,7 @@ fn share(opts: ShareOptions) -> Result<()> {
         &|_| Ok(Box::new(())),
         Some(&rejoin),
         ShareKind::Page,
+        &|cap, cancel| yes || approve_in_terminal(cap, cancel),
     )
 }
 
@@ -1289,6 +1295,79 @@ enum ShareKind {
 /// for `screen`).
 type ShareSource<'a> = &'a dyn Fn(&ShareServer) -> Result<Box<dyn std::any::Any>>;
 
+/// Decides whether a capture from over the tunnel may reach the
+/// receivers; the second argument says the question is moot (the page
+/// left, or tvpipe stops).
+pub type Approver<'a> = &'a dyn Fn(&CaptureInfo, &dyn Fn() -> bool) -> bool;
+
+/// Asks on the terminal (`y` + Enter). Without a terminal nothing remote
+/// is shown unless `--yes` was given.
+fn approve_in_terminal(_cap: &CaptureInfo, cancel: &dyn Fn() -> bool) -> bool {
+    match interrupt::ask("share: show it on the receivers? [y/N]", cancel) {
+        Some(a) => matches!(a.trim(), "y" | "Y" | "yes" | "Yes" | "YES"),
+        None => {
+            if !cancel() {
+                warn!("share: no terminal to ask on; pass --yes to show remote shares unasked");
+            }
+            false
+        }
+    }
+}
+
+/// Text from a remote page for the terminal: no control characters (no
+/// escape sequences), at most `max` characters.
+fn printable(s: &str, max: usize) -> String {
+    let mut out: String = s
+        .chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .take(max)
+        .collect();
+    if s.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+/// The address of `ipv4:port`, `[ipv6]:port` or a bare address.
+fn peer_host(peer: &str) -> &str {
+    if let Some(v6) = peer.strip_prefix('[') {
+        return v6.split(']').next().unwrap_or(v6);
+    }
+    match peer.split_once(':') {
+        Some((h, p)) if !p.contains(':') => h,
+        _ => peer,
+    }
+}
+
+/// "203.0.113.9 (Chrome 157 on macOS) wants to share a window 1280x720".
+fn describe_remote(cap: &CaptureInfo) -> String {
+    let remote = cap.remote.as_ref();
+    let peer = remote
+        .and_then(|r| r.peer.as_deref())
+        .map(peer_host)
+        .filter(|p| !p.is_empty())
+        .unwrap_or("someone (address unknown)");
+    let agent = remote
+        .map(|r| crate::browser::share::browser_name(&r.agent))
+        .filter(|a| !a.is_empty())
+        .map(|a| format!(" ({a})"))
+        .unwrap_or_default();
+    let text = format!(
+        "{peer}{agent} wants to share {} {}x{}{}{}",
+        cap.surface.as_deref().unwrap_or("a surface"),
+        cap.width,
+        cap.height,
+        cap.label
+            .as_deref()
+            .filter(|l| !l.is_empty())
+            .map(|l| format!(" \"{}\"", printable(l, 60)))
+            .unwrap_or_default(),
+        if cap.audio { " with sound" } else { "" }
+    );
+    // All of it comes from the remote page (but the address).
+    printable(&text, 300)
+}
+
 /// `share` with the connector and stop request given, and a hook that
 /// sees the server once it listens (the tests start a fake page there).
 ///
@@ -1301,11 +1380,20 @@ fn share_with(
     stop: fn() -> bool,
     on_listening: &dyn Fn(&ShareServer),
 ) -> Result<()> {
+    let yes = opts.yes;
     let source = |server: &ShareServer| -> Result<Box<dyn std::any::Any>> {
         on_listening(server);
         Ok(Box::new(()))
     };
-    share_rejoin(opts, connect, stop, &source, None, ShareKind::Page)
+    share_rejoin(
+        opts,
+        connect,
+        stop,
+        &source,
+        None,
+        ShareKind::Page,
+        &|_, _| yes,
+    )
 }
 
 /// `share_with` with the reconnect hooks and the source.
@@ -1316,6 +1404,7 @@ fn share_rejoin(
     source: ShareSource<'_>,
     rejoin: Option<&Rejoin>,
     kind: ShareKind,
+    approve: Approver<'_>,
 ) -> Result<()> {
     crate::util::timer::raise_resolution();
     let mut server = ShareServer::bind(0)?;
@@ -1330,6 +1419,18 @@ fn share_rejoin(
                 warn!("--open: {e}");
             }
         }
+    }
+    if opts.tunnel && kind == ShareKind::Page {
+        info!("share: starting a public tunnel");
+        let url = server.expose(opts.tunnel_ttl, &stop)?;
+        info!(
+            "share: someone with {url} can ask to share their screen to the receivers \
+             (the link is new every run{}; you confirm each share here{})",
+            opts.tunnel_ttl
+                .map(|d| format!(" and lets people in for {} min", d.as_secs() / 60))
+                .unwrap_or_default(),
+            if opts.yes { ", unless --yes" } else { "" }
+        );
     }
     let fail = |server: &mut ShareServer, e: Error| {
         server.set_end_reason(&e.to_string());
@@ -1356,11 +1457,29 @@ fn share_rejoin(
         receivers: names.clone(),
     });
     server.set_status("waiting", "Press Share and pick what to show.", &names);
-    let Some(cap) = server.wait_capture(stop) else {
-        return match server.failure() {
-            Some(e) => Err(e),
-            None => Ok(()),
+    // A capture over the tunnel waits for the local user's yes.
+    let cap = loop {
+        let Some(cap) = server.wait_capture(stop) else {
+            return match server.failure() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            };
         };
+        if cap.remote.is_none() {
+            break cap;
+        }
+        info!("share: {}", describe_remote(&cap));
+        server.set_status("connecting", "Waiting for the host to accept…", &names);
+        let gone = || stop() || !server.capture_pending();
+        if approve(&cap, &gone) && server.capture_pending() {
+            break cap;
+        }
+        if stop() {
+            return Ok(());
+        }
+        info!("share: not shown");
+        server.decline("the host did not accept the share");
+        server.set_status("waiting", "Press Share and pick what to show.", &names);
     };
     capture_event(&cap);
     let audio = !opts.no_audio && cap.audio;
@@ -1384,7 +1503,16 @@ fn share_rejoin(
     // `plan` then fits the capture's aspect into the tightest of them.
     let offer = ShareOffer::new(&opts);
     let fps = opts.fps.unwrap_or(SHARE_FPS);
-    let budget = shared_budget(opts.latency_ms, &targets);
+    // Over the internet the page's records arrive with jitter: a remote
+    // share gets at least REMOTE_SHARE_LATENCY_MS (docs/tunnels.md).
+    let latency = match (cap.remote.is_some(), opts.latency_ms) {
+        (true, l) if l.is_none_or(|l| l < REMOTE_SHARE_LATENCY_MS) => {
+            info!("share: remote share: latency {REMOTE_SHARE_LATENCY_MS} ms");
+            Some(REMOTE_SHARE_LATENCY_MS)
+        }
+        (_, l) => l,
+    };
+    let budget = shared_budget(latency, &targets);
     let d = Desired {
         size: opts.size.unwrap_or(Size {
             width: cap.width.max(2),
@@ -1985,6 +2113,55 @@ mod player_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_shares_are_described() {
+        assert_eq!(peer_host("203.0.113.9:4000"), "203.0.113.9");
+        assert_eq!(peer_host("203.0.113.9"), "203.0.113.9");
+        assert_eq!(peer_host("[2001:db8::1]:443"), "2001:db8::1");
+        assert_eq!(peer_host("2001:db8::1"), "2001:db8::1");
+        let cap = CaptureInfo {
+            width: 1280,
+            height: 720,
+            fps: None,
+            audio: true,
+            surface: Some("window".into()),
+            label: Some("Slides".into()),
+            remote: Some(crate::browser::protocol::Remote {
+                peer: Some("203.0.113.9:4000".into()),
+                agent: "Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36".into(),
+            }),
+        };
+        assert_eq!(
+            describe_remote(&cap),
+            "203.0.113.9 (Chrome 131) wants to share window 1280x720 \"Slides\" with sound"
+        );
+        let cap = CaptureInfo {
+            remote: Some(crate::browser::protocol::Remote {
+                peer: None,
+                agent: String::new(),
+            }),
+            label: None,
+            audio: false,
+            ..cap
+        };
+        assert_eq!(
+            describe_remote(&cap),
+            "someone (address unknown) wants to share window 1280x720"
+        );
+        // The page cannot write escape sequences to the terminal.
+        let cap = CaptureInfo {
+            surface: Some("tab\x1b[2J".into()),
+            label: Some(format!("a\u{7}b{}", "x".repeat(100))),
+            ..cap
+        };
+        let d = describe_remote(&cap);
+        assert!(!d.chars().any(char::is_control), "{d:?}");
+        assert!(
+            d.contains("tab?[2J") && d.contains("\"a?bxxx") && d.contains("x…\""),
+            "{d}"
+        );
+    }
     use crate::media::ffmpeg::Output;
 
     fn caps(w: u32, h: u32, fps: u32, kbps: u32) -> Capabilities {

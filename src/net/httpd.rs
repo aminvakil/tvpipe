@@ -5,7 +5,8 @@
 //! a response, or a response followed by handing the socket over (the
 //! WebSocket upgrade), in which case the connection thread becomes the
 //! upgraded connection's thread. Only loopback addresses can be bound:
-//! nothing here is meant to face a network.
+//! nothing here is meant to face a network (a `--tunnel` reaches it from
+//! loopback too; the pages' own checks decide, `browser::access`).
 //!
 //! Sources: RFC 9112.
 
@@ -35,6 +36,17 @@ pub enum Reply {
 }
 
 pub type Handler = Arc<dyn Fn(&Request) -> Reply + Send + Sync>;
+
+thread_local! {
+    /// The client of the request being handled (each connection has its
+    /// own thread).
+    static PEER: std::cell::Cell<Option<SocketAddr>> = const { std::cell::Cell::new(None) };
+}
+
+/// Inside a [`Handler`]: the address the request came from.
+pub fn current_peer() -> Option<SocketAddr> {
+    PEER.with(|p| p.get())
+}
 
 /// A response with a body and the headers every reply here carries.
 pub fn response(status: u16, reason: &str, content_type: &str, body: Vec<u8>) -> Response {
@@ -146,6 +158,7 @@ fn accept_loop(listener: TcpListener, handler: Handler, stop: Arc<AtomicBool>) {
 }
 
 fn serve(tcp: TcpStream, peer: SocketAddr, handler: &Handler) {
+    PEER.with(|p| p.set(Some(peer)));
     // Accepted sockets may inherit the listener's non-blocking mode.
     if tcp.set_nonblocking(false).is_err() || tcp.set_read_timeout(Some(IDLE_TIMEOUT)).is_err() {
         return;

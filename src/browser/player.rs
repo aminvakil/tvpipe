@@ -5,7 +5,9 @@
 //! the fonts of [`fonts`]) on 127.0.0.1 with the same security as the
 //! share page (`browser::share`): a random `?t=` token on the page and the
 //! socket, a loopback `Host` (no DNS rebinding), and the WebSocket only
-//! from the page's own origin. Any number of tabs may watch. Each gets the decoder
+//! from the page's own origin (with `--tunnel`, also one public host with
+//! a token of its own: `browser::access`, docs/tunnels.md). Any number of
+//! tabs may watch. Each gets the decoder
 //! configuration as JSON, then one binary SLRW record (docs/slrw.md) per
 //! WebSocket message: H.264 access units (AVCC, as the session has them)
 //! and s16le PCM, stamped with the frame's instant on the session's
@@ -30,9 +32,11 @@
 
 use std::collections::VecDeque;
 use std::net::{SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::browser::access::{Access, Via};
 use crate::browser::fonts;
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
@@ -41,6 +45,7 @@ use crate::media::h264;
 use crate::media::slrw::{self, Kind};
 use crate::net::http::Request;
 use crate::net::httpd::{self, Reply};
+use crate::net::tunnel::{self, Tunnel};
 use crate::net::websocket::{self, close_code, Message, Role, Sender};
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus,
@@ -69,6 +74,16 @@ const RATES: [u32; 7] = [48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 96_000]
 /// How long the per-tab writer waits for the socket before it gives up
 /// on a stalled tab.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Viewers over the tunnel at once (each is a copy of the stream on the
+/// uplink).
+const MAX_PUBLIC_TABS: usize = 4;
+/// Record bytes a page that acknowledges may have unacknowledged; more
+/// are dropped for that tab (it waits for the next keyframe). Keeps one
+/// slow viewer from filling a tunnel relay's buffer for its connection,
+/// which would stall every viewer on the same tunnel (docs/tunnels.md).
+const MAX_IN_FLIGHT: usize = 256 * 1024;
+/// The playout delay the public URL asks for (`?delay=`), at least.
+const PUBLIC_DELAY_MS: u32 = 300;
 /// How long `stop` waits for the tabs to get the end.
 const STOP_WAIT: Duration = Duration::from_millis(500);
 
@@ -98,6 +113,10 @@ pub struct PlayerOptions {
     pub latency_ms: u32,
     /// Offer audio.
     pub audio: bool,
+    /// Also serve the page on a public URL (`--tunnel`, docs/tunnels.md).
+    pub tunnel: bool,
+    /// The public link lets new viewers in for this long (`--tunnel-ttl`).
+    pub tunnel_ttl: Option<Duration>,
 }
 
 impl Default for PlayerOptions {
@@ -110,6 +129,8 @@ impl Default for PlayerOptions {
             wait_for_viewer: false,
             latency_ms: 100,
             audio: true,
+            tunnel: false,
+            tunnel_ttl: None,
         }
     }
 }
@@ -255,9 +276,17 @@ enum Out {
 }
 
 /// A tab's outgoing queue, drained by its writer thread.
+#[derive(Default)]
 struct TabQueue {
     state: Mutex<QueueState>,
     cv: Condvar,
+    /// Record bytes written to the socket.
+    written: AtomicU64,
+    /// Record bytes the page says it received (`ack`).
+    acked: AtomicU64,
+    /// The page acknowledges (newer pages do): its unacknowledged bytes
+    /// are limited ([`MAX_IN_FLIGHT`]).
+    acking: AtomicBool,
 }
 
 #[derive(Default)]
@@ -280,6 +309,9 @@ impl TabQueue {
         let mut q = self.lock();
         if q.closing || q.msgs.len() >= TAB_QUEUE_MESSAGES || q.bytes + msg.len() > TAB_QUEUE_BYTES
         {
+            return false;
+        }
+        if self.acking.load(Ordering::Relaxed) && self.in_flight(q.bytes) > MAX_IN_FLIGHT {
             return false;
         }
         q.bytes += msg.len();
@@ -316,6 +348,20 @@ impl TabQueue {
         self.lock().closed
     }
 
+    /// Bytes on their way to the page: queued here, in sockets, in a
+    /// tunnel's relay, or not yet read by the page.
+    fn in_flight(&self, queued: usize) -> usize {
+        let written = self.written.load(Ordering::Relaxed);
+        let acked = self.acked.load(Ordering::Relaxed).min(written);
+        (written - acked) as usize + queued
+    }
+
+    /// The page received `bytes` record bytes so far.
+    fn ack(&self, bytes: u64) {
+        self.acking.store(true, Ordering::Relaxed);
+        self.acked.fetch_max(bytes, Ordering::Relaxed);
+    }
+
     /// Sends queued messages until closed or the socket fails.
     fn run(&self, sender: &Sender<TcpStream>) {
         loop {
@@ -335,7 +381,11 @@ impl TabQueue {
                 }
             };
             let ok = match msg {
-                Out::Record(r) => sender.send_binary(&r).is_ok(),
+                Out::Record(r) => {
+                    let ok = sender.send_binary(&r).is_ok();
+                    self.written.fetch_add(r.len() as u64, Ordering::Relaxed);
+                    ok
+                }
                 Out::End(text) => {
                     let _ = sender.send_text(&text);
                     let _ = sender.close(close_code::GOING_AWAY, "the stream ended");
@@ -359,6 +409,8 @@ struct Tab {
     waiting_key: bool,
     /// Frames this tab dropped (full queue).
     dropped: u64,
+    /// Came over the tunnel.
+    public: bool,
 }
 
 #[derive(Default)]
@@ -373,8 +425,7 @@ struct State {
 
 struct Shared {
     name: String,
-    token: String,
-    port: u16,
+    access: Access,
     /// tvpipe's clock for the page: µs since this instant.
     epoch: Instant,
     state: Mutex<State>,
@@ -395,27 +446,10 @@ impl Shared {
     }
 
     fn handle(self: &Arc<Self>, req: &Request) -> Reply {
-        let port = self.port;
-        let loopback = |authority: &str| {
-            [
-                format!("127.0.0.1:{port}"),
-                format!("localhost:{port}"),
-                format!("[::1]:{port}"),
-            ]
-            .iter()
-            .any(|h| h.eq_ignore_ascii_case(authority))
+        let (via, path, token_ok) = match self.access.check(req, &["/player.js", "/favicon.ico"]) {
+            Ok(c) => (c.via, c.path, c.token_ok),
+            Err(r) => return Reply::Response(r),
         };
-        if !loopback(req.headers.get("host").unwrap_or("")) {
-            return Reply::Response(httpd::error_response(421, "Misdirected Request"));
-        }
-        if req.method != "GET" && req.method != "HEAD" {
-            return Reply::Response(httpd::error_response(405, "Method Not Allowed"));
-        }
-        let (path, query) = req.target.split_once('?').unwrap_or((&req.target, ""));
-        let token_ok = query.split('&').any(|kv| {
-            kv.strip_prefix("t=")
-                .is_some_and(|t| crate::crypto::ring::ct_eq(t.as_bytes(), self.token.as_bytes()))
-        });
         match path {
             "/player.js" => Reply::Response(httpd::response(
                 200,
@@ -443,17 +477,24 @@ impl Shared {
             "/ws" if websocket::is_upgrade(req) => {
                 // Browsers send the page's origin: only ours may connect
                 // (other clients send none).
-                let origin_ok = req
-                    .headers
-                    .get("origin")
-                    .is_none_or(|o| o.strip_prefix("http://").is_some_and(loopback));
-                if !origin_ok {
+                if !self.access.origin_ok(via, req.headers.get("origin")) {
                     return Reply::Response(httpd::error_response(403, "Forbidden origin"));
+                }
+                if via == Via::Public {
+                    let st = self.lock();
+                    if st.tabs.iter().filter(|t| t.public).count() >= MAX_PUBLIC_TABS {
+                        drop(st);
+                        info!(
+                            "{}: refused a public viewer: {MAX_PUBLIC_TABS} are watching",
+                            self.name
+                        );
+                        return Reply::Response(httpd::error_response(503, "Too many viewers"));
+                    }
                 }
                 match websocket::server_response(req) {
                     Ok(resp) => {
                         let me = self.clone();
-                        Reply::Upgrade(resp, Box::new(move |tcp, rest| me.tab(tcp, rest)))
+                        Reply::Upgrade(resp, Box::new(move |tcp, rest| me.tab(tcp, rest, via)))
                     }
                     Err(e) => {
                         debug!("{}: bad upgrade: {e}", self.name);
@@ -472,7 +513,7 @@ impl Shared {
     }
 
     /// One tab, on its connection thread until it closes.
-    fn tab(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>) {
+    fn tab(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>, via: Via) {
         if tcp.set_read_timeout(Some(TAB_POLL)).is_err()
             || tcp.set_write_timeout(Some(WRITE_TIMEOUT)).is_err()
         {
@@ -484,10 +525,7 @@ impl Shared {
         let Ok((mut rx, tx)) = websocket::pair(tcp, rest, Role::Server, limits) else {
             return;
         };
-        let queue = Arc::new(TabQueue {
-            state: Mutex::new(QueueState::default()),
-            cv: Condvar::new(),
-        });
+        let queue = Arc::new(TabQueue::default());
         let id = {
             let mut st = self.lock();
             if st.shutdown {
@@ -507,6 +545,7 @@ impl Shared {
                 queue: queue.clone(),
                 waiting_key: true,
                 dropped: 0,
+                public: via == Via::Public,
             });
             self.cv.notify_all();
             id
@@ -518,12 +557,18 @@ impl Shared {
         if writer.is_err() {
             queue.close();
         }
-        info!("{}: a viewer connected (tab {id})", self.name);
+        let from = if via == Via::Public {
+            ", over the tunnel"
+        } else {
+            ""
+        };
+        info!("{}: a viewer connected (tab {id}{from})", self.name);
         crate::machine::emit(
             crate::machine::event("viewer")
                 .with("name", self.name.as_str())
                 .with("tab", id)
-                .with("state", "connected"),
+                .with("state", "connected")
+                .with("public", via == Via::Public),
         );
         let why = loop {
             if self.lock().shutdown {
@@ -597,6 +642,12 @@ impl Shared {
                 let agent = v.get("agent").and_then(Value::as_str).unwrap_or("");
                 debug!("{}: tab {id}: {agent}", self.name);
             }
+            "ack" => {
+                let bytes = v.get("bytes").and_then(Value::as_u64).unwrap_or(0);
+                if let Some(t) = self.lock().tabs.iter().find(|t| t.id == id) {
+                    t.queue.ack(bytes);
+                }
+            }
             "keyframe" => {
                 let why = v.get("reason").and_then(Value::as_str).unwrap_or("");
                 debug!("{}: tab {id} wants a keyframe ({why})", self.name);
@@ -625,6 +676,8 @@ pub struct BrowserSink {
     http: Option<httpd::Server>,
     shared: Arc<Shared>,
     url: String,
+    /// `--tunnel`: stopped with the sink.
+    tunnel: Option<Box<dyn Tunnel>>,
     clock: Option<SessionClock>,
     sink_clock: SinkClock,
     audio_rate: u32,
@@ -669,8 +722,7 @@ impl BrowserSink {
         let port = http.local_addr().port();
         let shared = Arc::new(Shared {
             name: opts.name.clone(),
-            token: token.clone(),
-            port,
+            access: Access::new(&opts.name, port, token.clone()),
             epoch: Instant::now(),
             state: Mutex::new(State {
                 status: Some(status_message("waiting", "Waiting for the stream…")),
@@ -691,6 +743,29 @@ impl BrowserSink {
                 warn!("{}: --open: {e}", opts.name);
             }
         }
+        let tunnel = if opts.tunnel {
+            info!("{}: starting a public tunnel", opts.name);
+            let t = tunnel::start(port, &stop)?;
+            let token = shared
+                .access
+                .publish(t.host(), opts.tunnel_ttl, t.peer_lookup())?;
+            // Over the internet the page needs more slack than on
+            // loopback (docs/tunnels.md, Measurements).
+            let delay = opts.latency_ms.max(PUBLIC_DELAY_MS);
+            info!(
+                "{}: anyone with https://{}/?t={token}&delay={delay} can watch ({}; the link is \
+                 new every run{})",
+                opts.name,
+                t.host(),
+                t.name(),
+                opts.tunnel_ttl
+                    .map(|d| format!(", and lets new viewers in for {} min", d.as_secs() / 60))
+                    .unwrap_or_default()
+            );
+            Some(t)
+        } else {
+            None
+        };
         let sink = BrowserSink {
             name: opts.name.clone(),
             caps: capabilities(opts),
@@ -698,6 +773,7 @@ impl BrowserSink {
             http: Some(http),
             shared,
             url,
+            tunnel,
             clock: None,
             sink_clock: SinkClock::private(Tolerance::DEFAULT),
             audio_rate: 0,
@@ -734,7 +810,8 @@ impl BrowserSink {
     pub fn ws_url(&self) -> String {
         format!(
             "ws://127.0.0.1:{}/ws?t={}",
-            self.shared.port, self.shared.token
+            self.shared.access.port(),
+            self.shared.access.token()
         )
     }
 

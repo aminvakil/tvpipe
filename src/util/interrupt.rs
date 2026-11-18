@@ -14,11 +14,20 @@
 //!   so the default handler ends the process.
 //!
 //! [`watch_stdin`] adds a std-only way to stop: `q` + Enter on a terminal.
+//! Other lines answer [`ask`] (the `share --tunnel` confirmation).
 
 use std::io::{BufRead, IsTerminal};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::Mutex;
+use std::time::Duration;
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
+/// The stdin watcher runs (stdin is a terminal).
+static WATCHING: AtomicBool = AtomicBool::new(false);
+/// Where the watcher sends the next line that is not `q`, if [`ask`]
+/// waits for one.
+static ANSWER: Mutex<Option<mpsc::Sender<String>>> = Mutex::new(None);
 /// Set only by the signal/console handler, so a Ctrl-C stop exits with 130
 /// while `q` + Enter exits with 0.
 static SIGNALLED: AtomicBool = AtomicBool::new(false);
@@ -44,6 +53,33 @@ pub fn request() {
     REQUESTED.store(true, Ordering::SeqCst);
 }
 
+/// Prints `question` and waits for a line on the terminal (after
+/// [`watch_stdin`]). `None`: stdin is not a terminal, or `cancel` said so
+/// first (polled every 100 ms).
+pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
+    if !WATCHING.load(Ordering::SeqCst) {
+        return None;
+    }
+    let (tx, rx) = mpsc::channel();
+    *ANSWER.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+    eprint!("{question} ");
+    let answer = loop {
+        if cancel() || requested() {
+            break None;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(l) => break Some(l),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+        }
+    };
+    ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if answer.is_none() {
+        eprintln!();
+    }
+    answer
+}
+
 /// If stdin is a terminal, reads it on a background thread and requests a
 /// stop on a line `q` (like ffmpeg). Does nothing otherwise, so piped or
 /// closed stdin never stops a session.
@@ -62,11 +98,20 @@ pub fn watch_stdin() {
                         request();
                         return;
                     }
-                    Ok(_) => {}
+                    Ok(l) => {
+                        let tx = ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take();
+                        if let Some(tx) = tx {
+                            let _ = tx.send(l);
+                        }
+                    }
                     Err(_) => return,
                 }
             }
+            WATCHING.store(false, Ordering::SeqCst);
         });
+    if spawned.is_ok() {
+        WATCHING.store(true, Ordering::SeqCst);
+    }
     if let Err(e) = spawned {
         debug!("cannot watch stdin: {e}");
     }

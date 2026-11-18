@@ -64,6 +64,8 @@ enum PlayArg {
     Open,
     WaitForViewer,
     NewToken,
+    Tunnel,
+    TunnelTtl,
     Input,
 }
 
@@ -80,6 +82,9 @@ enum ShareArg {
     Open,
     WaitForViewer,
     NewToken,
+    Tunnel,
+    TunnelTtl,
+    Yes,
     Profile,
     Visible,
     Reload,
@@ -225,12 +230,34 @@ const fn new_token<A>(id: A) -> Opt<A> {
         .help("Change the browser player page's URL token (--to browser; old URLs stop working)")
 }
 
+/// `--tunnel` (docs/tunnels.md).
+const fn tunnel<A>(id: A, help: &'static str) -> Opt<A> {
+    Opt::new(id).long("tunnel").help(help)
+}
+
+const fn tunnel_ttl<A>(id: A, help: &'static str) -> Opt<A> {
+    Opt::new(id).long("tunnel-ttl").value("MIN").help(help)
+}
+
+/// The share page's public link lets people in for this long by default.
+pub const SHARE_TUNNEL_TTL: Duration = Duration::from_secs(60 * 60);
+
+/// `--tunnel-ttl MIN` (0: no expiry).
+fn tunnel_ttl_value<A: Copy + 'static>(p: &mut Parser<A>) -> Result<Option<Duration>, Error> {
+    let min: f64 = p.value()?;
+    if !(min.is_finite() && (0.0..=7.0 * 24.0 * 60.0).contains(&min)) {
+        return Err(p.error("--tunnel-ttl takes minutes (0 to 10080; 0: no expiry)"));
+    }
+    Ok((min > 0.0).then(|| Duration::from_secs_f64(min * 60.0)))
+}
+
 /// Whether `--to browser` is among the receivers.
 fn has_browser_target(to: &[String]) -> bool {
     to.iter().any(|t| t.eq_ignore_ascii_case(BROWSER_TARGET))
 }
 
-const PLAYER_ONLY: &str = "--port, --open, --wait-for-viewer and --new-token are for --to browser";
+const PLAYER_ONLY: &str =
+    "--port, --open, --wait-for-viewer, --new-token and --tunnel are for --to browser";
 
 const fn interface<A>(id: A) -> Opt<A> {
     Opt::new(id)
@@ -314,6 +341,14 @@ macro_rules! play_opts {
             player_open(PlayArg::Open),
             wait_for_viewer(PlayArg::WaitForViewer),
             new_token(PlayArg::NewToken),
+            tunnel(
+                PlayArg::Tunnel,
+                "Also put the browser player page on a public https URL: anyone with the link can watch",
+            ),
+            tunnel_ttl(
+                PlayArg::TunnelTtl,
+                "With --tunnel: let new viewers in for MIN minutes only (default: no limit)",
+            ),
         ]
     };
 }
@@ -389,6 +424,18 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
         player_port(ShareArg::Port),
         wait_for_viewer(ShareArg::WaitForViewer),
         new_token(ShareArg::NewToken),
+        tunnel(
+            ShareArg::Tunnel,
+            "Also put the share page on a public https URL: someone with the link can ask to share their screen to the receivers (you confirm each)",
+        ),
+        tunnel_ttl(
+            ShareArg::TunnelTtl,
+            "With --tunnel: the link lets people in for MIN minutes (default 60; 0: no limit)",
+        ),
+        Opt::new(ShareArg::Yes)
+            .long("yes")
+            .short('y')
+            .help("With --tunnel: show a remote share without asking first"),
         Opt::new(ShareArg::Visible)
             .long("visible")
             .help("With URL: show the browser window instead of running headless (e.g. to log in)"),
@@ -637,6 +684,10 @@ pub struct BrowserOptions {
     pub wait_for_viewer: bool,
     /// Rotate the page's persistent token.
     pub new_token: bool,
+    /// Also serve the page on a public URL (`--tunnel`).
+    pub tunnel: bool,
+    /// `--tunnel-ttl` (`None`: no expiry).
+    pub tunnel_ttl: Option<Duration>,
 }
 
 /// `tvpipe share [URL]`.
@@ -654,6 +705,13 @@ pub struct ShareOptions {
     pub open: bool,
     /// For `--to browser` receivers (`open` is the field above).
     pub player: BrowserOptions,
+    /// Also serve the share page on a public URL (`--tunnel`; not with URL).
+    pub tunnel: bool,
+    /// How long the public link lets people in (`--tunnel-ttl`, default
+    /// [`SHARE_TUNNEL_TTL`]; `None`: no expiry).
+    pub tunnel_ttl: Option<Duration>,
+    /// `--yes`: show a remote share without asking.
+    pub yes: bool,
     /// With URL: tvpipe's own browser shows it.
     pub page: Option<PageOptions>,
 }
@@ -928,11 +986,16 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
             PlayArg::Open => o.browser.open = true,
             PlayArg::WaitForViewer => o.browser.wait_for_viewer = true,
             PlayArg::NewToken => o.browser.new_token = true,
+            PlayArg::Tunnel => o.browser.tunnel = true,
+            PlayArg::TunnelTtl => o.browser.tunnel_ttl = tunnel_ttl_value(&mut p)?,
             PlayArg::Input => input = Some(input_from(p.raw_value()?)),
         }
     }
     if mode == Mode::Preview {
         o.to = vec![BROWSER_TARGET.to_owned()];
+    }
+    if o.browser.tunnel_ttl.is_some() && !o.browser.tunnel {
+        return Err(p.error("--tunnel-ttl is for --tunnel"));
     }
     if o.to.is_empty() {
         return Err(p.error("at least one --to NAME|ADDR is required"));
@@ -964,6 +1027,7 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
     };
     let mut page = PageOptions::default();
     let mut url = None;
+    let mut ttl = None;
     while let Some(arg) = p.param()? {
         match arg {
             ShareArg::To => o.to.push(p.value()?),
@@ -977,6 +1041,9 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
             ShareArg::Port => o.player.port = Some(p.value()?),
             ShareArg::WaitForViewer => o.player.wait_for_viewer = true,
             ShareArg::NewToken => o.player.new_token = true,
+            ShareArg::Tunnel => o.tunnel = true,
+            ShareArg::TunnelTtl => ttl = Some(tunnel_ttl_value(&mut p)?),
+            ShareArg::Yes => o.yes = true,
             ShareArg::Profile => page.profile = Some(p.value()?),
             ShareArg::Visible => page.visible = true,
             ShareArg::Reload => {
@@ -997,7 +1064,16 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
     if !browser && o.player != BrowserOptions::default() {
         return Err(p.error(PLAYER_ONLY));
     }
+    if (ttl.is_some() || o.yes) && !o.tunnel {
+        return Err(p.error("--tunnel-ttl and --yes are for --tunnel"));
+    }
+    o.tunnel_ttl = ttl.unwrap_or(Some(SHARE_TUNNEL_TTL));
     match url {
+        Some(_) if o.tunnel => {
+            return Err(p.error(
+                "--tunnel serves the share page (without URL) to others; with URL tvpipe's own browser shares",
+            ));
+        }
         Some(url) => {
             if o.open && !browser {
                 return Err(p.error(
@@ -1243,6 +1319,26 @@ mod tests {
         assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
         assert!(parse_from(&["share"]).is_err());
         assert!(parse_from(&["share", "https://x"]).is_err());
+        // --tunnel exposes the share page; not with URL.
+        let (_, cmd) = parse_from(&["share", "--to", "TV", "--tunnel"]).unwrap();
+        let Command::Share(o) = cmd else { panic!() };
+        assert!(o.tunnel && !o.player.tunnel && !o.yes);
+        assert_eq!(o.tunnel_ttl, Some(SHARE_TUNNEL_TTL));
+        assert!(parse_from(&["share", "https://x", "--to", "TV", "--tunnel"]).is_err());
+        let share = |args: &[&str]| match parse_from(args).unwrap().1 {
+            Command::Share(o) => o,
+            _ => panic!(),
+        };
+        let o = share(&["share", "--to", "TV", "--tunnel", "--tunnel-ttl", "5", "-y"]);
+        assert_eq!(
+            (o.tunnel_ttl, o.yes),
+            (Some(Duration::from_secs(300)), true)
+        );
+        let o = share(&["share", "--to", "TV", "--tunnel", "--tunnel-ttl", "0"]);
+        assert_eq!(o.tunnel_ttl, None);
+        assert!(parse_from(&["share", "--to", "TV", "--yes"]).is_err());
+        assert!(parse_from(&["share", "--to", "TV", "--tunnel-ttl", "5"]).is_err());
+        assert!(parse_from(&["share", "--to", "TV", "--tunnel", "--tunnel-ttl", "-1"]).is_err());
     }
 
     #[test]
@@ -1357,6 +1453,8 @@ mod tests {
                 open: false,
                 wait_for_viewer: true,
                 new_token: true,
+                tunnel: false,
+                tunnel_ttl: None,
             }
         );
         assert_eq!(
@@ -1419,6 +1517,8 @@ mod tests {
             open: true,
             wait_for_viewer: true,
             new_token: true,
+            tunnel: false,
+            tunnel_ttl: None,
         };
         let opts = [
             "--port",
@@ -1542,6 +1642,16 @@ mod tests {
         assert!(parse_from(&["play", "--to", "tv", "--open", "x.mkv"]).is_err());
         assert!(parse_from(&["test-pattern", "--to", "tv", "--port", "1"]).is_err());
         assert!(play(&["preview", "--new-token"]).browser.new_token);
+        assert!(play(&["preview", "--tunnel"]).browser.tunnel);
+        assert_eq!(play(&["preview", "--tunnel"]).browser.tunnel_ttl, None);
+        assert_eq!(
+            play(&["preview", "--tunnel", "--tunnel-ttl", "1.5"])
+                .browser
+                .tunnel_ttl,
+            Some(Duration::from_secs(90))
+        );
+        assert!(parse_from(&["preview", "--tunnel-ttl", "5"]).is_err());
+        assert!(parse_from(&["test-pattern", "--to", "tv", "--tunnel"]).is_err());
     }
 
     #[test]
