@@ -38,7 +38,7 @@ $ tvpipe play --to "Living Room" movie.mp4
 ```
 
 ### Stop
-Press `Ctrl-C`, or type `q` and press Enter. The TV leaves mirroring mode.
+Press `Ctrl-C`, or type `q` and press Enter. The TV leaves mirroring mode. A second `Ctrl-C` quits at once.
 :::
 
 ## Next

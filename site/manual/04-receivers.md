@@ -14,9 +14,9 @@ A receiver is where tvpipe sends to: an Apple TV or AirPlay TV, a Chromecast or 
 :::aside Options
 `--timeout SECS` How long to look. Default 3.
 
-`--json` Output for scripts.
+`--json` Every receiver with its addresses and what each protocol announces, for scripts.
 
-`--interface ADDR` Also look from this local address.
+`--interface ADDR` Also look on the network of this local address, for computers on several networks.
 :::
 
 ```sh
@@ -49,6 +49,16 @@ Repeat `--to` to send to several receivers at once. They all get the same stream
 ```sh
 $ tvpipe play --to "Living Room" --to Kitchen movie.mp4
 ```
+
+## When a TV drops out
+
+:::aside Option
+`--reconnect SECS` How long to keep trying. Default 120, `0` turns it off.
+:::
+
+If a TV drops out while streaming, for example because it left the Wi-Fi or got a new address, tvpipe connects it again and the other receivers keep playing. A receiver given by name is looked up again, one given as an address is tried at that address. It comes back with the next full picture.
+
+A TV where someone stopped mirroring on purpose stays off.
 
 ## Pairing with an Apple TV
 

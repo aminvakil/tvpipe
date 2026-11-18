@@ -22,7 +22,7 @@ $ tvpipe preview --open movie.mp4
 $ tvpipe play --to "Living Room" --to browser movie.mp4
 ```
 
-`--open` opens the player page. Without it, tvpipe prints the address. Any number of tabs can watch.
+`--open` opens the player page. Without it, tvpipe prints the address. Any number of tabs can watch, and a tab opened later shows the same picture as the others. `--wait-for-viewer` starts the stream once a tab is open.
 
 ## The player page
 
@@ -42,7 +42,17 @@ The player works in Chrome, Edge, Safari 16.4+ and Firefox 130+.
 
 ## OBS
 
+:::aside Address
+Port 8765, or `--port`. If the port is taken, tvpipe uses another one for that run.
+:::
+
 Add the player address as a browser source and append `&ui=0` to hide the controls. Turn on “Control audio via OBS” to get the sound into OBS.
+
+The address stays the same between runs, so the source keeps working the next time tvpipe plays. `--new-token` makes a new address, and the old one stops working.
+
+## With other commands
+
+The player options `--open`, `--port`, `--wait-for-viewer` and `--new-token` work with `play`, `preview`, `share` and `test-pattern`, whenever one of the receivers is `--to browser`. `share --open` without a URL opens the share page instead.
 
 ## Video calls
 

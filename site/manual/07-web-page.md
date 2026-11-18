@@ -23,12 +23,14 @@ $ tvpipe share https://status.example.com --to TV --reload 30
 $ tvpipe share ./slides.html --to TV
 ```
 
-If the page reloads, navigates or crashes, tvpipe keeps it on the TV.
+Starting takes about a second. If the page reloads or navigates, the TV shows a short gap of about half a second. If the page or the browser crashes, tvpipe starts it again.
+
+`--visible`, `--profile`, `--reload` and `--browser` only work with a URL.
 
 ## Pages that need a login
 
 :::aside Profiles
-tvpipe never uses your own browser profile. Without `--profile` every run starts fresh.
+tvpipe never uses your own browser profile. Without `--profile` every run gets a new one, deleted afterwards, or by the next run if tvpipe was killed.
 :::
 
 Log in once in a visible window and keep the profile. Later runs use it without a window.
@@ -52,4 +54,4 @@ Any Chromium based browser works. tvpipe uses the first one it finds.
 
 ## Limitations
 
-Some sites refuse browsers that are controlled by a program. tvpipe does not hide that, so those sites do not work. Video calls are an example. For those, open the call in your normal browser and present a [browser tab](08-browser.md) in it.
+Some sites refuse browsers that are controlled by a program. tvpipe does not hide that, so those sites do not work, and tvpipe reports their answer (401, 403 or 429). Video calls are an example. For those, open the call in your normal browser and present a [browser tab](08-browser.md) in it.

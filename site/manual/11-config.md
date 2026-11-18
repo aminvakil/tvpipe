@@ -14,7 +14,7 @@ tvpipe has no configuration file. It keeps two files and reads a few environment
 
 | Platform | Directory |
 |---|---|
-| Linux | `~/.config/tvpipe` |
+| Linux | `$XDG_CONFIG_HOME/tvpipe`, usually `~/.config/tvpipe` |
 | macOS | `~/Library/Application Support/tvpipe` |
 | Windows | `%APPDATA%\tvpipe` |
 

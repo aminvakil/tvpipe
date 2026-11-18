@@ -65,27 +65,6 @@ ffmpeg, the release archives and building from source.
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
 | [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | `test-pattern`, `--latency`, measuring |
 
-## Notes
-
-<!-- Details the manual does not cover yet; drop each one once it does. -->
-
-- **Installer:** `TVPIPE_VERSION` picks a version, `TVPIPE_INSTALL_DIR`
-  another directory. The installers check the archive against the release's
-  `SHA256SUMS`. The [releases](https://github.com/mitsuhiko/tvpipe/releases)
-  have macOS, static Linux and Windows binaries for x86_64 and ARM64.
-- **Config directory:** on Linux and other Unixes it is
-  `$XDG_CONFIG_HOME/tvpipe` (default `~/.config/tvpipe`).
-- **Pacing:** `--realtime` / `--no-realtime` paces the input in real time or
-  not (default: real time for files).
-- **`share URL`:** starting takes about a second, a reload or navigation
-  leaves a gap of about half a second. A temporary profile left behind by a
-  killed run is deleted by the next run. A site's 401/403/429 is reported.
-  `--visible`, `--profile`, `--reload` and `--browser` only exist with a URL.
-- **`--to browser` options** (`--open`, `--port`, `--wait-for-viewer`,
-  `--new-token`) are the same for `play`, `test-pattern`, `preview` and
-  `share`, and need `--to browser`; `share --open` without a URL opens the
-  share page instead.
-
 ## Development
 
 ```sh

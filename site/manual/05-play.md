@@ -19,6 +19,8 @@ $ tvpipe play --to TV https://example.com/stream.m3u8
 
 `--loop` starts over at the end. `--no-audio` sends only the picture.
 
+tvpipe reads files at playback speed. A live source already arrives at that speed, and `--no-realtime` turns the pacing off for it.
+
 ## Screens and cameras
 
 :::aside Tip
