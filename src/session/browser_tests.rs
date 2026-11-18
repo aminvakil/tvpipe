@@ -210,14 +210,14 @@ fn watch(eval: &mut dyn FnMut(&str) -> Value, report: &Report) {
 
 /// A minimal DevTools-protocol client over our WebSocket (enough to drive
 /// the share page; W13 owns the real one).
-struct Cdp {
+pub(super) struct Cdp {
     rx: crate::net::websocket::Receiver<std::net::TcpStream, std::net::TcpStream>,
     tx: crate::net::websocket::Sender<std::net::TcpStream>,
     id: i64,
 }
 
 impl Cdp {
-    fn call(&mut self, method: &str, params: Value) -> Value {
+    pub(super) fn call(&mut self, method: &str, params: Value) -> Value {
         use crate::net::websocket::Message;
         self.id += 1;
         let msg = Value::object()
@@ -238,7 +238,7 @@ impl Cdp {
 
     /// Evaluates a function body as if the user clicked (transient
     /// activation); awaits a returned promise.
-    fn eval(&mut self, body: &str) -> Value {
+    pub(super) fn eval(&mut self, body: &str) -> Value {
         let r = self.call(
             "Runtime.evaluate",
             Value::object()
@@ -272,7 +272,7 @@ fn viewport() -> (u32, u32) {
 
 /// Starts Chrome on `url` (headless, tab capture auto-accepted) and
 /// connects to the page's DevTools target.
-fn chrome(bin: &str, url: &str, dir: &std::path::Path) -> (std::process::Child, Cdp) {
+pub(super) fn chrome(bin: &str, url: &str, dir: &std::path::Path) -> (std::process::Child, Cdp) {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).unwrap();
     let headless = std::env::var("TVPIPE_TEST_CHROME_HEADED").is_err();
@@ -405,13 +405,13 @@ fn chrome_share_to_fakes() {
 // ---------------------------------------------------------------------------
 // Safari (WebDriver)
 
-struct WebDriver {
+pub(super) struct WebDriver {
     port: u16,
     session: String,
     child: std::process::Child,
 }
 
-fn webdriver_call(port: u16, method: &str, path: &str, body: Option<&Value>) -> Value {
+pub(super) fn webdriver_call(port: u16, method: &str, path: &str, body: Option<&Value>) -> Value {
     let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
     let mut c = Conn::new(tcp);
@@ -427,7 +427,7 @@ fn webdriver_call(port: u16, method: &str, path: &str, body: Option<&Value>) -> 
 }
 
 impl WebDriver {
-    fn start() -> WebDriver {
+    pub(super) fn start() -> WebDriver {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -468,7 +468,7 @@ impl WebDriver {
         }
     }
 
-    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Value {
+    pub(super) fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Value {
         webdriver_call(
             self.port,
             method,
@@ -478,7 +478,7 @@ impl WebDriver {
     }
 
     /// Runs a function body (`return` a value; promises are awaited).
-    fn eval(&self, body: &str) -> Value {
+    pub(super) fn eval(&self, body: &str) -> Value {
         let script = format!(
             "const done = arguments[arguments.length - 1]; \
              (async () => {{ {body} }})().then(done, e => done('error: ' + e));"

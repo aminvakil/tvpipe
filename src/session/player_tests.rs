@@ -312,3 +312,278 @@ fn a_late_tab_shares_the_cast_timeline() {
     }
     assert!(common >= 10, "{common} frames in common");
 }
+
+// ---------------------------------------------------------------------------
+// Real browsers (opt-in, `--ignored`)
+//
+// TVPIPE_TEST_CHROME=/path/to/chrome cargo test --release chrome_player -- --ignored --nocapture
+// TVPIPE_TEST_SAFARI=1 cargo test --release safari_player -- --ignored --nocapture
+// TVPIPE_TEST_FIREFOX=.../Firefox.app/Contents/MacOS/firefox \
+//   TVPIPE_TEST_GECKODRIVER=.../geckodriver cargo test --release firefox_player -- --ignored --nocapture
+//
+// `preview` of the built-in test pattern (or TVPIPE_TEST_PLAYER_INPUT, a
+// file through ffmpeg or passthrough) in the real player page for
+// TVPIPE_TEST_BROWSER_SECS (default 6): frames drawn, no decoder errors,
+// audio scheduled, the measured delay near the target.
+// TVPIPE_TEST_PLAYER_SHOT=PATH (Chrome): a screenshot with the statistics
+// (the page's clock next to the pattern's burned-in clock).
+
+fn browser_secs() -> u64 {
+    std::env::var("TVPIPE_TEST_BROWSER_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(6)
+}
+
+/// Runs `preview` while `drive(url)` works a browser; the session stops
+/// when `drive` returns.
+fn preview_in_browser(drive: impl FnOnce(String) + Send + 'static) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    STOP.store(false, Ordering::SeqCst);
+    if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
+        crate::log::set_level(crate::log::Level::Debug);
+    }
+    let drive = Mutex::new(Some(drive));
+    let driver = Mutex::new(None);
+    let connect = |t: &Target, _: &CastOptions, _: &MirrorOptions| -> Result<Box<dyn Sink>> {
+        let Target::Browser(o) = t else {
+            panic!("{t:?}")
+        };
+        let sink = BrowserSink::bind(o, never)?;
+        let url = sink.url().to_owned();
+        let drive = drive.lock().unwrap().take().unwrap();
+        *driver.lock().unwrap() = Some(std::thread::spawn(move || {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(url)));
+            STOP.store(true, Ordering::SeqCst);
+            r
+        }));
+        Ok(Box::new(sink))
+    };
+    let input = std::env::var_os("TVPIPE_TEST_PLAYER_INPUT");
+    let o = PlayOptions {
+        to: vec!["browser".into()],
+        encoder: if input.is_some() {
+            Encoder::Auto
+        } else {
+            Encoder::Builtin
+        },
+        looped: input.is_some(),
+        input: input.map_or(InputSpec::TestPattern, InputSpec::Path),
+        latency_ms: std::env::var("TVPIPE_TEST_PLAYER_LATENCY")
+            .ok()
+            .and_then(|s| s.parse().ok()),
+        ..opts()
+    };
+    let r = play_with(o, no_io(), &connect, stop_flag);
+    let drove = driver.lock().unwrap().take().map(|h| h.join());
+    if let Some(Ok(Err(panic))) = drove {
+        std::panic::resume_unwind(panic);
+    }
+    r.unwrap();
+}
+
+/// Watches the page for the test's duration and checks what it did.
+fn watch_player(eval: &mut dyn FnMut(&str) -> Value) {
+    let t0 = Instant::now();
+    let deadline = t0 + Duration::from_secs(20);
+    while eval("return !!(window.tvpipePlayer && tvpipePlayer.config)") != Value::Bool(true) {
+        assert!(Instant::now() < deadline, "the page got no config");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let secs = browser_secs();
+    let mut last = Value::Null;
+    let mut delays = Vec::new();
+    let t1 = Instant::now();
+    while t1.elapsed() < Duration::from_secs(secs) {
+        std::thread::sleep(Duration::from_millis(1000));
+        let s = eval("return JSON.stringify(tvpipePlayer.summary())");
+        eprintln!("page: {}", s.as_str().unwrap_or("?"));
+        last = Value::parse(s.as_str().unwrap_or("null")).unwrap_or(Value::Null);
+        if let Some(d) = last.get("delayMs").and_then(Value::as_f64) {
+            delays.push(d);
+        }
+    }
+    let log = eval("return tvpipePlayer.log.join('\\n')");
+    eprintln!("page log:\n{}", log.as_str().unwrap_or(""));
+    let n = |k: &str| last.get(k).and_then(Value::as_f64).unwrap_or(-1.0);
+    assert!(n("drawn") >= (secs * 20) as f64, "{last}");
+    assert_eq!(n("decodeErrors"), 0.0, "{last}");
+    assert!(n("audioChunks") > 0.0, "no audio played: {last}");
+    let target = n("targetMs");
+    // After start-up the frames are shown on time.
+    let settled: Vec<f64> = delays.iter().skip(2).copied().collect();
+    let avg = settled.iter().sum::<f64>() / settled.len().max(1) as f64;
+    eprintln!("delay from the capture instant: avg {avg:.1} ms (target {target} ms)");
+    assert!(
+        (avg - target).abs() < 40.0,
+        "delay {avg:.1} ms, target {target}"
+    );
+}
+
+#[test]
+#[ignore]
+fn chrome_player() {
+    let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
+        eprintln!("TVPIPE_TEST_CHROME not set");
+        return;
+    };
+    preview_in_browser(move |url| {
+        let dir = std::env::temp_dir().join(format!("tvpipe-player-{}", std::process::id()));
+        let (mut child, mut cdp) =
+            super::browser_tests::chrome(&bin, &format!("{url}&stats=1"), &dir);
+        watch_player(&mut |s| cdp.eval(s));
+        if let Ok(path) = std::env::var("TVPIPE_TEST_PLAYER_SHOT") {
+            let r = cdp.call(
+                "Page.captureScreenshot",
+                Value::object().with("format", "png"),
+            );
+            let data = r
+                .get("result")
+                .and_then(|r| r.get("data"))
+                .and_then(Value::as_str)
+                .unwrap();
+            std::fs::write(&path, crate::net::base64::decode(data).unwrap()).unwrap();
+            eprintln!("wrote {path}");
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    });
+}
+
+#[test]
+#[ignore]
+fn safari_player() {
+    if std::env::var("TVPIPE_TEST_SAFARI").is_err() {
+        eprintln!("TVPIPE_TEST_SAFARI not set");
+        return;
+    }
+    preview_in_browser(move |url| {
+        let wd = super::browser_tests::WebDriver::start();
+        wd.call(
+            "POST",
+            "/url",
+            Some(&Value::object().with("url", format!("{url}&stats=1"))),
+        );
+        watch_player(&mut |s| wd.eval(s));
+    });
+}
+
+/// Firefox over geckodriver (W3C WebDriver), headless, with a fresh
+/// profile and autoplay allowed.
+struct Gecko {
+    port: u16,
+    session: String,
+    child: std::process::Child,
+}
+
+impl Gecko {
+    fn start(firefox: &str, driver: &str) -> Gecko {
+        use super::browser_tests::webdriver_call;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let child = std::process::Command::new(driver)
+            .args(["--port", &port.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("geckodriver");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "geckodriver did not start");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let mut args = Vec::new();
+        if std::env::var("TVPIPE_TEST_FIREFOX_HEADED").is_err() {
+            args.push("-headless");
+        }
+        let options = Value::object()
+            .with("binary", firefox)
+            .with("args", Value::array(args))
+            .with(
+                "prefs",
+                Value::object()
+                    .with("media.autoplay.default", 0)
+                    .with("media.autoplay.blocking_policy", 0),
+            );
+        let caps = Value::object().with(
+            "capabilities",
+            Value::object().with(
+                "alwaysMatch",
+                Value::object()
+                    .with("browserName", "firefox")
+                    .with("moz:firefoxOptions", options),
+            ),
+        );
+        let v = webdriver_call(port, "POST", "/session", Some(&caps));
+        let session = v
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("no WebDriver session: {v}"))
+            .to_owned();
+        Gecko {
+            port,
+            session,
+            child,
+        }
+    }
+
+    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Value {
+        super::browser_tests::webdriver_call(
+            self.port,
+            method,
+            &format!("/session/{}{path}", self.session),
+            body,
+        )
+    }
+
+    fn eval(&self, body: &str) -> Value {
+        let script = format!(
+            "const done = arguments[arguments.length - 1]; \
+             (async () => {{ {body} }})().then(done, e => done('error: ' + e));"
+        );
+        let b = Value::object()
+            .with("script", script)
+            .with("args", Value::array(Vec::<Value>::new()));
+        self.call("POST", "/execute/async", Some(&b))
+    }
+}
+
+impl Drop for Gecko {
+    fn drop(&mut self) {
+        super::browser_tests::webdriver_call(
+            self.port,
+            "DELETE",
+            &format!("/session/{}", self.session),
+            None,
+        );
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// TVPIPE_TEST_FIREFOX=/path/to/Firefox.app/Contents/MacOS/firefox and
+/// TVPIPE_TEST_GECKODRIVER=/path/to/geckodriver.
+#[test]
+#[ignore]
+fn firefox_player() {
+    let (Ok(firefox), Ok(driver)) = (
+        std::env::var("TVPIPE_TEST_FIREFOX"),
+        std::env::var("TVPIPE_TEST_GECKODRIVER"),
+    ) else {
+        eprintln!("TVPIPE_TEST_FIREFOX / TVPIPE_TEST_GECKODRIVER not set");
+        return;
+    };
+    preview_in_browser(move |url| {
+        let ff = Gecko::start(&firefox, &driver);
+        ff.call(
+            "POST",
+            "/url",
+            Some(&Value::object().with("url", format!("{url}&stats=1"))),
+        );
+        watch_player(&mut |s| ff.eval(s));
+    });
+}
