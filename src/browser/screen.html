@@ -1,22 +1,92 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tvpipe screen</title>
+<link rel="preload" href="/fonts/plex-sans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/michroma.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/sixtyfour.woff2" as="font" type="font/woff2" crossorigin>
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('tvpipe-theme') || 'auto'; } catch (e) {}</script>
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; padding: 24px 28px; font: 15px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
-  h1 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
-  p { margin: 0 0 8px; opacity: .75; }
-  #state { opacity: 1; }
-  #state.bad { color: #C0392B; }
+  /* The look of the share page and the tvpipe website, sized for the small
+     window tvpipe opens (src/browser/screen.rs: 520x340). */
+  @font-face { font-family: "Sixtyfour"; src: url(/fonts/sixtyfour.woff2) format("woff2"); font-display: block; }
+  @font-face { font-family: "Michroma"; src: url(/fonts/michroma.woff2) format("woff2"); font-display: block; }
+  @font-face { font-family: "IBM Plex Sans"; src: url(/fonts/plex-sans.woff2) format("woff2"); font-weight: 300 700; font-display: block; }
+  :root {
+    color-scheme: light;
+    --bg: #FFFFFF; --ink: #172B46; --ink-2: rgba(23, 43, 70, .7); --ink-3: rgba(23, 43, 70, .48);
+    --rule: rgba(23, 43, 70, .12); --panel: #F5F6F8; --accent: #E8743B; --bad: #C0392B;
+    --logo-ink: #172B46; --logo-screen: #FFFFFF;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0D1828; --ink: #E8ECF2; --ink-2: rgba(232, 236, 242, .72); --ink-3: rgba(232, 236, 242, .46);
+    --rule: rgba(232, 236, 242, .11); --panel: #13223A; --bad: #FF7A6B;
+    --logo-ink: #E8ECF2; --logo-screen: #0D1828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root[data-theme="auto"] {
+      color-scheme: dark;
+      --bg: #0D1828; --ink: #E8ECF2; --ink-2: rgba(232, 236, 242, .72); --ink-3: rgba(232, 236, 242, .46);
+      --rule: rgba(232, 236, 242, .11); --panel: #13223A; --bad: #FF7A6B;
+      --logo-ink: #E8ECF2; --logo-screen: #0D1828;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); color: var(--ink); }
+  body { margin: 0; padding: 22px 28px; font: 400 14px/1.55 "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .lbl { font: 400 9.5px/1.5 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--rule); }
+  .mark { display: flex; align-items: center; gap: 10px; }
+  .mark svg { width: 30px; height: auto; }
+  .mark span { font: 14px "Sixtyfour", monospace; font-variation-settings: "SCAN" 60; letter-spacing: -.02em; }
+  .mark span b { font-weight: 400; color: var(--accent); }
+  main { padding-top: 22px; }
+  .state { display: flex; align-items: center; gap: 9px; font-weight: 500; font-size: 14px; margin: 6px 0 18px; }
+  .state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .state.on::before { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .state.bad { color: var(--bad); } .state.bad::before { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .state.on::before { animation: none; } }
+  h1 { font: 400 17px/1.35 "Michroma", sans-serif; letter-spacing: -.01em; margin: 0 0 10px; }
+  p { margin: 0 0 8px; color: var(--ink-2); }
+  kbd { font: 500 12px "IBM Plex Sans", sans-serif; padding: 1px 6px; border-radius: 3px; background: var(--panel); color: var(--ink); }
 </style>
 </head>
 <body>
-<h1>tvpipe screen</h1>
-<p id="state">Starting the capture…</p>
-<p>tvpipe started this browser to capture the screen or a window. It closes
-it when you stop tvpipe (Ctrl-C) or stop sharing.</p>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo" viewBox="0 0 560 520">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <g style="stroke:var(--logo-ink)" stroke-width="12"><line x1="208" y1="118" x2="152" y2="62"/><line x1="256" y1="118" x2="322" y2="40"/></g>
+      <g style="fill:var(--logo-ink)"><circle cx="152" cy="62" r="14"/><circle cx="322" cy="40" r="14"/><path d="M180 137 A52 30 0 0 1 284 137 Z"/><path d="M92 474 A19 19 0 0 0 130 474 Z"/><path d="M334 474 A19 19 0 0 0 372 474 Z"/></g>
+      <rect x="23" y="137" width="419" height="331" rx="48" style="stroke:var(--logo-ink);fill:var(--logo-screen)" stroke-width="16"/>
+      <path d="M92 180 Q211 168 330 180 Q350 182 352 202 Q360 301 352 400 Q350 420 330 422 Q211 434 92 422 Q72 420 70 400 Q62 301 70 202 Q72 182 92 180 Z" style="stroke:var(--logo-ink)" stroke-width="14"/>
+      <circle cx="390" cy="222" r="17" fill="#E8743B"/><circle cx="390" cy="272" r="12" fill="#E8743B"/>
+      <g stroke-width="14">
+        <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z" style="stroke:var(--logo-screen)" stroke-width="40"/>
+        <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z" fill="#E8743B" style="stroke:var(--logo-ink)"/>
+        <ellipse cx="445" cy="322" rx="55" ry="13" style="fill:var(--logo-screen);stroke:var(--logo-ink)"/>
+        <line x1="182" y1="262" x2="182" y2="310" style="stroke:var(--logo-ink)" stroke-width="16"/>
+      </g>
+      <g stroke="#E8743B" stroke-width="13" transform="translate(12 0)"><path d="M492 225 C492 205 464 195 464 160 C464 136 482 120 502 120 C522 120 536 135 533 155 C531 170 518 177 507 175"/><path d="M470 290 C468 262 492 252 506 242 C520 230 524 214 518 200"/></g>
+    </g>
+  </symbol>
+</svg>
+
+<header>
+  <div class="mark"><svg viewBox="0 0 560 520" aria-hidden="true"><use href="#logo"/></svg><span>tv<b>pipe</b></span></div>
+  <span class="lbl">Screen</span>
+</header>
+
+<main>
+  <span class="lbl">Status</span>
+  <div class="state" id="state">Starting the capture…</div>
+  <h1>Sharing the screen</h1>
+  <p>tvpipe opened this window to record the screen or a window, and closes it when it stops.</p>
+  <p>Stop with <kbd>Ctrl-C</kbd> in the terminal, or with <b>Stop sharing</b> in the browser’s bar.</p>
+</main>
 <script src="/capture.js"></script>
 <script>
   // tvpipe starts the capture (browser/headless.js) and keeps its state in
@@ -31,7 +101,7 @@ it when you stop tvpipe (Ctrl-C) or stop sharing.</p>
     setInterval(function () {
       var s = globalThis.__tvpipe;
       if (!s) return;
-      el.className = s.state === 'ended' ? 'bad' : '';
+      el.className = 'state' + (s.state === 'ended' ? ' bad' : s.state === 'sharing' ? ' on' : '');
       el.textContent = s.state === 'ended' ? 'Stopped: ' + (s.error || 'the share ended')
         : (text[s.state] || s.state);
     }, 500);
