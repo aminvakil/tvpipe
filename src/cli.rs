@@ -19,6 +19,7 @@ enum Top {
     Unpair,
     Play,
     TestPattern,
+    Preview,
     Share,
     DebugPipeline,
 }
@@ -56,6 +57,9 @@ enum PlayArg {
     RawVideo,
     RawAudio,
     Ffmpeg,
+    Port,
+    Open,
+    WaitForViewer,
     Input,
 }
 
@@ -98,6 +102,7 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::Unpair, &UNPAIR),
         Cmd::new(Top::Play, &PLAY),
         Cmd::new(Top::TestPattern, &TEST_PATTERN),
+        Cmd::new(Top::Preview, &PREVIEW),
         Cmd::new(Top::Share, &SHARE),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
@@ -164,53 +169,70 @@ const fn raw_audio<A>(id: A) -> Opt<A> {
         .help("Game mode: raw audio in SLRW framing on stdin")
 }
 
-static PLAY_OPTS: &[Opt<PlayArg>] = &[
-    to(PlayArg::To),
-    Opt::new(PlayArg::Latency)
-        .long("latency")
-        .value("MS")
-        .help("Playout delay in ms, the same on every receiver (default: Cast 300, AirPlay automatic ~100-170)"),
-    Opt::new(PlayArg::Size)
-        .long("size")
-        .value("WxH")
-        .help("Output video size"),
-    Opt::new(PlayArg::Fps)
-        .long("fps")
-        .value("N")
-        .help("Output frame rate"),
-    Opt::new(PlayArg::Bitrate)
-        .long("bitrate")
-        .value("KBPS")
-        .help("Video bitrate in kbit/s"),
-    Opt::new(PlayArg::Encoder)
-        .long("encoder")
-        .value("ENCODER")
-        .default_value("auto")
-        .possible_values(&[
-            "auto",
-            "builtin",
-            "x264",
-            "videotoolbox",
-            "nvenc",
-            "qsv",
-            "vaapi",
-            "mf",
-        ])
-        .help("Video encoder"),
-    Opt::new(PlayArg::NoAudio)
-        .long("no-audio")
-        .help("Do not send audio"),
-    Opt::new(PlayArg::Loop).long("loop").help("Loop the input"),
-    Opt::new(PlayArg::Realtime)
-        .long("realtime")
-        .help("Pace the input in real time (default for files)"),
-    Opt::new(PlayArg::NoRealtime)
-        .long("no-realtime")
-        .help("Do not pace the input (live sources)"),
-    raw_video(PlayArg::RawVideo),
-    raw_audio(PlayArg::RawAudio),
-    ffmpeg_path(PlayArg::Ffmpeg),
-];
+/// `play`'s options after the given ones (`preview` has no `--to`).
+macro_rules! play_opts {
+    ($($first:expr),*) => {
+        &[
+            $($first,)*
+            Opt::new(PlayArg::Latency)
+                .long("latency")
+                .value("MS")
+                .help("Playout delay in ms, the same on every receiver (default: Cast 300, AirPlay automatic ~100-170, browser 100)"),
+            Opt::new(PlayArg::Size)
+                .long("size")
+                .value("WxH")
+                .help("Output video size"),
+            Opt::new(PlayArg::Fps)
+                .long("fps")
+                .value("N")
+                .help("Output frame rate"),
+            Opt::new(PlayArg::Bitrate)
+                .long("bitrate")
+                .value("KBPS")
+                .help("Video bitrate in kbit/s"),
+            Opt::new(PlayArg::Encoder)
+                .long("encoder")
+                .value("ENCODER")
+                .default_value("auto")
+                .possible_values(&[
+                    "auto",
+                    "builtin",
+                    "x264",
+                    "videotoolbox",
+                    "nvenc",
+                    "qsv",
+                    "vaapi",
+                    "mf",
+                ])
+                .help("Video encoder"),
+            Opt::new(PlayArg::NoAudio)
+                .long("no-audio")
+                .help("Do not send audio"),
+            Opt::new(PlayArg::Loop).long("loop").help("Loop the input"),
+            Opt::new(PlayArg::Realtime)
+                .long("realtime")
+                .help("Pace the input in real time (default for files)"),
+            Opt::new(PlayArg::NoRealtime)
+                .long("no-realtime")
+                .help("Do not pace the input (live sources)"),
+            raw_video(PlayArg::RawVideo),
+            raw_audio(PlayArg::RawAudio),
+            ffmpeg_path(PlayArg::Ffmpeg),
+            Opt::new(PlayArg::Port)
+                .long("port")
+                .value("PORT")
+                .help("Browser player page port on 127.0.0.1 (--to browser; default: any free one)"),
+            Opt::new(PlayArg::Open)
+                .long("open")
+                .help("Open the browser player page in the default browser (--to browser)"),
+            Opt::new(PlayArg::WaitForViewer)
+                .long("wait-for-viewer")
+                .help("Start streaming once a browser tab is watching (--to browser)"),
+        ]
+    };
+}
+
+static PLAY_OPTS: &[Opt<PlayArg>] = play_opts!(to(PlayArg::To));
 
 static PLAY: Cli<PlayArg> = Cli::new("play")
     .about("Mirror a file, URL, capture device or raw game input")
@@ -233,6 +255,21 @@ static TEST_PATTERN: Cli<PlayArg> = Cli::new("test-pattern")
         "The pattern (UTC clock in ms, frame counter, a beep and a flash every second) is \
          generated and encoded in-process; ffmpeg is not needed. Naming an ffmpeg encoder \
          (e.g. --encoder x264) streams ffmpeg's testsrc2 instead.",
+    );
+
+static PREVIEW: Cli<PlayArg> = Cli::new("preview")
+    .about("Play a file, URL, capture device, raw game input or the test pattern in a browser tab")
+    .usage("[OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]")
+    .opts(play_opts!())
+    .args(&[Pos::new(PlayArg::Input, "INPUT")
+        .optional()
+        .allow_hyphen()
+        .value_hint(ValueHint::FilePath)
+        .help("File or URL; '-' for SLRW raw input on stdin; none: the test pattern")])
+    .after_help(
+        "Serves a player page on 127.0.0.1 and prints its URL (--open opens it); the same\n\
+         as 'play --to browser'. The tab also works as an OBS browser source, or shared\n\
+         into a video call (docs/meet.md).",
     );
 
 static SHARE: Cli<ShareArg> = Cli::new("share")
@@ -394,6 +431,8 @@ impl FromStr for RawAudioSpec {
 #[derive(Debug, Clone)]
 pub struct PlayOptions {
     pub to: Vec<String>,
+    /// For `--to browser` receivers.
+    pub browser: BrowserOptions,
     pub latency_ms: Option<u32>,
     pub size: Option<Size>,
     pub fps: Option<Ratio>,
@@ -407,6 +446,18 @@ pub struct PlayOptions {
     pub raw_audio: Option<RawAudioSpec>,
     pub ffmpeg: Option<PathBuf>,
     pub input: InputSpec,
+}
+
+/// The `--to` that names the browser receiver (`--to browser`).
+pub const BROWSER_TARGET: &str = "browser";
+
+/// Options of `--to browser` receivers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BrowserOptions {
+    /// Port of the player page (0: any free one).
+    pub port: u16,
+    pub open: bool,
+    pub wait_for_viewer: bool,
 }
 
 /// `tvpipe share`.
@@ -471,11 +522,25 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
             Top::Discover => return Ok((g, parse_discover(p.subcommand(&DISCOVER))?)),
             Top::Pair => return Ok((g, parse_pair(p.subcommand(&PAIR))?)),
             Top::Unpair => return Ok((g, parse_unpair(p.subcommand(&UNPAIR))?)),
-            Top::Play => return Ok((g, Command::Play(parse_play(p.subcommand(&PLAY), false)?))),
+            Top::Play => {
+                return Ok((
+                    g,
+                    Command::Play(parse_play(p.subcommand(&PLAY), Mode::Play)?),
+                ))
+            }
             Top::TestPattern => {
                 return Ok((
                     g,
-                    Command::TestPattern(parse_play(p.subcommand(&TEST_PATTERN), true)?),
+                    Command::TestPattern(parse_play(
+                        p.subcommand(&TEST_PATTERN),
+                        Mode::TestPattern,
+                    )?),
+                ))
+            }
+            Top::Preview => {
+                return Ok((
+                    g,
+                    Command::Play(parse_play(p.subcommand(&PREVIEW), Mode::Preview)?),
                 ))
             }
             Top::Share => return Ok((g, parse_share(p.subcommand(&SHARE))?)),
@@ -550,9 +615,20 @@ fn input_from(raw: OsString) -> InputSpec {
     }
 }
 
-fn parse_play(mut p: Parser<PlayArg>, test_pattern: bool) -> Result<PlayOptions, Error> {
+/// Which command `parse_play` parses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Play,
+    TestPattern,
+    /// `play --to browser`; no INPUT: the test pattern.
+    Preview,
+}
+
+fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> {
+    let test_pattern = mode == Mode::TestPattern;
     let mut o = PlayOptions {
         to: Vec::new(),
+        browser: BrowserOptions::default(),
         latency_ms: None,
         size: None,
         fps: None,
@@ -595,14 +671,28 @@ fn parse_play(mut p: Parser<PlayArg>, test_pattern: bool) -> Result<PlayOptions,
             PlayArg::RawVideo => o.raw_video = Some(p.value()?),
             PlayArg::RawAudio => o.raw_audio = Some(p.value()?),
             PlayArg::Ffmpeg => o.ffmpeg = Some(p.raw_value()?.into()),
+            PlayArg::Port => o.browser.port = p.value()?,
+            PlayArg::Open => o.browser.open = true,
+            PlayArg::WaitForViewer => o.browser.wait_for_viewer = true,
             PlayArg::Input => input = Some(input_from(p.raw_value()?)),
         }
+    }
+    if mode == Mode::Preview {
+        o.to = vec![BROWSER_TARGET.to_owned()];
     }
     if o.to.is_empty() {
         return Err(p.error("at least one --to NAME|ADDR is required"));
     }
-    if !test_pattern {
-        o.input = input.ok_or_else(|| p.error("missing INPUT (or '-- FFMPEG_INPUT_ARGS')"))?;
+    let browser = o.to.iter().any(|t| t.eq_ignore_ascii_case(BROWSER_TARGET));
+    if !browser && o.browser != BrowserOptions::default() {
+        return Err(p.error("--port, --open and --wait-for-viewer are for --to browser"));
+    }
+    match mode {
+        Mode::Play => {
+            o.input = input.ok_or_else(|| p.error("missing INPUT (or '-- FFMPEG_INPUT_ARGS')"))?;
+        }
+        Mode::Preview => o.input = input.unwrap_or(InputSpec::TestPattern),
+        Mode::TestPattern => {}
     }
     let raw = o.raw_video.is_some() || o.raw_audio.is_some();
     if raw && o.input != InputSpec::Stdin {
@@ -788,6 +878,58 @@ mod tests {
     fn play_requires_to() {
         assert!(parse_from(&["play", "movie.mkv"]).is_err());
         assert!(parse_from(&["play", "--to", "tv", "-"]).is_err());
+    }
+
+    #[test]
+    fn browser_receiver_and_preview() {
+        let play = |args: &[&str]| match parse_from(args) {
+            Ok((_, Command::Play(o) | Command::TestPattern(o))) => o,
+            other => panic!("{other:?}"),
+        };
+        // `preview` without INPUT: the test pattern, in the browser only.
+        let o = play(&["preview"]);
+        assert_eq!(o.to, ["browser"]);
+        assert_eq!(o.input, InputSpec::TestPattern);
+        assert_eq!(o.browser, BrowserOptions::default());
+        let o = play(&[
+            "preview",
+            "--open",
+            "--port",
+            "8123",
+            "--latency",
+            "500",
+            "a.mp4",
+        ]);
+        assert_eq!(o.input, InputSpec::Path("a.mp4".into()));
+        assert_eq!(o.latency_ms, Some(500));
+        assert_eq!(
+            o.browser,
+            BrowserOptions {
+                port: 8123,
+                open: true,
+                wait_for_viewer: false
+            }
+        );
+        let o = play(&["preview", "--", "-f", "avfoundation", "-i", "1"]);
+        assert!(matches!(o.input, InputSpec::FfmpegArgs(_)));
+        assert!(parse_from(&["preview", "--to", "tv"]).is_err());
+        // Next to TVs.
+        let o = play(&[
+            "play",
+            "--to",
+            "tv",
+            "--to",
+            "Browser",
+            "--wait-for-viewer",
+            "x.mkv",
+        ]);
+        assert_eq!(o.to, ["tv", "Browser"]);
+        assert!(o.browser.wait_for_viewer);
+        let o = play(&["test-pattern", "--to", "browser"]);
+        assert_eq!(o.input, InputSpec::TestPattern);
+        // The page's options need a page.
+        assert!(parse_from(&["play", "--to", "tv", "--open", "x.mkv"]).is_err());
+        assert!(parse_from(&["test-pattern", "--to", "tv", "--port", "1"]).is_err());
     }
 
     #[test]

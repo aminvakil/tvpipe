@@ -33,10 +33,14 @@ use std::process::{Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::browser::layout;
+use crate::browser::player::{BrowserSink, PlayerOptions};
 use crate::browser::protocol::{PageConfig, SharePlan};
 use crate::browser::share::{ShareInputOptions, ShareServer};
 use crate::cast::{self, CastOptions};
-use crate::cli::{Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size};
+use crate::cli::{
+    BrowserOptions, Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size,
+    BROWSER_TARGET,
+};
 use crate::error::{Error, Result};
 use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
@@ -122,6 +126,9 @@ enum Target {
         /// The discovered device (for the credentials lookup).
         device: Option<Box<crate::net::device::Device>>,
     },
+    /// `--to browser`: a player page on 127.0.0.1 (W14). The options
+    /// are filled in once the budget is known ([`configure_browsers`]).
+    Browser(Box<PlayerOptions>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +221,9 @@ fn device_target(dev: &crate::net::device::Device, forced: Option<Protocol>) -> 
 }
 
 fn resolve_target(query: &str) -> Result<Target> {
+    if query.eq_ignore_ascii_case(BROWSER_TARGET) {
+        return Ok(Target::Browser(Box::default()));
+    }
     let (forced, rest) = parse_target(query);
     if let Some(t) = address_target(forced, rest) {
         return Ok(t);
@@ -562,12 +572,31 @@ fn connect_one(
                 &target, mirror,
             )?))
         }
+        Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, interrupt::requested)?)),
     }
 }
 
 fn target_name(t: &Target) -> &str {
     match t {
         Target::Cast { name, .. } | Target::AirPlay { name, .. } => name,
+        Target::Browser(o) => &o.name,
+    }
+}
+
+/// Sets up the `--to browser` targets: the page's options, the session's
+/// playout budget and whether audio goes there.
+fn configure_browsers(targets: &mut [Target], opts: &BrowserOptions, latency_ms: u32, audio: bool) {
+    for t in targets {
+        if let Target::Browser(o) = t {
+            **o = PlayerOptions {
+                name: BROWSER_TARGET.into(),
+                port: opts.port,
+                open: opts.open,
+                wait_for_viewer: opts.wait_for_viewer,
+                latency_ms,
+                audio,
+            };
+        }
     }
 }
 
@@ -849,7 +878,7 @@ fn play_with(
     if !opts.no_audio && !audio {
         info!("the input has no audio; streaming video only");
     }
-    let d = desired(&opts, &input);
+    let mut d = desired(&opts, &input);
 
     // 2. Receivers, before ffmpeg. Offers follow what we can send: a file
     // that may pass keeps its bitrate and its AAC; an encoding game's PCM
@@ -876,7 +905,7 @@ fn play_with(
             }
         }
     }
-    let targets = resolve_all(&opts.to)?;
+    let mut targets = resolve_all(&opts.to)?;
     // The built-in test pattern's beep: 44.1 kHz when AirPlay listens.
     let pattern_rate =
         builtin::pattern_sample_rate(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
@@ -896,6 +925,12 @@ fn play_with(
     }
     let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
+    configure_browsers(&mut targets, &opts.browser, budget.browser_ms, audio);
+    if targets.iter().all(|t| matches!(t, Target::Browser(_))) {
+        // Only browsers: their delay is the session's (the plan, the
+        // tail played out at the end).
+        d.latency_ms = budget.browser_ms;
+    }
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: budget.airplay_ms,
         audio,
@@ -1153,7 +1188,7 @@ fn share_with(
         server.set_end_reason(&e.to_string());
         e
     };
-    let targets = resolve_all(&opts.to).map_err(|e| fail(&mut server, e))?;
+    let mut targets = resolve_all(&opts.to).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     // One PCM stream for both families: 44.1 kHz when AirPlay listens.
     let pcm = RawAudioSpec {
@@ -1211,6 +1246,12 @@ fn share_with(
     }
     let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
+    configure_browsers(
+        &mut targets,
+        &BrowserOptions::default(),
+        budget.browser_ms,
+        audio,
+    );
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: budget.airplay_ms,
         audio,
@@ -1361,7 +1402,14 @@ struct Budget {
     /// AirPlay leads: `Some(L)` = video and audio lead L; `None` = the
     /// automatic profile ("wireless": video 100 ms, audio 170 ms).
     airplay_ms: Option<u32>,
+    /// Browser tabs' playout delay (`--to browser`).
+    browser_ms: u32,
 }
+
+/// The playout delay of a browser alone (`preview`): nothing between
+/// tvpipe and the tab but loopback, so it only has to absorb the input's
+/// burstiness and decoding.
+pub const BROWSER_LATENCY_MS: u32 = 100;
 
 /// One budget for every receiver (PLAN §5.3): `--latency L` is the
 /// delay from the shared capture instant to presentation on all of them.
@@ -1381,26 +1429,40 @@ fn shared_budget(user: Option<u32>, targets: &[Target]) -> Budget {
             Budget {
                 cast_ms: c,
                 airplay_ms: Some(c),
+                browser_ms: c,
             }
         }
         None if cast && airplay => Budget {
             cast_ms: DEFAULT_LATENCY_MS,
             airplay_ms: Some(DEFAULT_LATENCY_MS),
+            browser_ms: DEFAULT_LATENCY_MS,
         },
+        // Browsers show frames when the TVs do: Cast's delay, or the
+        // AirPlay automatic profile's video lead (which is the browser's
+        // own default as well).
         None => Budget {
             cast_ms: DEFAULT_LATENCY_MS,
             airplay_ms: None,
+            browser_ms: if cast {
+                DEFAULT_LATENCY_MS
+            } else {
+                BROWSER_LATENCY_MS
+            },
         },
     };
     if targets.len() > 1 {
         let ms = |v: u32| format!("{v} ms");
+        let browser = targets.iter().any(|t| matches!(t, Target::Browser(_)));
+        let auto = "AirPlay automatic (video 100 ms, audio 170 ms)";
         info!(
             "{} receivers on one timeline; playout budget {}",
             targets.len(),
             match (cast, airplay, b.airplay_ms) {
-                (_, true, None) => "AirPlay automatic (video 100 ms, audio 170 ms)".to_owned(),
+                (_, true, None) if browser => format!("{auto}, browser {}", ms(b.browser_ms)),
+                (_, true, None) => auto.to_owned(),
                 (_, true, Some(a)) => ms(a),
-                _ => ms(b.cast_ms),
+                (true, _, _) => ms(b.cast_ms),
+                _ => ms(b.browser_ms),
             }
         );
     }
@@ -1575,6 +1637,9 @@ mod share_tests;
 mod browser_tests;
 
 #[cfg(test)]
+mod player_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::media::ffmpeg::Output;
@@ -1682,6 +1747,7 @@ mod tests {
     pub(super) fn opts() -> PlayOptions {
         PlayOptions {
             to: vec!["tv".into()],
+            browser: Default::default(),
             latency_ms: None,
             size: None,
             fps: None,
@@ -2128,6 +2194,7 @@ mod tests {
         mirror: &crate::airplay::session::MirrorOptions,
     ) -> Result<Box<dyn Sink>> {
         let sink: Box<dyn Sink> = match t {
+            Target::Browser(_) => connect_one(t, cast_opts, mirror)?,
             Target::Cast { addr, name } => Box::new(cast::connect(*addr, name, cast_opts)?),
             Target::AirPlay { .. } => {
                 let fake = fake.expect("fake AirPlay receiver");

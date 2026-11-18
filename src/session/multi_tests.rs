@@ -129,6 +129,7 @@ fn mixed_receivers_share_one_timeline() {
     };
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         match t {
+            Target::Browser(_) => connect_one(t, c, m),
             Target::Cast { addr, name } => Ok(observed(
                 Box::new(cast::connect(*addr, name, c)?),
                 80,
@@ -261,6 +262,7 @@ fn mixed_connector<'a>(
 ) -> impl Fn(&Target, &CastOptions, &MirrorOptions) -> Result<Box<dyn Sink>> + Sync + 'a {
     move |t, c, m| {
         Ok(match t {
+            Target::Browser(_) => connect_one(t, c, m)?,
             Target::Cast { addr, name } => Tallied::boxed(
                 Box::new(cast::connect(*addr, name, c)?),
                 cast_limit,
@@ -417,28 +419,32 @@ fn budgets() {
         b(None, &both),
         Budget {
             cast_ms: d,
-            airplay_ms: Some(d)
+            airplay_ms: Some(d),
+            browser_ms: d,
         }
     );
     assert_eq!(
         b(None, std::slice::from_ref(&cast)),
         Budget {
             cast_ms: d,
-            airplay_ms: None
+            airplay_ms: None,
+            browser_ms: d,
         }
     );
     assert_eq!(
         b(None, &[airplay.clone(), airplay.clone()]),
         Budget {
             cast_ms: d,
-            airplay_ms: None
+            airplay_ms: None,
+            browser_ms: BROWSER_LATENCY_MS,
         }
     );
     assert_eq!(
         b(Some(120), &both),
         Budget {
             cast_ms: 120,
-            airplay_ms: Some(120)
+            airplay_ms: Some(120),
+            browser_ms: 120,
         }
     );
     // Clamped to what both protocols take.

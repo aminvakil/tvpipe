@@ -1571,6 +1571,7 @@ pub(crate) mod tests {
     fn play_opts() -> PlayOptions {
         PlayOptions {
             to: vec!["tv".into()],
+            browser: Default::default(),
             latency_ms: None,
             size: None,
             fps: None,

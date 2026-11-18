@@ -65,6 +65,7 @@ fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
     let (cast_tally, airplay_tally) = (SharedTally::default(), SharedTally::default());
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         Ok(match t {
+            Target::Browser(_) => connect_one(t, c, m)?,
             Target::Cast { addr, name } => {
                 Tallied::boxed(Box::new(cast::connect(*addr, name, c)?), None, &cast_tally)
             }
