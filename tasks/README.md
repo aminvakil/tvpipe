@@ -14,6 +14,9 @@ checklist as it lands pieces on `main`.
 | [W7 AirPlay mirror](W7-airplay-mirror.md) | subagent `w7-mirror` | `w7-mirror` / `../streamlib-w7` | in progress |
 | [W8 Cast](W8-cast.md) | subagent `w8-cast` | `w8-cast` / `../streamlib-w8` | done on openscreen receiver; real hardware pending |
 | Cast play wiring | subagent `play-cast` | merged | done (openscreen receiver) |
+| [W9 passthrough + encoded SLRW](W9-passthrough.md) | subagent `w9-passthrough` | `w9-passthrough` / `../streamlib-w9` | in progress |
+| [W10 AAC-LC encoder](W10-aac-encoder.md) | subagent `w10-aac` | `w10-aac` / `../streamlib-w10` | in progress |
+| [W11 H.264 encoder](W11-h264-encoder.md) | subagent `w11-h264enc` | `w11-h264enc` / `../streamlib-w11` | in progress |
 | S1 FairPlay spec | — | — | dropped for now (LGPL port, decision 0005) |
 | [S2 AirPlay mirroring spec (dirty)](S2-airplay-mirroring-spec.md) | subagent `s2-spec` | `s2-spec` / `../streamlib-s2` | merged (reviewed); answers W7 questions |
 
