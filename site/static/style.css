@@ -149,7 +149,9 @@ main { min-width: 0; }
 .ph h1 { font: 400 30px/1.25 var(--title); letter-spacing: -.01em; margin: 0 0 22px; }
 .ph .lede p { font-size: 19px; line-height: 1.6; font-weight: 300; margin: 0 0 .6em; max-width: 40em; }
 .ph .lede code { font-size: .8em; }
-.spec { margin: 16px 0 18px; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12px; }
+.spec { margin: 16px 0 18px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; font-size: 12px; }
+/* long values in the narrow margin column wrap instead of running into the text */
+.row > .meta code { white-space: normal; overflow-wrap: anywhere; }
 .spec dt { color: var(--ink-3); }
 .spec dd { margin: 0; color: var(--ink); }
 
