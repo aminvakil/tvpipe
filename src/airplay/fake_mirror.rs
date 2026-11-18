@@ -46,6 +46,10 @@ pub struct Recorded {
     pub audio: Vec<(u16, u32, Vec<u8>)>,
     pub sync: Vec<Vec<u8>>,
     pub retransmits: Vec<Vec<u8>>,
+    /// UDP packets from someone other than our sender, ignored: a sink of
+    /// another test still sending to a port that was freed and then
+    /// given to this fake (both bind 127.0.0.1:0).
+    pub strays: usize,
     pub event_replies: usize,
     pub teardown: bool,
 }
@@ -474,8 +478,15 @@ fn audio_server(ctx: &Arc<Ctx>, sender_control: u16) -> (u16, u16) {
                 .map(|(k, iv)| (Aes::new(&k).unwrap(), iv));
             let mut buf = [0u8; 2048];
             let mut n = 0usize;
-            while let Ok(len) = rtp.recv(&mut buf) {
+            // Where our sender's audio comes from: the source of the first
+            // packet that authenticates.
+            let mut sender = None;
+            while let Ok((len, from)) = rtp.recv_from(&mut buf) {
                 let p = &buf[..len];
+                if sender.is_some_and(|s| s != from) || len < 21 {
+                    ctx.rec.lock().unwrap().strays += 1;
+                    continue;
+                }
                 let seq = u16::from_be_bytes([p[2], p[3]]);
                 let ts = u32::from_be_bytes(p[4..8].try_into().unwrap());
                 let clear = if p[1] == 97 { 1 } else { 0 };
@@ -483,9 +494,23 @@ fn audio_server(ctx: &Arc<Ctx>, sender_control: u16) -> (u16, u16) {
                 let body = &p[12 + clear..];
                 let pt = match (&cipher, &cbc) {
                     (Some(c), _) => {
-                        let nonce = u64::from_le_bytes(body[body.len() - 8..].try_into().unwrap());
-                        c.open(&nonce_counter(nonce), &p[4..12], &body[..body.len() - 8])
-                            .expect("audio packet authenticates")
+                        let opened = body.len().checked_sub(8).ok_or(()).and_then(|tag| {
+                            let nonce = u64::from_le_bytes(body[tag..].try_into().unwrap());
+                            c.open(&nonce_counter(nonce), &p[4..12], &body[..tag])
+                                .map_err(|_| ())
+                        });
+                        match (opened, sender) {
+                            (Ok(pt), _) => {
+                                sender = Some(from);
+                                pt
+                            }
+                            // Our sender's packets must all authenticate.
+                            (Err(()), Some(_)) => panic!("audio packet does not authenticate"),
+                            (Err(()), None) => {
+                                ctx.rec.lock().unwrap().strays += 1;
+                                continue;
+                            }
+                        }
                     }
                     (None, Some((aes, iv))) => {
                         let mut b = body.to_vec();
@@ -508,7 +533,13 @@ fn audio_server(ctx: &Arc<Ctx>, sender_control: u16) -> (u16, u16) {
         let ctx = ctx.clone();
         thread::spawn(move || {
             let mut buf = [0u8; 2048];
-            while let Ok(len) = rtcp.recv(&mut buf) {
+            while let Ok((len, from)) = rtcp.recv_from(&mut buf) {
+                // Sync and retransmissions come from the sender's control
+                // socket.
+                if from.port() != sender_control {
+                    ctx.rec.lock().unwrap().strays += 1;
+                    continue;
+                }
                 let p = buf[..len].to_vec();
                 let mut r = ctx.rec.lock().unwrap();
                 if p[1] == 0xd6 {

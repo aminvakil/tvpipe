@@ -1697,6 +1697,43 @@ mod tests {
         assert!(r.sync[1..].iter().all(|p| p[0] == 0x80));
     }
 
+    /// UDP from another sender reaching the fake's audio ports (a sink of
+    /// another test still sending to a port that was freed and reused) is
+    /// ignored and counted; before, it failed authentication and killed
+    /// the fake's audio thread (seen once in a loaded run).
+    #[test]
+    fn fake_receiver_ignores_stray_udp() {
+        let fake = FakeMirror::start(Behaviour {
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        let a = sink.media.as_ref().unwrap().audio.as_ref().unwrap();
+        let (data, rtcp) = (a.data.peer_addr().unwrap(), a.rtcp);
+        let stray = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut junk = vec![0x80u8, 0x60, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+        junk.extend_from_slice(&[7; 40]);
+        let send = || {
+            stray.send_to(&junk, data).unwrap();
+            stray.send_to(&junk, rtcp).unwrap();
+        };
+        // Before our sender's first packet, and between its packets.
+        send();
+        stream(&mut sink, 10);
+        send();
+        stream(&mut sink, 10);
+        wait_for("audio, sync and four strays", || {
+            let r = fake.rec();
+            !r.audio.is_empty() && !r.sync.is_empty() && r.strays == 4
+        });
+        sink.stop().unwrap();
+        let r = fake.rec();
+        assert_eq!(r.strays, 4);
+        // Only our sync packets (type 0x57, marker set) got through.
+        assert!(r.sync.iter().all(|p| p[1] == 0xd7));
+    }
+
     /// A receiver that stops answering must not make `stop` (Ctrl-C) wait
     /// for the 30 s request timeout of the pending `/feedback`.
     #[test]
