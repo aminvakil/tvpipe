@@ -632,3 +632,88 @@ fn bench_profile() {
         n as f64 / start.elapsed().as_secs_f64()
     );
 }
+
+/// Bit-exactness at full HD with threads and rate control on lavfi
+/// content: `cargo test --release -- --ignored oracle_1080p`.
+#[test]
+#[ignore]
+fn oracle_1080p() {
+    let Some(ff) = ffmpeg() else { return };
+    let (w, h) = (1920u32, 1080u32);
+    for src in ["testsrc2", "mandelbrot"] {
+        let frames = lavfi_frames(&ff, src, w, h, 40);
+        let mut enc = Encoder::new(Config {
+            width: w,
+            height: h,
+            fps: Ratio::integer(60),
+            bitrate_kbps: 15000,
+            threads: 0,
+            ..Config::default()
+        })
+        .unwrap();
+        let mut aus = Vec::new();
+        let mut recon = Vec::new();
+        for (i, f) in frames.iter().enumerate() {
+            aus.push(enc.encode(f, i == 25).unwrap());
+            recon.extend_from_slice(&enc.recon().unwrap().to_i420());
+        }
+        let dec = decode(&ff, &annexb(&enc, &aus), src);
+        assert!(
+            dec == recon,
+            "{src}: decoded frames differ from reconstruction"
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn bench_scene_cuts() {
+    let Some(ff) = ffmpeg() else { return };
+    let (w, h) = (1280u32, 720u32);
+    let a = lavfi_frames(&ff, "testsrc2", w, h, 30);
+    let b = lavfi_frames(&ff, "mandelbrot", w, h, 30);
+    let mut enc = Encoder::new(Config {
+        width: w,
+        height: h,
+        bitrate_kbps: 8000,
+        ..Config::default()
+    })
+    .unwrap();
+    let avg = 8000.0 * 1000.0 / 60.0;
+    for i in 0..120 {
+        let f = if (i / 30) % 2 == 0 {
+            &a[i % 30]
+        } else {
+            &b[i % 30]
+        };
+        let t = std::time::Instant::now();
+        let au = enc.encode(f, false).unwrap();
+        if i % 30 < 3 {
+            eprintln!(
+                "{i:>3} qp {} {:.2}x avg, {:.1} ms, psnr {:.2}",
+                au.qp,
+                au.data.len() as f64 * 8.0 / avg,
+                t.elapsed().as_secs_f64() * 1000.0,
+                psnr(&f.y, &enc.recon().unwrap().y)
+            );
+        }
+    }
+}
+
+#[test]
+fn parameter_set_vectors() {
+    for b in crate::util::vectors::load("h264enc/params.txt") {
+        let enc = Encoder::new(Config {
+            width: b.parse("width"),
+            height: b.parse("height"),
+            fps: Ratio::integer(b.parse("fps")),
+            bitrate_kbps: b.parse("kbps"),
+            ..Config::default()
+        })
+        .unwrap();
+        let (sps, pps) = enc.parameter_sets();
+        assert_eq!(sps, &b.hex("sps")[..], "{}", b.name());
+        assert_eq!(pps, &b.hex("pps")[..], "{}", b.name());
+        assert_eq!(enc.avcc(), b.hex("avcc"), "{}", b.name());
+    }
+}
