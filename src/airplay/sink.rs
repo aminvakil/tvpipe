@@ -870,7 +870,7 @@ impl<S: ControlStream> MirrorSink<S> {
                 rtcp_loop(&shared, &sock, &pk, ip)
             })?;
         }
-        info!(
+        debug!(
             "airplay: {}: streaming {}x{} video{}",
             self.name,
             vstate.width,
@@ -1155,7 +1155,7 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
         for t in threads {
             crate::util::thread::join_until(t, deadline);
         }
-        info!("airplay: {}: stopped", self.name);
+        debug!("airplay: {}: stopped", self.name);
         r
     }
 }

@@ -1455,7 +1455,7 @@ fn stream(
 ) -> Result<EndReason> {
     let info = input.info().clone();
     let v = &info.video;
-    info!(
+    debug!(
         "{}: {:?} {}x{}@{}{}",
         input.describe(),
         v.codec,
@@ -1499,7 +1499,7 @@ fn stream(
                     input.request_keyframe();
                 }
                 if fanout.active() == 0 {
-                    info!("every receiver ended the session");
+                    debug!("every receiver ended the session");
                     break EndReason::ReceiversGone;
                 }
             }

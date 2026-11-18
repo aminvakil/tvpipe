@@ -570,7 +570,7 @@ impl<S: ControlStream> Session<S> {
         let t0 = Instant::now();
         let mut media_first = false;
         let (resp, t0) = if SETUP1_REFUSED.contains(&resp.status) {
-            info!(
+            debug!(
                 "airplay: session SETUP refused ({}), using media-first ordering",
                 resp.status
             );

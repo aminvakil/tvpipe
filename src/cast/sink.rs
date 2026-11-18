@@ -688,7 +688,7 @@ impl Sink for StreamingSink {
                     .map_err(|e| Error::io("cast: spawn RTCP reader", e))?,
             );
         }
-        info!(
+        debug!(
             "cast: {}: streaming to {peer} ({burst} packets per {:?} burst)",
             self.name, BURST_INTERVAL
         );
@@ -819,7 +819,7 @@ impl Sink for StreamingSink {
         if let Some(t) = self.control_thread.take() {
             let _ = t.join();
         }
-        info!("cast: {}: stopped", self.name);
+        debug!("cast: {}: stopped", self.name);
         Ok(())
     }
 }
