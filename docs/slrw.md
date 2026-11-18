@@ -1,7 +1,8 @@
 # SLRW: game input
 
 SLRW is the format a game (or any program) writes to `tvpipe`'s stdin to
-stream its own frames:
+stream its own frames. This is the full reference; the manual's
+[Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) is the short version.
 
 ```sh
 mygame | tvpipe play --to TV --raw-video 1920x1080@60:rgba --raw-audio 48000:2:s16le -

@@ -2,6 +2,7 @@
 
 Results that shaped the code, with enough detail to repeat them. Browser
 player timings are in [`player-protocol.md`](player-protocol.md#browsers).
+The test pattern and how to measure with it: [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/).
 
 ## Glass-to-glass latency: Apple TV 4K (2026-11-18)
 

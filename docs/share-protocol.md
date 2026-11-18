@@ -3,7 +3,8 @@
 The protocol between tvpipe and a capture script (`src/browser/capture.js`)
 running in a browser: tvpipe's share page (`tvpipe share`), or the page
 tvpipe's own browser shows and injects the script into (`tvpipe share URL`).
-Version 1.
+Version 1. Using them: [Sharing a tab or screen](https://mitsuhiko.github.io/tvpipe/manual/share/) and
+[A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/).
 
 ## Transport
 
