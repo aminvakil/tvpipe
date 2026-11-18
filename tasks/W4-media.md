@@ -38,7 +38,7 @@ Notes for integrators:
   rejects ALAC plans with other frame sizes. For AirPlay's 352-sample
   frames plan `AudioCodec::PcmS16le` (exact 352-sample packets) and frame
   it as uncompressed ALAC in the sink.
-- SLRW byte order: docs/decisions/0002-slrw.md (little-endian).
+- SLRW byte order: docs/slrw.md (little-endian).
 - Measured (M3): 720p30 SLRW → x264 zerolatency → demuxed frame ≈ 20 ms
   for the first frame on an M-series Mac (release build).
 

@@ -32,7 +32,7 @@ comments, and don't copy from it.
       `session.rs` for this; keep the Cast path working.
 - [x] Vector tests for every byte layout in the spec's vectors.
 
-Integration notes: `docs/decisions/0007-airplay-mirror-sink.md`. The Apple
+Integration notes: `ARCHITECTURE.md` ("AirPlay"). The Apple
 TV accepts the whole session (protocol level); picture/sound confirmation
 by the human pending.
 

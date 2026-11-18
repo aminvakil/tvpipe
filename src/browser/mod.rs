@@ -1,7 +1,7 @@
-//! Streaming a browser (decision 0012).
+//! Streaming a browser.
 //!
-//! Owner: W12 (share a tab, option C); W13 adds the headless browser
-//! (option A) on top of the same capture script and WebSocket.
+//! Owner: W12 (share a tab); W13 adds the headless browser on top of the
+//! same capture script and WebSocket.
 //!
 //! - [`share`]: `tvpipe share`, the 127.0.0.1 page server and the input
 //!   the page's encoded H.264 and PCM feed.

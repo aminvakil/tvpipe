@@ -81,7 +81,7 @@ const AIRPLAY_PORT: u16 = 7000;
 /// retransmission or two on Wi-Fi. openscreen's sender default is 200 ms,
 /// but a Google TV on Wi-Fi has feedback gaps of ~220 ms, which overflow
 /// the in-flight window a few times per 5 minutes at 200 ms (each costing
-/// up to a GOP); decision 0010. `--latency` goes lower on good networks.
+/// up to a GOP); docs/measurements.md. `--latency` goes lower on good networks.
 pub const DEFAULT_LATENCY_MS: u32 = 300;
 /// Largest default output (an input larger than this is scaled down).
 const DEFAULT_MAX_SIZE: Size = Size {
@@ -602,7 +602,7 @@ fn configure_browsers(targets: &mut [Target], opts: &BrowserOptions, latency_ms:
     if !targets.iter().any(|t| matches!(t, Target::Browser(_))) {
         return;
     }
-    // One URL across runs (decision in docs/player-protocol.md); a
+    // One URL across runs (docs/player-protocol.md); a
     // config directory we cannot write only costs that.
     let token = match crate::browser::player::persistent_token(opts.new_token) {
         Ok(t) => Some(t),
@@ -628,7 +628,7 @@ fn configure_browsers(targets: &mut [Target], opts: &BrowserOptions, latency_ms:
 
 /// Keeps what worked: with several receivers, one that cannot be resolved
 /// or connected is logged and left out, and the session goes on with the
-/// others; it fails only when none is left (decision 0010).
+/// others; it fails only when none is left (ARCHITECTURE.md).
 fn keep_working<T>(what: &str, results: Vec<(String, Result<T>)>) -> Result<Vec<T>> {
     let total = results.len();
     let mut ok = Vec::new();
@@ -1128,7 +1128,7 @@ fn play_with(
 }
 
 // ---------------------------------------------------------------------------
-// Share a browser tab (decision 0012, option C)
+// Share a browser tab
 
 /// `share`'s frame rate without `--fps`.
 const SHARE_FPS: Ratio = Ratio::integer(30);
@@ -1422,7 +1422,7 @@ fn share_with(
 const MIN_LATENCY_MS: u32 = 5;
 const MAX_LATENCY_MS: u32 = 2000;
 
-/// The playout budget each family is set up with (decision 0010).
+/// The playout budget each family is set up with (ARCHITECTURE.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Budget {
     /// Cast target delay (audio and video).

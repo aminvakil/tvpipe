@@ -1,6 +1,17 @@
 # Architecture
 
-This document explains how `tvpipe` works and why it works that way.
+This document explains how `tvpipe` works and why it works that way. More
+detail lives in `docs/`:
+
+- [`slrw.md`](docs/slrw.md): the game input format.
+- [`share-protocol.md`](docs/share-protocol.md) and
+  [`player-protocol.md`](docs/player-protocol.md): the browser pages.
+- [`measurements.md`](docs/measurements.md): latency and experiments.
+- [`cross-platform.md`](docs/cross-platform.md): what was checked on which
+  OS.
+- [`meet.md`](docs/meet.md): presenting into video calls.
+- [`spec/`](docs/spec/) and [`cleanroom-log.md`](docs/cleanroom-log.md):
+  the clean-room AirPlay spec and its provenance.
 
 ## Scope
 
@@ -14,6 +25,17 @@ player page on 127.0.0.1 that decodes the stream with WebCodecs and plays
 it in a browser tab, on the same timeline as the TVs (see
 [Browser Player](#browser-player)).
 
+What the receivers take:
+
+| | Video | Audio |
+|---|---|---|
+| AirPlay mirroring | H.264 (HEVC partly specified) | ALAC (incl. *verbatim*, i.e. PCM in an ALAC frame); AAC-ELD/AAC-LC per the format mask |
+| Cast Streaming | H.264, VP8, VP9, HEVC, AV1 | AAC, Opus (no PCM) |
+| Browser player | H.264 | PCM |
+
+All of them want one timestamp per frame, sent in presentation order, so
+in practice **no B-frames**. tvpipe sends H.264 everywhere.
+
 ## One Code Path for Every OS
 
 `tvpipe` uses only `std::net`, `std::process` and `std::fs`. It uses no OS
@@ -26,7 +48,8 @@ media frameworks, no discovery services and no interface APIs.
 As a result, the binary behaves the same on macOS, Linux and Windows and should enable a consistent experience across all of them.
 
 Formats and protocols are written by hand and tested against oracles. Only
-the hard cryptography comes from `ring`, and TLS from `rustls`.
+the hard cryptography comes from `ring`, and TLS from `rustls`. Any other
+dependency must be proposed in [`docs/deps.md`](docs/deps.md) first.
 
 ## Session Lifecycle
 
@@ -78,8 +101,10 @@ single drop costs a whole GOP. `-v` logs why a file did not pass.
 - Arguments after `--` go straight to ffmpeg, which is how capture works
   without platform code in `tvpipe`.
 
-**Built-in encoders.** These are used for the test pattern and raw game
-frames, with `--encoder builtin` or when ffmpeg is missing.
+**Built-in encoders.** The test pattern always uses them (unless an ffmpeg
+encoder is named). Raw game frames use them with `--encoder builtin` or
+when ffmpeg is missing. Files, URLs and capture always need ffmpeg when
+they are not passed through.
 
 - The H.264 encoder is Constrained Baseline:
   - CAVLC entropy coding,
@@ -96,7 +121,7 @@ frames, with `--encoder builtin` or when ffmpeg is missing.
 
 **Game input (SLRW)** is the format a game writes to `tvpipe`'s stdin: the
 magic `"SLRW"`, then records of `u8 kind | u64le pts_us | u32le len |
-payload`.
+payload`. The full format is in [`docs/slrw.md`](docs/slrw.md).
 
 - **Raw frames** go to the built-in encoder, or to ffmpeg through two
   localhost TCP listeners. That works the same on every OS, with no fd
@@ -106,36 +131,89 @@ payload`.
   which the game already owns. No port is needed. Requests are coalesced
   and rate-limited.
 
+**Browser capture** (`tvpipe share`) serves a page that captures with
+`getDisplayMedia`, encodes with WebCodecs and sends the same records as
+encoded SLRW over a localhost WebSocket, so it takes the same path
+(passthrough video, PCM or built-in AAC). Protocol:
+[`docs/share-protocol.md`](docs/share-protocol.md). Receivers stretch what
+they get to fill their screen, so sinks report their screen shape
+(`Capabilities::display_aspect`: Cast from the ANSWER's `display`, AirPlay
+from the SETUP canvas) and the page centers the capture in a frame of that
+shape. A headless mode (`tvpipe browser URL`: drive an installed Chromium
+over the DevTools protocol and inject the same capture script) is in
+progress.
+
+The WebSocket, HTTP bits, base64 and the DevTools client are hand-rolled;
+the pages are static files embedded in the binary.
+
 ## Timing and Latency
 
 - **A media clock** maps presentation timestamps to wall-clock instants,
-  anchored on the first frame. The anchor only moves earlier, never later. Sinks re-anchor when frames are
-  more than 100 ms late.
+  anchored on the first frame. It re-anchors when frames are more than
+  100 ms late (a stalled source) or 1 s early (a jump). One clock serves
+  the whole session (see [Several Receivers](#several-receivers)).
 - **AirPlay PTP** runs without a PTP stack. The receiver's
   `X-Apple-RequestReceivedTimestamp` response header is on its PTP
   timeline. Every `/feedback` response (every 2 s) re-anchors our mapping.
   Legacy receivers get an NTP responder instead.
 - **Cast** derives RTP timestamps from the media clock. Sender Reports map
   RTP time to NTP time for A/V sync.
-- **Defaults:**
-  - Cast: a 200 ms target delay.
-  - AirPlay: leads of 100 ms (video) and 170 ms (audio). The spec's 85 ms
-    audio lead glitched on the Apple TV.
-  - `--latency` overrides both.
+- **Defaults** are in the budget table below. Cast uses 300 ms rather
+  than openscreen's 200 ms because Wi-Fi feedback gaps overflowed the
+  in-flight window at 200 ms. AirPlay alone uses its automatic "wireless"
+  profile because the spec's 85 ms audio lead glitched on the Apple TV.
 
-Measured glass to glass: ~250 ms on an Apple TV 4K over Wi-Fi.
+Measured glass to glass: ~250 ms on an Apple TV 4K over Wi-Fi. Details
+and other measurements: [`docs/measurements.md`](docs/measurements.md).
+
+## Several Receivers
+
+**One timeline.** The fanout owns the session's `MediaClock` and schedules
+every frame on it as it leaves the input, before any per-sink queueing.
+Each sink gets a read-only view (`Sink::set_clock`, before `start()`) and
+pins the frame's scheduled instant right before pushing it, so every
+receiver presents a frame at the same instant even when one sink thread
+ran late. A sink that falls behind does not move everyone's timeline; its
+frames just have less headroom. AirPlay maps the instant to PTP/NTP, Cast
+to RTP plus Sender Reports, the browser sends it as is. Receivers are
+still not frame-locked: each has its own decode pipeline and clock
+mapping error.
+
+**One budget.** The delay from the shared capture instant to presentation
+is the same everywhere:
+
+| Session | Cast target delay | AirPlay leads (video / audio) | Browser |
+|---|---|---|---|
+| `--latency L` | L | L / L | L |
+| Cast present, no `--latency` | 300 ms | 300 / 300 ms | 300 ms |
+| AirPlay only, no `--latency` | — | automatic, 100 / 170 ms | 100 ms |
+| Browser only, no `--latency` | — | — | 100 ms |
+
+`L` is clamped to 5–2000 ms, which both protocols accept. Mixed with Cast,
+AirPlay takes the shared budget instead of its automatic profile, which
+would show every frame 200 ms before the Cast TV (MediaDataControl only
+runs with the automatic leads).
+
+**Partial failures.** A `--to` that cannot be resolved or connected is
+logged and left out; the session goes on with the others and fails only
+when none is left. Targets resolve and connect in parallel. A sink failing
+mid-stream, or a receiver ending the session, removes that sink; the
+session ends when every receiver is gone.
 
 ## Browser Player
 
 `--to browser` (and `tvpipe preview`) is a sink like the others. It
-serves a page on 127.0.0.1 behind a random token and a loopback `Host`
-check, and sends each tab the decoder configuration, then one SLRW record
+serves a page on 127.0.0.1 behind a token and a loopback `Host` check, and sends each tab the decoder configuration, then one SLRW record
 per WebSocket message: H.264 access units and PCM, each stamped with the
 frame's instant on the session clock. The page learns tvpipe's clock by
 ping/pong, decodes with `VideoDecoder`, and presents video and audio
 (Web Audio) one playout delay after that instant, like the TVs. Each tab
 has its own queue and writer thread, so a slow tab only drops its own
-frames. Protocol: `docs/player-protocol.md`.
+frames. The URL (port and token) stays the same across runs, so an open
+tab or an OBS source picks up the next session. Protocol:
+[`docs/player-protocol.md`](docs/player-protocol.md). Presenting the tab
+into video calls, and why tvpipe does not join Meet by itself:
+[`docs/meet.md`](docs/meet.md).
 
 ## Fanout
 
@@ -185,8 +263,15 @@ The sender is built from a clean-room spec, plus pyatv (MIT) for pairing.
 - **Audio** is *verbatim ALAC*: PCM wrapped in ALAC frames, 44.1 kHz, 352
   samples per frame, sent as encrypted RTP. Sync packets and retransmits
   are handled. No audio encoder is needed.
-- **Receiver quirks** are handled in one place: PTP falling back to NTP,
-  audio format, latency leads, and initial volume.
+- **Receiver quirks** are handled in one place: PTP falling back to NTP
+  (retried once on a fresh connection), audio format, latency leads, and
+  initial volume.
+- **Legacy receivers** (third-party TVs): unpaired candidates (no HAP
+  pairing bit, or feature bit 26/51) try raw pair-setup first and fall
+  back to HAP; transient pair-setup tries `X-Apple-HKP` 3 or 4 depending
+  on the receiver and retries the other once. The legacy media profile
+  (plaintext control, AES-CTR video, AES-CBC audio, NTP) is implemented
+  but only loop-tested.
 
 ## Cast
 
@@ -216,27 +301,58 @@ attribution.
 
   The feedback logic does no I/O and takes time as an argument, so it can
   be tested deterministically.
+- **Not done:** device authentication (`tp.deviceauth`; Chromecasts do not
+  require it from senders). The Android TV payload-type hack (127/96) is
+  off by default (`CastOptions::android_rtp_hack`); if some TV needs it,
+  it should become a flag or a per-model quirk.
 
-## Ctrl-C
+## Platform-Specific Code
 
-Ctrl-C must send TEARDOWN or STOP, or the TV stays in mirroring mode. std
-cannot install a signal handler, and ffmpeg dies from the same signal.
-Ctrl-C handling is therefore the one FFI exception, and it uses the C
-runtime std already links:
+Everything is platform-neutral except these, each with no crate and every
+`unsafe` block carrying a SAFETY comment:
 
-- **Unix:** `signal()` with a handler that only sets an atomic flag.
-- **Windows:** `SetConsoleCtrlHandler`.
+- **Ctrl-C** (`src/util/interrupt.rs`). Ctrl-C must send TEARDOWN or STOP,
+  or the TV stays in mirroring mode. std cannot install a signal handler,
+  and ffmpeg (in our process group) dies from the same signal, so the
+  fallback "tear down on ffmpeg's EOF" does not work either. It uses the C
+  runtime std already links:
+  - Unix: `signal(SIGINT/SIGTERM)` with a handler that only does an atomic
+    swap. One code path for every Unix.
+  - Windows: `SetConsoleCtrlHandler`.
 
-A second Ctrl-C exits immediately. `q` then Enter also stops, using std
-only.
+  A second Ctrl-C exits immediately. `q` then Enter also stops, using std
+  only (only when stdin is a terminal, not SLRW). On a stop the session
+  does not drain: every sink's `stop()` runs and ffmpeg is killed and
+  reaped. Ctrl-C/SIGTERM exits with 130, `q` with 0.
+- **Windows timer resolution** (`src/util/timer.rs`). Windows ends timed
+  waits on the 15.6 ms system tick, which made Cast pacing bursty.
+  `timeBeginPeriod(1)` (winmm, once per process, no `timeEndPeriod`: since
+  Windows 10 2004 it ends with the process) is called from `main`,
+  `session::play_with` and the fake receivers. Measurements:
+  [`docs/measurements.md`](docs/measurements.md#windows-timer-resolution).
+- **Paths:** `cfg(target_os)` for the config directory and for the
+  well-known browser install paths (`src/browser/platform.rs`).
+
+Other Windows differences (UDP `ConnectionReset`, `shutdown` not waking a
+blocked `recv`, PowerShell pipes) are handled in portable code; see
+[`docs/cross-platform.md`](docs/cross-platform.md).
 
 ## Licensing and Clean Room
 
 - **Licenses.** `tvpipe` is Apache-2.0, except the FairPlay module
   (LGPL-3.0-or-later). While that module is included, the binary is
   distributed under LGPL terms.
+- **FairPlay** is a port of doubletake's SAP implementation in
+  `src/airplay/fairplay/` (LGPL-3.0-or-later SPDX headers and attribution
+  in every file), behind a small API (`FpSession`: `m1`, `m3`,
+  `check_m4`, `wrap_key`, plus the stream-key derivation) so a clean-room
+  version can replace it. Nothing outside that directory may copy from it.
 - **Tainted sources.** doubletake, UxPlay, playfair and their derivatives
   are read only by a dirty-room spec writer and by the FairPlay porter.
+  The spec and its Q&A are in [`docs/spec/`](docs/spec/), and who saw what
+  is in [`docs/cleanroom-log.md`](docs/cleanroom-log.md).
+- **Encoders** were written from ITU-T H.264 and ISO/IEC 14496-3; some
+  tables come from openh264 (BSD-2) with attribution.
 - **AirPlay mirroring** was implemented from a reviewed prose spec plus test
   vectors.
 - **Permissive references** (openscreen, pyatv, pychromecast, RFCs, ITU/ISO
@@ -257,13 +373,50 @@ only.
   mirroring and pairing. Full `play` sessions run against them.
 - **Opt-in tests** against openscreen's `cast_receiver` and the Apple TV run
   with `--ignored` and `TVPIPE_*` variables.
-- **CI** runs fmt, clippy and the tests on Linux, macOS and Windows.
+- **CI** runs fmt, clippy and the tests on Linux, macOS and Windows. What
+  was checked by hand on which OS: [`docs/cross-platform.md`](docs/cross-platform.md).
+- **Isolation.** Unit tests use a scratch config directory
+  (`target/test-tmp/`) and never browse the real network, unless
+  `TVPIPE_ATV` (hardware tests) or `TVPIPE_LIVE_MDNS` is set.
+
+## Code Conventions
+
+- **Core types** in `src/types.rs` (`EncodedFrame`, `VideoInfo`,
+  `AudioInfo`, `Capabilities`, `Encoder`, the plans, `Sink`, …) are
+  shared by every module. Changing anything public there goes through the
+  lead; adding helper methods is fine.
+- **Errors:** one crate-wide `Error { kind, msg, source }` with
+  `ErrorKind` and `Result<T>` (`src/error.rs`). Modules may use private
+  error enums but convert at their public boundary. Malformed input is
+  `ErrorKind::Malformed` with the format name as prefix (`"dns: ..."`).
+  Data from the network or from ffmpeg never panics.
+- **Parsing** goes through `util::bytes::Reader` (bounds-checked, never
+  panics); `Writer` for output.
+- **Timestamps:** video pts in 90 kHz ticks, audio pts in sample ticks.
+- **Video payloads** are AVCC (4-byte length prefixes) everywhere inside
+  tvpipe; Cast converts to Annex B at the edge.
+- **Test vectors** are `key = value` blocks (blank-line separated, `#`
+  comments, indented continuation lines) under `tests/vectors/<module>/`
+  (`util::vectors`); binary fixtures under `tests/fixtures/<module>/`.
+- **Logging** uses the `error!`/`warn!`/`info!`/`debug!`/`trace!` macros
+  from `src/log.rs`; `play` writes nothing but SLRW keyframe requests to
+  stdout.
+- **Naming:** the project was called streamlib before it became tvpipe.
+  An existing `…/streamlib` config directory is moved over once on first
+  use; the SLRW magic and some fixtures keep the old name on purpose.
 
 ## Known Gaps
 
 - **Untested hardware:** LG and Samsung AirPlay, and the legacy AirPlay
-  pairing and media profile.
+  pairing and media profile (including the no-FairPlay variant, which
+  sends random `shk`/`shiv` and audio in the clear).
 - **Cast:** testing on real hardware is in progress.
-- **Not implemented:** HEVC, AAC-ELD, adaptive bitrate, and IPv6
-  discovery.
+- **Not implemented:** HEVC, AAC-ELD (so AAC files are re-encoded for
+  AirPlay), HTTP Digest for password-protected AirPlay receivers,
+  adaptive bitrate, and IPv6 discovery.
 - **B-frames** on real receivers are still untested.
+- **Further ffmpeg-free paths** were considered and not taken: OS encoders
+  (VideoToolbox, Media Foundation, VAAPI) break the platform-neutral rule;
+  an `openh264`/libopus crate needs a dependency; Cast "remoting" mode
+  would pass most files through on Cast at higher latency and with a
+  second, larger protocol.

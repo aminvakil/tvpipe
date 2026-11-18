@@ -146,7 +146,7 @@ out of the repository.
   `{codec: 'avc1.42E01F', optimizeForLatency: true}` without a
   `description`: 148 of 148 frames at 30 fps. AVCC plus an avcC
   `description` is the other option, matching `h264-config` in
-  `docs/share-protocol.md`.
+  [`share-protocol.md`](share-protocol.md).
 - **Frames into a MediaStream.** `MediaStreamTrackGenerator({kind:
   'video'})` takes decoded `VideoFrame`s directly. It works on the window
   in Chrome; the standard `VideoTrackGenerator` is worker-only. The

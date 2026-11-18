@@ -1,14 +1,14 @@
-# Browser player protocol (`--to browser`, W14)
+# Browser player protocol (`--to browser`)
 
 `--to browser` is a receiver like a TV: tvpipe serves a player page and
 streams to it over a WebSocket; the page decodes and presents on tvpipe's
-shared timeline (decision 0010). `tvpipe preview` is `play --to browser`.
+shared timeline (`ARCHITECTURE.md`, "Several Receivers"). `tvpipe preview` is `play --to browser`.
 Code: `src/browser/player.rs` (server and sink), `player.html`,
 `player.js` (the page). Version 1.
 
 ## Transport
 
-The share page's rules (`docs/share-protocol.md`), with one more check:
+The share page's rules ([`share-protocol.md`](share-protocol.md)), with one more check:
 
 - tvpipe listens on `127.0.0.1` only and prints
   `http://127.0.0.1:PORT/?t=TOKEN`. The URL is the same every run, so a
@@ -61,7 +61,7 @@ Unknown types are ignored by both sides.
 
 ## Binary messages (tvpipe → page)
 
-Each is one SLRW record (decision 0008), `u8 kind | u64le pts_us |
+Each is one SLRW record ([`slrw.md`](slrw.md)), `u8 kind | u64le pts_us |
 u32le len | payload`, `len` = message length − 13:
 
 | kind | payload |
@@ -118,7 +118,7 @@ plays the samples) at `pts_us + latency`.
   sink). No extra encode for the test pattern, games, `share` and AirPlay
   sessions; ffmpeg adds one PCM track otherwise. Passthrough files with
   AAC audio are re-encoded when a browser listens (as with AirPlay).
-- **Budget** (decision 0010 table, one more column): `--latency L` → L;
+- **Budget** (the table in `ARCHITECTURE.md`): `--latency L` → L;
   with Cast receivers → Cast's delay (300 ms); otherwise 100 ms (on
   loopback the delay only absorbs the input's burstiness and decoding;
   also the AirPlay automatic profile's video lead).

@@ -1,8 +1,8 @@
-# Share page protocol (decision 0012)
+# Share page protocol (`tvpipe share`)
 
 The protocol between tvpipe and a capture script (`src/browser/capture.js`)
 running in a browser: tvpipe's share page (`tvpipe share`), or any page the
-headless-browser mode injects the script into (W13). Version 1.
+headless-browser mode injects the script into. Version 1.
 
 ## Transport
 
@@ -68,7 +68,7 @@ Unknown types are ignored by both sides.
 
 ## Binary messages
 
-Each is exactly one SLRW record (decision 0008): `u8 kind | u64le
+Each is exactly one SLRW record ([`slrw.md`](slrw.md)): `u8 kind | u64le
 pts_us | u32le len | payload`, `len` = message length − 13.
 
 | kind | payload |
@@ -151,7 +151,7 @@ are dropped above the same threshold.
 - Clocks are `performance.timeOrigin + performance.now()` so page and
   worker timestamps agree.
 
-## Capture script API (for W13)
+## Capture script API (for the headless mode)
 
 `capture.js` defines `globalThis.tvpipeCapture`:
 

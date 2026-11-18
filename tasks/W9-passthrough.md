@@ -35,7 +35,7 @@ lead tells you, then you wire `media::input` in.
       (decision 0008: kinds 3-5, `keyframe\n` on stdout;
       `Fanout::keyframe_wanted()`, lead-approved.)
 - [~] Experiments on the receivers, as `#[ignore]` tests or scripts plus a
-      short write-up in `docs/ffmpeg-optional.md`: H.264 with B-frames sent
+      short write-up in `docs/measurements.md`: H.264 with B-frames sent
       in decode order (openscreen receiver; Apple TV once W7 merges), and
       AAC-LC passthrough. (openscreen done; Apple TV pending W7.)
 - [x] Wire `media::input` into `session.rs` (plan below, as done).

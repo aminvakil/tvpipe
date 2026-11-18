@@ -1,5 +1,5 @@
-//! `tvpipe share`: the page server and the input it feeds (decision 0012,
-//! option C; protocol in docs/share-protocol.md).
+//! `tvpipe share`: the page server and the input it feeds (protocol in
+//! docs/share-protocol.md).
 //!
 //! [`ShareServer`] serves the share page and `capture.js` on 127.0.0.1
 //! and accepts the page's WebSocket at `/ws`. Every request must carry
@@ -552,7 +552,7 @@ impl Lag {
     }
 }
 
-/// H.264 + PCM from the share page (decision 0012).
+/// H.264 + PCM from the share page.
 pub struct ShareInput {
     server: ShareServer,
     sender: Sender<TcpStream>,

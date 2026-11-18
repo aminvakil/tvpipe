@@ -1,6 +1,6 @@
 //! Crate-wide error type.
 //!
-//! Conventions (frozen in M0, see `docs/decisions/0001-core-types.md`):
+//! Conventions (frozen in M0, see ARCHITECTURE.md, "Code Conventions"):
 //!
 //! - Every fallible function returns [`Result<T>`].
 //! - Data from the network or from ffmpeg never causes a panic; malformed

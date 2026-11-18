@@ -13,7 +13,7 @@
 //!   new non-key video is dropped until the next keyframe.
 //! - [`SinkStatus::Finished`] or an error removes the sink; the others go on.
 //!
-//! Timing (decision 0010): the fanout owns the session's [`MediaClock`]
+//! Timing (ARCHITECTURE.md, "Several Receivers"): the fanout owns the session's [`MediaClock`]
 //! and hands it to every sink ([`Sink::set_clock`]) before `start()`.
 //! Each frame is scheduled on it as it leaves the input
 //! ([`MediaClock::schedule`]: anchored on the first frame, re-anchored

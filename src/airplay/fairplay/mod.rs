@@ -5,7 +5,7 @@
 //! FairPlay SAP for AirPlay mirroring (PLAN §7.3).
 //!
 //! **License:** this directory is an LGPL-3.0-or-later port of doubletake
-//! (decision 0005). Nothing outside `src/airplay/fairplay/` may copy from
+//! (ARCHITECTURE.md, "Licensing and Clean Room"). Nothing outside `src/airplay/fairplay/` may copy from
 //! it; use it only through the API below.
 //!
 //! # Use

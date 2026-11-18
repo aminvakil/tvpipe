@@ -10,7 +10,7 @@
 //!
 //! Sources: ITU-T H.264 (08/2021), see the submodules; I. Richardson, "The
 //! H.264 Advanced Video Compression Standard" (2nd ed.). Clean room: no
-//! x264/ffmpeg encoder source was consulted (decision 0006); tables were
+//! x264/ffmpeg encoder source was consulted; tables were
 //! cross-checked with openh264 (BSD-2-Clause).
 
 pub mod bits;

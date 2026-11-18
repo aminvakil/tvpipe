@@ -120,8 +120,8 @@ The lead freezes these in M0, before any workstream starts:
 - The test vector file format: line-based `key = hex` blocks separated by
   blank lines, read by a tiny shared test helper. No JSON dependency in tests.
 
-Changing a frozen interface needs a short proposal in `docs/decisions/` that
-the lead approves. Implementers can add private helpers freely.
+Changing a frozen interface needs a short proposal that the lead approves;
+record the outcome in `ARCHITECTURE.md` (no separate decision records). Implementers can add private helpers freely.
 
 ## Working agreements
 
@@ -169,7 +169,7 @@ the lead approves. Implementers can add private helpers freely.
 4. M5/M6: first mirrored picture on the Apple TV.
 5. M7: lip-sync check by eye and ear; LG and Samsung attempts.
 6. M8: Cast hardware decision (built-in vs. dongle).
-7. M10: replication across devices; latency table in `docs/latency.md`.
+7. M10: replication across devices; latency table in `docs/measurements.md`.
 
 ## Suggested kickoff
 

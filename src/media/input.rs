@@ -1,4 +1,5 @@
-//! Media inputs: where the session's frames come from (decision 0006).
+//! Media inputs: where the session's frames come from (ARCHITECTURE.md,
+//! "Inputs").
 //!
 //! An [`Input`] yields the stream info the sinks start with and then
 //! [`EncodedFrame`]s in our conventions (PLAN §3). Implementations:
@@ -9,7 +10,7 @@
 //!   unchanged ([`passthrough`]), paced in real time on a [`MediaClock`],
 //!   optionally looped. No ffmpeg at all.
 //! - [`SlrwEncodedInput`]: a game sends encoded H.264 (and PCM) in SLRW
-//!   (`--raw-video WxH@FPS:h264`, decision 0008), with keyframes on
+//!   (`--raw-video WxH@FPS:h264`, docs/slrw.md), with keyframes on
 //!   demand through the stdout back channel. No ffmpeg for video.
 //!
 //! The session loop is the same for all three: `info()`, then
@@ -18,8 +19,7 @@
 //! Every implementation returns `None` soon after a stop request
 //! (Ctrl-C), also while waiting for input.
 //!
-//! Sources: PLAN §3, §5; docs/ffmpeg-optional.md; decisions 0002, 0006,
-//! 0008.
+//! Sources: PLAN §3, §5; docs/slrw.md; docs/measurements.md.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -372,7 +372,7 @@ pub const REORDER_EXPERIMENT_ENV: &str = "TVPIPE_EXPERIMENT_BFRAMES";
 
 /// `$TVPIPE_EXPERIMENT_BFRAMES`: pass files with B-frames through
 /// anyway (decode order, stamped as said), to try receivers
-/// (docs/ffmpeg-optional.md). Unset: B-frames go through ffmpeg.
+/// (docs/measurements.md). Unset: B-frames go through ffmpeg.
 pub fn reorder_experiment() -> Option<ReorderStamp> {
     match std::env::var(REORDER_EXPERIMENT_ENV).ok()?.as_str() {
         "dts" => Some(ReorderStamp::Dts),
@@ -732,7 +732,7 @@ pub fn encoded_audio_families(
     (out, warnings)
 }
 
-/// Writes keyframe requests to the game (decision 0008).
+/// Writes keyframe requests to the game (docs/slrw.md).
 struct BackChannel {
     state: Arc<(Mutex<(bool, bool)>, Condvar)>,
     last: Option<Instant>,
@@ -802,7 +802,7 @@ pub struct EncodedOptions {
     pub back_channel: Option<Box<dyn Write + Send>>,
 }
 
-/// Encoded H.264 + PCM from a game over SLRW (decision 0008).
+/// Encoded H.264 + PCM from a game over SLRW (docs/slrw.md).
 pub struct SlrwEncodedInput {
     rx: Receiver<std::io::Result<Option<Packet>>>,
     info: StreamInfo,
@@ -960,7 +960,7 @@ impl FamilyAudio {
     }
 }
 
-/// The encoded-SLRW timeline and audio paths (decision 0008), shared with
+/// The encoded-SLRW timeline and audio paths (docs/slrw.md), shared with
 /// `media::builtin`, which feeds it the access units it encodes.
 pub(crate) struct EncodedState {
     video: RawVideoSpec,
@@ -1957,7 +1957,7 @@ pub(crate) mod tests {
     }
 }
 
-/// Experiments for docs/ffmpeg-optional.md: passthrough of ffmpeg-made
+/// Experiments for docs/measurements.md: passthrough of ffmpeg-made
 /// files to a real Cast receiver (openscreen's, see
 /// `scripts/receivers/cast-receiver.sh`), frames sent in decode order.
 ///

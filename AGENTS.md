@@ -15,10 +15,9 @@ workstream.
 - Never panic on data from the network or from ffmpeg. Return errors.
 - Platform-neutral code only. No OS media/discovery APIs; `cfg(target_os)` is
   only acceptable for config-directory paths. The exceptions are
-  `src/util/interrupt.rs` (Ctrl-C handling, `cfg(unix)`/`cfg(windows)`; see
-  `docs/decisions/0004-ctrl-c.md`) and `src/util/timer.rs` (Windows 1 ms
-  timer resolution, `cfg(windows)`; see
-  `docs/decisions/0011-windows-timer-resolution.md`).
+  `src/util/interrupt.rs` (Ctrl-C handling, `cfg(unix)`/`cfg(windows)`) and
+  `src/util/timer.rs` (Windows 1 ms timer resolution, `cfg(windows)`); see
+  "Platform-Specific Code" in `ARCHITECTURE.md`.
 
 ## Clean room
 
@@ -26,7 +25,7 @@ workstream.
   airfry, or RottingApple unless your assigned role is "spec writer (dirty
   room)" or "FairPlay LGPL porter". Spec writers never write code in `src/`.
 - **FairPlay is an LGPL port for now** (human decision 2026-11-18, PLAN §10
-  fallback; `docs/decisions/0005-fairplay-lgpl.md`). Only the FairPlay porter
+  fallback; "Licensing and Clean Room" in `ARCHITECTURE.md`). Only the FairPlay porter
   reads doubletake, and it writes only `src/airplay/fairplay/**` (plus its
   vectors and license files). That directory is LGPL-3.0-or-later; nothing
   outside it may copy from it or from doubletake.

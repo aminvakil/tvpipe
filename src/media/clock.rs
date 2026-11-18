@@ -12,7 +12,7 @@
 //! their sample rate both start near zero on one timeline, see
 //! `media::source`), so one clock serves video and audio.
 //!
-//! One clock serves the whole session (decision 0010): the fanout
+//! One clock serves the whole session (ARCHITECTURE.md, "Several Receivers"): the fanout
 //! schedules every frame on it as the frame leaves the input
 //! ([`MediaClock::schedule`]), and every sink reads the same instants
 //! through a [`SinkClock`], so all receivers present a frame at the same
@@ -162,7 +162,7 @@ impl MediaClock {
     }
 }
 
-/// The session's clock as one sink sees it (decision 0010), handed over
+/// The session's clock as one sink sees it (ARCHITECTURE.md), handed over
 /// by the fanout with [`Sink::set_clock`](crate::types::Sink::set_clock).
 ///
 /// The fanout schedules each frame when it leaves the input and *pins*

@@ -7,7 +7,7 @@
 //! 1 ms condvar or socket timeout took ~25 ms on average (up to ~75 ms),
 //! a 10 ms `sleep` ~16-20 ms. With `timeBeginPeriod(1)` the same waits
 //! take ~1-2 ms and ~10.7 ms. std has no API for it, so this is the second
-//! platform FFI exception (`docs/decisions/0011-windows-timer-resolution.md`),
+//! platform FFI exception (ARCHITECTURE.md, docs/measurements.md),
 //! against winmm, a system DLL; no crate. Elsewhere it does nothing:
 //! Linux and macOS timers are already fine-grained.
 //!

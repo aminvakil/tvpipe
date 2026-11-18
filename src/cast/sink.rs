@@ -16,7 +16,7 @@
 //! Timing: every frame's reference time is derived from its pts on the
 //! session's [`media::clock`](crate::media::clock) (handed over by the
 //! fanout with [`Sink::set_clock`], shared with the other receivers;
-//! decision 0010), so audio and video stay in sync, and the receiver plays
+//! ARCHITECTURE.md), so audio and video stay in sync, and the receiver plays
 //! each frame at reference time + target delay. Without a session clock
 //! the first frame pushed anchors a private one, moved forward when frames
 //! arrive more than [`MAX_LATENESS`] late (a stalled encoder).
@@ -25,7 +25,7 @@
 //! access unit per Cast frame, as Chromium's Cast sender does
 //! (`media/cast/encoding/audio_encoder.cc`, `AppleAacImpl`); openscreen's
 //! receiver has no AudioSpecificConfig and cannot decode raw access units
-//! (docs/ffmpeg-optional.md). Raw units (from ffmpeg's Matroska,
+//! (docs/measurements.md). Raw units (from ffmpeg's Matroska,
 //! passthrough, `aacenc`) get the header here. [`AacFraming::Raw`] sends
 //! raw units instead (stripping headers), for receivers that want those.
 //!
@@ -294,7 +294,7 @@ const PRIVATE_CLOCK: Tolerance = Tolerance {
 };
 
 /// Maps media pts to reference instants (shared by audio and video): on
-/// the session's clock (decision 0010) when the fanout handed one over,
+/// the session's clock (ARCHITECTURE.md) when the fanout handed one over,
 /// else on a private one anchored on the first frame ([`PRIVATE_CLOCK`]).
 fn reference_time(clock: &SinkClock, pts: u64, rate: u32, now: Instant) -> Instant {
     clock.instant(pts, rate, now)

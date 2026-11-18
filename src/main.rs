@@ -31,7 +31,7 @@ fn main() -> ExitCode {
     } else {
         log::Level::Info
     });
-    // Fine-grained timed waits for pacing (Windows; decision 0011).
+    // Fine-grained timed waits for pacing (Windows; `util::timer`).
     util::timer::raise_resolution();
     let rv = session::run(command);
     // A Ctrl-C/SIGTERM stop exits with 130 like other CLI tools, after the

@@ -207,7 +207,7 @@ pub struct FakeReceiver {
 impl FakeReceiver {
     pub fn spawn(opts: Options) -> FakeReceiver {
         // Its 10 ms receive polls and 20 ms feedback need a fine timer on
-        // Windows, like the sender's pacing (decision 0011).
+        // Windows, like the sender's pacing (`util::timer`).
         crate::util::timer::raise_resolution();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();

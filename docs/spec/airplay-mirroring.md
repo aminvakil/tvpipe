@@ -113,7 +113,7 @@ access-control entry is sufficient for a mirroring session on the Apple TV
 
 ### 2.2 FairPlay SAP and what mirroring takes from it
 
-FairPlay is done by `airplay::fairplay` (LGPL port, decision 0005); this
+FairPlay is done by `airplay::fairplay` (LGPL port); this
 spec only uses its outputs. Run it after pair-verify, on the (encrypted)
 control connection, when `/info` feature bit 14 is set. FairPlay counts as
 unsupported, and the session continues without it, only when feature 14 is

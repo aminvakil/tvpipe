@@ -11,7 +11,7 @@
 //! runs forever), `--no-audio`, `--no-pace` (write as fast as possible).
 //! Video is RGBA; audio is s16le, one record per video frame.
 //!
-//! `--encoded` sends H.264 instead (decision 0008), the way a game with
+//! `--encoded` sends H.264 instead (docs/slrw.md), the way a game with
 //! its own hardware encoder would. This example uses ffmpeg (libx264,
 //! no B-frames) as that encoder, so it needs ffmpeg in `PATH` (or
 //! `$TVPIPE_FFMPEG`); tvpipe itself then runs without ffmpeg for

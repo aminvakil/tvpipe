@@ -6,10 +6,10 @@
 //! (`browser::share`): a random `?t=` token on the page and the socket, a
 //! loopback `Host` (no DNS rebinding), and the WebSocket only from the
 //! page's own origin. Any number of tabs may watch. Each gets the decoder
-//! configuration as JSON, then one binary SLRW record (decision 0008) per
+//! configuration as JSON, then one binary SLRW record (docs/slrw.md) per
 //! WebSocket message: H.264 access units (AVCC, as the session has them)
 //! and s16le PCM, stamped with the frame's instant on the session's
-//! shared clock (decision 0010) in microseconds of tvpipe's clock. The
+//! shared clock (ARCHITECTURE.md) in microseconds of tvpipe's clock. The
 //! page maps that clock to its own (ping/pong), adds the playout delay and
 //! presents video and audio on time, in step with the other receivers.
 //!

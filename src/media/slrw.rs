@@ -10,9 +10,9 @@
 //! ```
 //!
 //! An `end` record has `len = 0`. Multi-byte fields are little-endian
-//! (docs/decisions/0002-slrw.md).
+//! (docs/slrw.md).
 //!
-//! Encoded mode (`--raw-video WxH@FPS:h264`, docs/decisions/0008-slrw-encoded.md)
+//! Encoded mode (`--raw-video WxH@FPS:h264`, docs/slrw.md)
 //! adds three kinds:
 //!
 //! ```text

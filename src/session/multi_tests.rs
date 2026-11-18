@@ -1,7 +1,7 @@
 //! Replication tests (M10): one session, a fake Cast receiver and a fake
-//! AirPlay mirror receiver, one encode, one shared timeline (decision
-//! 0010), and the failure cases: a receiver that cannot be reached, one
-//! that leaves mid-stream, and a stop request.
+//! AirPlay mirror receiver, one encode, one shared timeline
+//! (ARCHITECTURE.md), and the failure cases: a receiver that cannot be
+//! reached, one that leaves mid-stream, and a stop request.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

@@ -1,6 +1,6 @@
 //! The OS-specific bits of the browser modes: which command opens a URL
-//! (decision 0012 allows `cfg(target_os)` here, like a config path; W13
-//! adds the well-known browser install paths).
+//! (`cfg(target_os)` is allowed here, like a config path; W13 adds the
+//! well-known browser install paths).
 
 use std::process::{Command, Stdio};
 

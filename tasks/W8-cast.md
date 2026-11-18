@@ -70,8 +70,7 @@ TVPIPE_CAST_SECS=10 TVPIPE_CAST_LOSS=0.02 \
 
 Open items / for the lead:
 
-- Wiring: see `docs/decisions/0003-cast-sink.md` (API for `session.rs`,
-  private H.264/clock helpers that duplicate W4, AAC framing question).
+- Wiring: done; see `ARCHITECTURE.md` ("Cast").
 - Real hardware (Chromecast / Google TV): untested. Things to watch:
   device-auth not done; Android-TV payload-type hack is
   `CastOptions::android_rtp_hack`; AAC raw vs ADTS.

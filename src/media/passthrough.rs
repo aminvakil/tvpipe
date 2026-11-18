@@ -1,5 +1,5 @@
 //! Passthrough: sending a file's own encoded frames, without ffmpeg
-//! (docs/ffmpeg-optional.md option A, decision 0006).
+//! (ARCHITECTURE.md, "Inputs").
 //!
 //! - [`FileSource`] demuxes MP4/MOV ([`mp4`](super::mp4)) or Matroska/WebM
 //!   ([`source::MediaReader`] over [`mkv`](super::mkv)) into
@@ -13,7 +13,7 @@
 //!
 //! Sources: ISO/IEC 14496-3 §1.6.2.1 (AudioSpecificConfig, Table 1.16
 //! sampling frequencies); ITU-T H.264 §7.4.2.1.1, Annex E.2.1; PLAN §3, §5;
-//! docs/ffmpeg-optional.md.
+//! docs/measurements.md.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -797,7 +797,7 @@ pub struct CheckOptions {
     /// The user wants audio (no `--no-audio`).
     pub audio: bool,
     /// Accept B-frame reordering (frames are sent in decode order). Off
-    /// until the receivers are known to cope (docs/ffmpeg-optional.md).
+    /// until the receivers are known to cope (docs/measurements.md).
     pub allow_reordering: bool,
     /// Longest keyframe interval (seconds) we accept: after a loss or a
     /// queue overflow a receiver shows nothing until the next keyframe.

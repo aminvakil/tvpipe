@@ -1,8 +1,8 @@
-//! Built-in encoding without ffmpeg (decision 0006, option C): raw SLRW
+//! Built-in encoding without ffmpeg: raw SLRW
 //! game frames, or a generated test pattern, converted to I420
 //! (`media::convert`), scaled to the plan size and encoded by
 //! `media::h264enc` with IDRs on demand. Audio takes the encoded-SLRW
-//! paths (decision 0008): PCM for AirPlay, `media::aacenc` for Cast.
+//! paths (docs/slrw.md): PCM for AirPlay, `media::aacenc` for Cast.
 //!
 //! Threads: a reader takes records from the game (or the pattern
 //! generator), cuts the video down to the plan's frame rate and hands
@@ -18,7 +18,7 @@
 //! photographing the TV next to a millisecond clock gives the end-to-end
 //! latency.
 //!
-//! Sources: decisions 0002, 0006, 0008; PLAN §5.2; ITU-R BT.709-6 (bar
+//! Sources: docs/slrw.md; PLAN §5.2; ITU-R BT.709-6 (bar
 //! colours via `media::convert`).
 
 use std::io::{self, Read};

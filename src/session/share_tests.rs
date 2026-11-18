@@ -1,4 +1,4 @@
-//! `share` end to end (decision 0012, option C): a fake page (the Rust
+//! `share` end to end: a fake page (the Rust
 //! one from `browser::share::tests`, built-in H.264 + PCM over a real
 //! loopback WebSocket) to a fake Cast receiver and a fake AirPlay mirror
 //! receiver.

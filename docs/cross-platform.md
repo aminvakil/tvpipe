@@ -1,7 +1,20 @@
 # Cross-platform status
 
 What has been checked on which OS, and how to repeat it from a Mac.
-Last updated 2026-11-18 (branch `windows-vm`: first runs on Windows).
+Last updated 2026-11-18 (first runs on Windows).
+
+## User-facing notes
+
+- ffmpeg 6 or newer (tested with 6.1, 7.1 and 8.1). It is optional; see
+  "When ffmpeg is used" in the README.
+- Windows: AirPlay receivers send timing requests to UDP ports tvpipe
+  opens, so Windows Firewall may ask to allow tvpipe the first time; allow
+  it on private networks.
+- Windows: pipe SLRW game input from `cmd.exe`, a program that spawns
+  tvpipe, or PowerShell 7.4+. Windows PowerShell 5.1 re-encodes binary
+  pipes between programs.
+- `scripts/cross-check.sh` runs clippy for the Windows targets and builds
+  a Windows `.exe` from macOS or Linux with zig as the C toolchain.
 
 ## Matrix
 
@@ -48,7 +61,9 @@ Found and fixed on Windows:
   `util::thread::join_until` (deadline joins).
 - Timed waits end on the 15.6 ms system tick (in the VM a 1 ms condvar
   or socket timeout took ~25 ms, up to ~75 ms): Cast pacing went bursty
-  and two session tests flaked. Fixed with `util::timer` (decision 0011).
+  and two session tests flaked. Fixed with `util::timer` (see
+  `ARCHITECTURE.md`, "Platform-Specific Code", and
+  [`measurements.md`](measurements.md#windows-timer-resolution)).
 
 Open:
 
@@ -109,8 +124,8 @@ in another on the same user-defined bridge network.
 
 ## Platform differences handled in the code
 
-- Ctrl-C: `src/util/interrupt.rs` (decision 0004).
-- Timer resolution: `src/util/timer.rs` (decision 0011), Windows only.
+- Ctrl-C: `src/util/interrupt.rs`.
+- Timer resolution: `src/util/timer.rs`, Windows only.
 - Config directory: `src/airplay/credentials.rs` (`%APPDATA%\tvpipe`).
 - `ffmpeg.exe`/`ffprobe.exe`: `std::env::consts::EXE_SUFFIX` in
   `media::ffmpeg::find_in_path`.

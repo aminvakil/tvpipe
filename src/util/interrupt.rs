@@ -4,7 +4,7 @@
 //! std cannot change how a process reacts to Ctrl-C: the default is to
 //! die at once. This module and `util::timer` are the only places with
 //! platform FFI outside the config-directory paths (see
-//! `docs/decisions/0004-ctrl-c.md`), against the C runtime std links
+//! ARCHITECTURE.md, "Platform-Specific Code"), against the C runtime std links
 //! anyway; no crate.
 //!
 //! - unix: `signal(SIGINT/SIGTERM)` installs a handler that only stores

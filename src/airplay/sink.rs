@@ -18,7 +18,7 @@
 //! packet first and then every second).
 //!
 //! Timing: the session's [`MediaClock`] (handed over by the fanout with
-//! [`Sink::set_clock`], shared with the other receivers; decision 0010)
+//! [`Sink::set_clock`], shared with the other receivers; ARCHITECTURE.md)
 //! maps pts to capture instants; without one, a private clock is anchored
 //! on the first frame and re-anchored when frames are more than
 //! [`MAX_LATENESS`] late or [`MAX_EARLY`] early. The session timeline

@@ -591,7 +591,7 @@ Honest caveats (this is not legal advice):
 5. **Latency measurement**: `tvpipe test-pattern` burns a millisecond
    wallclock and a frame counter into the video. Photograph the sender's screen
    and the TV together (or point a phone at both). Record the results in
-   `docs/latency.md` per device and setting.
+   `docs/measurements.md` per device and setting.
 
 ---
 
@@ -633,7 +633,7 @@ only on M0–M3 and can run in parallel with M4–M7.
 | `ring` needs a C toolchain | build friction on Windows | document it; `ring` ships prebuilt asm for the main targets |
 | mDNS legacy unicast ignored by some responder | device not found | fall back to binding 5353 with `SO_REUSEADDR` (needs `socket2` or a little unsafe code; decide then) and to `--to ADDR` |
 
-| ffmpeg as a hard runtime dependency | install friction; encode latency; no on-demand IDR | passthrough for compatible inputs, engine-encoded SLRW, optional hand-rolled encoders: see `docs/ffmpeg-optional.md` |
+| ffmpeg as a hard runtime dependency | install friction; encode latency; no on-demand IDR | passthrough for compatible inputs, engine-encoded SLRW, optional hand-rolled encoders: see "Inputs" in `ARCHITECTURE.md` |
 
 Open questions for the human:
 

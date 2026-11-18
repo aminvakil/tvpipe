@@ -1,5 +1,5 @@
-//! Hand-rolled AAC-LC encoder (option C of `docs/ffmpeg-optional.md`,
-//! decision 0006), so PCM can reach Cast receivers without ffmpeg.
+//! Hand-rolled AAC-LC encoder, so PCM can reach Cast receivers without
+//! ffmpeg.
 //!
 //! Scope: mono or stereo, 8-96 kHz, 1024-sample frames, sine windows,
 //! block switching (long/start/eight-short/stop) driven by a simple

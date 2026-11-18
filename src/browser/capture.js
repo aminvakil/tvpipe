@@ -1,4 +1,4 @@
-// tvpipe capture script (decision 0012, protocol: docs/share-protocol.md).
+// tvpipe capture script (protocol: docs/share-protocol.md).
 //
 // Connects to tvpipe's WebSocket, captures a MediaStream (by default with
 // getDisplayMedia), encodes the video as H.264 with WebCodecs and turns the

@@ -1,6 +1,6 @@
 //! The share page's WebSocket protocol (docs/share-protocol.md).
 //!
-//! Binary messages are single SLRW records (decision 0008): `u8 kind |
+//! Binary messages are single SLRW records (docs/slrw.md): `u8 kind |
 //! u64le pts_us | u32le len | payload`, with `len` equal to the rest of
 //! the message. Text messages are JSON objects with a `type`.
 

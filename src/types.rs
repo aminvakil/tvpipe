@@ -1,7 +1,8 @@
 //! Core types shared by every workstream (PLAN §3).
 //!
-//! **Frozen in M0.** Changing anything public here needs a proposal in
-//! `docs/decisions/` approved by the lead. Adding helper methods is fine.
+//! **Frozen in M0.** Changing anything public here needs the lead's
+//! approval (ARCHITECTURE.md, "Code Conventions"). Adding helper methods
+//! is fine.
 
 use std::sync::Arc;
 
@@ -134,11 +135,11 @@ pub fn aspect_of(w: u32, h: u32) -> Option<(u32, u32)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Encoder {
     /// Probe `ffmpeg -encoders` and pick the best available (the built-in
-    /// encoder when raw input has no ffmpeg; decision 0006).
+    /// encoder when raw input has no ffmpeg).
     #[default]
     Auto,
     /// `media::h264enc` in-process (raw SLRW input and the test pattern;
-    /// decision 0006). Never handed to ffmpeg.
+    /// ARCHITECTURE.md). Never handed to ffmpeg.
     Builtin,
     X264,
     VideoToolbox,
@@ -206,7 +207,7 @@ pub trait Sink: Send {
     /// Valid after connect.
     fn capabilities(&self) -> &Capabilities;
 
-    /// The session's media clock (decision 0010), handed over by the
+    /// The session's media clock (ARCHITECTURE.md), handed over by the
     /// fanout before [`Sink::start`]: the sink maps pts to instants on it
     /// instead of anchoring a clock of its own on the first frame it gets,
     /// so every receiver shares one timeline. Wrappers must forward it.

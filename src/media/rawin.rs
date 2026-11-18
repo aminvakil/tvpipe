@@ -36,7 +36,7 @@ const ACCEPT_TIMEOUT: Duration = Duration::from_secs(20);
 const DRIFT_LOG: Duration = Duration::from_millis(100);
 
 /// The `--raw-video` pixel format that selects encoded H.264 input
-/// (docs/decisions/0008-slrw-encoded.md); handled by `media::input`, not
+/// (docs/slrw.md); handled by `media::input`, not
 /// here.
 pub const ENCODED_PIX_FMT: &str = "h264";
 

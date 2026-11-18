@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo/tvpipe.svg" alt="tvpipe logo" width="260">
+</p>
+
 # tvpipe
 
 `tvpipe` is a command line tool for low-latency mirroring of video and audio
@@ -10,13 +14,6 @@ source. It can mirror files, URLs, capture devices, a built-in test pattern,
 or raw frames that a game writes to its stdin. It can also send to several
 receivers at once from a single encode.
 
-- One Rust binary with the same code on macOS, Linux and Windows. It uses no
-  OS media or discovery APIs.
-- Three dependencies: `argument`, `rustls` and `ring`. Everything else (mDNS,
-  RTSP, plists, AES, SRP, Matroska/MP4 demuxers, H.264 and AAC encoders) is
-  written by hand.
-- `ffmpeg` is optional. It is needed only for inputs that must be transcoded.
-
 ## Building
 
 ```sh
@@ -26,19 +23,6 @@ cargo build --release        # → target/release/tvpipe
 You need Rust 1.85 or newer and a C toolchain for `ring`. For general file
 and capture input, put `ffmpeg` (and `ffprobe`) in `PATH`, or pass
 `--ffmpeg PATH` or set `$TVPIPE_FFMPEG`.
-
-Platform notes:
-
-- Windows: AirPlay receivers send timing requests to UDP ports tvpipe
-  opens, so Windows Firewall may ask to allow tvpipe the first time; allow
-  it on private networks. Pipe SLRW game input from `cmd.exe`, a program
-  that spawns tvpipe, or PowerShell 7.4+; older PowerShell re-encodes
-  binary pipes between programs.
-- ffmpeg 6 or newer (tested with 6.1, 7.1 and 8.1). The first frames of
-  SLRW input are dropped while ffmpeg starts (about 0.3 s with Debian's
-  ffmpeg 7.1).
-- `scripts/cross-check.sh` runs clippy for the Windows targets and builds
-  a Windows `.exe` from macOS or Linux with zig as the C toolchain.
 
 ## Quick start
 
@@ -110,13 +94,12 @@ tvpipe share --to TV --open
 
 `share` serves a page on 127.0.0.1 that captures with the browser
 (`getDisplayMedia`) and encodes H.264 with WebCodecs (Chrome, Edge, Safari
-16.4+, Firefox 130+); no ffmpeg involved. Tick "share audio" in Chrome's
-picker for sound. The stream takes the TV's screen shape with the capture
-centered (black bars), at the capture's size up to what the TV allows.
-Stopping the share or closing the page ends the session. Protocol:
-`docs/share-protocol.md`.
+16.4+, Firefox 130+).  Tick "share audio" in Chrome's picker for sound.  The
+stream takes the TV's screen shape with the capture centered (black bars), at
+the capture's size up to what the TV allows.  Stopping the share or closing the
+page ends the session.
 
-### Playing in a browser (`--to browser`, `preview`)
+### Playing To A Browser (`--to browser`, `preview`)
 
 ```sh
 # Preview a file, a capture or the test pattern (no INPUT) in a browser tab
@@ -127,34 +110,30 @@ tvpipe preview --open
 tvpipe play --to "Living Room" --to browser movie.mp4
 ```
 
-`--to browser` is a receiver like a TV: tvpipe serves a player page on
-127.0.0.1 and prints its URL (`--open` opens it). The URL stays the same
-across runs (port 8765 unless `--port` says otherwise, and a token kept in
-the config directory), so an open tab or an OBS source picks up the next
-run by itself; `--new-token` changes it, which locks out old URLs. If
-8765 is taken, tvpipe warns and uses another port for that run.
-The page decodes H.264 with WebCodecs and plays PCM with Web Audio
-(Chrome, Edge, Safari 16.4+, Firefox 130+), in step with the other
-receivers. Any number of tabs can watch; a tab that joins later starts at
-the next keyframe. Without a tab, the stream runs anyway (frames are
-dropped); `--wait-for-viewer` holds the start until a tab is open.
-`preview` is `play --to browser`.
+`--to browser` is a receiver like a TV: tvpipe serves a player page on 127.0.0.1
+and prints its URL (`--open` opens it in the default browser).  The URL stays
+the same across runs (port 8765 unless `--port` says otherwise, and a token kept
+in the config directory), so an open tab or an OBS source picks up the next run
+by itself.  Use `--new-token` to change it, which locks out old URLs.
 
-On the page: double-click or `F` for fullscreen, `S` for statistics
-(delay, frame rate, drops, the wallclock of the shown frame). The
-controls and the cursor hide when the mouse rests. Browsers start audio
-only after a click: click the page once (the "Click for sound" button).
-URL options: `&delay=MS` (the page's own playout delay), `&stats=1`,
-`&ui=0` (never any overlay).
+If 8765 is taken, tvpipe warns and uses another port for that run.  The page
+decodes H.264 with WebCodecs and plays PCM with Web Audio (Chrome, Edge, Safari
+16.4+, Firefox 130+), in step with the other receivers.  Any number of tabs can
+watch and a tab that joins later starts synchronized.
+
+Without a tab, the stream runs anyway but you can use `--wait-for-viewer` to
+defer the start until a tab is open.  `preview` is short for `play --to
+browser`.
+
+On the page: double-click or `F` for fullscreen, `S` for statistics (delay,
+frame rate, drops, the wallclock of the shown frame).  The controls and the
+cursor hide when the mouse rests.  Browsers start audio only after a click:
+click the page once (the "Click for sound" button).
 
 - **OBS:** add the URL as a browser source with `&ui=0`; "Control audio
-  via OBS" routes its sound into the mix (not yet tried with OBS itself).
+  via OBS" routes its sound into the mix.
 - **Video calls:** present the tab in Meet, Zoom or Teams (share the tab
-  with its audio); see `docs/meet.md`. A larger `&delay=` (e.g. 500)
-  trades latency for a steadier picture there.
-
-The delay is `--latency`, or the TVs' (300 ms with Cast) when there are
-any, else 100 ms. Protocol and design: `docs/player-protocol.md`.
+  with its audio).
 
 Useful `play` options:
 
@@ -183,8 +162,8 @@ Useful `play` options:
 - **Encoded game input:** a game that encodes H.264 itself never needs
   ffmpeg for video.
 
-Every other input is transcoded by ffmpeg. Run with `-v` to see which path
-was chosen and why.
+Every other input is transcoded by ffmpeg.  Run with `-v` to see which path was
+chosen and why.
 
 ### Game input (SLRW)
 
@@ -207,9 +186,8 @@ kind: 0 = end, 1 = raw video frame, 2 = interleaved PCM,
 - Encoded H.264: use `--raw-video WxH@FPS:h264` and send kinds 3 and 4. If
   the game also enables keyframe requests (kind 5), `tvpipe` writes the line
   `keyframe` to its stdout whenever a receiver needs a new IDR.
-- The full format is in `docs/decisions/0002-slrw.md` and
-  `docs/decisions/0008-slrw-encoded.md`.
 - `cargo run --example slrw-gen` is a working sample producer.
+- The full format is in [`docs/slrw.md`](docs/slrw.md).
 
 ## Configuration
 
