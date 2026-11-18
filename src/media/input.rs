@@ -1521,3 +1521,225 @@ mod tests {
         input.finish(true).unwrap();
     }
 }
+
+/// Experiments for docs/ffmpeg-optional.md: passthrough of ffmpeg-made
+/// files to a real Cast receiver (openscreen's, see
+/// `scripts/receivers/cast-receiver.sh`), frames sent in decode order.
+///
+/// ```sh
+/// STREAMLIB_PT_KIND=bframes STREAMLIB_PT_ORDER=pts \
+///     cargo test media::input::experiments -- --ignored --nocapture
+/// ```
+///
+/// - `STREAMLIB_CAST_ADDR` (default `127.0.0.1:8010`), `STREAMLIB_PT_SECS`
+///   (10).
+/// - `STREAMLIB_PT_KIND`: `bf0` (no B-frames), `bframes` (x264 `-bf 3`,
+///   B-pyramid), or `STREAMLIB_PT_FILE` for any MP4/MKV file.
+/// - `STREAMLIB_PT_ORDER`: the timestamp each frame carries: `pts` (its
+///   presentation time; the Cast sink keeps RTP timestamps increasing, so
+///   reordered frames get bumped ones) or `dts` (its decode time).
+/// - `STREAMLIB_PT_AUDIO=1`: also send the file's audio (AAC-LC for the
+///   generated files) if the receiver chose a matching codec;
+///   `STREAMLIB_PT_ADTS=1` wraps AAC access units in ADTS headers.
+#[cfg(test)]
+mod experiments {
+    use super::*;
+    use crate::cast::{connect, CastOptions};
+    use crate::types::{Sink, SinkStatus};
+    use crate::util::ratio::Ratio;
+
+    /// A 7-byte ADTS header (ISO/IEC 13818-7 §6.2, MPEG-4 ID, no CRC).
+    fn adts(asc: &[u8], au: &[u8]) -> Vec<u8> {
+        let (aot, _, ch, _) = passthrough::parse_asc(asc).unwrap();
+        let idx = ((asc[0] & 0x07) << 1) | (asc[1] >> 7);
+        let len = au.len() + 7;
+        let mut h = vec![
+            0xff,
+            0xf1,
+            (((aot - 1) as u8) << 6) | (idx << 2) | (ch >> 2),
+            ((ch & 3) << 6) | ((len >> 11) as u8 & 0x03),
+            (len >> 3) as u8,
+            (((len & 7) as u8) << 5) | 0x1f,
+            0xfc,
+        ];
+        h.extend_from_slice(au);
+        h
+    }
+
+    fn env(name: &str, default: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| default.into())
+    }
+
+    fn generate(kind: &str, secs: u32) -> PathBuf {
+        let (bin, _) = crate::media::ffmpeg::tests::real_ffmpeg().expect("ffmpeg");
+        let path = std::env::temp_dir().join(format!("streamlib-pt-{kind}-{secs}.mp4"));
+        let bf: &[&str] = match kind {
+            "bf0" => &["-bf", "0", "-tune", "zerolatency"],
+            "bframes" => &["-bf", "3", "-b-pyramid", "normal"],
+            other => panic!("unknown STREAMLIB_PT_KIND {other}"),
+        };
+        let ok = std::process::Command::new(bin)
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
+            .args(["-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi"])
+            .args(["-i", "sine=frequency=440:sample_rate=48000", "-t"])
+            .arg(secs.to_string())
+            .args(["-c:v", "libx264", "-preset", "veryfast", "-g", "60"])
+            .args(bf)
+            .args([
+                "-b:v", "3M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2",
+            ])
+            .arg(&path)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "ffmpeg failed");
+        path
+    }
+
+    #[test]
+    #[ignore = "needs a Cast receiver (scripts/receivers/cast-receiver.sh)"]
+    fn passthrough_to_cast_receiver() {
+        let addr: std::net::SocketAddr = env("STREAMLIB_CAST_ADDR", "127.0.0.1:8010")
+            .parse()
+            .unwrap();
+        let secs: u32 = env("STREAMLIB_PT_SECS", "10").parse().unwrap();
+        let order = env("STREAMLIB_PT_ORDER", "pts");
+        let path = match std::env::var("STREAMLIB_PT_FILE") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => generate(&env("STREAMLIB_PT_KIND", "bf0"), secs),
+        };
+        crate::log::set_level(Level::Debug);
+        let info = passthrough::probe(&path).unwrap();
+        eprintln!(
+            "file: {:?} {}x{}@{} reorders={} reorder_frames={:?} kbps={:?}",
+            info.video.codec,
+            info.video.width,
+            info.video.height,
+            info.video.fps,
+            info.reorders,
+            info.sps.as_ref().and_then(|s| s.max_num_reorder_frames),
+            info.video_kbps
+        );
+        let opts = CastOptions {
+            latency_ms: 400,
+            max_width: info.video.width,
+            max_height: info.video.height,
+            max_fps: Ratio::integer(30),
+            max_bitrate_kbps: 8000,
+            audio: env("STREAMLIB_PT_AUDIO", "0") == "1",
+            ..CastOptions::default()
+        };
+        let mut sink = connect(addr, "cast-receiver", &opts).expect("connect");
+        let caps = sink.capabilities().clone();
+        let verdict = passthrough::check(&info, &[("rx", &caps)], CheckOptions::default());
+        eprintln!("check: {verdict:?}");
+        let audio = info.audio.clone().filter(|a| {
+            caps.accepts_audio(&AudioFormat {
+                codec: a.codec,
+                sample_rate: a.sample_rate,
+                channels: a.channels,
+            })
+        });
+        eprintln!("audio: {:?}", audio.as_ref().map(|a| a.codec));
+        sink.start(&info.video, audio.as_ref()).expect("start");
+        let mut src = FileSource::open(&path).unwrap();
+        let start = Instant::now();
+        let (mut sent, mut dropped, mut reordered) = (0, 0, 0);
+        let mut last_pts = None;
+        let mut audio_frames = 0;
+        while let Some(f) = src.next_frame().unwrap() {
+            if f.frame.track != TrackKind::Video {
+                let Some(a) = &audio else { continue };
+                let due = start + ticks_to_duration(f.dts, a.sample_rate);
+                std::thread::sleep(due.saturating_duration_since(Instant::now()));
+                let data = if env("STREAMLIB_PT_ADTS", "0") == "1" {
+                    Arc::from(adts(&a.config, &f.frame.data))
+                } else {
+                    f.frame.data.clone()
+                };
+                let frame = EncodedFrame {
+                    track: TrackKind::Audio(AudioFamily::Cast),
+                    data,
+                    ..f.frame
+                };
+                if sink.push(&frame).unwrap() == SinkStatus::Accepted {
+                    audio_frames += 1;
+                }
+                continue;
+            }
+            // Frames leave in decode order at their decode time.
+            let due = start + ticks_to_duration(f.dts, VIDEO_CLOCK_RATE);
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+            if last_pts.is_some_and(|l| f.frame.pts < l) {
+                reordered += 1;
+            }
+            last_pts = Some(f.frame.pts);
+            let pts = if order == "dts" { f.dts } else { f.frame.pts };
+            match sink.push(&EncodedFrame { pts, ..f.frame }).unwrap() {
+                SinkStatus::Finished => panic!("receiver ended the session"),
+                SinkStatus::Dropped => dropped += 1,
+                SinkStatus::Accepted => sent += 1,
+            }
+        }
+        std::thread::sleep(Duration::from_millis(800));
+        eprintln!(
+            "sent {sent}, dropped {dropped}, out of presentation order {reordered}, \
+             audio {audio_frames}; sink stats {:?}",
+            sink.stats()
+        );
+        sink.stop().unwrap();
+    }
+
+    /// Checks a recorded encoded-SLRW stream (e.g. from
+    /// `slrw-gen --encoded > x.slrw`): `STREAMLIB_SLRW_FILE=x.slrw
+    /// STREAMLIB_SLRW_VIDEO=640x360@30:h264 [STREAMLIB_SLRW_AUDIO=48000:2:s16le]`.
+    #[test]
+    #[ignore = "needs STREAMLIB_SLRW_FILE"]
+    fn slrw_encoded_file() {
+        let path = std::env::var("STREAMLIB_SLRW_FILE").expect("STREAMLIB_SLRW_FILE");
+        let video: RawVideoSpec = env("STREAMLIB_SLRW_VIDEO", "640x360@30:h264")
+            .parse()
+            .unwrap();
+        let audio: Option<RawAudioSpec> = std::env::var("STREAMLIB_SLRW_AUDIO")
+            .ok()
+            .map(|a| a.parse().unwrap());
+        let families = if audio.is_some() {
+            vec![(AudioFamily::AirPlay, AIRPLAY_PCM_FRAME_SAMPLES)]
+        } else {
+            vec![]
+        };
+        let file = std::fs::File::open(path).unwrap();
+        let mut input = SlrwEncodedInput::open(
+            std::io::BufReader::new(file),
+            EncodedOptions {
+                video,
+                audio,
+                audio_families: families,
+                back_channel: None,
+            },
+        )
+        .unwrap();
+        let v = &input.info().video;
+        eprintln!(
+            "video {}x{}@{} avcC {} bytes",
+            v.width,
+            v.height,
+            v.fps,
+            v.avcc.len()
+        );
+        let (mut video, mut keys, mut audio, mut last) = (0, 0, 0, 0);
+        while let Some(f) = input.next_frame().unwrap() {
+            if f.track == TrackKind::Video {
+                video += 1;
+                keys += f.keyframe as u32;
+                last = f.pts;
+            } else {
+                audio += 1;
+            }
+        }
+        eprintln!(
+            "{video} video frames ({keys} keyframes, last pts {:.3} s), {audio} audio frames",
+            last as f64 / 90_000.0
+        );
+        assert!(video > 0);
+    }
+}
