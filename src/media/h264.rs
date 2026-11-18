@@ -243,6 +243,33 @@ pub struct Sps {
     pub height: u32,
     /// `time_scale / (2 * num_units_in_tick)` from the VUI, if present.
     pub fps: Option<Ratio>,
+    /// VUI `max_num_reorder_frames` (frames that may precede another in
+    /// decode order and follow it in output order: 0 means no B-frame
+    /// reordering), when the SPS has `bitstream_restriction_flag`. `None`
+    /// when absent or when the VUI tail does not parse.
+    pub max_num_reorder_frames: Option<u32>,
+    /// VUI `max_dec_frame_buffering`, under the same conditions.
+    pub max_dec_frame_buffering: Option<u32>,
+}
+
+impl Sps {
+    /// Whether output order equals decode order, as far as the SPS says:
+    /// `max_num_reorder_frames == 0`, or a profile without B-slices
+    /// (Baseline / Constrained Baseline), or the inference of H.264
+    /// E.2.1 for intra-only profiles (constraint_set3_flag). `None` when
+    /// the SPS does not tell.
+    pub fn no_reordering(&self) -> Option<bool> {
+        if let Some(n) = self.max_num_reorder_frames {
+            return Some(n == 0);
+        }
+        let set3 = self.constraint_flags & 0x10 != 0;
+        if self.profile_idc == 66
+            || (set3 && matches!(self.profile_idc, 44 | 86 | 100 | 110 | 122 | 244))
+        {
+            return Some(true);
+        }
+        None
+    }
 }
 
 /// Profiles whose SPS carries chroma format / bit depth / scaling lists
@@ -389,10 +416,13 @@ pub fn parse_sps(nal: &[u8]) -> Result<Sps> {
         .map_err(|_| Error::malformed("h264 sps: width too large"))?;
     let height = u32::try_from(coded_h - crop_h)
         .map_err(|_| Error::malformed("h264 sps: height too large"))?;
-    let fps = if br.flag()? {
-        parse_vui_fps(&mut br)?
+    let (fps, restriction) = if br.flag()? {
+        let fps = parse_vui_fps(&mut br)?;
+        // The rest of the VUI only adds information; a stream whose tail
+        // we cannot read keeps its size and rate.
+        (fps.0, parse_vui_tail(&mut br, fps.1).ok().flatten())
     } else {
-        None
+        (None, None)
     };
     Ok(Sps {
         profile_idc,
@@ -407,11 +437,15 @@ pub fn parse_sps(nal: &[u8]) -> Result<Sps> {
         width,
         height,
         fps,
+        max_num_reorder_frames: restriction.map(|r| r.0),
+        max_dec_frame_buffering: restriction.map(|r| r.1),
     })
 }
 
-/// Reads the VUI up to the timing info (H.264 E.1.1).
-fn parse_vui_fps(br: &mut BitReader<'_>) -> Result<Option<Ratio>> {
+/// Reads the VUI up to and including the timing info (H.264 E.1.1).
+/// Returns the frame rate and whether the reader stands right after the
+/// timing info (so [`parse_vui_tail`] can go on).
+fn parse_vui_fps(br: &mut BitReader<'_>) -> Result<(Option<Ratio>, bool)> {
     if br.flag()? {
         // aspect_ratio_info_present_flag
         if br.u(8)? == 255 {
@@ -437,20 +471,77 @@ fn parse_vui_fps(br: &mut BitReader<'_>) -> Result<Option<Ratio>> {
         br.ue()?;
     }
     if !br.flag()? {
-        return Ok(None);
+        return Ok((None, true));
     }
     let num_units_in_tick = br.u(32)? as u64;
     let time_scale = br.u(32)? as u64;
+    // fixed_frame_rate_flag; a stream that ends right here keeps its rate.
+    let at_tail = br.flag().is_ok();
     if num_units_in_tick == 0 || time_scale == 0 {
-        return Ok(None);
+        return Ok((None, at_tail));
     }
     let den = 2 * num_units_in_tick;
     let g = gcd(time_scale, den);
     let (num, den) = (time_scale / g, den / g);
-    Ok(match (u32::try_from(num), u32::try_from(den)) {
-        (Ok(num), Ok(den)) => Some(Ratio::new(num, den)),
-        _ => None,
-    })
+    Ok((
+        match (u32::try_from(num), u32::try_from(den)) {
+            (Ok(num), Ok(den)) => Some(Ratio::new(num, den)),
+            _ => None,
+        },
+        at_tail,
+    ))
+}
+
+/// Skips hrd_parameters() (H.264 E.1.2).
+fn skip_hrd(br: &mut BitReader<'_>) -> Result<()> {
+    let cpb_cnt = br.ue()? as u64 + 1;
+    if cpb_cnt > 32 {
+        return Err(Error::malformed("h264 sps: cpb_cnt_minus1 out of range"));
+    }
+    br.u(8)?; // bit_rate_scale, cpb_size_scale
+    for _ in 0..cpb_cnt {
+        br.ue()?;
+        br.ue()?;
+        br.flag()?;
+    }
+    br.u(20)?; // four 5-bit delay/offset lengths
+    Ok(())
+}
+
+/// Reads the VUI after the timing info: `(max_num_reorder_frames,
+/// max_dec_frame_buffering)` when bitstream_restriction_flag is set
+/// (H.264 E.1.1).
+fn parse_vui_tail(br: &mut BitReader<'_>, at_tail: bool) -> Result<Option<(u32, u32)>> {
+    if !at_tail {
+        return Ok(None);
+    }
+    let nal_hrd = br.flag()?;
+    if nal_hrd {
+        skip_hrd(br)?;
+    }
+    let vcl_hrd = br.flag()?;
+    if vcl_hrd {
+        skip_hrd(br)?;
+    }
+    if nal_hrd || vcl_hrd {
+        br.flag()?; // low_delay_hrd_flag
+    }
+    br.flag()?; // pic_struct_present_flag
+    if !br.flag()? {
+        return Ok(None);
+    }
+    br.flag()?; // motion_vectors_over_pic_boundaries_flag
+    for _ in 0..4 {
+        br.ue()?; // max_bytes_per_pic_denom .. log2_max_mv_length_vertical
+    }
+    let reorder = br.ue()?;
+    let buffering = br.ue()?;
+    if reorder > 16 || buffering > 16 {
+        return Err(Error::malformed(
+            "h264 sps: bitstream_restriction out of range",
+        ));
+    }
+    Ok(Some((reorder, buffering)))
 }
 
 /// The `avcC` record (AVCDecoderConfigurationRecord).
@@ -647,6 +738,41 @@ mod tests {
             // x264 signals the encoder's rate in the VUI.
             if fps.is_some() {
                 assert_eq!(fps, Some(b.str("encoder_fps").parse().unwrap()), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn reorder_vectors() {
+        let blocks = vectors::load("h264/reorder.txt");
+        assert!(blocks.len() >= 5);
+        for b in &blocks {
+            let name = b.name();
+            let sps = parse_sps(&b.hex("sps")).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let want = |k: &str| match b.str(k) {
+                "-" => None,
+                v => Some(v.parse::<u32>().unwrap()),
+            };
+            assert_eq!(
+                sps.max_num_reorder_frames,
+                want("max_num_reorder_frames"),
+                "{name}"
+            );
+            assert_eq!(
+                sps.max_dec_frame_buffering,
+                want("max_dec_frame_buffering"),
+                "{name}"
+            );
+            if let Some(n) = sps.max_num_reorder_frames {
+                assert_eq!(sps.no_reordering(), Some(n == 0), "{name}");
+            }
+        }
+        // Older vectors: all x264 without B-frame options but High
+        // profiles reorder; baseline never does.
+        for b in vectors::load("h264/sps.txt") {
+            let sps = parse_sps(&b.hex("sps")).unwrap();
+            if sps.profile_idc == 66 {
+                assert_eq!(sps.no_reordering(), Some(true));
             }
         }
     }
