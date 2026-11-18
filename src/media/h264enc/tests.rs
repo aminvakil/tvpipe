@@ -271,6 +271,86 @@ fn cropped_multislice_matches_ffmpeg() {
 }
 
 #[test]
+fn long_sequence_wraps_frame_num() {
+    // > 256 frames (frame_num wraps), periodic IDRs (idr_pic_id changes),
+    // rate control on.
+    let c = Config {
+        gop: 100,
+        qp: None,
+        bitrate_kbps: 300,
+        ..cfg(48, 32, 0)
+    };
+    roundtrip("long", c, Tools::default(), 300, &[7, 8]);
+}
+
+#[test]
+fn keyframes_on_request_and_gop() {
+    let c = Config {
+        gop: 5,
+        ..cfg(32, 32, 30)
+    };
+    let mut enc = Encoder::new(c).unwrap();
+    let f = synth(32, 32, 0);
+    let kinds: Vec<bool> = (0..12)
+        .map(|i| {
+            if i == 7 {
+                enc.request_keyframe();
+            }
+            enc.encode(&f, i == 2).unwrap().keyframe
+        })
+        .collect();
+    let idx: Vec<usize> = (0..12).filter(|&i| kinds[i]).collect();
+    assert_eq!(idx, vec![0, 2, 7]);
+    let mut enc = Encoder::new(Config {
+        gop: 4,
+        ..cfg(32, 32, 30)
+    })
+    .unwrap();
+    let k: Vec<usize> = (0..10)
+        .filter(|_| enc.encode(&f, false).unwrap().keyframe)
+        .collect();
+    assert_eq!(k, vec![0, 4, 8]);
+}
+
+#[test]
+fn rate_control_hits_target() {
+    let (w, h) = (160u32, 96u32);
+    let frames: Vec<_> = (0..40).map(|t| synth(w, h, t)).collect();
+    for kbps in [250u32, 800] {
+        let mut enc = Encoder::new(Config {
+            width: w,
+            height: h,
+            fps: Ratio::integer(30),
+            bitrate_kbps: kbps,
+            threads: 2,
+            ..Config::default()
+        })
+        .unwrap();
+        let n = frames.len();
+        let mut bits = 0usize;
+        let mut max_p = 0usize;
+        for f in &frames {
+            let au = enc.encode(f, false).unwrap();
+            bits += au.data.len() * 8;
+            if !au.keyframe {
+                max_p = max_p.max(au.data.len() * 8);
+            }
+        }
+        let rate = bits as f64 / (n as f64 / 30.0) / 1000.0;
+        let avg = kbps as f64 * 1000.0 / 30.0;
+        eprintln!(
+            "rc {kbps}k: {rate:.0} kbit/s, max P {:.2}x",
+            max_p as f64 / avg
+        );
+        assert!(
+            (rate / kbps as f64 - 1.0).abs() < 0.15,
+            "{kbps}k: got {rate:.0}"
+        );
+        assert!((max_p as f64) < 2.5 * avg, "P frame {max_p} bits");
+    }
+}
+
+#[test]
 fn rejects_bad_input() {
     assert!(Encoder::new(Config {
         width: 33,
@@ -396,5 +476,110 @@ fn ffprobe_accepts_stream() {
         "color_range=\"tv\"",
     ] {
         assert!(out.contains(want), "missing {want} in {out}");
+    }
+}
+
+/// Raw I420 frames from an ffmpeg lavfi source.
+pub(crate) fn lavfi_frames(ff: &PathBuf, src: &str, w: u32, h: u32, n: u32) -> Vec<Yuv420Frame> {
+    let out = tmp_path(&format!("lavfi-{}.yuv", src.len()));
+    let o = Command::new(ff)
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!(
+            "{src}{}size={w}x{h}:rate=60",
+            if src.contains('=') { ":" } else { "=" }
+        ))
+        .args([
+            "-frames:v",
+            &n.to_string(),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let data = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+    let fs = (w * h * 3 / 2) as usize;
+    data.chunks_exact(fs)
+        .map(|c| Yuv420Frame::from_i420(w, h, c).unwrap())
+        .collect()
+}
+
+/// Quality report on lavfi content:
+/// `cargo test --release -- --ignored --nocapture bench_quality`.
+#[test]
+#[ignore]
+fn bench_quality() {
+    let Some(ff) = ffmpeg() else { return };
+    let (w, h) = (1280u32, 720u32);
+    for src in ["testsrc2", "mandelbrot", "cellauto=rule=110", "smptehdbars"] {
+        let frames = lavfi_frames(&ff, src, w, h, 120);
+        for kbps in [2000u32, 4000, 8000, 16000] {
+            let mut enc = Encoder::new(Config {
+                width: w,
+                height: h,
+                fps: Ratio::integer(60),
+                bitrate_kbps: kbps,
+                threads: 0,
+                ..Config::default()
+            })
+            .unwrap();
+            let mut bytes = 0;
+            let mut ps = 0.0;
+            let mut max_frame = 0;
+            let start = std::time::Instant::now();
+            for f in &frames {
+                let au = enc.encode(f, false).unwrap();
+                bytes += au.data.len();
+                max_frame = max_frame.max(au.data.len());
+                ps += psnr(&f.y, &enc.recon().unwrap().y);
+            }
+            let el = start.elapsed().as_secs_f64();
+            let secs = frames.len() as f64 / 60.0;
+            let avg = bytes as f64 / frames.len() as f64;
+            eprintln!(
+                "{src:>18} {kbps:>5}k: {:>6.0} kbit/s ({:+.1}%), PSNR-Y {:.2} dB, max frame {:.1}x avg, {:.0} fps",
+                bytes as f64 * 8.0 / secs / 1000.0,
+                (bytes as f64 * 8.0 / secs / 1000.0 / kbps as f64 - 1.0) * 100.0,
+                ps / frames.len() as f64,
+                max_frame as f64 / avg,
+                frames.len() as f64 / el
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn bench_trace() {
+    let Some(ff) = ffmpeg() else { return };
+    let src = std::env::var("H264ENC_SRC").unwrap_or("cellauto=rule=110".into());
+    let kbps: u32 = std::env::var("H264ENC_KBPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4000);
+    let (w, h) = (1280u32, 720u32);
+    let frames = lavfi_frames(&ff, &src, w, h, 60);
+    let mut enc = Encoder::new(Config {
+        width: w,
+        height: h,
+        bitrate_kbps: kbps,
+        threads: 0,
+        ..Config::default()
+    })
+    .unwrap();
+    for (i, f) in frames.iter().enumerate() {
+        let au = enc.encode(f, false).unwrap();
+        eprintln!(
+            "{i:>3} {} qp {:>2} {:>7} bits psnr {:.2} stats {:?}",
+            if au.keyframe { "I" } else { "P" },
+            au.qp,
+            au.data.len() * 8,
+            psnr(&f.y, &enc.recon().unwrap().y),
+            enc.last_stats()
+        );
     }
 }
