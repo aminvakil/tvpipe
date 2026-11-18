@@ -9,6 +9,7 @@ pub mod debug;
 pub mod fanout;
 pub mod ffmpeg;
 pub mod h264;
+pub mod input;
 pub mod mkv;
 pub mod mp4;
 pub mod passthrough;
