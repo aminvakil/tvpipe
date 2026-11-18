@@ -312,16 +312,28 @@ fn push_inputs(
             realtime,
             looped,
         } => {
-            if *realtime {
-                push_realtime(a, probe);
+            // A paced local file with audio is opened twice, once per
+            // stream: `-re` paces each input as a whole, and with files
+            // whose audio is interleaved far from the video (QuickTime
+            // screen recordings put audio ~1 s behind in multi-second
+            // chunks) the reader stalls on one stream while it is ahead
+            // on the other; ffmpeg then lags and never catches up (about
+            // 0.88x real time). Separate inputs pace independently.
+            let split = *realtime
+                && plan.is_some_and(|p| !p.audio.is_empty())
+                && std::path::Path::new(url).is_file();
+            for _ in 0..if split { 2 } else { 1 } {
+                if *realtime {
+                    push_realtime(a, probe);
+                }
+                if *looped {
+                    a.extend(["-stream_loop", "-1"]);
+                }
+                a.extend(LOW_DELAY_INPUT).push("-i").push(url);
             }
-            if *looped {
-                a.extend(["-stream_loop", "-1"]);
-            }
-            a.extend(LOW_DELAY_INPUT).push("-i").push(url);
             Ok(InputMaps {
                 video: "0:v:0".into(),
-                audio: Some("0:a:0?".into()),
+                audio: Some(if split { "1:a:0?" } else { "0:a:0?" }.into()),
                 video_fps: None,
             })
         }
@@ -1039,6 +1051,39 @@ pub(crate) mod tests {
              -max_interleave_delta 0 -muxdelay 0 -muxpreload 0 -f matroska -live 1 \
              -cluster_time_limit 0 -flush_packets 1 pipe:1"
         );
+    }
+
+    /// A paced local file with audio is opened twice so each stream is
+    /// paced on its own (badly interleaved files made `-re` lag).
+    #[test]
+    fn paced_local_file_opens_one_input_per_stream() {
+        let dir = std::env::temp_dir().join(format!("streamlib-ffmpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("movie.mov");
+        std::fs::write(&file, b"x").unwrap();
+        let src = |realtime| Source::Url {
+            url: file.clone().into_os_string(),
+            realtime,
+            looped: true,
+        };
+        let inv = build(&src(true), Output::Encode(&plan()), &probe(), "warning").unwrap();
+        let j = joined(&inv);
+        assert_eq!(j.matches(" -i ").count(), 2, "{j}");
+        assert_eq!(
+            j.matches("-re -readrate_initial_burst 0.001 -stream_loop -1")
+                .count(),
+            2
+        );
+        assert!(j.contains("-map 0:v:0 "), "{j}");
+        assert_eq!(j.matches("-map 1:a:0? ").count(), 2, "{j}");
+        // Not paced, or video only: one input as before.
+        let inv = build(&src(false), Output::Encode(&plan()), &probe(), "warning").unwrap();
+        assert_eq!(joined(&inv).matches(" -i ").count(), 1);
+        let mut video_only = plan();
+        video_only.audio.clear();
+        let inv = build(&src(true), Output::Encode(&video_only), &probe(), "warning").unwrap();
+        assert_eq!(joined(&inv).matches(" -i ").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
