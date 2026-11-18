@@ -930,3 +930,328 @@ impl<S: ControlStream> Drop for MirrorSink<S> {
         let _ = self.stop();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::airplay::fake_mirror::{Behaviour, FakeMirror, CLOCK_ID};
+    use crate::codec::bplist::Plist;
+    use crate::net::rtsp::RtspClient;
+    use crate::util::vectors;
+
+    fn connect(fake: &FakeMirror, opts: &MirrorOptions) -> MirrorSink<TcpStream> {
+        let tcp = TcpStream::connect(fake.addr).unwrap();
+        let s = Session::establish(
+            RtspClient::new(tcp),
+            fake.addr,
+            fake.secret.clone(),
+            true,
+            opts,
+        )
+        .map_err(SetupError::into_error)
+        .unwrap();
+        MirrorSink::new("fake".into(), s, opts)
+    }
+
+    fn avcc() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let b = vectors::load("airplay-mirror/video.txt")
+            .into_iter()
+            .find(|b| b.name() == "avcC record for codec packet")
+            .unwrap();
+        let (sps, pps) = (b.hex("sps"), b.hex("pps"));
+        let mut rec = vec![1, sps[1], sps[2], sps[3], 0xff, 0xe1];
+        rec.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+        rec.extend_from_slice(&sps);
+        rec.push(1);
+        rec.extend_from_slice(&(pps.len() as u16).to_be_bytes());
+        rec.extend_from_slice(&pps);
+        (rec, sps, pps)
+    }
+
+    fn nal(bytes: &[u8]) -> Vec<u8> {
+        [&(bytes.len() as u32).to_be_bytes()[..], bytes].concat()
+    }
+
+    fn video_info() -> VideoInfo {
+        VideoInfo {
+            codec: VideoCodec::H264,
+            width: 1920,
+            height: 1080,
+            fps: Ratio::integer(30),
+            avcc: avcc().0,
+        }
+    }
+
+    fn audio_info() -> AudioInfo {
+        AudioInfo {
+            codec: AudioCodec::PcmS16le,
+            sample_rate: 44_100,
+            channels: 2,
+            frame_samples: 352,
+            config: Vec::new(),
+        }
+    }
+
+    fn video(i: u64, sps: &[u8], pps: &[u8]) -> EncodedFrame {
+        let idr = i % 15 == 0;
+        let data = if idr {
+            [
+                nal(&[0x09, 0xf0]),
+                nal(sps),
+                nal(pps),
+                nal(&[0x65, 0x88, i as u8]),
+            ]
+            .concat()
+        } else {
+            [nal(&[0x09, 0xf0]), nal(&[0x41, 0x9a, i as u8])].concat()
+        };
+        EncodedFrame {
+            track: TrackKind::Video,
+            pts: i * 3000,
+            keyframe: idr,
+            data: data.into(),
+        }
+    }
+
+    fn pcm(i: u64) -> Vec<u8> {
+        (0..352 * 2)
+            .flat_map(|s| ((s as i16).wrapping_mul(i as i16 + 1)).to_le_bytes())
+            .collect()
+    }
+
+    fn audio(i: u64) -> EncodedFrame {
+        EncodedFrame {
+            track: TrackKind::Audio(AudioFamily::AirPlay),
+            pts: i * 352,
+            keyframe: true,
+            data: pcm(i).into(),
+        }
+    }
+
+    fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
+        let until = Instant::now() + Duration::from_secs(5);
+        while !f() {
+            assert!(Instant::now() < until, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Streams 1.3 s of 30 fps video and audio to the fake receiver.
+    fn stream(sink: &mut MirrorSink<TcpStream>, frames: u64) -> Vec<SinkStatus> {
+        let (_, sps, pps) = avcc();
+        let t0 = Instant::now();
+        let mut out = Vec::new();
+        let mut a = 0u64;
+        for i in 0..frames {
+            let due = t0 + Duration::from_micros(i * 33_333);
+            if let Some(d) = due.checked_duration_since(Instant::now()) {
+                std::thread::sleep(d);
+            }
+            out.push(sink.push(&video(i, &sps, &pps)).unwrap());
+            // Audio up to this video frame's time.
+            while a * 352 * 90_000 / 44_100 <= i * 3000 {
+                out.push(sink.push(&audio(a)).unwrap());
+                a += 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn streams_to_fake_receiver() {
+        let fake = FakeMirror::start(Behaviour::default());
+        let opts = MirrorOptions::default();
+        let mut sink = connect(&fake, &opts);
+        let caps = sink.capabilities().clone();
+        assert_eq!((caps.max_width, caps.max_height), (1280, 720));
+        assert_eq!(caps.audio_formats.len(), 1);
+        assert_eq!(caps.audio_family, AudioFamily::AirPlay);
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        let statuses = stream(&mut sink, 40);
+        assert!(statuses.iter().all(|s| *s != SinkStatus::Finished));
+        wait_for("audio and video", || {
+            let r = fake.rec();
+            r.video.iter().filter(|p| p.kind == 0).count() == 40 && !r.retransmits.is_empty()
+        });
+        sink.stop().unwrap();
+        sink.stop().unwrap();
+
+        let r = fake.rec();
+        assert_eq!(
+            r.requests,
+            [
+                "GET /info",
+                &format!("SETUP rtsp://{}/{}", fake.addr, sink.session.audio_id),
+                "GET /info",
+                &format!("RECORD rtsp://{}/{}", fake.addr, sink.session.audio_id),
+                &format!("SETUP rtsp://{}/{}", fake.addr, sink.session.audio_id),
+                &format!("SETUP rtsp://{}/{}", fake.addr, sink.session.video_id),
+                "POST /feedback",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .chain(r.requests[7..].iter().cloned())
+            .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            r.requests.last().unwrap(),
+            &format!("TEARDOWN rtsp://{}/{}", fake.addr, sink.session.audio_id)
+        );
+        assert!(r.teardown);
+        assert_eq!(r.event_replies, 1);
+        assert!(r.setup_bodies[0].get("timingPeerInfo").is_some());
+
+        // Video: codec packet, then IDR at the same timestamp; strictly
+        // increasing timestamps; SPS/PPS/AUD stripped; heartbeat.
+        let (_, sps, pps) = avcc();
+        let v = &r.video;
+        assert_eq!(v[0].kind, 1);
+        assert_eq!(v[0].payload, avcc_record(&sps, &pps).unwrap());
+        assert_eq!((v[1].kind, v[1].idr, v[1].ts), (0, true, v[0].ts));
+        assert_eq!(v[1].payload, nal(&[0x65, 0x88, 0]));
+        assert_eq!(v[1].timeline, CLOCK_ID);
+        let frames: Vec<&crate::airplay::fake_mirror::VideoPacket> =
+            v.iter().filter(|p| p.kind == 0).collect();
+        assert!(frames.windows(2).all(|w| w[1].ts > w[0].ts));
+        assert_eq!(frames[1].payload, nal(&[0x41, 0x9a, 1]));
+        assert!(!frames[1].idr && frames[15].idr);
+        // In-band SPS equal to the avcC one: no second codec packet.
+        assert_eq!(v.iter().filter(|p| p.kind == 1).count(), 1);
+        assert!(v.iter().any(|p| p.kind == 2), "heartbeat");
+        // ~33 ms apart on the receiver's timeline (PTP anchored at the
+        // SETUP headers: 1201707.448 s).
+        let dt = frames[30].ts - frames[0].ts;
+        let secs = dt as f64 / 4_294_967_296.0;
+        assert!((0.9..1.2).contains(&secs), "{secs}");
+        assert!(frames[0].ts >> 32 >= 1_201_707);
+
+        // Audio: sequence from 1, RTP from 352, verbatim ALAC of our PCM.
+        let a = &r.audio;
+        assert!(a.len() > 20, "{}", a.len());
+        assert_eq!((a[0].0, a[0].1), (1, 352));
+        assert_eq!(a[1].1 - a[0].1, 352);
+        assert_eq!(a[0].2.len(), 1416);
+        // First sync: X bit, PTP form, rtp_play = rtp_now - 3748.
+        assert_eq!(&r.sync[0][..4], &[0x90, 0xd7, 0, 4]);
+        let play = u32::from_be_bytes(r.sync[0][4..8].try_into().unwrap());
+        assert_eq!(play, 352u32.wrapping_sub(3748));
+        assert_eq!(&r.sync[0][20..28], &CLOCK_ID.to_be_bytes());
+        assert!(r.sync.len() >= 2 && r.sync[1][0] == 0x80);
+        // Retransmit answers for seq 1 and 2 carry the stored PT 96 copies.
+        assert_eq!(r.retransmits.len(), 2);
+        for (i, p) in r.retransmits.iter().enumerate() {
+            assert_eq!(&p[..4], &[0x80, 0xd6, 0, 9]);
+            assert_eq!(p[5], 96);
+            assert_eq!(u16::from_be_bytes([p[6], p[7]]), i as u16 + 1);
+        }
+    }
+
+    #[test]
+    fn audio_payload_is_verbatim_alac() {
+        let fake = FakeMirror::start(Behaviour {
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 10);
+        wait_for("audio", || fake.rec().audio.len() >= 5);
+        sink.stop().unwrap();
+        let r = fake.rec();
+        // Audio before the first video frame is dropped, so find the first
+        // sent frame among the pushed ones; the rest follow in order.
+        let first = (0..20u64)
+            .find(|&src| alac_verbatim(&pcm(src), 2).unwrap() == r.audio[0].2)
+            .expect("ALAC payload of a pushed frame");
+        for (k, (seq, ts, payload)) in r.audio.iter().take(5).enumerate() {
+            assert_eq!(*seq as usize, k + 1);
+            assert_eq!(*ts, 352 * (k as u32 + 1));
+            assert_eq!(*payload, alac_verbatim(&pcm(first + k as u64), 2).unwrap());
+        }
+    }
+
+    #[test]
+    fn receiver_closing_data_finishes() {
+        let fake = FakeMirror::start(Behaviour {
+            close_after_packets: Some(3),
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), None).unwrap();
+        let (_, sps, pps) = avcc();
+        let mut finished = false;
+        for i in 0..200 {
+            match sink.push(&video(i, &sps, &pps)) {
+                Ok(SinkStatus::Finished) | Err(_) => {
+                    finished = true;
+                    break;
+                }
+                _ => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        assert!(finished);
+        sink.stop().unwrap();
+    }
+
+    #[test]
+    fn media_first_ordering() {
+        let fake = FakeMirror::start(Behaviour {
+            refuse_session_setup: Some(455),
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let opts = MirrorOptions::default();
+        let mut sink = connect(&fake, &opts);
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 5);
+        sink.stop().unwrap();
+        let r = fake.rec();
+        let audio_uri = format!("rtsp://{}/{}", fake.addr, sink.session.audio_id);
+        assert_eq!(
+            r.requests[..6],
+            [
+                "GET /info".to_string(),
+                format!("SETUP {audio_uri}"),
+                format!("SETUP {audio_uri}"),
+                "GET /info".into(),
+                format!("SETUP rtsp://{}/{}", fake.addr, sink.session.video_id),
+                format!("RECORD {audio_uri}"),
+            ]
+        );
+        // The media-first SETUP carries the session and the stream.
+        let mf = &r.setup_bodies[1];
+        assert!(mf.get("sessionUUID").is_some() && mf.get("streams").is_some());
+        assert!(mf.get("updateSessionRequest").is_none());
+        assert!(r.video.iter().any(|p| p.kind == 0));
+    }
+
+    #[test]
+    fn ntp_session() {
+        let fake = FakeMirror::start(Behaviour {
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let opts = MirrorOptions {
+            ptp: false,
+            ..MirrorOptions::default()
+        };
+        let mut sink = connect(&fake, &opts);
+        assert!(matches!(sink.session.timeline, Timeline::Ntp));
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 5);
+        wait_for("sync", || !fake.rec().sync.is_empty());
+        sink.stop().unwrap();
+        let r = fake.rec();
+        assert_eq!(
+            r.setup_bodies[0]
+                .get("timingProtocol")
+                .and_then(Plist::as_str),
+            Some("NTP")
+        );
+        assert!(r.setup_bodies[0].get("timingPort").is_some());
+        assert_eq!(&r.sync[0][..2], &[0x90, 0xd4]);
+        assert_eq!(r.sync[0].len(), 20);
+        let f = r.video.iter().find(|p| p.kind == 0).unwrap();
+        assert_eq!(f.timeline, 0);
+    }
+}

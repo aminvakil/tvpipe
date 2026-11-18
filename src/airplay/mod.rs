@@ -8,6 +8,7 @@ pub mod credentials;
 pub mod discovery;
 pub mod events;
 pub mod fairplay;
+pub mod fake_mirror;
 pub mod info;
 pub mod keys;
 pub mod mirror;
