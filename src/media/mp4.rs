@@ -132,6 +132,9 @@ pub struct Track {
     /// Audio: sample rate and channel count from the sample entry.
     pub sample_rate: u32,
     pub channels: u16,
+    /// `tkhd` display matrix (a, b, u, c, d, v, x, y, w; 16.16 and 2.30
+    /// fixed point). Phones rotate video with it.
+    pub matrix: [i32; 9],
     /// Edit list as stored.
     pub edits: Vec<Edit>,
     /// Added to every dts/pts: leading empty edits minus the first edit's
@@ -148,7 +151,22 @@ pub struct Track {
     defaults: Defaults,
 }
 
+/// The `tkhd` identity matrix.
+pub const IDENTITY_MATRIX: [i32; 9] = [0x1_0000, 0, 0, 0, 0x1_0000, 0, 0, 0, 0x4000_0000];
+
 impl Track {
+    /// Whether the display matrix only translates (no rotation, flip or
+    /// scaling).
+    pub fn matrix_is_identity(&self) -> bool {
+        self.matrix[..2] == IDENTITY_MATRIX[..2] && self.matrix[3..5] == IDENTITY_MATRIX[3..5]
+    }
+
+    /// Edits that are not leading empty edits; more than one means the
+    /// file is cut (we play the media as is).
+    pub fn media_edits(&self) -> usize {
+        self.edits.iter().filter(|e| e.media_time != -1).count()
+    }
+
     /// Seconds of media, if known.
     pub fn duration_secs(&self) -> Option<f64> {
         (self.timescale > 0 && self.duration > 0)
@@ -815,6 +833,7 @@ fn parse_trak(body: &[u8], movie_timescale: u32) -> Result<Option<Track>> {
     let mut id = 0;
     let mut edits = Vec::new();
     let mut mdia = None;
+    let mut matrix = IDENTITY_MATRIX;
     for b in boxes(body) {
         let (typ, body) = b?;
         match &typ {
@@ -822,6 +841,13 @@ fn parse_trak(body: &[u8], movie_timescale: u32) -> Result<Option<Track>> {
                 let (v, _, mut r) = full_box(body, "mp4 tkhd")?;
                 r.skip(if v == 1 { 16 } else { 8 })?;
                 id = r.u32_be()?;
+                // reserved, duration, reserved[2], layer, alternate_group,
+                // volume, reserved; then the 3x3 display matrix.
+                r.skip(if v == 1 { 4 + 8 } else { 4 + 4 })?;
+                r.skip(16)?;
+                for m in matrix.iter_mut() {
+                    *m = r.i32_be()?;
+                }
             }
             b"edts" => {
                 if let Some(elst) = child(body, b"elst")? {
@@ -888,6 +914,7 @@ fn parse_trak(body: &[u8], movie_timescale: u32) -> Result<Option<Track>> {
         height: entry.height,
         sample_rate: entry.sample_rate,
         channels: entry.channels,
+        matrix,
         time_offset: edit_offset(&edits, movie_timescale, timescale),
         edits,
         sample_count: table.sizes.count() as u64,
@@ -1499,11 +1526,41 @@ mod tests {
         assert!(matches!(v.codec, Codec::Avc { avcc: Some(_) }));
         assert!(!v.reorders);
         assert!(!d.is_fragmented());
+        assert!(v.matrix_is_identity());
+        assert_eq!(v.media_edits(), 1);
         let a = &d.tracks()[1];
         let Codec::Aac { asc } = &a.codec else {
             panic!("{:?}", a.codec)
         };
         assert_eq!(asc[0] >> 3, 2, "AAC-LC");
+    }
+
+    #[test]
+    fn rotated_track() {
+        let tmp =
+            std::env::temp_dir().join(format!("streamlib-mp4-rot-{}.mp4", std::process::id()));
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-display_rotation",
+                "90",
+                "-i",
+            ])
+            .arg(vectors::path("tests/fixtures/media/bf0.mp4"))
+            .args(["-c", "copy"])
+            .arg(&tmp)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return;
+        }
+        let d = Demuxer::new(std::fs::File::open(&tmp).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+        assert!(!d.tracks()[0].matrix_is_identity());
+        assert!(d.tracks()[1].matrix_is_identity());
     }
 
     #[test]
