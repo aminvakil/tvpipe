@@ -14,3 +14,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 [profile.release]
 debug = 1
+
+# The real-time tests (built-in H.264/AAC encoders paced at 30 fps, fake
+# receivers counting frames) drop frames when unoptimized on loaded or slow
+# machines: CI runners, emulated x86_64, a busy laptop. Debug assertions and
+# overflow checks stay on.
+[profile.test]
+opt-level = 1
