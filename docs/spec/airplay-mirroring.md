@@ -667,13 +667,23 @@ Vectors: `keys.txt`.
   (ASCII prefix immediately followed by the decimal digits, then the raw
   16 key bytes.) The counter block increments as a 128-bit big-endian
   integer (standard CTR, as `crypto::aes` CTR). `shiv` is not an input.
-- **Audio AES-128-CBC**: key `K`, IV `eiv` (§8.3). No audio encryption if
-  FairPlay did not run.
+- **Audio AES-128-CBC**: key `K`, IV `eiv` (§8.3). No audio encryption if FairPlay did not run.
+- **Legacy profile without FairPlay** (feature 14 absent or `/fp-setup`
+  404) [REF, untested on any receiver]: `ekey`/`eiv`/`et` are not sent;
+  `shk` and `shiv` are 16 random bytes each, sent in the video descriptor
+  (the control connection is plaintext, so the receiver can read them);
+  video is still AES-128-CTR, derived as above from that random `shk`;
+  audio is sent in the clear. Failing the session instead is a defensible
+  choice until such a receiver is seen. This case never arises with HAP
+  pairing: an LG-style receiver that pairs over TLV8 has an encrypted
+  control channel and therefore uses the HAP column of §5.0 (ChaCha video
+  and audio), with or without FairPlay.
 
 ### 5.3 What to put in the video `shk`/`shiv`
 
 `shk = K`, `shiv = eiv` whenever FairPlay ran (both profiles). Without
-FairPlay the reference sends, in the HAP profile, the first 16 bytes of the
+FairPlay the reference sends, in the legacy profile, random values that
+also key the video (§5.2); in the HAP profile, the first 16 bytes of the
 control write key as `shk` and the first 16 bytes of the control read key
 as `shiv`, and two random 16-byte values with no pairing keys at all; these
 are placeholders that do not key anything in the HAP profile.
@@ -1337,8 +1347,11 @@ Open:
 ## Appendix A. Legacy (raw) pairing, for third-party receivers
 
 Receivers whose features lack all of bits 38/43/46/48, or that have bit 26
-or 51, use `X-Apple-HKP: 3` and may implement the original non-TLV
-protocol. Raw pair-verify requests carry `Content-Type: application/octet-stream`,
+or 51 ("legacy-preferring"), may implement the original non-TLV protocol;
+their TLV8 pairing requests (if any) use `X-Apple-HKP: 3`. The raw
+(non-TLV) requests below carry **no** `X-Apple-HKP` header at all; the
+modelled legacy receivers treat a missing header as type 3 [REF, MODEL].
+Raw pair-verify requests carry `Content-Type: application/octet-stream`,
 `User-Agent`, `X-Apple-ProtocolVersion: 1`, `X-Apple-PD: 1`, `CSeq` and
 `Content-Length`; no `X-Apple-Session-ID`.
 
@@ -1350,9 +1363,24 @@ protocol. Raw pair-verify requests carry `Content-Type: application/octet-stream
   Do it once and store the receiver key with the controller identity, like
   a HAP pairing; later connections only run raw pair-verify against the
   stored key. If a later connection does run raw pair-setup again, the
-  returned key must equal the stored one, else refuse the receiver. If raw
-  pair-setup fails, try TLV8 transient pair-setup with HKP 3; if that also
-  fails with 400/404/405/415/455/501, the receiver is not legacy.
+  returned key must equal the stored one, else refuse the receiver. If raw pair-setup fails, try TLV8 transient pair-setup; if that also
+fails with 400/404/405/415/455/501 before M2, the receiver is not legacy.
+
+TLV8 transient pair-setup, which `X-Apple-HKP` value [REF]:
+- legacy-preferring receivers (definition above, e.g. the LG model in
+  §10): `X-Apple-HKP: 3` on the transient pair-setup **and** on the
+  pair-verify that follows it, with no `X-Apple-Client-ID`/`-Name` and no
+  `X-Apple-PD`; the LG model rejects pair-setup whose HKP is not 3;
+- receivers with CoreUtils pairing bits and neither bit 26 nor 51 (Apple
+  receivers): `X-Apple-HKP: 4` (what W5 sends). The reference retries the
+  other value once if the first is refused with one of the statuses above
+  before M2.
+- SRP password for transient pair-setup: the reference uses the **empty**
+  password (its test receiver does the same), while streamlib (after
+  pyatv) uses `3939`. Which one real third-party receivers expect is
+  unverified; the dev Apple TV requires PIN pairing and could not settle
+  it. If a transient pair-setup fails at M4 with an authentication error,
+  retrying with the other password is cheap.
 - Raw pair-verify, two `POST /pair-verify` exchanges:
   - V1 (68 bytes): `01 00 00 00` ‖ sender X25519 ephemeral public key (32)
     ‖ sender Ed25519 public key (32).

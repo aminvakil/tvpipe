@@ -45,10 +45,33 @@ accepted it at protocol level.
    `X-Apple-HKP: 3`? The header lists for raw requests do not mention it,
    while the first paragraph says such receivers "use `X-Apple-HKP: 3`".
    [Not sent.]
+
+   **Answer (S2):** correct, not sent. The raw requests carry no
+   `X-Apple-HKP`; modelled legacy receivers treat its absence as type 3.
+   Only TLV8 pairing requests to such receivers use `X-Apple-HKP: 3`.
+   Spec: Appendix A (first paragraph).
 5. Appendix A: "try TLV8 transient pair-setup with HKP 3": streamlib's
    existing transient pair-setup sends `X-Apple-HKP: 4`. Which is right
    for third-party receivers? [Unchanged: the HAP fallback is W5's
    `pair::connect`.]
+
+   **Answer (S2):** both, depending on the receiver: HKP 4 for Apple
+   receivers (CoreUtils bits, no bit 26/51), HKP 3 for legacy-preferring
+   receivers (no CoreUtils bits, or bit 26/51, e.g. LG), on the transient
+   pair-setup and the pair-verify after it. It matters for LG-like TVs (the
+   model rejects non-3). The reference retries the other value once on an
+   early rejection. Also: the reference uses an empty SRP password for
+   transient pairing, streamlib uses `3939`; unverified which real
+   third-party receivers want. Spec: Appendix A ("TLV8 transient
+   pair-setup").
 6. §5.0/§5.2/§5.3: legacy profile **without** FairPlay (feature 14
    absent): is video sent in the clear, or AES-CTR keyed from the random
    `shk` we put in the video SETUP? [Session start fails with an error.]
+
+   **Answer (S2):** the reference sends random `shk`/`shiv` and AES-CTR
+   video keyed from that random `shk` (§5.2 derivation), with audio in the
+   clear; untested on any receiver, so failing is acceptable for now. It
+   does not apply to LG-like receivers that pair over HAP: their control
+   channel is encrypted, so they use ChaCha video/audio (§5.0 HAP column)
+   with or without FairPlay. Spec: §5.2 ("Legacy profile without
+   FairPlay"), §5.3.
