@@ -750,3 +750,68 @@ fn bench_fixed_qp() {
         );
     }
 }
+
+/// A fast pan over a still picture (`dx`, `dy` px per frame).
+pub(crate) fn pan_frames(
+    big: &Yuv420Frame,
+    w: u32,
+    h: u32,
+    n: u32,
+    dx: u32,
+    dy: u32,
+) -> Vec<Yuv420Frame> {
+    (0..n)
+        .map(|t| {
+            let (ox, oy) = ((t * dx) as usize, (t * dy) as usize);
+            let mut f = Yuv420Frame::new(w, h);
+            let bw = big.width as usize;
+            for y in 0..h as usize {
+                let sy = (y + oy).min(big.height as usize - 1);
+                for x in 0..w as usize {
+                    f.y[y * w as usize + x] = big.y[sy * bw + (x + ox).min(bw - 1)];
+                }
+            }
+            let (cw, bcw) = (f.chroma_width(), big.chroma_width());
+            for y in 0..f.chroma_height() {
+                let sy = (y + oy / 2).min(big.chroma_height() - 1);
+                for x in 0..cw {
+                    let sx = (x + ox / 2).min(bcw - 1);
+                    f.u[y * cw + x] = big.u[sy * bcw + sx];
+                    f.v[y * cw + x] = big.v[sy * bcw + sx];
+                }
+            }
+            f
+        })
+        .collect()
+}
+
+#[test]
+#[ignore]
+fn bench_pan() {
+    let Some(ff) = ffmpeg() else { return };
+    let big = lavfi_frames(&ff, "mandelbrot", 3840, 2160, 1).remove(0);
+    let (w, h) = (1280u32, 720u32);
+    let frames = pan_frames(&big, w, h, 60, 24, 10);
+    for qp in [26u8, 32] {
+        let mut enc = Encoder::new(Config {
+            width: w,
+            height: h,
+            qp: Some(qp),
+            threads: 1,
+            ..Config::default()
+        })
+        .unwrap();
+        let mut bytes = 0;
+        let mut ps = 0.0;
+        for f in &frames {
+            bytes += enc.encode(f, false).unwrap().data.len();
+            ps += psnr(&f.y, &enc.recon().unwrap().y);
+        }
+        eprintln!(
+            "pan qp {qp}: {:.2} dB {:.0} kbps stats {:?}",
+            ps / 60.0,
+            bytes as f64 * 8.0 / 1000.0,
+            enc.last_stats()
+        );
+    }
+}

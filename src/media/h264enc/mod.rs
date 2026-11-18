@@ -280,6 +280,9 @@ impl Encoder {
             Some(q) => q,
             None => self.rc.frame_qp(idr, &self.src),
         };
+        for s in &mut self.slices {
+            s.begin_picture();
+        }
         let mut tries = 0;
         let data = loop {
             let data = self.encode_pass(idr, qp);

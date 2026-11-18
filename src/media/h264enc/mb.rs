@@ -78,6 +78,8 @@ pub struct SliceEnc {
     pub mb_w: usize,
     pub rec: [Plane; 3],
     pub info: Vec<MbInfo>,
+    /// `info` of the previous picture (temporal motion candidates).
+    prev: Vec<MbInfo>,
     pub bw: BitWriter,
     pub stats: SliceStats,
 }
@@ -195,9 +197,16 @@ impl SliceEnc {
                 Plane::new(mb_w * 8, rows * 8, 0),
             ],
             info: vec![MbInfo::default(); mb_w * rows],
+            prev: vec![MbInfo::default(); mb_w * rows],
             bw: BitWriter::with_capacity(1 << 16),
             stats: SliceStats::default(),
         }
+    }
+
+    /// Call once per picture before [`encode`](SliceEnc::encode) (which may
+    /// run several times when rate control re-encodes).
+    pub fn begin_picture(&mut self) {
+        self.prev.clone_from(&self.info);
     }
 
     /// Encodes the slice; the RBSP (header + data + trailing bits) ends up
@@ -907,6 +916,17 @@ impl SliceEnc {
         for (dx, dy) in [(-1isize, 0isize), (0, -1), (1, -1)] {
             if let Some((0, m)) = self.nb_motion(mx as isize + dx, my as isize + dy) {
                 cands.push(m);
+            }
+        }
+        // Temporal candidates: the co-located macroblock and its right and
+        // lower neighbours in the previous picture.
+        for (dx, dy) in [(0usize, 0usize), (1, 0), (0, 1)] {
+            let (x, y) = (mx + dx, my + dy);
+            if x < self.mb_w && y < self.rows {
+                let p = &self.prev[y * self.mb_w + x];
+                if p.refi == 0 {
+                    cands.push([p.mv[0] as i32, p.mv[1] as i32]);
+                }
             }
         }
         let (mv, inter_cost) =
