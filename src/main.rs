@@ -8,6 +8,7 @@
 mod log;
 
 mod airplay;
+mod browser;
 mod cast;
 mod cli;
 mod codec;

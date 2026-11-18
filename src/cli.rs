@@ -19,6 +19,7 @@ enum Top {
     Unpair,
     Play,
     TestPattern,
+    Share,
     DebugPipeline,
 }
 
@@ -59,6 +60,18 @@ enum PlayArg {
 }
 
 #[derive(Copy, Clone)]
+enum ShareArg {
+    To,
+    Latency,
+    Size,
+    Fps,
+    Bitrate,
+    NoAudio,
+    Port,
+    Open,
+}
+
+#[derive(Copy, Clone)]
 enum PipelineArg {
     Raw,
     RawVideo,
@@ -85,6 +98,7 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::Unpair, &UNPAIR),
         Cmd::new(Top::Play, &PLAY),
         Cmd::new(Top::TestPattern, &TEST_PATTERN),
+        Cmd::new(Top::Share, &SHARE),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -215,6 +229,43 @@ static PLAY: Cli<PlayArg> = Cli::new("play")
 static TEST_PATTERN: Cli<PlayArg> = Cli::new("test-pattern")
     .about("Stream a test pattern with a burned-in wallclock for latency measurement")
     .opts(PLAY_OPTS);
+
+static SHARE: Cli<ShareArg> = Cli::new("share")
+    .about("Mirror a browser tab, window or screen (serves a capture page on 127.0.0.1)")
+    .opts(&[
+        to(ShareArg::To),
+        Opt::new(ShareArg::Latency)
+            .long("latency")
+            .value("MS")
+            .help("Playout delay in ms, the same on every receiver"),
+        Opt::new(ShareArg::Size)
+            .long("size")
+            .value("WxH")
+            .help("Output video size (default: the capture, at most 1920x1080)"),
+        Opt::new(ShareArg::Fps)
+            .long("fps")
+            .value("N")
+            .help("Output frame rate (default 30)"),
+        Opt::new(ShareArg::Bitrate)
+            .long("bitrate")
+            .value("KBPS")
+            .help("Video bitrate in kbit/s"),
+        Opt::new(ShareArg::NoAudio)
+            .long("no-audio")
+            .help("Do not capture audio"),
+        Opt::new(ShareArg::Port)
+            .long("port")
+            .value("PORT")
+            .help("Port of the page on 127.0.0.1 (default: any free one)"),
+        Opt::new(ShareArg::Open)
+            .long("open")
+            .help("Open the page in the default browser"),
+    ])
+    .after_help(
+        "Open the printed http://127.0.0.1 URL in a browser with WebCodecs (Chrome, Edge,\n\
+         Safari 16.4+, Firefox 130+) and press Share. Closing the page or stopping the\n\
+         share ends the session.",
+    );
 
 static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")
     .about("Run ffmpeg and the demuxer and print every frame")
@@ -353,6 +404,20 @@ pub struct PlayOptions {
     pub input: InputSpec,
 }
 
+/// `tvpipe share`.
+#[derive(Debug, Clone)]
+pub struct ShareOptions {
+    pub to: Vec<String>,
+    pub latency_ms: Option<u32>,
+    pub size: Option<Size>,
+    pub fps: Option<Ratio>,
+    pub bitrate_kbps: Option<u32>,
+    pub no_audio: bool,
+    /// 0: any free port.
+    pub port: u16,
+    pub open: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct PipelineOptions {
     pub raw: bool,
@@ -378,6 +443,7 @@ pub enum Command {
     },
     Play(PlayOptions),
     TestPattern(PlayOptions),
+    Share(ShareOptions),
     DebugPipeline(PipelineOptions),
 }
 
@@ -407,6 +473,7 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                     Command::TestPattern(parse_play(p.subcommand(&TEST_PATTERN), true)?),
                 ))
             }
+            Top::Share => return Ok((g, parse_share(p.subcommand(&SHARE))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -542,6 +609,35 @@ fn parse_play(mut p: Parser<PlayArg>, test_pattern: bool) -> Result<PlayOptions,
     Ok(o)
 }
 
+fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
+    let mut o = ShareOptions {
+        to: Vec::new(),
+        latency_ms: None,
+        size: None,
+        fps: None,
+        bitrate_kbps: None,
+        no_audio: false,
+        port: 0,
+        open: false,
+    };
+    while let Some(arg) = p.param()? {
+        match arg {
+            ShareArg::To => o.to.push(p.value()?),
+            ShareArg::Latency => o.latency_ms = Some(p.value()?),
+            ShareArg::Size => o.size = Some(p.value()?),
+            ShareArg::Fps => o.fps = Some(p.value()?),
+            ShareArg::Bitrate => o.bitrate_kbps = Some(p.value()?),
+            ShareArg::NoAudio => o.no_audio = true,
+            ShareArg::Port => o.port = p.value()?,
+            ShareArg::Open => o.open = true,
+        }
+    }
+    if o.to.is_empty() {
+        return Err(p.error("at least one --to NAME|ADDR is required"));
+    }
+    Ok(Command::Share(o))
+}
+
 fn parse_pipeline(mut p: Parser<PipelineArg>) -> Result<Command, Error> {
     let mut o = PipelineOptions {
         raw: false,
@@ -654,6 +750,33 @@ mod tests {
         };
         assert_eq!(o.encoder, Encoder::Builtin);
         assert_eq!(o.input, InputSpec::TestPattern);
+    }
+
+    #[test]
+    fn share_options() {
+        let (_, cmd) = parse_from(&[
+            "share",
+            "--to",
+            "Office TV",
+            "--to",
+            "cafe TV",
+            "--fps",
+            "60",
+            "--size",
+            "1280x720",
+            "--port",
+            "8123",
+            "--open",
+            "--no-audio",
+        ])
+        .unwrap();
+        let Command::Share(o) = cmd else { panic!() };
+        assert_eq!(o.to, ["Office TV", "cafe TV"]);
+        assert_eq!(o.fps, Some(Ratio::integer(60)));
+        assert_eq!((o.port, o.open, o.no_audio), (8123, true, true));
+        assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
+        assert!(parse_from(&["share"]).is_err());
+        assert!(parse_from(&["share", "--to", "tv", "--port", "70000"]).is_err());
     }
 
     #[test]

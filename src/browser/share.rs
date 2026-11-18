@@ -1,0 +1,725 @@
+//! `tvpipe share`: the page server and the input it feeds (decision 0012,
+//! option C; protocol in docs/share-protocol.md).
+//!
+//! [`ShareServer`] serves the share page and `capture.js` on 127.0.0.1
+//! and accepts the page's WebSocket at `/ws`. Every request must carry
+//! the session's random token (`?t=`) and a loopback `Host` (no DNS
+//! rebinding). Several pages may connect (a reload, a second tab); the
+//! first that starts a capture becomes the source, later ones are told
+//! `busy`. The session then sends the page its encode `plan` and turns
+//! the server into a [`ShareInput`], which feeds the page's records into
+//! the encoded-SLRW state (`media::input::EncodedState`): passthrough
+//! H.264, PCM for AirPlay, `aacenc` AAC for Cast. Keyframe requests go
+//! back to the page as `keyframe` messages. The input ends when the share
+//! ends or the page goes away.
+
+use std::net::{SocketAddr, TcpStream};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use crate::browser::protocol::{self, CaptureInfo, PageConfig, PageMsg, SharePlan};
+use crate::cli::{RawAudioSpec, RawVideoSpec};
+use crate::codec::json::Value;
+use crate::error::{Error, ErrorKind, Result};
+use crate::media::h264;
+use crate::media::input::{
+    AudioOut, EncodedState, Input, StopFn, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
+};
+use crate::media::rawin;
+use crate::media::slrw::{self, Kind, Packet};
+use crate::media::source::StreamInfo;
+use crate::net::http::Request;
+use crate::net::httpd::{self, Reply};
+use crate::net::websocket::{self, close_code, Message, Role, Sender};
+use crate::types::{AudioFamily, EncodedFrame};
+
+pub const PAGE_HTML: &str = include_str!("share.html");
+/// The capture script: self-contained, also injected into pages by the
+/// headless-browser mode (W13).
+pub const CAPTURE_JS: &str = include_str!("capture.js");
+
+/// Records queued between the page's socket and the session.
+const EVENT_QUEUE: usize = 256;
+/// How often a page connection checks for shutdown.
+const CLIENT_POLL: Duration = Duration::from_millis(200);
+/// How long the page may take from the plan to its first keyframe.
+const FIRST_KEYFRAME_TIMEOUT: Duration = Duration::from_secs(15);
+const LAG_REPORT: Duration = Duration::from_secs(5);
+
+/// What happened on the source page's socket.
+enum Event {
+    Packet(Packet),
+    Stats(Value),
+    Ended(String),
+    Failed(Error),
+}
+
+#[derive(Default)]
+struct State {
+    next_id: u64,
+    clients: Vec<(u64, Sender<TcpStream>)>,
+    /// The `config` message, once the session knows it.
+    config: Option<String>,
+    /// The last `status` message, for pages that connect later.
+    status: Option<String>,
+    /// The page whose capture is the source.
+    active: Option<u64>,
+    capture: Option<CaptureInfo>,
+    /// The active page's clock at its `hello`, and when that arrived.
+    clock: PageClock,
+    agent: String,
+    /// The plan went out: records flow to the input.
+    streaming: bool,
+    shutdown: bool,
+}
+
+struct Shared {
+    token: String,
+    port: u16,
+    state: Mutex<State>,
+    cv: Condvar,
+    events: SyncSender<Event>,
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn broadcast(&self, st: &State, text: &str) {
+        for (_, s) in &st.clients {
+            let _ = s.send_text(text);
+        }
+    }
+
+    fn handle(self: &Arc<Self>, req: &Request) -> Reply {
+        let host = req.headers.get("host").unwrap_or("");
+        let port = self.port;
+        let host_ok = [
+            format!("127.0.0.1:{port}"),
+            format!("localhost:{port}"),
+            format!("[::1]:{port}"),
+        ]
+        .iter()
+        .any(|h| h.eq_ignore_ascii_case(host));
+        if !host_ok {
+            return Reply::Response(httpd::error_response(421, "Misdirected Request"));
+        }
+        if req.method != "GET" && req.method != "HEAD" {
+            return Reply::Response(httpd::error_response(405, "Method Not Allowed"));
+        }
+        let (path, query) = req.target.split_once('?').unwrap_or((&req.target, ""));
+        let token_ok = query.split('&').any(|kv| {
+            kv.strip_prefix("t=")
+                .is_some_and(|t| crate::crypto::ring::ct_eq(t.as_bytes(), self.token.as_bytes()))
+        });
+        match path {
+            "/capture.js" => Reply::Response(httpd::response(
+                200,
+                "OK",
+                "text/javascript; charset=utf-8",
+                CAPTURE_JS.as_bytes().to_vec(),
+            )),
+            "/favicon.ico" => Reply::Response(httpd::response(
+                204,
+                "No Content",
+                "image/x-icon",
+                Vec::new(),
+            )),
+            _ if !token_ok => Reply::Response(httpd::error_response(
+                403,
+                "Forbidden (open the URL tvpipe printed)",
+            )),
+            "/" => Reply::Response(httpd::response(
+                200,
+                "OK",
+                "text/html; charset=utf-8",
+                PAGE_HTML.as_bytes().to_vec(),
+            )),
+            "/ws" if websocket::is_upgrade(req) => match websocket::server_response(req) {
+                Ok(resp) => {
+                    let me = self.clone();
+                    Reply::Upgrade(resp, Box::new(move |tcp, rest| me.client(tcp, rest)))
+                }
+                Err(e) => {
+                    debug!("share: bad upgrade: {e}");
+                    let mut r = if e.kind() == ErrorKind::Unsupported {
+                        httpd::error_response(426, "Upgrade Required")
+                    } else {
+                        httpd::error_response(400, "Bad Request")
+                    };
+                    r.headers.add("Sec-WebSocket-Version", "13");
+                    Reply::Response(r)
+                }
+            },
+            _ => Reply::Response(httpd::error_response(404, "Not Found")),
+        }
+    }
+
+    /// One page connection, on its own thread until it closes.
+    fn client(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>) {
+        if tcp.set_read_timeout(Some(CLIENT_POLL)).is_err() {
+            return;
+        }
+        let limits = websocket::Limits {
+            max_message: protocol::MAX_MESSAGE,
+        };
+        let Ok((mut rx, tx)) = websocket::pair(tcp, rest, Role::Server, limits) else {
+            return;
+        };
+        let id = {
+            let mut st = self.lock();
+            st.next_id += 1;
+            let id = st.next_id;
+            st.clients.push((id, tx.clone()));
+            for m in [&st.config, &st.status].into_iter().flatten() {
+                let _ = tx.send_text(m);
+            }
+            id
+        };
+        debug!("share: page {id} connected");
+        let mut clock = None;
+        let why = loop {
+            if self.lock().shutdown {
+                break "tvpipe stopped".to_owned();
+            }
+            match rx.read_message() {
+                Err(e) if e.kind() == ErrorKind::Timeout => {}
+                Err(e) => break format!("the page's connection failed: {e}"),
+                Ok(Message::Close(_)) => break "the page closed".to_owned(),
+                Ok(Message::Text(t)) => match protocol::parse_page(&t) {
+                    Ok(PageMsg::Hello {
+                        version,
+                        clock_us,
+                        agent,
+                    }) => {
+                        debug!("share: page {id}: {agent} (protocol {version})");
+                        if version != protocol::VERSION {
+                            warn!(
+                                "share: the page speaks protocol {version}, tvpipe {}",
+                                protocol::VERSION
+                            );
+                        }
+                        clock = Some((Instant::now(), clock_us));
+                        self.lock().agent = agent;
+                    }
+                    Ok(PageMsg::Capture(info)) => {
+                        let mut st = self.lock();
+                        if st.active.is_none() && !st.streaming {
+                            info!(
+                                "share: capturing {} {}x{}{}{}",
+                                info.surface.as_deref().unwrap_or("a surface"),
+                                info.width,
+                                info.height,
+                                info.fps.map(|f| format!("@{f:.0}")).unwrap_or_default(),
+                                if info.audio { " with audio" } else { "" }
+                            );
+                            st.active = Some(id);
+                            st.capture = Some(info);
+                            st.clock = clock;
+                            self.cv.notify_all();
+                        } else if st.active != Some(id) {
+                            drop(st);
+                            let _ = tx.send_text(&protocol::busy());
+                            let _ = tx.close(close_code::POLICY, "another page is sharing");
+                            break "busy".to_owned();
+                        }
+                    }
+                    Ok(PageMsg::Stats(v)) => {
+                        if self.is_source(id) {
+                            let _ = self.events.try_send(Event::Stats(v));
+                        }
+                    }
+                    Ok(PageMsg::Ended(reason)) => {
+                        if self.is_source(id) {
+                            break reason;
+                        }
+                    }
+                    Ok(PageMsg::Log { level, message }) => match level.as_str() {
+                        "error" | "warn" => warn!("share page: {message}"),
+                        _ => debug!("share page: {message}"),
+                    },
+                    Ok(PageMsg::Unknown(t)) => trace!("share: page {id}: unknown message {t:?}"),
+                    Err(e) => debug!("share: page {id}: {e}"),
+                },
+                Ok(Message::Binary(b)) => {
+                    let streaming = {
+                        let st = self.lock();
+                        st.streaming && st.active == Some(id)
+                    };
+                    if !streaming {
+                        continue;
+                    }
+                    let ev = match protocol::parse_record(&b) {
+                        Ok(p) => Event::Packet(p),
+                        Err(e) => {
+                            let _ = tx.close(close_code::UNSUPPORTED, e.message());
+                            let _ = self.events.send(Event::Failed(e));
+                            break "bad record".to_owned();
+                        }
+                    };
+                    // Blocks while the session is behind: backpressure
+                    // into the socket, where the page sees bufferedAmount
+                    // grow and drops frames.
+                    if self.events.send(ev).is_err() {
+                        break "tvpipe stopped".to_owned();
+                    }
+                }
+            }
+        };
+        debug!("share: page {id}: {why}");
+        let mut st = self.lock();
+        st.clients.retain(|(c, _)| *c != id);
+        if st.active == Some(id) {
+            if st.streaming {
+                let _ = self.events.try_send(Event::Ended(why));
+            } else {
+                // Not started yet: another capture may take its place.
+                st.active = None;
+                st.capture = None;
+                self.cv.notify_all();
+            }
+        }
+        drop(st);
+        let _ = tx.close(close_code::NORMAL, "");
+        tx.with_stream(|s| {
+            let _ = s.shutdown(std::net::Shutdown::Both);
+        });
+    }
+
+    fn is_source(&self, id: u64) -> bool {
+        self.lock().active == Some(id)
+    }
+}
+
+/// The share page server, until a capture starts streaming.
+pub struct ShareServer {
+    http: Option<httpd::Server>,
+    shared: Arc<Shared>,
+    events: Receiver<Event>,
+    url: String,
+    end_reason: String,
+}
+
+impl ShareServer {
+    /// Listens on 127.0.0.1 (`port` 0: any free port).
+    pub fn bind(port: u16) -> Result<ShareServer> {
+        let token = crate::util::hex::encode(&crate::crypto::ring::random_array::<16>()?);
+        // The port is only known after binding; the handler reads it from
+        // `Shared`, which is built around a placeholder first.
+        let listener_addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
+        let (tx, events) = mpsc::sync_channel(EVENT_QUEUE);
+        let cell: Arc<Mutex<Option<Arc<Shared>>>> = Arc::new(Mutex::new(None));
+        let c = cell.clone();
+        let handler: httpd::Handler = Arc::new(move |req: &Request| {
+            let shared = c.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            match shared {
+                Some(s) => s.handle(req),
+                None => Reply::Response(httpd::error_response(503, "Service Unavailable")),
+            }
+        });
+        let http = httpd::Server::bind(listener_addr, handler)?;
+        let port = http.local_addr().port();
+        let shared = Arc::new(Shared {
+            token: token.clone(),
+            port,
+            state: Mutex::new(State::default()),
+            cv: Condvar::new(),
+            events: tx,
+        });
+        *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
+        Ok(ShareServer {
+            http: Some(http),
+            shared,
+            events,
+            url: format!("http://127.0.0.1:{port}/?t={token}"),
+            end_reason: "tvpipe stopped".into(),
+        })
+    }
+
+    /// The page's URL (with the token).
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// The WebSocket URL a capture script connects to.
+    pub fn ws_url(&self) -> String {
+        format!(
+            "ws://127.0.0.1:{}/ws?t={}",
+            self.shared.port, self.shared.token
+        )
+    }
+
+    /// Tells pages what to capture (sent now and to every later page).
+    pub fn configure(&self, config: &PageConfig) {
+        let text = config.to_json();
+        let mut st = self.shared.lock();
+        self.shared.broadcast(&st, &text);
+        st.config = Some(text);
+    }
+
+    /// Shows `state`/`message` on every page.
+    pub fn set_status(&self, state: &str, message: &str, receivers: &[String]) {
+        let text = protocol::status(state, message, receivers);
+        let mut st = self.shared.lock();
+        self.shared.broadcast(&st, &text);
+        st.status = Some(text);
+    }
+
+    /// What pages see when the server goes away (default: "tvpipe
+    /// stopped").
+    pub fn set_end_reason(&mut self, reason: &str) {
+        self.end_reason = reason.to_owned();
+    }
+
+    /// Waits until a page starts a capture; `None` on a stop request.
+    pub fn wait_capture(&self, stop: StopFn) -> Option<CaptureInfo> {
+        let mut st = self.shared.lock();
+        loop {
+            if stop() {
+                return None;
+            }
+            if let Some(c) = &st.capture {
+                return Some(c.clone());
+            }
+            st = self
+                .shared
+                .cv
+                .wait_timeout(st, STOP_POLL)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+    }
+
+    /// Sends the plan to the source page and waits for its first
+    /// keyframe. On failure the pages are told why.
+    pub fn start(
+        mut self,
+        plan: &SharePlan,
+        opts: ShareInputOptions,
+        stop: StopFn,
+    ) -> Result<ShareInput> {
+        let claimed = self.claim().and_then(|(sender, clock, agent)| {
+            sender.send_text(&plan.to_json())?;
+            Ok((sender, clock, agent))
+        });
+        let (sender, clock, agent) = match claimed {
+            Ok(v) => v,
+            Err(e) => {
+                self.set_end_reason(&e.to_string());
+                return Err(e);
+            }
+        };
+        let video = RawVideoSpec {
+            size: crate::cli::Size {
+                width: plan.width,
+                height: plan.height,
+            },
+            fps: opts.fps,
+            pix_fmt: rawin::ENCODED_PIX_FMT.into(),
+        };
+        let st = match EncodedState::new(video, opts.audio, &opts.audio_families, None) {
+            Ok(st) => st,
+            Err(e) => {
+                self.set_end_reason(&e.to_string());
+                return Err(e);
+            }
+        };
+        let mut input = ShareInput {
+            server: self,
+            sender,
+            st,
+            info: StreamInfo {
+                video: crate::types::VideoInfo {
+                    codec: crate::types::VideoCodec::H264,
+                    width: 0,
+                    height: 0,
+                    fps: opts.fps,
+                    avcc: Vec::new(),
+                },
+                audio: Vec::new(),
+            },
+            stop,
+            last_key_request: None,
+            length_size: 4,
+            clock,
+            lag: Lag::default(),
+            page_stats: None,
+            agent,
+        };
+        match input.first_keyframe() {
+            Ok(()) => Ok(input),
+            Err(e) => {
+                input.server.set_end_reason(&e.to_string());
+                Err(e)
+            }
+        }
+    }
+
+    /// Marks the source page as streaming: its sender, clock and agent.
+    fn claim(&self) -> Result<(Sender<TcpStream>, PageClock, String)> {
+        let mut st = self.shared.lock();
+        let active = st
+            .active
+            .ok_or_else(|| Error::closed("share: the capture ended before streaming started"))?;
+        let sender = st
+            .clients
+            .iter()
+            .find(|(id, _)| *id == active)
+            .map(|(_, s)| s.clone())
+            .ok_or_else(|| Error::closed("share: the page went away"))?;
+        st.streaming = true;
+        Ok((sender, st.clock, st.agent.clone()))
+    }
+}
+
+impl Drop for ShareServer {
+    fn drop(&mut self) {
+        let end = protocol::end(&self.end_reason);
+        {
+            let mut st = self.shared.lock();
+            st.shutdown = true;
+            for (_, s) in &st.clients {
+                let _ = s.send_text(&end);
+                let _ = s.close(close_code::GOING_AWAY, &self.end_reason);
+            }
+            self.shared.cv.notify_all();
+        }
+        if let Some(mut h) = self.http.take() {
+            h.shutdown();
+        }
+    }
+}
+
+/// A page's clock (µs) and when we read it.
+type PageClock = Option<(Instant, u64)>;
+
+/// The input side of [`ShareServer::start`].
+pub struct ShareInputOptions {
+    /// Frame rate for timing when the SPS has none.
+    pub fps: crate::util::ratio::Ratio,
+    /// The PCM the page sends (s16le), if any.
+    pub audio: Option<RawAudioSpec>,
+    pub audio_families: Vec<(AudioFamily, AudioOut)>,
+}
+
+/// Capture-to-tvpipe delay of video records (page clock vs. arrival).
+#[derive(Default)]
+struct Lag {
+    since: Option<Instant>,
+    n: u64,
+    sum_ms: f64,
+    max_ms: f64,
+    total_n: u64,
+    total_sum_ms: f64,
+    total_max_ms: f64,
+}
+
+impl Lag {
+    fn add(&mut self, ms: f64) {
+        let now = Instant::now();
+        let since = *self.since.get_or_insert(now);
+        self.n += 1;
+        self.sum_ms += ms;
+        self.max_ms = self.max_ms.max(ms);
+        self.total_n += 1;
+        self.total_sum_ms += ms;
+        self.total_max_ms = self.total_max_ms.max(ms);
+        if now.duration_since(since) >= LAG_REPORT {
+            debug!(
+                "share: {:.1} fps from the page, capture to tvpipe avg {:.1} ms, max {:.1} ms",
+                self.n as f64 / now.duration_since(since).as_secs_f64(),
+                self.sum_ms / self.n as f64,
+                self.max_ms
+            );
+            *self = Lag {
+                since: Some(now),
+                total_n: self.total_n,
+                total_sum_ms: self.total_sum_ms,
+                total_max_ms: self.total_max_ms,
+                ..Lag::default()
+            };
+        }
+    }
+}
+
+/// H.264 + PCM from the share page (decision 0012).
+pub struct ShareInput {
+    server: ShareServer,
+    sender: Sender<TcpStream>,
+    st: EncodedState,
+    info: StreamInfo,
+    stop: StopFn,
+    last_key_request: Option<Instant>,
+    /// The page's AVCC length size (from its avcC).
+    length_size: usize,
+    clock: PageClock,
+    lag: Lag,
+    page_stats: Option<Value>,
+    agent: String,
+}
+
+impl ShareInput {
+    fn first_keyframe(&mut self) -> Result<()> {
+        let deadline = Instant::now() + FIRST_KEYFRAME_TIMEOUT;
+        while !self.st.started() {
+            if self.st.ended() {
+                return Err(Error::closed(
+                    "share: the capture ended before the first keyframe",
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::timeout(format!(
+                    "share: no keyframe from the page within {} s (can the browser encode H.264?)",
+                    FIRST_KEYFRAME_TIMEOUT.as_secs()
+                )));
+            }
+            if !self.pump()? {
+                return Err(Error::closed("share: stopped before the first keyframe"));
+            }
+        }
+        self.info = self.st.stream_info()?;
+        Ok(())
+    }
+
+    /// Waits up to [`STOP_POLL`] for one event and handles it; `false` on
+    /// a stop request.
+    fn pump(&mut self) -> Result<bool> {
+        if (self.stop)() {
+            return Ok(false);
+        }
+        match self.server.events.recv_timeout(STOP_POLL) {
+            Ok(Event::Packet(p)) => self.packet(p)?,
+            Ok(Event::Stats(v)) => {
+                trace!("share: page stats {v}");
+                self.page_stats = Some(v);
+            }
+            Ok(Event::Ended(reason)) => {
+                info!("share: {reason}");
+                self.server.set_end_reason("the share ended");
+                self.st.end();
+            }
+            Ok(Event::Failed(e)) => return Err(e),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => self.st.end(),
+        }
+        Ok(true)
+    }
+
+    fn packet(&mut self, mut p: Packet) -> Result<()> {
+        match p.kind {
+            Kind::H264Config if p.payload.first() == Some(&slrw::CONFIG_AVCC) => {
+                let cfg = h264::AvcConfig::parse(&p.payload[1..])?;
+                self.length_size = cfg.length_size as usize;
+            }
+            Kind::H264 => {
+                if let Some((at, page_us)) = self.clock {
+                    let page_now = page_us as f64 + at.elapsed().as_secs_f64() * 1e6;
+                    self.lag.add((page_now - p.pts_us as f64) / 1000.0);
+                }
+                let annexb = p.payload[0] & slrw::H264_ANNEX_B != 0;
+                if !annexb && self.length_size != 4 {
+                    p.payload = reframe(&p.payload, self.length_size)?;
+                }
+            }
+            _ => {}
+        }
+        self.st.handle(p)
+    }
+}
+
+/// An `h264` record payload (flags + AVCC with `n`-byte lengths) with
+/// 4-byte lengths.
+fn reframe(payload: &[u8], n: usize) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(payload.len() + 16);
+    out.push(payload[0]);
+    for nal in h264::avcc_nals(&payload[1..], n) {
+        let nal = nal?;
+        out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+        out.extend_from_slice(nal);
+    }
+    Ok(out)
+}
+
+impl Input for ShareInput {
+    fn info(&self) -> &StreamInfo {
+        &self.info
+    }
+
+    fn next_frame(&mut self) -> Result<Option<EncodedFrame>> {
+        loop {
+            if let Some(f) = self.st.pop() {
+                return Ok(Some(f));
+            }
+            if self.st.ended() || !self.pump()? {
+                return Ok(None);
+            }
+        }
+    }
+
+    fn request_keyframe(&mut self) -> bool {
+        let now = Instant::now();
+        if self
+            .last_key_request
+            .is_some_and(|l| now.duration_since(l) < KEYFRAME_REQUEST_INTERVAL)
+        {
+            return true;
+        }
+        self.last_key_request = Some(now);
+        debug!("share: asking the page for a keyframe");
+        self.sender.send_text(&protocol::keyframe()).is_ok()
+    }
+
+    fn describe(&self) -> String {
+        let agent = browser_name(&self.agent);
+        format!(
+            "shared {}",
+            if agent.is_empty() {
+                "browser capture".into()
+            } else {
+                format!("capture from {agent}")
+            }
+        )
+    }
+
+    fn finish(self: Box<Self>, _clean_eof: bool) -> Result<()> {
+        let l = &self.lag;
+        if l.total_n > 0 {
+            info!(
+                "share: {} video frames; capture to tvpipe avg {:.1} ms, max {:.1} ms",
+                l.total_n,
+                l.total_sum_ms / l.total_n as f64,
+                l.total_max_ms
+            );
+        }
+        if let Some(s) = &self.page_stats {
+            debug!("share: last page stats {s}");
+        }
+        // Dropping the server tells the pages and stops listening.
+        Ok(())
+    }
+}
+
+/// "Chrome/131", "Safari/18.1", "Firefox/133" from a user agent.
+fn browser_name(agent: &str) -> String {
+    let find = |name: &str| {
+        agent.split_whitespace().find_map(|t| {
+            t.strip_prefix(name)
+                .and_then(|v| v.strip_prefix('/'))
+                .map(|v| format!("{name} {}", v.split('.').next().unwrap_or(v)))
+        })
+    };
+    find("Firefox")
+        .or_else(|| find("Edg"))
+        .or_else(|| find("Chrome"))
+        .or_else(|| {
+            find("Version")
+                .filter(|_| agent.contains("Safari"))
+                .map(|v| v.replace("Version", "Safari"))
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+pub(crate) mod tests;

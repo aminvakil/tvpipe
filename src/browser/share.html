@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tvpipe share</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f5f5f7; --card: #fff; --mute: #6e6e73; --accent: #0a66d8; --bad: #c62828; --ok: #2e7d32; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #1c1c1e; --card: #2c2c2e; --mute: #a1a1a6; --accent: #4c9bff; --bad: #ff6b6b; --ok: #5fd068; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); }
+  main { max-width: 560px; margin: 48px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--mute); margin: 0 0 20px; }
+  .card { background: var(--card); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .state { font-weight: 600; }
+  .state.ok { color: var(--ok); } .state.bad { color: var(--bad); }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; background: var(--accent); color: #fff; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  label { color: var(--mute); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dt { color: var(--mute); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+  #log { color: var(--mute); font-size: 13px; white-space: pre-wrap; margin: 0; max-height: 160px; overflow: auto; }
+  #log .error { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>tvpipe share</h1>
+  <p class="sub">Choose a tab, window or screen to show on the TV.</p>
+
+  <div class="card">
+    <div class="row" style="justify-content: space-between">
+      <span class="state" id="state">Connecting to tvpipe…</span>
+      <span id="receivers" class="sub" style="margin:0"></span>
+    </div>
+    <p id="message" class="sub" style="margin:6px 0 14px"></p>
+    <div class="row">
+      <button id="share" disabled>Share…</button>
+      <button id="stop" class="secondary" disabled>Stop</button>
+      <label><input type="checkbox" id="local"> keep tab audio playing here</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <dl>
+      <dt>Capture</dt><dd id="capture">–</dd>
+      <dt>Stream</dt><dd id="plan">–</dd>
+      <dt>Encoder</dt><dd id="codec">–</dd>
+      <dt>Frame rate</dt><dd id="fps">–</dd>
+      <dt>Bitrate</dt><dd id="kbps">–</dd>
+      <dt>Encode delay</dt><dd id="delay">–</dd>
+      <dt>Dropped</dt><dd id="dropped">–</dd>
+    </dl>
+  </div>
+
+  <div class="card"><pre id="log"></pre></div>
+</main>
+<script src="/capture.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var logEl = $('log');
+  function log(text, cls) {
+    var line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function state(text, cls, message) {
+    $('state').textContent = text;
+    $('state').className = 'state ' + (cls || '');
+    if (message !== undefined) $('message').textContent = message;
+  }
+  if (!window.tvpipeCapture) { state('capture.js did not load', 'bad'); return; }
+  var f = tvpipeCapture.features();
+  var missing = [];
+  if (!f.secure) missing.push('a secure context (open the http://127.0.0.1 URL tvpipe printed)');
+  if (!f.displayMedia) missing.push('screen capture (getDisplayMedia)');
+  if (!f.webcodecs) missing.push('WebCodecs (VideoEncoder)');
+  if (missing.length) log('This browser lacks ' + missing.join(', ') + '.', 'error');
+
+  var ws = location.origin.replace(/^http/, 'ws') + '/ws' + location.search;
+  var cap = tvpipeCapture.connect(ws, {});
+  var ended = false;
+  function receivers(list) {
+    $('receivers').textContent = list && list.length ? '→ ' + list.join(', ') : '';
+  }
+  cap.on('open', function () { state('Connected', '', 'Waiting for tvpipe…'); });
+  cap.on('config', function (c) {
+    receivers(c.receivers);
+    if (!missing.length && !ended) $('share').disabled = false;
+    state('Ready', 'ok', 'Press Share and pick what to show' + (c.audio ? ' (tick "Share audio" for sound).' : '.'));
+  });
+  cap.on('status', function (s) {
+    receivers(s.receivers);
+    var cls = s.state === 'streaming' ? 'ok' : s.state === 'error' ? 'bad' : '';
+    var names = { waiting: 'Ready', connecting: 'Connecting to the TV…', streaming: 'Streaming', error: 'Error' };
+    state(names[s.state] || s.state, cls, s.message || '');
+  });
+  cap.on('capture', function (c) {
+    var s = c.settings;
+    $('capture').textContent = (s.displaySurface || 'surface') + ' ' + s.width + '×' + s.height +
+      (s.frameRate ? ' @ ' + Math.round(s.frameRate) : '') + (c.audio ? ', with audio' : ', no audio');
+    $('share').disabled = true;
+    $('stop').disabled = false;
+  });
+  cap.on('plan', function (p) {
+    $('plan').textContent = p.width + '×' + p.height + ' @ ' + p.fps + ', ' + Math.round(p.bitrate / 1000) + ' kbit/s' +
+      (p.audio ? ', PCM ' + p.audio.sampleRate + ' Hz' : '');
+  });
+  cap.on('stats', function (s) {
+    $('codec').textContent = s.codec || '–';
+    $('fps').textContent = s.fps + ' (source ' + s.sourceFps + ')';
+    $('kbps').textContent = s.kbps + ' kbit/s video' + (s.audioKbps ? ', ' + s.audioKbps + ' audio' : '');
+    $('delay').textContent = s.encodeMs === null ? '–' : s.encodeMs + ' ms';
+    $('dropped').textContent = s.dropped + (s.repeated ? ' (' + s.repeated + ' repeats of a still picture)' : '');
+  });
+  cap.on('log', function (l) { log(l.message, l.level === 'error' ? 'error' : ''); });
+  cap.on('error', function (e) { log(e, 'error'); state('Error', 'bad', e); });
+  cap.on('end', function (reason) {
+    ended = true;
+    state('Ended', '', reason + '. Run tvpipe share again to share something else.');
+    $('share').disabled = true;
+    $('stop').disabled = true;
+  });
+  cap.on('close', function () {
+    if (!ended) state('Disconnected', 'bad', 'tvpipe is not running any more.');
+    ended = true;
+    $('share').disabled = true;
+    $('stop').disabled = true;
+  });
+  $('share').onclick = function () {
+    cap.opts.localAudio = $('local').checked;
+    $('share').disabled = true;
+    cap.captureDisplay().catch(function (e) {
+      var msg = e && e.name === 'NotAllowedError' ? 'Sharing was cancelled.' : String(e && e.message || e);
+      log(msg, 'error');
+      if (!ended) $('share').disabled = false;
+    });
+  };
+  $('stop').onclick = function () { cap.stop('stopped on the share page'); };
+})();
+</script>
+</body>
+</html>

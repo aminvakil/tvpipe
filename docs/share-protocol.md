@@ -1,0 +1,119 @@
+# Share page protocol (decision 0012)
+
+The protocol between tvpipe and a capture script (`src/browser/capture.js`)
+running in a browser: tvpipe's share page (`tvpipe share`), or any page the
+headless-browser mode injects the script into (W13). Version 1.
+
+## Transport
+
+- tvpipe listens on `127.0.0.1` only (`--port`, default: any free port)
+  and prints `http://127.0.0.1:PORT/?t=TOKEN`. `TOKEN` is 16 random bytes
+  in hex, new for every run.
+- `GET /?t=TOKEN`: the share page. `GET /capture.js`: the capture script
+  (static, no token). `GET /ws?t=TOKEN`: the WebSocket (RFC 6455, no
+  extensions, no subprotocol). Every request needs a `Host` of
+  `127.0.0.1:PORT`, `localhost:PORT` or `[::1]:PORT` (421 otherwise:
+  DNS rebinding), the page and the socket need the token (403).
+- `http://127.0.0.1` is a secure context in Chrome, Safari and Firefox, so
+  `getDisplayMedia` and WebCodecs are available without TLS.
+- Largest message: 16 MiB.
+
+## Flow
+
+```
+page                                    tvpipe
+ |-- hello ------------------------------>|
+ |<-------------------------------- config |  (once the receivers are resolved)
+ |<-------------------------------- status |  (any time)
+ |   user picks a surface (getDisplayMedia)
+ |-- capture ---------------------------->|  tvpipe connects the receivers
+ |<---------------------------------- plan |
+ |-- record h264-config, h264, audio ... ->|
+ |<------------------------------ keyframe |  (any time, coalesced)
+ |-- stats ------------------------------>|  (every 2 s)
+ |-- ended ------------------------------>|  share stopped: tvpipe ends
+ |<----------------------------------- end |  or tvpipe stopped first
+```
+
+Several pages may connect; the first `capture` wins, later ones get
+`busy` and are closed (1008). A page that ends (or closes) before the
+`plan` frees the slot for another capture. After the plan, the page
+closing its socket or sending `ended` ends the session (after one playout
+delay, like the end of a file).
+
+## Text messages (JSON objects with a `type`)
+
+Page → tvpipe:
+
+| type | fields |
+|---|---|
+| `hello` | `version` (1), `clock` (the page's media clock, µs), `agent` (user agent), `features` (what the browser has; informational) |
+| `capture` | `width`, `height` (the track's settings), `fps` (or null), `audio` (bool: an audio track was shared), `surface` (`browser`/`window`/`monitor`), `label` |
+| `stats` | `fps`, `sourceFps`, `kbps`, `audioKbps`, `encodeMs`, `dropped`, `repeated`, `keyRequests`, `queue`, `buffered`, `codec`, `width`, `height` (logged at `--debug`) |
+| `ended` | `reason` |
+| `log` | `level` (`error`/`warn`/`info`), `message` (shown in tvpipe's log) |
+
+tvpipe → page:
+
+| type | fields |
+|---|---|
+| `config` | `version`, `fps` (what to ask getDisplayMedia for), `audio` (whether to ask for audio), `sampleRate`, `channels` (the PCM tvpipe wants), `receivers` (names) |
+| `status` | `state` (`waiting`, `connecting`, `streaming`), `message`, `receivers` |
+| `plan` | `width`, `height` (encode size: the page scales and letterboxes into it), `fps`, `bitrate` (bit/s), `keyInterval` (frames between IDRs), `audio` (`{sampleRate, channels}` or null: send no audio) |
+| `keyframe` | — make the next frame an IDR (soon: a still screen re-encodes its last frame) |
+| `busy` | — another page is the source |
+| `end` | `reason`: tvpipe stopped (Ctrl-C, receivers gone, an error) |
+
+Unknown types are ignored by both sides.
+
+## Binary messages
+
+Each is exactly one SLRW record (decision 0008): `u8 kind | u64le
+pts_us | u32le len | payload`, `len` = message length − 13.
+
+| kind | payload |
+|---|---|
+| 4 `h264-config` | `u8 format` (0: avcC from `VideoEncoder` metadata `decoderConfig.description`) + data. Sent before the first chunk and again only when it changes. |
+| 3 `h264` | `u8 flags` (bit 0: key, bit 1: Annex B) + one access unit (`EncodedVideoChunk` data; AVCC with the avcC's length size, or Annex B when the encoder gave no avcC) |
+| 2 `audio` | s16le interleaved PCM at the plan's rate and channels (~10 ms per record) |
+| 0 `end` | empty (accepted; `ended` is preferred) |
+
+Other kinds are an error and end the session. `pts_us` is the page's
+media clock (`performance.now()` in µs) for audio and video alike: video
+frames are stamped when the page receives them from the capture, audio
+records with their arrival time minus their duration. tvpipe takes media
+time 0 from the first record it keeps and times audio by its sample count
+(resyncing on drift over 50 ms), as for games.
+
+The H.264 must have no B-frames (decode order = presentation order). The
+script asks for Constrained Baseline first (then Main, High), at the
+smallest level that fits the plan, with `latencyMode: "realtime"`.
+
+## Flow control
+
+tvpipe reads records as fast as the session takes them; when it falls
+behind, the socket backs up. The page drops source frames *before* the
+encoder while `WebSocket.bufferedAmount` exceeds 4 MiB or the encoder has
+more than 2 frames queued, so the stream stays decodable. Audio records
+are dropped above the same threshold.
+
+## Capture script API (for W13)
+
+`capture.js` defines `globalThis.tvpipeCapture`:
+
+```js
+const c = tvpipeCapture.connect(wsUrl, {
+  preferCurrentTab: true,          // getDisplayMedia hint (headless mode)
+  selfBrowserSurface: 'include',   // default 'exclude' (the share page)
+  localAudio: false,               // keep playing tab audio locally
+  profiles: ['42E0', '4D40', '6400'],
+});
+c.on('config' | 'status' | 'plan' | 'capture' | 'stats' | 'log' | 'error' | 'end' | 'close' | 'open', fn);
+await c.captureDisplay();  // getDisplayMedia from the config, then share()
+await c.share(stream);     // or any MediaStream (canvas.captureStream(), ...)
+c.stop(reason);
+```
+
+`captureDisplay()` must run with transient user activation (a click; or
+CDP `Runtime.evaluate` with `userGesture: true` plus Chrome's
+auto-accept flags in the headless mode).

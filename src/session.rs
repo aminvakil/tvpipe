@@ -32,8 +32,10 @@ use std::path::Path;
 use std::process::{Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::browser::protocol::{PageConfig, SharePlan};
+use crate::browser::share::{ShareInputOptions, ShareServer};
 use crate::cast::{self, CastOptions};
-use crate::cli::{Command, InputSpec, PlayOptions, Size};
+use crate::cli::{Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size};
 use crate::error::{Error, Result};
 use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
@@ -59,6 +61,7 @@ pub fn run(cmd: Command) -> Result<()> {
         Command::Pair { target, pin } => crate::airplay::pair::pair(&target, pin.as_deref()),
         Command::Unpair { target } => crate::airplay::pair::unpair(&target),
         Command::Play(opts) | Command::TestPattern(opts) => play(opts),
+        Command::Share(opts) => share(opts),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
 }
@@ -1070,6 +1073,186 @@ fn play_with(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Share a browser tab (decision 0012, option C)
+
+/// `share`'s frame rate without `--fps`.
+const SHARE_FPS: Ratio = Ratio::integer(30);
+
+fn share(opts: ShareOptions) -> Result<()> {
+    if !interrupt::install() {
+        warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
+    }
+    interrupt::watch_stdin();
+    share_with(opts, &connect_one, interrupt::requested, &|_| {})
+}
+
+/// `share` with the connector and stop request given, and a hook that
+/// sees the server once it listens (the tests start a fake page there).
+///
+/// The page comes first: once it captured something, its size decides
+/// the offer; then the receivers connect, the plan goes to the page and
+/// its stream runs through `stream` like an encoded-SLRW game's.
+fn share_with(
+    opts: ShareOptions,
+    connect: Connector<'_>,
+    stop: fn() -> bool,
+    on_listening: &dyn Fn(&ShareServer),
+) -> Result<()> {
+    crate::util::timer::raise_resolution();
+    let mut server = ShareServer::bind(opts.port)?;
+    info!(
+        "open {} in a browser and choose what to share (Ctrl-C to stop)",
+        server.url()
+    );
+    if opts.open {
+        if let Err(e) = crate::browser::platform::open_url(server.url()) {
+            warn!("--open: {e}");
+        }
+    }
+    on_listening(&server);
+    let fail = |server: &mut ShareServer, e: Error| {
+        server.set_end_reason(&e.to_string());
+        e
+    };
+    let targets = resolve_all(&opts.to).map_err(|e| fail(&mut server, e))?;
+    let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
+    // One PCM stream for both families: 44.1 kHz when AirPlay listens.
+    let pcm = RawAudioSpec {
+        sample_rate: builtin::pattern_sample_rate(
+            targets.iter().any(|t| matches!(t, Target::AirPlay { .. })),
+        ),
+        channels: 2,
+        sample_fmt: "s16le".into(),
+    };
+    let fps = opts.fps.unwrap_or(SHARE_FPS);
+    server.configure(&PageConfig {
+        fps: fps.as_f64(),
+        audio: !opts.no_audio,
+        sample_rate: pcm.sample_rate,
+        channels: pcm.channels,
+        receivers: names.clone(),
+    });
+    server.set_status("waiting", "Press Share and pick what to show.", &names);
+    let Some(cap) = server.wait_capture(stop) else {
+        return Ok(());
+    };
+    let audio = !opts.no_audio && cap.audio;
+    if !opts.no_audio && !cap.audio {
+        info!(
+            "share: the capture has no audio (the browser's picker has a \"share audio\" option)"
+        );
+    }
+    let size = opts.size.unwrap_or_else(|| {
+        fit(
+            cap.width,
+            cap.height,
+            DEFAULT_MAX_SIZE.width,
+            DEFAULT_MAX_SIZE.height,
+        )
+    });
+    let d = Desired {
+        size,
+        fps,
+        bitrate_kbps: opts
+            .bitrate_kbps
+            .unwrap_or_else(|| default_bitrate(size, fps)),
+        latency_ms: opts.latency_ms.unwrap_or(DEFAULT_LATENCY_MS),
+    };
+    let mut cast_opts = cast_options(&d, audio);
+    if let Some(f) = input::encoded_cast_audio(Some(&pcm)).filter(|_| audio) {
+        cast_opts.audio_codecs = vec![AudioCodec::AacLc];
+        cast_opts.audio_sample_rate = f.sample_rate;
+        cast_opts.audio_channels = f.channels;
+    }
+    let budget = shared_budget(opts.latency_ms, &targets);
+    cast_opts.latency_ms = budget.cast_ms;
+    let mirror = crate::airplay::session::MirrorOptions {
+        latency_ms: budget.airplay_ms,
+        audio,
+        ..Default::default()
+    };
+    server.set_status("connecting", "", &names);
+    let sinks =
+        connect_all(&targets, connect, &cast_opts, &mirror).map_err(|e| fail(&mut server, e))?;
+    if stop() {
+        stop_all(sinks);
+        return Ok(());
+    }
+    let names: Vec<String> = sinks.iter().map(|s| s.name().to_owned()).collect();
+    let caps: Vec<&Capabilities> = sinks.iter().map(|s| s.capabilities()).collect();
+    let named: Vec<(&str, &Capabilities)> =
+        sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
+    let planned = plan(&d, Encoder::Auto, &caps, false);
+    let (families, warnings) = if audio {
+        input::encoded_audio_families(Some(&pcm), &named)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    drop((caps, named));
+    let plan = match planned {
+        Ok(p) => p,
+        Err(e) => {
+            stop_all(sinks);
+            return Err(fail(&mut server, e));
+        }
+    };
+    for w in warnings {
+        warn!("{w}");
+    }
+    let page_audio = (!families.is_empty()).then_some((pcm.sample_rate, pcm.channels));
+    info!(
+        "plan: {}x{}@{} {} kbit/s, keyframe every {} frames, {}, latency {} ms (encoded by the browser)",
+        plan.video.width,
+        plan.video.height,
+        plan.video.fps,
+        plan.video.bitrate_kbps,
+        plan.video.gop,
+        match page_audio {
+            Some((rate, ch)) => format!("PCM {rate} Hz {ch} ch"),
+            None => "no audio".into(),
+        },
+        plan.latency_ms
+    );
+    server.set_status("streaming", "", &names);
+    let share_plan = SharePlan {
+        width: plan.video.width,
+        height: plan.video.height,
+        fps: plan.video.fps.as_f64(),
+        bitrate_bps: plan.video.bitrate_kbps as u64 * 1000,
+        key_interval: plan.video.gop,
+        audio: page_audio,
+    };
+    let opened = server.start(
+        &share_plan,
+        ShareInputOptions {
+            fps: plan.video.fps,
+            audio: page_audio.map(|_| pcm.clone()),
+            audio_families: families,
+        },
+        stop,
+    );
+    let input = match opened {
+        Ok(i) => i,
+        Err(e) => {
+            stop_all(sinks);
+            if stop() {
+                info!("stopped");
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
+    match stream(Box::new(input), plan.latency_ms, sinks, stop) {
+        Ok(EndReason::Interrupted) => {
+            info!("stopped");
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// `--latency` bounds (AirPlay accepts 5–2000 ms, Cast 1–5000 ms; the
 /// intersection keeps one budget valid for both).
 const MIN_LATENCY_MS: u32 = 5;
@@ -1289,6 +1472,9 @@ fn stream(
 
 #[cfg(test)]
 mod multi_tests;
+
+#[cfg(test)]
+mod share_tests;
 
 #[cfg(test)]
 mod tests {
