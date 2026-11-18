@@ -78,6 +78,9 @@ const HEARTBEAT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_DRAIN: Duration = Duration::from_millis(500);
 /// After TEARDOWN: how long `stop` waits for the sink's threads.
 const STOP_JOIN: Duration = Duration::from_secs(1);
+/// After a failed write: how long the writer waits for the reader to see
+/// the receiver closing the connection (which makes it no failure).
+const WRITE_FAILURE_GRACE: Duration = Duration::from_millis(250);
 /// Video packets queued for the writer before frames are dropped.
 const MAX_QUEUED: usize = 32;
 const MAX_QUEUED_BYTES: usize = 8 << 20;
@@ -257,6 +260,9 @@ struct Shared {
     first_frame_sent: AtomicBool,
     /// A frame was dropped; skip to the next keyframe.
     need_key: AtomicBool,
+    /// When the receiver last answered `POST /feedback` (or the stream
+    /// started).
+    last_answer: Mutex<Instant>,
 }
 
 impl Shared {
@@ -269,13 +275,25 @@ impl Shared {
             debug!("airplay: after stop: {e}");
             return;
         }
-        error!("airplay: {e}");
+        // `push` returns it; the session logs it (and may reconnect).
+        debug!("airplay: {e}");
         let mut f = self.failed.lock().unwrap_or_else(|e| e.into_inner());
         f.get_or_insert(e);
     }
 
     fn take_failure(&self) -> Option<Error> {
         self.failed.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    fn answered(&self) {
+        *self.last_answer.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
+    }
+
+    fn silent_for(&self) -> Duration {
+        self.last_answer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .elapsed()
     }
 }
 
@@ -354,7 +372,16 @@ fn writer_loop(shared: &Shared, mut sock: TcpStream, mut cipher: VideoCipher, ti
                 }),
         };
         if let Err(e) = r {
-            shared.fail(e);
+            // The receiver closing the connection fails the write too;
+            // that is the end of the session, not a loss, once the
+            // reader sees it.
+            let until = Instant::now() + WRITE_FAILURE_GRACE;
+            while !shared.finished.load(Ordering::Acquire) && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if !shared.finished.load(Ordering::Acquire) {
+                shared.fail(e);
+            }
             let mut q = shared.queue();
             q.items.clear();
             q.bytes = 0;
@@ -654,6 +681,8 @@ pub struct MirrorSink<S: ControlStream> {
     media: Option<Media>,
     /// The session's media clock (from the fanout), if any.
     clock: Option<SessionClock>,
+    /// [`MirrorOptions::feedback_timeout`].
+    feedback_timeout: Duration,
     stopped: bool,
 }
 
@@ -713,7 +742,9 @@ impl<S: ControlStream> MirrorSink<S> {
                 stopping: AtomicBool::new(false),
                 first_frame_sent: AtomicBool::new(false),
                 need_key: AtomicBool::new(false),
+                last_answer: Mutex::new(Instant::now()),
             }),
+            feedback_timeout: opts.feedback_timeout,
             media: None,
             clock: None,
             stopped: false,
@@ -821,6 +852,7 @@ impl<S: ControlStream> MirrorSink<S> {
             s.try_clone()
                 .map_err(|e| Error::io("airplay: clone socket", e))
         };
+        self.shared.answered();
 
         // Writer.
         {
@@ -831,21 +863,40 @@ impl<S: ControlStream> MirrorSink<S> {
                 writer_loop(&shared, sock, cipher, timeline)
             })?;
         }
-        // Data connection reader: EOF means the receiver ended mirroring.
+        // Data connection reader: the receiver closing it (EOF, or a
+        // reset when our frames were still unread) means it ended
+        // mirroring (§4.14); a receiver that is gone (another address,
+        // off the network) cannot close anything. Other errors (the
+        // kernel giving up on retransmissions) mean it is lost.
         {
             let shared = self.shared.clone();
             let mut sock = clone(&data)?;
             Self::spawn(&mut threads, "airplay-data", move || {
                 let mut buf = [0u8; 1024];
-                loop {
+                let error = loop {
                     match sock.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => break None,
+                        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break None,
                         Ok(n) => trace!("airplay: {n} bytes on the video data connection"),
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock
+                                    | std::io::ErrorKind::TimedOut
+                                    | std::io::ErrorKind::Interrupted
+                            ) => {}
+                        Err(e) => break Some(e),
                     }
+                };
+                if shared.stopping.load(Ordering::Acquire) {
+                    return;
                 }
-                if !shared.stopping.load(Ordering::Acquire) {
-                    info!("airplay: receiver closed the video connection");
-                    shared.finished.store(true, Ordering::Release);
+                match error {
+                    None => {
+                        info!("airplay: receiver closed the video connection");
+                        shared.finished.store(true, Ordering::Release);
+                    }
+                    Some(e) => shared.fail(Error::io("airplay: video data connection", e)),
                 }
             })?;
         }
@@ -1032,6 +1083,7 @@ fn feedback_loop<S: ControlStream>(
             Ok(r) => {
                 let t1 = Instant::now();
                 drop(c);
+                shared.answered();
                 if !r.is_success() {
                     debug!("airplay: /feedback answered {}", r.status);
                 }
@@ -1095,11 +1147,22 @@ impl<S: ControlStream> Sink for MirrorSink<S> {
     }
 
     fn push(&mut self, frame: &EncodedFrame) -> Result<SinkStatus> {
+        // The receiver ending the session wins over the errors closing
+        // its connections causes.
+        if self.shared.finished.load(Ordering::Acquire) {
+            return Ok(SinkStatus::Finished);
+        }
         if let Some(e) = self.shared.take_failure() {
             return Err(e);
         }
-        if self.shared.finished.load(Ordering::Acquire) {
-            return Ok(SinkStatus::Finished);
+        if self.media.is_some() {
+            let silent = self.shared.silent_for();
+            if silent >= self.feedback_timeout {
+                return Err(Error::timeout(format!(
+                    "airplay: no answer to /feedback for {:.0} s",
+                    silent.as_secs_f64()
+                )));
+            }
         }
         match frame.track {
             TrackKind::Video => self.push_video(frame),
@@ -1466,18 +1529,87 @@ mod tests {
         let mut sink = connect(&fake, &MirrorOptions::default());
         sink.start(&video_info(), None).unwrap();
         let (_, sps, pps) = avcc();
-        let mut finished = false;
+        let mut end = None;
         for i in 0..200 {
             match sink.push(&video(i, &sps, &pps)) {
-                Ok(SinkStatus::Finished) | Err(_) => {
-                    finished = true;
+                Ok(SinkStatus::Finished) => {
+                    end = Some(SinkStatus::Finished);
                     break;
                 }
+                Err(e) => panic!("the receiver ending mirroring is no failure: {e}"),
                 _ => std::thread::sleep(Duration::from_millis(20)),
             }
         }
-        assert!(finished);
+        assert_eq!(end, Some(SinkStatus::Finished));
         sink.stop().unwrap();
+    }
+
+    /// Pushes video until `push` says something other than Accepted or
+    /// Dropped.
+    fn push_until_end(sink: &mut MirrorSink<TcpStream>) -> Result<SinkStatus> {
+        let (_, sps, pps) = avcc();
+        let until = Instant::now() + Duration::from_secs(15);
+        for i in 0.. {
+            assert!(Instant::now() < until, "the sink never noticed");
+            match sink.push(&video(i, &sps, &pps)) {
+                Ok(SinkStatus::Accepted | SinkStatus::Dropped) => {}
+                other => return other,
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        unreachable!()
+    }
+
+    /// The receiver goes off the network: its connections break or go
+    /// quiet without the data connection being closed. That is a
+    /// failure (the session may reconnect), not the end of the session.
+    #[test]
+    fn vanished_receiver_fails_sink() {
+        let fake = FakeMirror::start(Behaviour {
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        sink.start(&video_info(), None).unwrap();
+        stream(&mut sink, 5);
+        fake.vanish();
+        let e = push_until_end(&mut sink).unwrap_err();
+        assert_ne!(e.kind(), crate::error::ErrorKind::Unsupported, "{e}");
+        let t = Instant::now();
+        let _ = sink.stop();
+        assert!(t.elapsed() < Duration::from_secs(6), "{:?}", t.elapsed());
+        // It serves the next connection as a new session.
+        let mut again = connect(&fake, &MirrorOptions::default());
+        again.start(&video_info(), None).unwrap();
+        stream(&mut again, 5);
+        wait_for("second session", || {
+            fake.rec()
+                .video
+                .iter()
+                .any(|p| p.session == 1 && p.kind == 0)
+        });
+        again.stop().unwrap();
+    }
+
+    /// `/feedback` goes unanswered: lost after the feedback timeout.
+    #[test]
+    fn unanswered_feedback_fails_sink() {
+        let fake = FakeMirror::start(Behaviour {
+            hang_feedback: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let opts = MirrorOptions {
+            feedback_timeout: Duration::from_millis(400),
+            ..MirrorOptions::default()
+        };
+        let mut sink = connect(&fake, &opts);
+        sink.start(&video_info(), None).unwrap();
+        let t0 = Instant::now();
+        let e = push_until_end(&mut sink).unwrap_err();
+        assert_eq!(e.kind(), crate::error::ErrorKind::Timeout, "{e}");
+        assert!(t0.elapsed() >= Duration::from_millis(400));
+        let _ = sink.stop();
     }
 
     #[test]

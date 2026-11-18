@@ -4,13 +4,18 @@
 //! a video data port that decrypts what it gets, and audio RTP/RTCP
 //! sockets. Behaviour follows the Apple TV as the spec describes it.
 //!
+//! [`FakeMirror::vanish`] makes the sessions so far go dark, like a
+//! receiver that left the network (the control connections break, the
+//! data connection stays open but is no longer read); new connections
+//! are new sessions, unless [`FakeMirror::set_refusing`] turns them away.
+//!
 //! Sources: docs/airplay-mirroring.md §4, §6, §8, §9, §11.
 
 #![cfg(test)]
 
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -35,6 +40,8 @@ pub struct VideoPacket {
     pub timeline: u64,
     /// Decrypted payload.
     pub payload: Vec<u8>,
+    /// The session (0, then 1 after a [`FakeMirror::vanish`], ...).
+    pub session: usize,
 }
 
 #[derive(Debug, Default)]
@@ -104,6 +111,7 @@ pub struct FakeMirror {
     pub addr: SocketAddr,
     pub rec: Arc<Mutex<Recorded>>,
     pub secret: Vec<u8>,
+    ctx: Arc<Ctx>,
 }
 
 struct Ctx {
@@ -114,6 +122,15 @@ struct Ctx {
     session: AtomicBool,
     close_data: Arc<AtomicBool>,
     raw: Mutex<Option<crate::airplay::legacy_pair::fake::RawReceiver>>,
+    /// Bumped by `vanish`: connections of older generations are dark.
+    generation: AtomicUsize,
+    refusing: AtomicBool,
+}
+
+impl Ctx {
+    fn gone(&self, generation: usize) -> bool {
+        self.generation.load(Ordering::Acquire) != generation
+    }
 }
 
 impl FakeMirror {
@@ -132,17 +149,38 @@ impl FakeMirror {
             session: AtomicBool::new(false),
             close_data: Arc::new(AtomicBool::new(false)),
             raw: Mutex::new(behaviour_raw.map(crate::airplay::legacy_pair::fake::RawReceiver::new)),
+            generation: AtomicUsize::new(0),
+            refusing: AtomicBool::new(false),
         });
+        let accept = ctx.clone();
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { break };
-                let ctx = ctx.clone();
+                if accept.refusing.load(Ordering::Acquire) {
+                    continue; // dropped: the sender sees EOF
+                }
+                let ctx = accept.clone();
                 thread::spawn(move || {
                     let _ = serve(stream, &ctx);
                 });
             }
         });
-        FakeMirror { addr, rec, secret }
+        FakeMirror {
+            addr,
+            rec,
+            secret,
+            ctx,
+        }
+    }
+
+    /// The sessions so far go dark (see the module docs).
+    pub fn vanish(&self) {
+        self.ctx.generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Closes new connections at once (an address nobody serves).
+    pub fn set_refusing(&self, refusing: bool) {
+        self.ctx.refusing.store(refusing, Ordering::Release);
     }
 
     pub fn rec(&self) -> std::sync::MutexGuard<'_, Recorded> {
@@ -197,9 +235,13 @@ fn info(with_displays: bool) -> Plist {
 }
 
 fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
+    let generation = ctx.generation.load(Ordering::Acquire);
     let mut conn = Conn::new(stream);
     loop {
         let req = conn.read_request()?;
+        if ctx.gone(generation) {
+            return Ok(()); // vanished: the connection breaks
+        }
         ctx.rec
             .lock()
             .unwrap()
@@ -395,6 +437,7 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64, shk: [u8; 16]) -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
     let ctx = ctx.clone();
+    let generation = ctx.generation.load(Ordering::Acquire);
     thread::spawn(move || {
         let Ok((mut s, _)) = l.accept() else { return };
         if ctx.behaviour.stall_data {
@@ -416,6 +459,18 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64, shk: [u8; 16]) -> u16 {
         let mut buf = Vec::new();
         let mut chunk = [0u8; 65536];
         loop {
+            if ctx.gone(generation) {
+                // Dark: hold the connection without reading (no EOF),
+                // until the sender closes it or a while passed.
+                let _ = s.set_read_timeout(Some(Duration::from_millis(100)));
+                for _ in 0..200 {
+                    thread::sleep(Duration::from_millis(100));
+                    if s.peek(&mut [0u8; 1]).is_ok_and(|n| n == 0) {
+                        break;
+                    }
+                }
+                return;
+            }
             if ctx.close_data.load(Ordering::Acquire)
                 || ctx.behaviour.close_after_packets.is_some_and(|c| n >= c)
             {
@@ -450,6 +505,7 @@ fn data_server(ctx: &Arc<Ctx>, stream_id: u64, shk: [u8; 16]) -> u16 {
                     ts: u64::from_le_bytes(header[8..16].try_into().unwrap()),
                     timeline: u64::from_le_bytes(header[40..48].try_into().unwrap()),
                     payload,
+                    session: generation,
                 });
                 n += 1;
             }

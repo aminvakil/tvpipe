@@ -172,7 +172,14 @@ pub struct MirrorOptions {
     pub name: String,
     /// Allow PTP (else always NTP).
     pub ptp: bool,
+    /// No answer to `POST /feedback` (sent every 2 s) for this long: the
+    /// receiver is lost (`push` fails with a timeout).
+    pub feedback_timeout: std::time::Duration,
 }
+
+/// Default [`MirrorOptions::feedback_timeout`]: three missed `/feedback`
+/// rounds.
+pub const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(7);
 
 impl Default for MirrorOptions {
     fn default() -> MirrorOptions {
@@ -181,6 +188,7 @@ impl Default for MirrorOptions {
             audio: true,
             name: "tvpipe".into(),
             ptp: true,
+            feedback_timeout: FEEDBACK_TIMEOUT,
         }
     }
 }
