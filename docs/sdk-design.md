@@ -1,6 +1,8 @@
 # Node SDK design (`tvpipe` on npm)
 
-Status: proposal. Goal: `npm install tvpipe` and stream to an Apple TV, a
+Status: implemented (the decisions at the end). The machine interface's
+reference is [`machine.md`](machine.md); the SDK's user documentation is
+[`npm/tvpipe/README.md`](../npm/tvpipe/README.md). Goal: `npm install tvpipe` and stream to an Apple TV, a
 Chromecast or a browser tab from Node without knowing about the binary:
 files, URLs, the test pattern, web pages, and frames a program makes itself
 (a canvas, raw RGBA, encoded H.264), with audio.
@@ -189,6 +191,9 @@ contract; options and behaviour of the commands stay as they are.
 
 ### Events: stdout, one JSON object per line
 
+(As implemented, with `devices` and `unpaired` added and the codes listed:
+[`machine.md`](machine.md).)
+
 The first line is always `hello`; the last line before exit is `end` (or
 `error`, then the exit status). Logs move from stderr to `log` events
 (stderr keeps only what is printed before `main` runs, i.e. argument parse
@@ -332,8 +337,9 @@ runs the resolved binary with inherited stdio and its exit status.
 ```
 npm/
   tvpipe/                     the SDK (source of the `tvpipe` package)
-    package.json              type: module, engines node >= 22, exports, bin,
-                              optionalDependencies @tvpipe/* (exact version)
+    package.json              type: module, engines node >= 22, exports, bin;
+                              the version is the crate's (CI checks); the
+                              optionalDependencies are added when staging
     tsconfig.json             erasableSyntaxOnly, rewriteRelativeImportExtensions,
                               declaration, declarationMap
     src/*.ts                  imports use .ts extensions
@@ -341,10 +347,12 @@ npm/
     examples/canvas-tone.ts
     README.md
   scripts/
-    build-packages.mjs        stage packages: npm/dist/tvpipe (built JS + .d.ts + src),
-                              npm/dist/@tvpipe/<os>-<cpu> (binary from a release archive
-                              or a local target/ dir, package.json, LICENSE files, README)
-    sync-version.mjs          Cargo.toml version → package.json files
+    build-packages.mjs        stage packages: npm/dist/tvpipe (built JS + .d.ts + src,
+                              optionalDependencies @tvpipe/* pinned to the version),
+                              npm/dist/tvpipe-<os>-<cpu> (@tvpipe/<os>-<cpu>: the binary
+                              from a release archive, or --local PATH, LICENSE files)
+    publish-packages.mjs      npm publish in order (platforms first), skipping
+                              versions already published; --dry-run, --provenance
 ```
 
 - **TypeScript**: erasable syntax only (no enums, namespaces, parameter
@@ -363,21 +371,26 @@ npm/
 - **Versions in lockstep**: every package has the crate's version; the
   SDK's optionalDependencies pin it exactly. Prereleases (`0.2.0-rc.1`) get
   the `next` dist-tag.
-- **Release job** (`release.yml`, `npm` job after `build`): downloads the
-  six archives, runs `build-packages.mjs`, `npm pack`s everything, runs the
-  SDK tests against the linux-x64 binary, then:
-  - tag push: `npm publish --provenance --access public` for the six
-    platform packages first, then `tvpipe` (job permission `id-token:
-    write`, `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`); an already
-    published version is skipped so a rerun completes.
+- **Release job** (`release.yml`, `npm` job after `build` and `release`):
+  downloads the six archives, builds and type-checks the SDK, runs its
+  tests against the linux-x64 release binary, stages the packages and
+  `npm pack`s them, then:
+  - tag push: `publish-packages.mjs --provenance`: `npm publish
+    --provenance --access public` for the six platform packages first, then
+    `tvpipe`, authenticated by **npm trusted publishing** (OIDC; job
+    permission `id-token: write`, npm ≥ 11.5.1, no token anywhere); an
+    already published version is skipped so a rerun completes.
   - `workflow_dispatch` (dry run): `npm publish --dry-run` and the
-    tarballs kept as a workflow artifact.
-- **What the owner does once**: create the npm org/scope `tvpipe`, an
-  automation (granular, publish) token for `tvpipe` and `@tvpipe/*`, and
-  add it as the `NPM_TOKEN` repository secret (Settings → Secrets →
-  Actions). After the first publish, npm's trusted publishing (OIDC) can
-  replace the token: configure it per package on npmjs.com, then drop the
-  secret.
+    tarballs kept as the `npm-dry-run` workflow artifact.
+- **One-time setup** (done by the maintainers, not by CI): the npm org
+  `tvpipe` owns the `@tvpipe/*` scope; the seven packages were published
+  once by hand (trusted publishing can only be configured for packages
+  that exist), then each got a trusted publisher: GitHub repository
+  `mitsuhiko/tvpipe`, workflow `release.yml`, no environment
+  (`npm trust github <pkg> --repo mitsuhiko/tvpipe --file release.yml`).
+- **Releasing**: bump the version in `Cargo.toml`, `Cargo.lock` and
+  `npm/tvpipe/package.json` together (CI fails when they differ), tag
+  `vX.Y.Z`.
 - CI (`ci.yml`): an `sdk` job (Linux/macOS/Windows) building the debug
   binary and running `node --test` with `TVPIPE_BINARY` set.
 
@@ -394,13 +407,16 @@ npm/
   backpressure drops are counted, `end()` drains.
 - `stream()` encoded H.264: `keyframe` events (the binary's built-in
   encoder is not reachable from Node, so the fixture is a short H.264
-  elementary stream from `tests/fixtures`).
+  elementary stream, `npm/tvpipe/test/fixtures/testsrc-64x48-30.h264`,
+  made with ffmpeg/x264 with access unit delimiters).
 - watchdog: killing the Node side's pipe ends tvpipe; AbortSignal;
   `await using`.
 - `pair()` against tvpipe's fake pairing server is Rust-side only (it
   lives in the test binary); the SDK's PIN path is tested with a stub
   binary (a small Node script that speaks the protocol).
-- `discover()` parses a recorded `discover --json` (no network in tests).
+- `discover()`, receiver choice without `to`, pairing with `onPin` and on
+  demand, protocol mismatch: against the stub binary (Unix only; Windows
+  cannot spawn a script without a shell).
 
 Example (`examples/canvas-tone.ts`): a moving RGBA test card (no canvas
 library) and a 440 Hz tone to `--to browser`, printing the player URL.
@@ -414,13 +430,16 @@ library) and a 440 Hz tone to `--to browser`, printing the player URL.
 - A manual page for the website (`site/manual/node.md` or text handed to
   the website session).
 
-## Open questions
+## Decisions
 
-1. Flag name: `--machine` (proposed) vs `--json-events`; it changes stdin
-   too, so `--machine` says more.
-2. Logs in machine mode only as `log` events (proposed), or also on stderr?
-3. SDK default player port `0` (proposed) vs the CLI's stable 8765.
-4. `stream()` default encoder: the CLI's `auto` (ffmpeg if installed,
-   else built-in) vs always `builtin` (no ffmpeg dependency, keyframes on
-   demand, no start-up drop; more CPU at 1080p60).
-5. An `sdk` job in `ci.yml` as well as the release job?
+1. The flag is `--machine`.
+2. In machine mode logs are only `log` events; the SDK re-emits them
+   (`session.on("log")`) and can mirror them to stderr (`logs` option).
+3. The SDK's player port defaults to 0 (any free port); `player: { port }`
+   overrides it.
+4. `stream()` uses the built-in encoder by default (no ffmpeg, keyframes
+   on demand); `encoder: "auto" | "x264" | …` opts into ffmpeg.
+5. `ci.yml` has an `sdk` job on Linux, macOS and Windows.
+6. Without `to`, sessions use the only receiver with video on the network;
+   otherwise `no-receivers` or `ambiguous-receiver` (listing them).
+7. Package names: `tvpipe` (unscoped) and `@tvpipe/<os>-<cpu>`.

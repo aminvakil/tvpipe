@@ -1,0 +1,47 @@
+{
+  "name": "tvpipe",
+  "version": "0.1.1",
+  "description": "Stream video and audio to AirPlay, Google Cast and browser tabs from Node: files, URLs, web pages, canvases and raw frames",
+  "keywords": ["airplay", "chromecast", "google-cast", "apple-tv", "mirroring", "streaming", "canvas", "h264"],
+  "homepage": "https://mitsuhiko.github.io/tvpipe/",
+  "bugs": "https://github.com/mitsuhiko/tvpipe/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mitsuhiko/tvpipe.git",
+    "directory": "npm/tvpipe"
+  },
+  "license": "Apache-2.0",
+  "author": "Armin Ronacher",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "tvpipe": "bin/tvpipe.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "node --test --test-concurrency=1 \"test/*.test.ts\"",
+    "example": "node examples/canvas-tone.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "~5.9.3"
+  }
+}

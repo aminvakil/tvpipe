@@ -35,6 +35,14 @@ Playing files, URLs and capture devices needs `ffmpeg` (and `ffprobe`); see
 [Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) for
 ffmpeg, the release archives and building from source.
 
+From Node.js, `npm install tvpipe` installs an SDK and the binary for your
+platform ([`npm/tvpipe`](npm/tvpipe/README.md)):
+
+```js
+import { play } from "tvpipe";
+await play("movie.mp4", { to: "Living Room" });
+```
+
 ## Features
 
 - Plays files and URLs, and mirrors cameras, capture cards and the screen
@@ -71,6 +79,13 @@ ffmpeg, the release archives and building from source.
 cargo build --release        # → target/release/tvpipe (Rust 1.85+, a C compiler)
 cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 ```
+
+The Node SDK's tests run against the debug binary: `cargo build && cd
+npm/tvpipe && npm ci && npm run check && npm test`. A release bumps the
+version in `Cargo.toml`, `Cargo.lock` and `npm/tvpipe/package.json`
+together (CI checks), then tags `vX.Y.Z`; `release.yml` publishes the GitHub
+release and the npm packages. Programs in other languages can drive tvpipe
+through [`--machine`](docs/machine.md).
 
 Tests that use ffmpeg as an oracle are skipped without it; tests against
 real receivers or hardware run with `--ignored`. How and why tvpipe works is
