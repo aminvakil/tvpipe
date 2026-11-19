@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>beam</title>
+<style>
+  :root { color-scheme: dark; font: 14px/1.4 system-ui, sans-serif; }
+  body { margin: 0; background: #12121a; color: #eee; display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+  aside { padding: 16px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #333; overflow: auto; }
+  main { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  label { display: flex; justify-content: space-between; gap: 8px; }
+  select, button { font: inherit; }
+  canvas { width: 100%; max-width: 960px; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
+  pre { margin: 0; font: 12px ui-monospace, monospace; white-space: pre-wrap; color: #aab; }
+  h1 { font-size: 18px; margin: 0; }
+</style>
+<script type="module" src="host.js"></script>
+</head>
+<body>
+<aside>
+  <h1>beam</h1>
+  <p>Canvases on TVs: encoded in this page (a surface) or this picture as a page tvpipe captures (the tab).</p>
+  <label>Path <select id="path"><option value="canvas">canvas (surface)</option><option value="tab">tab capture</option></select></label>
+  <label>Clock <select id="clock"><option value="raf">animation frames</option><option value="timer">timer</option><option value="worker">worker (OffscreenCanvas)</option></select></label>
+  <label>Size <select id="size"><option>1280x720</option><option>1920x1080</option></select></label>
+  <label>Frames/s <select id="fps"><option>30</option><option>60</option></select></label>
+  <label>Sound <select id="audio"><option value="1">a beep a second</option><option value="0">none</option></select></label>
+  <label>Second screen <select id="second"><option value="">none</option><option value="same">to the same TVs</option></select></label>
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+  <pre id="status"></pre>
+</aside>
+<main>
+  <canvas id="c" width="1280" height="720"></canvas>
+  <canvas id="c2" width="1280" height="720" hidden></canvas>
+  <pre id="stats"></pre>
+</main>
+</body>
+</html>

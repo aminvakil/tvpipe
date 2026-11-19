@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>beam (a page on the TV)</title>
+<style>html, body { margin: 0; background: #000; overflow: hidden; } canvas { display: block; width: 100vw; height: 100vh; }</style>
+<script type="module">
+  // The tab-capture path: this page in tvpipe's headless browser, captured.
+  import { makeScene } from "./scene.js";
+  const canvas = document.querySelector("canvas");
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+  const scene = makeScene(canvas);
+  const loop = () => {
+    scene.draw();
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+</script>
+</head>
+<body><canvas></canvas></body>
+</html>
