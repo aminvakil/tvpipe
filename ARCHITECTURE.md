@@ -21,6 +21,14 @@ detail lives in `docs/`:
 
 ## Scope
 
+tvpipe is a Rust library (`crates/tvpipe`, the `tvpipe` crate) with the
+`tvpipe` command on top of it (`crates/tvpipe-cli`). Programs link the
+library to stream their own frames, or run the command with
+[`--machine`](docs/machine.md) (the Node SDK does). The library has no
+process-wide state besides an optional log handler: each session has its
+own stop token, events and storage for pairings
+([`docs/rust-sdk-design.md`](docs/rust-sdk-design.md)).
+
 `tvpipe` is a **sender** only. It pushes video and audio to receivers over
 their **real-time mirroring** protocols: AirPlay screen mirroring, and Cast
 Streaming (the Chromecast mirroring app, RTP/RTCP over UDP). It does not use

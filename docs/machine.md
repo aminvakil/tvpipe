@@ -2,10 +2,14 @@
 
 For programs that drive tvpipe: the Node SDK (`@tvpipe/sdk`, source in `npm/tvpipe`), and anything
 else that can spawn a process and read lines. Protocol version **1**.
-Code: `crates/tvpipe-cli/src/machine.rs`, the events at their sources (`session.rs`,
+Code: `crates/tvpipe-cli/src/machine.rs`; the events are the Rust
+library's `tvpipe::Event`, one `to_json()` line each
+(`crates/tvpipe/src/events.rs`), emitted at their sources (`session.rs`,
 `session/rejoin.rs`, `media/fanout.rs`, `browser/player.rs`,
-`airplay/pair.rs`, `net/discover.rs`). Tests: `crates/tvpipe-cli/src/machine/tests.rs`,
-`crates/tvpipe-cli/tests/machine.rs` (the real binary).
+`airplay/pair.rs`). Tests: `crates/tvpipe-cli/src/machine/tests.rs`,
+`crates/tvpipe-cli/tests/machine.rs` (the real binary). Golden vectors,
+which the Node SDK's tests read: `crates/tvpipe/tests/vectors/machine/`
+(every event type, and recorded sessions).
 
 ```sh
 tvpipe --machine test-pattern --to browser --port 0
