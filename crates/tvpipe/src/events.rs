@@ -821,3 +821,6 @@ impl std::fmt::Debug for Events {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

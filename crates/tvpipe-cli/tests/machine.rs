@@ -108,6 +108,85 @@ impl Tvpipe {
     }
 }
 
+/// An event line's `type`.
+fn type_of(line: &str) -> &str {
+    let start = "{\"type\":\"".len();
+    line.get(start..)
+        .and_then(|s| s.split('"').next())
+        .unwrap_or("")
+}
+
+/// Replaces what changes from run to run: ports, tokens, the version.
+fn scrub(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(i) = rest.find("127.0.0.1:") {
+        out.push_str(&rest[..i + 10]);
+        rest = &rest[i + 10..];
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        out.push_str("8765");
+        rest = &rest[digits..];
+    }
+    out.push_str(rest);
+    let mut s = String::new();
+    let mut rest = out.as_str();
+    while let Some(i) = rest.find("t=") {
+        s.push_str(&rest[..i + 2]);
+        rest = &rest[i + 2..];
+        let hex = rest.chars().take_while(char::is_ascii_hexdigit).count();
+        if hex == 32 {
+            s.push_str("0123456789abcdef0123456789abcdef");
+        } else {
+            s.push_str(&rest[..hex]);
+        }
+        rest = &rest[hex..];
+    }
+    s.push_str(rest);
+    s.replace(
+        &format!("\"version\":\"{}\"", env!("CARGO_PKG_VERSION")),
+        "\"version\":\"0.0.0\"",
+    )
+}
+
+/// The session as a transcript for the Node SDK's replay tests
+/// (crates/tvpipe/tests/vectors/machine/sessions/NAME.txt): the events
+/// without log and stats lines, scrubbed, after the command line and the
+/// expected outcome. `TVPIPE_BLESS=1` writes it; otherwise the sequence of
+/// event types must match the file's.
+fn transcript(name: &str, args: &[&str], lines: &[String], exit: i32, outcome: &str) {
+    let events: Vec<String> = lines
+        .iter()
+        .filter(|l| !matches!(type_of(l), "log" | "stats"))
+        .map(|l| scrub(l))
+        .collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tvpipe/tests/vectors/machine/sessions")
+        .join(format!("{name}.txt"));
+    if std::env::var_os("TVPIPE_BLESS").is_some() {
+        let mut text = format!(
+            "# A recorded `tvpipe --machine` session (crates/tvpipe-cli/tests/machine.rs,\n\
+             # TVPIPE_BLESS=1); ports and tokens scrubbed, log and stats lines left out.\n\
+             # args: {}\n# exit: {exit}\n# outcome: {outcome}\n",
+            args.join(" ")
+        );
+        for e in &events {
+            text.push_str(e);
+            text.push('\n');
+        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        return;
+    }
+    let want: Vec<String> = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{}: {e} (TVPIPE_BLESS=1)", path.display()))
+        .lines()
+        .filter(|l| l.starts_with('{'))
+        .map(|l| type_of(l).to_owned())
+        .collect();
+    let have: Vec<String> = events.iter().map(|l| type_of(l).to_owned()).collect();
+    assert_eq!(have, want, "{} (TVPIPE_BLESS=1 to update)", path.display());
+}
+
 fn last_type(lines: &[String]) -> &str {
     let last = lines.last().map(String::as_str).unwrap_or("");
     let start = "{\"type\":\"".len();
@@ -141,8 +220,24 @@ fn stop_command_ends_the_session_cleanly() {
     assert!(started.contains("\"width\":320"), "{started}");
     t.wait_for("\"stats\"");
     t.command(r#"{"type":"stop"}"#);
+    let seen = t.seen.clone();
     let (code, rest) = t.finish();
     assert_eq!(code, 0, "{rest:?}");
+    transcript(
+        "test-pattern-stopped",
+        &[
+            "test-pattern",
+            "--to",
+            "browser",
+            "--port",
+            "0",
+            "--size",
+            "320x240",
+        ],
+        &[seen, rest.clone()].concat(),
+        code,
+        "end stopped",
+    );
     let end = rest
         .iter()
         .find(|l| l.starts_with("{\"type\":\"end\""))
@@ -226,6 +321,7 @@ fn raw_slrw_frames_play_out_on_eof() {
     }
     t.wait_for("\"started\"");
     t.close_stdin();
+    let seen = t.seen.clone();
     let (code, rest) = t.finish();
     assert_eq!(code, 0, "{rest:?}");
     let end = rest
@@ -233,6 +329,22 @@ fn raw_slrw_frames_play_out_on_eof() {
         .find(|l| l.starts_with("{\"type\":\"end\""))
         .unwrap();
     assert!(end.contains("\"reason\":\"eof\""), "{end}");
+    transcript(
+        "raw-slrw-eof",
+        &[
+            "play",
+            "--to",
+            "browser",
+            "--port",
+            "0",
+            "--raw-video",
+            &video,
+            "-",
+        ],
+        &[seen, rest.clone()].concat(),
+        code,
+        "end eof",
+    );
 }
 
 #[test]
@@ -240,6 +352,13 @@ fn errors_are_events_with_codes() {
     let t = Tvpipe::spawn("error", &["play", "--to", "browser", "/no/such/file.mp4"]);
     let (code, rest) = t.finish();
     assert_eq!(code, 1);
+    transcript(
+        "input-not-found",
+        &["play", "--to", "browser", "/no/such/file.mp4"],
+        &rest,
+        code,
+        "error input-not-found",
+    );
     let err = rest.last().unwrap();
     assert!(err.starts_with("{\"type\":\"error\""), "{rest:?}");
     assert!(err.contains("\"code\":\"input-not-found\""), "{err}");

@@ -1,0 +1,7 @@
+# A recorded `tvpipe --machine` session (crates/tvpipe-cli/tests/machine.rs,
+# TVPIPE_BLESS=1); ports and tokens scrubbed, log and stats lines left out.
+# args: play --to browser /no/such/file.mp4
+# exit: 1
+# outcome: error input-not-found
+{"type":"hello","protocol":1,"version":"0.0.0","command":"play"}
+{"type":"error","kind":"not-found","code":"input-not-found","message":"/no/such/file.mp4: no such file"}

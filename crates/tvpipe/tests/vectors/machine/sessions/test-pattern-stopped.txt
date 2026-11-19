@@ -1,0 +1,12 @@
+# A recorded `tvpipe --machine` session (crates/tvpipe-cli/tests/machine.rs,
+# TVPIPE_BLESS=1); ports and tokens scrubbed, log and stats lines left out.
+# args: test-pattern --to browser --port 0 --size 320x240
+# exit: 0
+# outcome: end stopped
+{"type":"hello","protocol":1,"version":"0.0.0","command":"test-pattern"}
+{"type":"player","name":"browser","url":"http://127.0.0.1:8765/?t=0123456789abcdef0123456789abcdef"}
+{"type":"receiver","name":"browser","protocol":"browser","state":"connected"}
+{"type":"connected","receivers":["browser"]}
+{"type":"started","route":"builtin","video":{"codec":"h264","width":320,"height":240,"fps":30.0},"audio":[{"codec":"pcm-s16le","sample_rate":48000,"channels":2}],"latency_ms":100}
+{"type":"receiver","name":"browser","state":"stopped"}
+{"type":"end","reason":"stopped","receivers":[{"name":"browser","pushed":167,"dropped":167,"dropped_full":0,"dropped_waiting":0,"end":"stopped"}]}

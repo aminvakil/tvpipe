@@ -107,8 +107,8 @@ export interface PairOptions extends ProcessOptions {
 export interface PairResult {
   name: string;
   model: string | undefined;
-  /** The credentials file. */
-  file: string;
+  /** The credentials file (the tvpipe command always has one). */
+  file: string | undefined;
 }
 
 /**

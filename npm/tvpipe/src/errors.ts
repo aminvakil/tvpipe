@@ -16,6 +16,7 @@ export type TvpipeErrorCode =
   | "pin-missing"
   | "bad-input"
   | "fairplay-required"
+  | "feature-disabled"
   // The SDK's.
   | "binary-missing"
   | "unsupported-platform"

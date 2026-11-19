@@ -1,0 +1,136 @@
+# The machine interface's events (docs/machine.md) as tvpipe writes them:
+# one block per event type and interesting case. Generated from
+# crates/tvpipe/src/events/tests.rs (TVPIPE_BLESS=1 cargo test -p tvpipe events::);
+# the Node SDK's tests read it too.
+
+name = hello
+type = hello
+json = {"type":"hello","protocol":1,"version":"0.1.2","command":"test-pattern"}
+
+name = log
+type = log
+json = {"type":"log","level":"info","module":"browser::player","message":"browser: open http://127.0.0.1:8765/?t=… to watch"}
+
+name = log at every level
+type = log
+json = {"type":"log","level":"trace","module":"cast::rtcp","message":"quoted \"text\" and a tab\t"}
+
+name = receiver connected
+type = receiver
+json = {"type":"receiver","name":"Living Room","protocol":"airplay","state":"connected"}
+
+name = receiver failed while connecting
+type = receiver
+json = {"type":"receiver","name":"Living Room","protocol":"airplay","state":"failed","error":"Living Room requires pairing: run `tvpipe pair \"Living Room\"`","code":"pairing-required"}
+
+name = receiver lost
+type = receiver
+json = {"type":"receiver","name":"Living Room","state":"lost","error":"cast: no RTCP for 5 s"}
+
+name = receiver reconnected
+type = receiver
+json = {"type":"receiver","name":"Living Room","state":"reconnected"}
+
+name = receiver gave up
+type = receiver
+json = {"type":"receiver","name":"Living Room","state":"gave-up","error":"gave up reconnecting after 120 s: connect: connection refused"}
+
+name = receiver ended
+type = receiver
+json = {"type":"receiver","name":"Living Room","state":"ended"}
+
+name = receiver stopped
+type = receiver
+json = {"type":"receiver","name":"Living Room","state":"stopped"}
+
+name = player
+type = player
+json = {"type":"player","name":"browser","url":"http://127.0.0.1:8765/?t=0123456789abcdef0123456789abcdef"}
+
+name = viewer
+type = viewer
+json = {"type":"viewer","name":"browser","tab":1,"state":"connected","public":false}
+
+name = viewer over the tunnel leaves
+type = viewer
+json = {"type":"viewer","name":"browser","tab":2,"state":"disconnected","public":true}
+
+name = tunnel to the player
+type = tunnel
+json = {"type":"tunnel","page":"player","name":"browser","provider":"cloudflare","url":"https://example.trycloudflare.com/?t=abc&delay=300"}
+
+name = tunnel to the share page
+type = tunnel
+json = {"type":"tunnel","page":"share","provider":"opentunnel","url":"https://abc.opentunnel.example/?t=def"}
+
+name = share-page
+type = share-page
+json = {"type":"share-page","url":"http://127.0.0.1:52345/?t=0123"}
+
+name = capture
+type = capture
+json = {"type":"capture","surface":"window","label":"Slides","width":1920,"height":1080,"audio":true}
+
+name = capture without details
+type = capture
+json = {"type":"capture","width":640,"height":480,"audio":false}
+
+name = connected
+type = connected
+json = {"type":"connected","receivers":["Living Room","browser"]}
+
+name = started
+type = started
+json = {"type":"started","route":"builtin","video":{"codec":"h264","width":1280,"height":720,"fps":30.0},"audio":[{"codec":"pcm-s16le","sample_rate":44100,"channels":2},{"codec":"aac-lc","sample_rate":48000,"channels":2}],"latency_ms":300}
+
+name = started with a fractional rate and no audio
+type = started
+json = {"type":"started","route":"passthrough","video":{"codec":"h264","width":1920,"height":1080,"fps":29.97002997002997},"audio":[],"latency_ms":100}
+
+name = keyframe
+type = keyframe
+json = {"type":"keyframe"}
+
+name = stats
+type = stats
+json = {"type":"stats","elapsed_ms":2005,"video_frames":60,"audio_frames":273,"receivers":[{"name":"Living Room","pushed":333,"dropped":1,"dropped_full":2,"dropped_waiting":3}]}
+
+name = devices
+type = devices
+json = {"type":"devices","devices":[{"name":"Living Room","addresses":["192.0.2.10"],"model":"AppleTV14,1","airplay":{"instance":"Living Room","host":"Living-Room.local","port":7000,"address":"192.0.2.10:7000","model":"AppleTV14,1","srcvers":"860.7.1","osvers":"26.1","deviceid":"AA:BB:CC:00:00:0A","features":"0x4A7FDFD5,0x3C177FDE","flags":"0x644","pk":"0000000000000000000000000000000000000000000000000000000000000000","mirroring":true,"password":false,"pin":true,"paired":false}},{"name":"Kitchen speaker","addresses":["192.0.2.11"],"cast":{"instance":"Google-Nest-Mini-0123","host":"0123.local","port":8009,"address":"192.0.2.11:8009","friendly_name":"Kitchen speaker","model":"Google Nest Mini","id":"0123456789abcdef","capabilities":199172,"video":false,"group":false}}]}
+
+name = pin-required
+type = pin-required
+json = {"type":"pin-required","name":"Living Room","address":"192.0.2.10:7000"}
+
+name = paired
+type = paired
+json = {"type":"paired","name":"Living Room","model":"AppleTV14,1","file":"/home/user/.config/tvpipe/credentials.txt"}
+
+name = paired in memory
+type = paired
+json = {"type":"paired","name":"Living Room"}
+
+name = unpaired
+type = unpaired
+json = {"type":"unpaired","name":"Living Room","id":"5B3C1A0E-0000-4000-8000-000000000001"}
+
+name = end of a stream
+type = end
+json = {"type":"end","reason":"eof","receivers":[{"name":"Living Room","pushed":333,"dropped":1,"dropped_full":2,"dropped_waiting":3,"end":"stopped"},{"name":"Office","pushed":12,"dropped":1,"dropped_full":2,"dropped_waiting":3,"end":"failed","error":"cast: control channel ended"}]}
+
+name = end of a command
+type = end
+json = {"type":"end","reason":"done"}
+
+name = end after every receiver left
+type = end
+json = {"type":"end","reason":"receivers-gone","receivers":[{"name":"Living Room","pushed":5,"dropped":1,"dropped_full":2,"dropped_waiting":3,"end":"ended"}]}
+
+name = error
+type = error
+json = {"type":"error","kind":"auth","code":"pairing-required","message":"Living Room requires pairing","device":"Living Room"}
+
+name = error without code
+type = error
+json = {"type":"error","kind":"not-found","message":"no such file"}

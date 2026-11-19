@@ -125,7 +125,8 @@ export interface PairedEvent {
   type: "paired";
   name: string;
   model?: string;
-  file: string;
+  /** The credentials file (the CLI's always has one). */
+  file?: string;
 }
 
 export interface UnpairedEvent {
@@ -158,6 +159,19 @@ export interface ErrorEvent {
   device?: string;
 }
 
+/** `share` or `screen`: the browser started sharing. */
+export interface CaptureEvent {
+  type: "capture";
+  /** `monitor`, `window` or `browser`, if the browser says. */
+  surface?: string;
+  /** A screen or window title, if the browser says. */
+  label?: string;
+  width: number;
+  height: number;
+  /** Whether the capture has sound. */
+  audio: boolean;
+}
+
 /** A device as `discover` reports it (camelCased). */
 export interface RawDevice {
   name: string;
@@ -176,6 +190,7 @@ export type TvpipeEvent =
   | ViewerEvent
   | SharePageEvent
   | TunnelEvent
+  | CaptureEvent
   | ConnectedEvent
   | StartedEvent
   | KeyframeEvent
@@ -186,6 +201,37 @@ export type TvpipeEvent =
   | DevicesEvent
   | EndEvent
   | ErrorEvent;
+
+/**
+ * Every event `type`, as a value (the golden vectors in
+ * crates/tvpipe/tests/vectors/machine/ are checked against it).
+ */
+export const EVENT_TYPES = [
+  "hello",
+  "log",
+  "receiver",
+  "player",
+  "viewer",
+  "share-page",
+  "tunnel",
+  "capture",
+  "connected",
+  "started",
+  "keyframe",
+  "stats",
+  "pin-required",
+  "paired",
+  "unpaired",
+  "devices",
+  "end",
+  "error",
+] as const;
+
+// EVENT_TYPES and the TvpipeEvent union name the same types (a compile error
+// otherwise).
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const sameTypes: Same<(typeof EVENT_TYPES)[number], TvpipeEvent["type"]> = true;
+void sameTypes;
 
 /** snake_case keys to camelCase, recursively. */
 export function camelize(value: unknown): unknown {
