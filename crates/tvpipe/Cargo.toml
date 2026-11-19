@@ -55,4 +55,4 @@ h264 = []
 [dependencies]
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
-tvpipe-fairplay = { path = "../tvpipe-fairplay", version = "0.1.2", optional = true }
+tvpipe-fairplay = { path = "../tvpipe-fairplay", version = "0.2.0", optional = true }
