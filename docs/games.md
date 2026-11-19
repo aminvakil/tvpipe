@@ -283,11 +283,11 @@ What it checks (errors stop it with exit code 1, warnings do not):
 |---|---|---|
 | `tvpipe.json` | missing, not JSON, a wrong or missing field (as `tvpipe playshare` would refuse it), a `tvpipe` version this tvpipe cannot run | unknown fields and pages (typos), no `tvpipe` version |
 | the folder | `root` missing ("build the game first"), outside the folder, or empty; symlinks that leave `root` (never served) or are broken or loop; names with backslashes or control characters, or not UTF-8; a `_tvpipe` folder; more than 10 000 files or 256 MiB | names Windows cannot unpack (`<>:"\|?*`, a trailing dot or space); `node_modules` in `root`; files over 32 MiB |
-| a zip | not a zip, zip64, encryption, other methods, CRC errors; unsafe names (`..`, absolute, drive letters); a name twice; no `tvpipe.json` at the top or in its one top-level folder (with a hint for Finder's `__MACOSX/` or a folder too deep) | files outside `root` (never served) |
+| a zip | not a zip, zip64, encryption, other methods, CRC errors; unsafe names (`..`, absolute, drive letters); a name twice; no `tvpipe.json` at the top or in its one top-level folder (with a hint for a folder too deep) | files outside `root` (never served) |
 | names | two files or folders that differ only in case (one is lost on macOS and Windows) | |
 | the pages | an entry page missing (and why: the case, an unbuilt `root`) | an entry page that is not `.html` |
 | what pages load | a missing file, with the page and line: `<script src>`, `<link href>`, `<img src/srcset>`, media, `<iframe>`, CSS `url()` and `@import`, JS `import`/`export from`/`import("…")`, inline scripts and styles; a path above the root; a hidden file; a name that differs in case; an import without its extension; TypeScript or JSX loaded as a script; a module with `import` loaded as a classic script; a bare import (`"@tvpipe/party"`) no import map resolves; a `/_tvpipe/` path tvpipe does not serve | a file loaded from the internet; a missing `<a href>` target; `<base href>` |
-| `@tvpipe/party` | | a host page that never loads `/_tvpipe/lib/index.js` (or `tvpipe.js`); a TV or phone page without the client; a copy of the library inside the game |
+| `@tvpipe/party` | | a host page that never loads `/_tvpipe/lib/index.js` (or `tvpipe.js`); a TV or phone page without the client (not the TV page when the game streams a canvas: `tvpipe.surface`, `SurfaceEncoder`); a copy of the library inside the game |
 
 Finally the result is opened the way `tvpipe playshare` opens it.
 
@@ -297,9 +297,9 @@ stored, whichever is smaller). It holds one folder named after the game
 with `tvpipe.json` (without `root`) and the files of `root`, so it
 unpacks into a tidy folder and `tvpipe playshare` reads it as it is.
 Hidden files (`.DS_Store`, `.git`) are left out, and so is the zip itself
-when it is written inside the game. Do not zip by hand: Finder's
-"Compress" adds `__MACOSX/` beside the folder, which `tvpipe playshare`
-refuses.
+when it is written inside the game. A zip made by hand works too
+(`tvpipe playshare` ignores Finder's `__MACOSX/` and hidden files beside
+the game's folder), but `tvpipe bundle DIR` checks it and leaves them out.
 
 **`--smoke`** runs the game once, without TVs or a tunnel, in a headless
 Chromium-based browser (Chrome, Edge, Chromium, Brave; `--browser PATH`
@@ -418,7 +418,7 @@ Ctrl-C).
 | Symptom | Cause, fix |
 |---|---|
 | `tvpipe.json: …` at start | the manifest is wrong; `tvpipe bundle --check PATH` lists everything at once |
-| `no tvpipe.json at the top of the archive` | the zip has more than one top-level entry (Finder's `__MACOSX/`, a stray file) or the game is a folder too deep: pack it with `tvpipe bundle DIR` |
+| `no tvpipe.json at the top of the archive` | the zip has more than one top-level entry (a stray file or folder; `__MACOSX/` and hidden names do not count) or the game is a folder too deep: pack it with `tvpipe bundle DIR` |
 | `pages.host: dist/… is not in the bundle (is the game built?)` | `root` points at a build output that is missing: run the game's build |
 | `the game needs tvpipe X or newer` | update tvpipe; `made for tvpipe X`: the game needs updating |
 | a blank or broken page | open it with `--window open` and look at the browser's console; `tvpipe bundle --check --smoke PATH` names missing files, exceptions and failed requests |

@@ -447,6 +447,18 @@ fn library_rules() {
         Level::Warning,
         &["host.html: the host page does not load @tvpipe/party"],
     );
+    // A TV page without the client: a warning, unless the host streams a
+    // canvas (a surface), which is then the TV picture.
+    let plain_tv = ("tv.html", Some("<!doctype html><canvas></canvas>"));
+    let c = check(&game("plaintv", &[plain_tv])).unwrap();
+    only(
+        &c,
+        Level::Warning,
+        &["tv.html: the tv page does not load @tvpipe/party's client"],
+    );
+    let host = "import { Tvpipe } from \"/_tvpipe/lib/index.js\";\nimport { rules } from './rules.js';\nconst tv = await (await Tvpipe.connect()).surface({ canvas });\n";
+    let c = check(&game("surfacetv", &[plain_tv, ("host.js", Some(host))])).unwrap();
+    assert!(c.problems.is_empty(), "{:#?}", lines(&c));
     // A bundled copy.
     let c = check(&game(
         "copy",
@@ -551,11 +563,14 @@ fn zip_rules() {
         Level::Error,
         &["no tvpipe.json at the top", "a/b/tvpipe.json is deeper"],
     );
-    // Finder's __MACOSX next to the folder.
+    // Finder's __MACOSX and a .DS_Store next to the folder: playshare
+    // loads it, the check only warns.
     let mut v = refs(&good);
     v.push(("__MACOSX/tiny/._host.html".into(), "x".into()));
+    v.push((".DS_Store".into(), "x".into()));
     let c = check(&zip_of("zip-macosx", &as_str(&v))).unwrap();
-    only(&c, Level::Error, &["no tvpipe.json at the top", "Finder"]);
+    assert_eq!(c.errors(), 0, "{:#?}", lines(&c));
+    has(&c, Level::Warning, &["__MACOSX/", "Finder"]);
     // Unsafe names.
     let mut v = refs(&good);
     v.push(("tiny/../../evil.sh".into(), "x".into()));

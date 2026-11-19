@@ -644,11 +644,13 @@ fn gather_zip(data: &[u8], c: &mut Checked) {
     let prefix = if ok.iter().any(|e| e.name == MANIFEST) {
         String::new()
     } else {
-        // As playshare sees it: every entry counts, hidden ones too.
+        // As playshare sees it: what archivers add beside the folder
+        // (Finder's __MACOSX/, hidden names) does not count.
         let tops: BTreeSet<&str> = entries
             .iter()
             .filter(|e| !unsafe_name(&e.name))
             .map(|e| e.name.split('/').next().unwrap_or(""))
+            .filter(|t| !t.starts_with('.') && *t != "__MACOSX")
             .collect();
         match tops.iter().next() {
             Some(t)
@@ -665,17 +667,16 @@ fn gather_zip(data: &[u8], c: &mut Checked) {
                     let (t, rest) = e.name.split_once('/')?;
                     (rest == MANIFEST).then_some(t)
                 });
-                let hint = match (deeper, macosx) {
-                    (_, true) => " (Finder's Compress adds __MACOSX/: build the zip with tvpipe bundle DIR)".to_owned(),
+                let hint = match deeper {
                     _ if tvpipe_top.is_some() => format!(
                         " ({}/ has it, but the archive has more at its top: {}; build the zip with tvpipe bundle DIR)",
                         tvpipe_top.unwrap_or(""),
                         tops.iter().filter(|t| Some(**t) != tvpipe_top).copied().collect::<Vec<_>>().join(", ")
                     ),
-                    (Some(d), _) => format!(
+                    Some(d) => format!(
                         " ({d} is deeper: zip the game's folder itself, or use tvpipe bundle DIR)"
                     ),
-                    (None, _) => String::new(),
+                    None => String::new(),
                 };
                 c.error(
                     "",
@@ -922,7 +923,16 @@ impl ImportMap {
 struct Reach {
     /// `lib/…` modules of tvpipe's library.
     lib: BTreeSet<String>,
+    /// Streams a canvas to the TVs (a surface): the TV page then need not
+    /// be a client.
+    surface: bool,
     seen: HashSet<String>,
+}
+
+/// Whether a script streams a canvas (`tvpipe.surface(…)`,
+/// `openSurface(…)`, `SurfaceEncoder`).
+fn uses_surface(text: &str) -> bool {
+    text.contains(".surface(") || text.contains("openSurface(") || text.contains("SurfaceEncoder")
 }
 
 fn what(kind: RefKind) -> &'static str {
@@ -1009,6 +1019,7 @@ impl Walker<'_> {
             self.reference(file, r, &map, reach);
         }
         for s in &h.scripts {
+            reach.surface |= uses_surface(&s.text);
             for mut r in scan::js(&s.text) {
                 r.line += s.line - 1;
                 self.reference(file, &r, &map, reach);
@@ -1190,6 +1201,7 @@ impl Walker<'_> {
             return;
         };
         let text = String::from_utf8_lossy(bytes).into_owned();
+        reach.surface |= uses_surface(&text);
         if text.contains("class PartyClient") || text.contains("class HostedParty") {
             self.problems.push((
                 Level::Warning,
@@ -1276,6 +1288,9 @@ fn check_pages(c: &mut Checked) {
         let reach = w.page(page);
         found.push((*key, page.clone(), reach));
     }
+    let surfaces = found
+        .iter()
+        .any(|(_, _, r)| r.surface || r.lib.contains("lib/surface.js"));
     for (key, page, reach) in &found {
         let has = |m: &str| reach.lib.contains(m);
         match *key {
@@ -1284,6 +1299,8 @@ fn check_pages(c: &mut Checked) {
                 page.clone(),
                 "the host page does not load @tvpipe/party (import { Tvpipe } from \"/_tvpipe/lib/index.js\"): without it no relay is attached and phones cannot join".into(),
             )),
+            // With surfaces the TV picture comes from the host's canvases.
+            "tv" if surfaces => {}
             "tv" | "phone" if !(has("lib/client.js") || has("lib/index.js")) => w.problems.push((
                 Level::Warning,
                 page.clone(),
