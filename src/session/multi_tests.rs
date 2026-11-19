@@ -3,11 +3,12 @@
 //! (ARCHITECTURE.md), and the failure cases: a receiver that cannot be
 //! reached, one that leaves mid-stream, and a stop request.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::tests::{assert_cast_frames, fake_airplay, never, opts, SharedTally, Tallied};
+use super::tests::{
+    assert_cast_frames, connect_test, fake_airplay, never, opts, SharedTally, Tallied,
+};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
@@ -129,7 +130,7 @@ fn mixed_receivers_share_one_timeline() {
     };
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         match t {
-            Target::Browser(_) => connect_one(t, c, m),
+            Target::Browser(_) => connect_test(t, c, m),
             Target::Cast { addr, name } => Ok(observed(
                 Box::new(cast::connect(*addr, name, c)?),
                 80,
@@ -152,7 +153,7 @@ fn mixed_receivers_share_one_timeline() {
         }
     };
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
-    play_with(o, no_io(), &connect, never).unwrap();
+    play_with(o, no_io(), &connect, never()).unwrap();
 
     // One budget: no --latency with both families = the default everywhere.
     let m = seen_mirror.lock().unwrap().clone().unwrap();
@@ -262,7 +263,7 @@ fn mixed_connector<'a>(
 ) -> impl Fn(&Target, &CastOptions, &MirrorOptions) -> Result<Box<dyn Sink>> + Sync + 'a {
     move |t, c, m| {
         Ok(match t {
-            Target::Browser(_) => connect_one(t, c, m)?,
+            Target::Browser(_) => connect_test(t, c, m)?,
             Target::Cast { addr, name } => Tallied::boxed(
                 Box::new(cast::connect(*addr, name, c)?),
                 cast_limit,
@@ -293,7 +294,7 @@ fn unreachable_receiver_is_left_out() {
         "cast:127.0.0.1:1".into(),
         format!("airplay:{}", fake.addr),
     ]);
-    play_with(o, no_io(), &connect, never).unwrap();
+    play_with(o, no_io(), &connect, never()).unwrap();
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     assert!(st.stopped);
@@ -311,7 +312,7 @@ fn unreachable_receiver_is_left_out() {
 
     // Nobody reachable: the session fails with the connect error.
     let o = pattern_opts(vec!["cast:127.0.0.1:1".into(), "cast:127.0.0.1:2".into()]);
-    let e = play_with(o, no_io(), &connect, never).unwrap_err();
+    let e = play_with(o, no_io(), &connect, never()).unwrap_err();
     assert_eq!(e.kind(), crate::error::ErrorKind::Io, "{e}");
 }
 
@@ -326,7 +327,7 @@ fn airplay_receiver_leaving_does_not_stop_cast() {
     let tallies = Tallies::default();
     let connect = mixed_connector(&fake, Some(45), None, &tallies);
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
-    play_with(o, no_io(), &connect, never).unwrap();
+    play_with(o, no_io(), &connect, never()).unwrap();
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     assert!(st.stopped);
@@ -350,7 +351,7 @@ fn cast_receiver_leaving_does_not_stop_airplay() {
         rx.shutdown()
     });
     let t0 = Instant::now();
-    play_with(o, no_io(), &connect, never).unwrap();
+    play_with(o, no_io(), &connect, never()).unwrap();
     let state = killer.join().unwrap();
     // 45 frames at 30 fps: the AirPlay sink was given all of them, well
     // after the Cast one left, and its receiver got what it accepted.
@@ -364,11 +365,8 @@ fn cast_receiver_leaving_does_not_stop_airplay() {
     assert!(v.frames.len() < 30, "{}", v.frames.len());
 }
 
-static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-fn stop_requested() -> bool {
-    STOP_REQUESTED.load(Ordering::SeqCst)
-}
+static STOP_REQUESTED: std::sync::LazyLock<crate::util::stop::Stop> =
+    std::sync::LazyLock::new(crate::util::stop::Stop::new);
 
 #[test]
 fn stop_request_tears_every_receiver_down() {
@@ -380,10 +378,10 @@ fn stop_request_tears_every_receiver_down() {
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
     let stopper = std::thread::spawn(|| {
         std::thread::sleep(Duration::from_millis(700));
-        STOP_REQUESTED.store(true, Ordering::SeqCst);
+        STOP_REQUESTED.request();
         Instant::now()
     });
-    play_with(o, no_io(), &connect, stop_requested).unwrap();
+    play_with(o, no_io(), &connect, STOP_REQUESTED.clone()).unwrap();
     let asked = stopper.join().unwrap();
     // No draining and no playout tail: down within a moment.
     assert!(

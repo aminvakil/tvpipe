@@ -32,6 +32,7 @@ use crate::error::{Error, Result};
 use crate::media::clock::{MediaClock, SessionClock, Tolerance};
 use crate::media::source::StreamInfo;
 use crate::types::{AudioFamily, EncodedFrame, Sink, SinkStatus, TrackKind, VIDEO_CLOCK_RATE};
+use crate::util::stop::Stop;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FanoutConfig {
@@ -258,13 +259,13 @@ impl Fanout {
     /// in the queues of sinks that are still setting up, and they anchor
     /// their clocks on the stale first one: the backlog would become
     /// latency. Returns whether all sinks started in time.
-    pub fn wait_started(&self, timeout: Duration, stop: fn() -> bool) -> bool {
+    pub fn wait_started(&self, timeout: Duration, stop: &Stop) -> bool {
         let until = Instant::now() + timeout;
         for h in &self.sinks {
             let mut st = h.shared.lock();
             while !st.started {
                 let now = Instant::now();
-                if now >= until || stop() {
+                if now >= until || stop.requested() {
                     return false;
                 }
                 let wait = (until - now).min(Duration::from_millis(50));
@@ -836,7 +837,6 @@ mod tests {
 
     #[test]
     fn waits_for_sinks_to_start() {
-        let never = || false;
         let slow = |ms, fail| -> Box<dyn Sink> {
             Box::new(SlowStart {
                 caps: caps(AudioFamily::Cast),
@@ -851,7 +851,7 @@ mod tests {
         )
         .unwrap();
         let t0 = Instant::now();
-        assert!(f.wait_started(Duration::from_secs(5), never));
+        assert!(f.wait_started(Duration::from_secs(5), &Stop::new()));
         assert!(
             t0.elapsed() >= Duration::from_millis(140),
             "{:?}",
@@ -861,11 +861,11 @@ mod tests {
         f.close(false);
         // A failed start counts as done; a hanging one times out.
         let f = Fanout::new(vec![slow(20, true)], &info(), FanoutConfig::default()).unwrap();
-        assert!(f.wait_started(Duration::from_secs(5), never));
+        assert!(f.wait_started(Duration::from_secs(5), &Stop::new()));
         f.close(false);
         let f = Fanout::new(vec![slow(400, false)], &info(), FanoutConfig::default()).unwrap();
         let t0 = Instant::now();
-        assert!(!f.wait_started(Duration::from_millis(100), never));
+        assert!(!f.wait_started(Duration::from_millis(100), &Stop::new()));
         assert!(t0.elapsed() < Duration::from_millis(300));
         f.close(false);
     }

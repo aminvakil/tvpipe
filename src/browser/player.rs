@@ -52,6 +52,7 @@ use crate::types::{
     TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
 };
 use crate::util::ratio::Ratio;
+use crate::util::stop::Stop;
 
 pub const PLAYER_HTML: &str = include_str!("player.html");
 pub const PLAYER_JS: &str = include_str!("player.js");
@@ -689,7 +690,7 @@ pub struct BrowserSink {
 impl BrowserSink {
     /// Listens on 127.0.0.1 and prints the URL; with `wait_for_viewer`,
     /// returns once a tab is connected (or `stop` says so: an error).
-    pub fn bind(opts: &PlayerOptions, stop: fn() -> bool) -> Result<BrowserSink> {
+    pub fn bind(opts: &PlayerOptions, stop: Stop) -> Result<BrowserSink> {
         let token = match &opts.token {
             Some(t) => t.clone(),
             None => new_token()?,
@@ -745,7 +746,7 @@ impl BrowserSink {
         }
         let tunnel = if let Some(provider) = opts.tunnel {
             info!("{}: starting a public tunnel", opts.name);
-            let t = tunnel::start(port, provider, &stop)?;
+            let t = tunnel::start(port, provider, &|| stop.requested())?;
             let token = shared
                 .access
                 .publish(t.host(), opts.tunnel_ttl, t.peer_lookup())?;
@@ -792,7 +793,7 @@ impl BrowserSink {
             info!("{}: waiting for a viewer", opts.name);
             let mut st = sink.shared.lock();
             while st.tabs.is_empty() {
-                if stop() {
+                if stop.requested() {
                     return Err(Error::closed(format!(
                         "{}: stopped while waiting for a viewer",
                         opts.name

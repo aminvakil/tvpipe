@@ -11,8 +11,8 @@ use crate::browser::protocol;
 use crate::media::clock::MediaClock;
 use crate::net::websocket::{self, Message};
 
-fn never() -> bool {
-    false
+fn never() -> crate::util::stop::Stop {
+    crate::util::stop::Stop::new()
 }
 
 /// An avcC (Constrained Baseline, level 3.1) from the built-in encoder.
@@ -143,7 +143,7 @@ fn wait_viewers(sink: &BrowserSink, n: usize) {
 }
 
 fn started(clock: &Arc<MediaClock>) -> BrowserSink {
-    let mut sink = BrowserSink::bind(&PlayerOptions::default(), never).unwrap();
+    let mut sink = BrowserSink::bind(&PlayerOptions::default(), never()).unwrap();
     sink.set_clock(SessionClock::new(clock.clone()));
     sink
 }
@@ -209,7 +209,7 @@ fn http(addr: u16, raw: &str) -> String {
 
 #[test]
 fn page_server_checks_token_host_and_origin() {
-    let sink = BrowserSink::bind(&PlayerOptions::default(), never).unwrap();
+    let sink = BrowserSink::bind(&PlayerOptions::default(), never()).unwrap();
     let port = sink.shared.access.port();
     let token = sink.shared.access.token().to_owned();
     let get = |target: &str, host: &str, extra: &str| {
@@ -528,18 +528,17 @@ fn acknowledging_tabs_have_a_limited_amount_in_flight() {
 
 #[test]
 fn waits_for_a_viewer_or_a_stop() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static STOP: AtomicBool = AtomicBool::new(false);
-    fn stop() -> bool {
-        STOP.load(Ordering::SeqCst)
-    }
+    static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+        std::sync::LazyLock::new(crate::util::stop::Stop::new);
     let opts = PlayerOptions {
         wait_for_viewer: true,
         ..PlayerOptions::default()
     };
-    let h = std::thread::spawn(move || BrowserSink::bind(&opts, stop).map(|s| s.url().to_owned()));
+    let h = std::thread::spawn(move || {
+        BrowserSink::bind(&opts, STOP.clone()).map(|s| s.url().to_owned())
+    });
     std::thread::sleep(Duration::from_millis(100));
-    STOP.store(true, Ordering::SeqCst);
+    STOP.request();
     assert!(h.join().unwrap().is_err());
 }
 
@@ -595,7 +594,7 @@ fn the_url_uses_the_given_token_and_the_fixed_port_or_another() {
         token: Some(token.clone()),
         ..PlayerOptions::default()
     };
-    let sink = BrowserSink::bind(&opts, never).unwrap();
+    let sink = BrowserSink::bind(&opts, never()).unwrap();
     assert_ne!(sink.shared.access.port(), DEFAULT_PORT);
     assert!(
         sink.url().ends_with(&format!("/?t={token}")),
@@ -610,5 +609,5 @@ fn the_url_uses_the_given_token_and_the_fixed_port_or_another() {
         port: Some(port),
         ..PlayerOptions::default()
     };
-    assert!(BrowserSink::bind(&opts, never).is_err());
+    assert!(BrowserSink::bind(&opts, never()).is_err());
 }

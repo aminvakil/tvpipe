@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 
-use super::tests::{fake_airplay, never, SharedTally, Tallied};
+use super::tests::{connect_test, fake_airplay, never, SharedTally, Tallied};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
@@ -54,7 +54,7 @@ fn pages_to_cast_and_airplay_across_a_navigation() {
     let (cast_tally, airplay_tally) = (SharedTally::default(), SharedTally::default());
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         Ok(match t {
-            Target::Browser(_) => connect_one(t, c, m)?,
+            Target::Browser(_) => connect_test(t, c, m)?,
             Target::Cast { addr, name } => {
                 Tallied::boxed(Box::new(cast::connect(*addr, name, c)?), None, &cast_tally)
             }
@@ -99,7 +99,7 @@ fn pages_to_cast_and_airplay_across_a_navigation() {
         }),
         ..browse_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)])
     };
-    browse::browse_with(&o, &connect, never, &launcher).unwrap();
+    browse::browse_with(&o, &connect, never(), &launcher).unwrap();
     assert_eq!(*viewport.lock().unwrap(), Some((320, 180)));
     let seen = std::mem::take(&mut *seen.lock().unwrap());
     assert_eq!(seen.len(), 2);
@@ -149,7 +149,7 @@ fn page_size_follows_the_receivers_and_a_browser_failure_stops_them() {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
     };
-    let e = browse::browse_with(&o, &connect_one, never, &launcher).unwrap_err();
+    let e = browse::browse_with(&o, &connect_test, never(), &launcher).unwrap_err();
     assert!(e.to_string().contains("ERR_NAME_NOT_RESOLVED"), "{e}");
     assert_eq!(*viewport.lock().unwrap(), Some((1280, 720)));
     let state = rx.shutdown();
@@ -191,7 +191,7 @@ fn a_browser_that_fails_later_fails_the_session() {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
     };
-    let e = browse::browse_with(&o, &connect_one, never, &launcher).unwrap_err();
+    let e = browse::browse_with(&o, &connect_test, never(), &launcher).unwrap_err();
     assert!(e.to_string().contains("NotAllowedError"), "{e}");
     let state = rx.shutdown();
     assert!(state.lock().unwrap().stopped);
@@ -280,15 +280,13 @@ fn firefox_browser_to_cast_and_player() {
 /// `share URL` with browser `bin`; `view(bin, url)` watches the player
 /// page at `url` in another one.
 fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
         crate::log::set_level(crate::log::Level::Debug);
     }
-    static STOP: AtomicBool = AtomicBool::new(false);
-    fn stop() -> bool {
-        STOP.load(Ordering::SeqCst)
-    }
-    STOP.store(false, Ordering::SeqCst);
+    static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+        std::sync::LazyLock::new(crate::util::stop::Stop::new);
+    STOP.clear();
     // The test page, counting its loads.
     let loads = std::sync::Arc::new(AtomicUsize::new(0));
     let l = loads.clone();
@@ -319,12 +317,12 @@ fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
                     port: Some(0),
                     ..(**o).clone()
                 };
-                let sink = BrowserSink::bind(&o, never)?;
+                let sink = BrowserSink::bind(&o, never())?;
                 let url = format!("{}&stats=1", sink.url());
                 let bin = b.clone();
                 *viewer.lock().unwrap() = Some(std::thread::spawn(move || {
                     let r = std::panic::catch_unwind(|| view(&bin, &url));
-                    STOP.store(true, Ordering::SeqCst);
+                    STOP.request();
                     r
                 }));
                 Box::new(sink)
@@ -352,14 +350,14 @@ fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
                 reload: Some(Duration::from_secs(4)),
             },
             server.handle(),
-            stop,
+            STOP.clone(),
         )?;
         *profile.lock().unwrap() = Some(h.profile_dir().to_path_buf());
         Ok(Box::new(h))
     };
     let o = browse_opts(vec![rx.addr.to_string(), "browser".into()]);
     let t0 = Instant::now();
-    let r = browse::browse_with(&o, &connect, stop, &launcher);
+    let r = browse::browse_with(&o, &connect, STOP.clone(), &launcher);
     let secs = t0.elapsed().as_secs_f64();
     let watched = viewer.lock().unwrap().take().map(|h| h.join().unwrap());
     if let Some(Err(panic)) = watched {
@@ -456,15 +454,12 @@ fn firefox_browser_survives_crashes() {
 /// `share URL` with browser `bin` while `crash(profile, tally)` crashes
 /// it.
 fn browser_survives_crashes(bin: String, crash: fn(&std::path::Path, &SharedTally)) {
-    use std::sync::atomic::{AtomicBool, Ordering};
     if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
         crate::log::set_level(crate::log::Level::Debug);
     }
-    static STOP: AtomicBool = AtomicBool::new(false);
-    fn stop() -> bool {
-        STOP.load(Ordering::SeqCst)
-    }
-    STOP.store(false, Ordering::SeqCst);
+    static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+        std::sync::LazyLock::new(crate::util::stop::Stop::new);
+    STOP.clear();
     let handler: crate::net::httpd::Handler = std::sync::Arc::new(|_| {
         crate::net::httpd::Reply::Response(crate::net::httpd::response(
             200,
@@ -503,14 +498,14 @@ fn browser_survives_crashes(bin: String, crash: fn(&std::path::Path, &SharedTall
                 reload: None,
             },
             server.handle(),
-            stop,
+            STOP.clone(),
         )?;
         let dir = h.profile_dir().to_path_buf();
         *profile.lock().unwrap() = Some(dir.clone());
         let tally = tally.clone();
         *driver.lock().unwrap() = Some(std::thread::spawn(move || {
             let r = std::panic::catch_unwind(|| crash(&dir, &tally));
-            STOP.store(true, Ordering::SeqCst);
+            STOP.request();
             r
         }));
         Ok(Box::new(h))
@@ -522,7 +517,7 @@ fn browser_survives_crashes(bin: String, crash: fn(&std::path::Path, &SharedTall
         }),
         ..browse_opts(vec![rx.addr.to_string()])
     };
-    let r = browse::browse_with(&o, &connect, stop, &launcher);
+    let r = browse::browse_with(&o, &connect, STOP.clone(), &launcher);
     let drove = driver.lock().unwrap().take().map(|h| h.join().unwrap());
     if let Some(Err(panic)) = drove {
         std::panic::resume_unwind(panic);

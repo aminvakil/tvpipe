@@ -2,7 +2,7 @@
 //! as the page: `preview` of the built-in test pattern, and a browser
 //! next to a fake Cast receiver on one timeline, joining late.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -20,14 +20,11 @@ use crate::types::{AudioInfo, EncodedFrame, SinkStatus, VideoInfo, VIDEO_CLOCK_R
 
 /// One test at a time: they share the stop flag.
 static SERIAL: Mutex<()> = Mutex::new(());
-static STOP: AtomicBool = AtomicBool::new(false);
+static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+    std::sync::LazyLock::new(crate::util::stop::Stop::new);
 
-fn stop_flag() -> bool {
-    STOP.load(Ordering::SeqCst)
-}
-
-fn never() -> bool {
-    false
+fn never() -> crate::util::stop::Stop {
+    crate::util::stop::Stop::new()
 }
 
 /// Tests never take the fixed port.
@@ -152,7 +149,7 @@ fn stop_when(limit: Duration, cond: impl Fn() -> bool + Send + 'static) -> JoinH
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        STOP.store(true, Ordering::SeqCst);
+        STOP.request();
         ok
     })
 }
@@ -160,14 +157,14 @@ fn stop_when(limit: Duration, cond: impl Fn() -> bool + Send + 'static) -> JoinH
 #[test]
 fn preview_plays_the_test_pattern_in_a_page() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    STOP.store(false, Ordering::SeqCst);
+    STOP.clear();
     let video = Arc::new(AtomicUsize::new(0));
     let page = Mutex::new(None);
     let connect = |t: &Target, _: &CastOptions, _: &MirrorOptions| -> Result<Box<dyn Sink>> {
         let Target::Browser(o) = t else {
             panic!("{t:?}")
         };
-        let sink = BrowserSink::bind(o, never)?;
+        let sink = BrowserSink::bind(o, never())?;
         *page.lock().unwrap() = Some((spawn_page(sink.ws_url(), video.clone()), *o.clone()));
         Ok(Box::new(sink))
     };
@@ -186,7 +183,7 @@ fn preview_plays_the_test_pattern_in_a_page() {
         encoder: Encoder::Builtin,
         ..opts()
     };
-    play_with(o, no_io(), &connect, stop_flag).unwrap();
+    play_with(o, no_io(), &connect, STOP.clone()).unwrap();
     assert!(stopper.join().unwrap(), "the page got too little video");
     let (page, popts) = page.lock().unwrap().take().unwrap();
     let log = page.join().unwrap();
@@ -229,7 +226,7 @@ fn preview_plays_the_test_pattern_in_a_page() {
 #[test]
 fn a_late_tab_shares_the_cast_timeline() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    STOP.store(false, Ordering::SeqCst);
+    STOP.clear();
     let rx = FakeReceiver::spawn(CastFake::default());
     let cast_tally = SharedTally::default();
     type Log = Arc<Mutex<Vec<(u64, Instant)>>>;
@@ -243,7 +240,7 @@ fn a_late_tab_shares_the_cast_timeline() {
                 log: cast_log.clone(),
             }),
             Target::Browser(o) => {
-                let sink = BrowserSink::bind(o, never)?;
+                let sink = BrowserSink::bind(o, never())?;
                 *browser.lock().unwrap() = Some((sink.ws_url(), sink.epoch(), *o.clone()));
                 Box::new(Logged {
                     inner: Box::new(sink),
@@ -282,7 +279,7 @@ fn a_late_tab_shares_the_cast_timeline() {
             });
             (page, stopped)
         });
-        play_with(o, no_io(), &connect, stop_flag).unwrap();
+        play_with(o, no_io(), &connect, STOP.clone()).unwrap();
         joiner.join().unwrap()
     });
     assert!(page.1.join().unwrap(), "the page got too little video");
@@ -349,7 +346,7 @@ pub(super) fn browser_secs() -> u64 {
 /// when `drive` returns.
 fn preview_in_browser(drive: impl FnOnce(String) + Send + 'static) {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    STOP.store(false, Ordering::SeqCst);
+    STOP.clear();
     if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
         crate::log::set_level(crate::log::Level::Debug);
     }
@@ -359,12 +356,12 @@ fn preview_in_browser(drive: impl FnOnce(String) + Send + 'static) {
         let Target::Browser(o) = t else {
             panic!("{t:?}")
         };
-        let sink = BrowserSink::bind(o, never)?;
+        let sink = BrowserSink::bind(o, never())?;
         let url = sink.url().to_owned();
         let drive = drive.lock().unwrap().take().unwrap();
         *driver.lock().unwrap() = Some(std::thread::spawn(move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(url)));
-            STOP.store(true, Ordering::SeqCst);
+            STOP.request();
             r
         }));
         Ok(Box::new(sink))
@@ -385,7 +382,7 @@ fn preview_in_browser(drive: impl FnOnce(String) + Send + 'static) {
             .and_then(|s| s.parse().ok()),
         ..opts()
     };
-    let r = play_with(o, no_io(), &connect, stop_flag);
+    let r = play_with(o, no_io(), &connect, STOP.clone());
     let drove = driver.lock().unwrap().take().map(|h| h.join());
     if let Some(Ok(Err(panic))) = drove {
         std::panic::resume_unwind(panic);
@@ -614,11 +611,11 @@ fn chrome_player_reconnects_to_the_next_run() {
     let browser: Arc<Mutex<Option<super::browser_tests::Chrome>>> = Arc::default();
     let mut drawn = Vec::new();
     for run in 0..2 {
-        STOP.store(false, Ordering::SeqCst);
+        STOP.clear();
         let (b, o, u, bin) = (browser.clone(), page.clone(), url.clone(), bin.clone());
         let connect =
             move |_: &Target, _: &CastOptions, _: &MirrorOptions| -> Result<Box<dyn Sink>> {
-                let sink = BrowserSink::bind(&o, never)?;
+                let sink = BrowserSink::bind(&o, never())?;
                 let mut g = b.lock().unwrap();
                 if g.is_none() {
                     *g = Some(super::browser_tests::chrome(&bin, &u));
@@ -647,14 +644,14 @@ fn chrome_player_reconnects_to_the_next_run() {
                     break -1.0;
                 }
             };
-            STOP.store(true, Ordering::SeqCst);
+            STOP.request();
             r
         });
         let o = PlayOptions {
             to: vec!["browser".into()],
             ..opts()
         };
-        play_with(o, no_io(), &connect, stop_flag).unwrap();
+        play_with(o, no_io(), &connect, STOP.clone()).unwrap();
         let n = watcher.join().unwrap();
         eprintln!("run {run}: page drew {n} frames so far");
         assert!(n > 0.0, "run {run}: the page did not play");

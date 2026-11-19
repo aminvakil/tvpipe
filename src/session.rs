@@ -43,6 +43,7 @@ use crate::cli::{
     BROWSER_TARGET,
 };
 use crate::codec::json::Value;
+use crate::ctx::Ctx;
 use crate::error::{Error, Result};
 use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
@@ -55,10 +56,10 @@ use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioPlan, Capabilities, EncodePlan, Encoder, Sink,
     TrackKind, VideoCodec, VideoPlan,
 };
-use crate::util::interrupt;
 use crate::util::ratio::Ratio;
+use crate::util::stop::Stop;
 
-pub fn run(cmd: Command) -> Result<()> {
+pub fn run(cmd: Command, ctx: &Ctx) -> Result<()> {
     match cmd {
         Command::Discover {
             timeout,
@@ -67,10 +68,10 @@ pub fn run(cmd: Command) -> Result<()> {
         } => crate::net::discover::run(timeout, json, &interfaces),
         Command::Pair { target, pin } => crate::airplay::pair::pair(&target, pin.as_deref()),
         Command::Unpair { target } => crate::airplay::pair::unpair(&target),
-        Command::Play(opts) | Command::TestPattern(opts) => play(opts),
-        Command::Share(opts) if opts.page.is_some() => browse::browse(opts),
-        Command::Share(opts) => share(opts),
-        Command::Screen(opts) => screen::screen(opts),
+        Command::Play(opts) | Command::TestPattern(opts) => play(opts, ctx),
+        Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),
+        Command::Share(opts) => share(opts, ctx),
+        Command::Screen(opts) => screen::screen(opts, ctx),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
 }
@@ -582,6 +583,7 @@ fn connect_one(
     t: &Target,
     opts: &CastOptions,
     mirror: &crate::airplay::session::MirrorOptions,
+    ctx: &Ctx,
 ) -> Result<Box<dyn Sink>> {
     match t {
         Target::Cast { addr, name } => Ok(Box::new(cast::connect(*addr, name, opts)?)),
@@ -594,7 +596,7 @@ fn connect_one(
                 &target, mirror,
             )?))
         }
-        Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, interrupt::requested)?)),
+        Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, ctx.stop.clone())?)),
     }
 }
 
@@ -872,7 +874,7 @@ struct GameIo {
     stdout: Box<dyn std::io::Write + Send>,
 }
 
-fn play(opts: PlayOptions) -> Result<()> {
+fn play(opts: PlayOptions, ctx: &Ctx) -> Result<()> {
     play_io(
         opts,
         GameIo {
@@ -885,28 +887,21 @@ fn play(opts: PlayOptions) -> Result<()> {
                 Box::new(std::io::stdout())
             },
         },
+        ctx,
     )
 }
 
-fn play_io(opts: PlayOptions, io: GameIo) -> Result<()> {
-    if !interrupt::install() {
-        warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
-    }
-    if opts.input != InputSpec::Stdin {
-        interrupt::watch_stdin();
-    }
-    let rejoin = Rejoin::system(opts.reconnect);
-    play_rejoin(opts, io, &connect_one, interrupt::requested, Some(&rejoin))
+fn play_io(opts: PlayOptions, io: GameIo, ctx: &Ctx) -> Result<()> {
+    let rejoin = Rejoin::system(opts.reconnect, ctx);
+    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        connect_one(t, o, m, ctx)
+    };
+    play_rejoin(opts, io, &connect, ctx.stop.clone(), Some(&rejoin))
 }
 
 /// `play` with the connector and the stop request (Ctrl-C, SIGTERM, `q`)
 /// given: the tests use fakes and their own stop flag.
-fn play_with(
-    opts: PlayOptions,
-    io: GameIo,
-    connect: Connector<'_>,
-    stop: fn() -> bool,
-) -> Result<()> {
+fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>, stop: Stop) -> Result<()> {
     play_rejoin(opts, io, connect, stop, None)
 }
 
@@ -916,7 +911,7 @@ fn play_rejoin(
     opts: PlayOptions,
     io: GameIo,
     connect: Connector<'_>,
-    stop: fn() -> bool,
+    stop: Stop,
     rejoin: Option<&Rejoin>,
 ) -> Result<()> {
     // Also here for the tests, which do not go through `main`.
@@ -1030,7 +1025,7 @@ fn play_rejoin(
         ..Default::default()
     };
     let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)?;
-    if stop() {
+    if stop.requested() {
         stop_all(sinks);
         return Ok(());
     }
@@ -1074,7 +1069,7 @@ fn play_rejoin(
     let opened: Result<(Box<dyn Input>, u32)> = (|| match route {
         Route::Passthrough(path, plan) => {
             let realtime = opts.realtime.unwrap_or(true);
-            let i = PassthroughInput::open_with(&path, &plan, realtime, opts.looped, stop)?;
+            let i = PassthroughInput::open(&path, &plan, realtime, opts.looped, stop.clone())?;
             Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
         }
         Route::Encoded => {
@@ -1096,7 +1091,7 @@ fn play_rejoin(
                 .raw_video
                 .clone()
                 .ok_or_else(|| Error::usage("--raw-video missing"))?;
-            let i = SlrwEncodedInput::open_with(
+            let i = SlrwEncodedInput::open(
                 io.stdin,
                 EncodedOptions {
                     video,
@@ -1104,7 +1099,7 @@ fn play_rejoin(
                     audio_families: families,
                     back_channel: Some(io.stdout),
                 },
-                stop,
+                stop.clone(),
             )?;
             Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
         }
@@ -1135,13 +1130,13 @@ fn play_rejoin(
                 warn!("{w}");
             }
             let i = if opts.input == InputSpec::TestPattern {
-                BuiltinInput::test_pattern(out, pattern_rate, families, stop)?
+                BuiltinInput::test_pattern(out, pattern_rate, families, stop.clone())?
             } else {
                 let video_in = opts
                     .raw_video
                     .clone()
                     .ok_or_else(|| Error::usage("--raw-video missing"))?;
-                BuiltinInput::open_slrw_with(
+                BuiltinInput::open_slrw(
                     io.stdin,
                     BuiltinOptions {
                         video_in,
@@ -1150,7 +1145,7 @@ fn play_rejoin(
                         audio_families: families,
                         threads: 0,
                     },
-                    stop,
+                    stop.clone(),
                 )?
             };
             Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
@@ -1173,7 +1168,7 @@ fn play_rejoin(
             );
             let (bin, probe) = tools.get()?;
             let (source, raw) = ffmpeg_source(&opts, &input, io.stdin)?;
-            let i = FfmpegInput::start_with(bin, probe, &source, &plan, raw, stop)?;
+            let i = FfmpegInput::start(bin, probe, &source, &plan, raw, stop.clone())?;
             Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
         }
     })();
@@ -1183,14 +1178,14 @@ fn play_rejoin(
         Ok(v) => v,
         Err(e) => {
             stop_all(sinks);
-            if stop() {
+            if stop.requested() {
                 info!("stopped");
                 return Ok(());
             }
             return Err(e);
         }
     };
-    match stream(input, route_name, latency_ms, sinks, stop) {
+    match stream(input, route_name, latency_ms, sinks, &stop) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1252,17 +1247,16 @@ fn receiver_limits(caps: &[&Capabilities]) -> String {
     )
 }
 
-fn share(opts: ShareOptions) -> Result<()> {
-    if !interrupt::install() {
-        warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
-    }
-    interrupt::watch_stdin();
-    let rejoin = Rejoin::system(opts.reconnect);
+fn share(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
+    let rejoin = Rejoin::system(opts.reconnect, ctx);
+    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        connect_one(t, o, m, ctx)
+    };
     let yes = opts.yes;
     share_rejoin(
         opts,
-        &connect_one,
-        interrupt::requested,
+        &connect,
+        ctx.stop.clone(),
         &|_| Ok(Box::new(())),
         Some(&rejoin),
         ShareKind::Page,
@@ -1303,7 +1297,7 @@ pub type Approver<'a> = &'a dyn Fn(&CaptureInfo, &dyn Fn() -> bool) -> bool;
 /// Asks on the terminal (`y` + Enter). Without a terminal nothing remote
 /// is shown unless `--yes` was given.
 fn approve_in_terminal(_cap: &CaptureInfo, cancel: &dyn Fn() -> bool) -> bool {
-    match interrupt::ask("share: show it on the receivers? [y/N]", cancel) {
+    match crate::util::interrupt::ask("share: show it on the receivers? [y/N]", cancel) {
         Some(a) => matches!(a.trim(), "y" | "Y" | "yes" | "Yes" | "YES"),
         None => {
             if !cancel() {
@@ -1377,7 +1371,7 @@ fn describe_remote(cap: &CaptureInfo) -> String {
 fn share_with(
     opts: ShareOptions,
     connect: Connector<'_>,
-    stop: fn() -> bool,
+    stop: Stop,
     on_listening: &dyn Fn(&ShareServer),
 ) -> Result<()> {
     let yes = opts.yes;
@@ -1400,7 +1394,7 @@ fn share_with(
 fn share_rejoin(
     opts: ShareOptions,
     connect: Connector<'_>,
-    stop: fn() -> bool,
+    stop: Stop,
     source: ShareSource<'_>,
     rejoin: Option<&Rejoin>,
     kind: ShareKind,
@@ -1422,7 +1416,7 @@ fn share_rejoin(
     }
     if let (Some(provider), ShareKind::Page) = (opts.tunnel, kind) {
         info!("share: starting a public tunnel");
-        let url = server.expose(provider, opts.tunnel_ttl, &stop)?;
+        let url = server.expose(provider, opts.tunnel_ttl, &|| stop.requested())?;
         info!(
             "share: someone with {url} can ask to share their screen to the receivers \
              (the link is new every run{}; you confirm each share here{})",
@@ -1465,7 +1459,7 @@ fn share_rejoin(
     server.set_status("waiting", "Press Share and pick what to show.", &names);
     // A capture over the tunnel waits for the local user's yes.
     let cap = loop {
-        let Some(cap) = server.wait_capture(stop) else {
+        let Some(cap) = server.wait_capture(&stop) else {
             return match server.failure() {
                 Some(e) => Err(e),
                 None => Ok(()),
@@ -1476,11 +1470,11 @@ fn share_rejoin(
         }
         info!("share: {}", describe_remote(&cap));
         server.set_status("connecting", "Waiting for the host to accept…", &names);
-        let gone = || stop() || !server.capture_pending();
+        let gone = || stop.requested() || !server.capture_pending();
         if approve(&cap, &gone) && server.capture_pending() {
             break cap;
         }
-        if stop() {
+        if stop.requested() {
             return Ok(());
         }
         info!("share: not shown");
@@ -1545,7 +1539,7 @@ fn share_rejoin(
     server.set_status("connecting", "", &names);
     let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)
         .map_err(|e| fail(&mut server, e))?;
-    if stop() {
+    if stop.requested() {
         stop_all(sinks);
         return Ok(());
     }
@@ -1630,20 +1624,20 @@ fn share_rejoin(
             audio: page_audio.map(|_| pcm.clone()),
             audio_families: families,
         },
-        stop,
+        stop.clone(),
     );
     let input = match opened {
         Ok(i) => i,
         Err(e) => {
             stop_all(sinks);
-            if stop() {
+            if stop.requested() {
                 info!("stopped");
                 return Ok(());
             }
             return Err(e);
         }
     };
-    match stream(Box::new(input), "browser", plan.latency_ms, sinks, stop) {
+    match stream(Box::new(input), "browser", plan.latency_ms, sinks, &stop) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1871,7 +1865,7 @@ fn stream(
     route: &str,
     latency_ms: u32,
     sinks: Vec<Box<dyn Sink>>,
-    stop: fn() -> bool,
+    stop: &Stop,
 ) -> Result<EndReason> {
     let info = input.info().clone();
     let v = &info.video;
@@ -1903,7 +1897,7 @@ fn stream(
     // (the built-in encoder, games) start their clock with it, so nothing
     // piles up in the queues of sinks still in start().
     let ready = Instant::now();
-    if !fanout.wait_started(SINK_START_WAIT, stop) && !stop() {
+    if !fanout.wait_started(SINK_START_WAIT, stop) && !stop.requested() {
         warn!("a receiver is slow to start; streaming anyway");
     }
     debug!("sinks started in {} ms", ready.elapsed().as_millis());
@@ -1913,7 +1907,7 @@ fn stream(
     let mut input_error = None;
     let mut next_stats = t0 + STATS_INTERVAL;
     let end = loop {
-        if stop() {
+        if stop.requested() {
             break EndReason::Interrupted;
         }
         if crate::machine::enabled() && Instant::now() >= next_stats {
@@ -1932,9 +1926,9 @@ fn stream(
                     break EndReason::ReceiversGone;
                 }
             }
-            Ok(None) if stop() => break EndReason::Interrupted,
+            Ok(None) if stop.requested() => break EndReason::Interrupted,
             Ok(None) => break EndReason::Eof,
-            Err(e) if stop() => {
+            Err(e) if stop.requested() => {
                 debug!("input after stop request: {e}");
                 break EndReason::Interrupted;
             }
@@ -2435,7 +2429,7 @@ mod tests {
             return;
         };
         let rx = FakeReceiver::spawn(Options::default());
-        play(file_opts(bin, path, rx.addr.to_string())).unwrap();
+        play(file_opts(bin, path, rx.addr.to_string()), &Ctx::new()).unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped, "STOP not received");
@@ -2457,7 +2451,11 @@ mod tests {
             return;
         };
         let rx = FakeReceiver::spawn(Options::default());
-        play(file_opts(bin, path, format!("cast:{}", rx.addr))).unwrap();
+        play(
+            file_opts(bin, path, format!("cast:{}", rx.addr)),
+            &Ctx::new(),
+        )
+        .unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped);
@@ -2505,7 +2503,11 @@ mod tests {
             return;
         };
         let rx = FakeReceiver::spawn(Options::default());
-        play(file_opts(NO_FFMPEG.into(), path, rx.addr.to_string())).unwrap();
+        play(
+            file_opts(NO_FFMPEG.into(), path, rx.addr.to_string()),
+            &Ctx::new(),
+        )
+        .unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped, "STOP not received");
@@ -2531,7 +2533,11 @@ mod tests {
             return;
         };
         let rx = FakeReceiver::spawn(Options::default());
-        let e = play(file_opts(NO_FFMPEG.into(), path, rx.addr.to_string())).unwrap_err();
+        let e = play(
+            file_opts(NO_FFMPEG.into(), path, rx.addr.to_string()),
+            &Ctx::new(),
+        )
+        .unwrap_err();
         assert!(e.to_string().contains(NO_FFMPEG), "{e}");
         let state = rx.shutdown();
         assert!(state.lock().unwrap().stopped, "STOP not received");
@@ -2607,7 +2613,7 @@ mod tests {
             }),
             stdout: Box::new(out.clone()),
         };
-        play_io(o, io).unwrap();
+        play_io(o, io, &Ctx::new()).unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
         assert!(st.stopped, "STOP not received");
@@ -2721,7 +2727,7 @@ mod tests {
         mirror: &crate::airplay::session::MirrorOptions,
     ) -> Result<Box<dyn Sink>> {
         let sink: Box<dyn Sink> = match t {
-            Target::Browser(_) => connect_one(t, cast_opts, mirror)?,
+            Target::Browser(_) => connect_test(t, cast_opts, mirror)?,
             Target::Cast { addr, name } => Box::new(cast::connect(*addr, name, cast_opts)?),
             Target::AirPlay { .. } => {
                 let fake = fake.expect("fake AirPlay receiver");
@@ -2754,10 +2760,18 @@ mod tests {
         )?))
     }
 
-    /// Never asks to stop (the tests must not touch the process-wide
-    /// Ctrl-C flag).
-    pub(super) fn never() -> bool {
-        false
+    /// Never asks to stop.
+    pub(super) fn never() -> Stop {
+        Stop::new()
+    }
+
+    /// The real connector, with a context of its own.
+    pub(super) fn connect_test(
+        t: &Target,
+        c: &CastOptions,
+        m: &crate::airplay::session::MirrorOptions,
+    ) -> Result<Box<dyn Sink>> {
+        connect_one(t, c, m, &Ctx::new())
     }
 
     /// Paced raw RGBA SLRW (like `slrw-gen`), 1 s at 30 fps with PCM.
@@ -2895,7 +2909,7 @@ mod tests {
             raw_opts(rx.addr.to_string(), 48_000),
             raw_game_io(48_000),
             &connect,
-            never,
+            never(),
         )
         .unwrap();
         let c = builtin::take_finished_counts().expect("built-in input");
@@ -2950,7 +2964,7 @@ mod tests {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
         };
-        play_with(o, io, &connect, never).unwrap();
+        play_with(o, io, &connect, never()).unwrap();
         let t = *tally.lock().unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
@@ -2979,7 +2993,7 @@ mod tests {
             raw_opts(to.clone(), 44_100),
             raw_game_io(44_100),
             &connect,
-            never,
+            never(),
         )
         .unwrap();
         {
@@ -3024,7 +3038,7 @@ mod tests {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
         };
-        play_with(o, io, &connect, never).unwrap();
+        play_with(o, io, &connect, never()).unwrap();
         let t = *tally.lock().unwrap();
         let r = fake.rec();
         assert!(r.teardown);
@@ -3095,7 +3109,7 @@ mod tests {
             bitrate_kbps: 300,
             gop: 30,
         };
-        let input = BuiltinInput::test_pattern(out, 48_000, vec![], interrupt::requested).unwrap();
+        let input = BuiltinInput::test_pattern(out, 48_000, vec![], never()).unwrap();
         let arrivals = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = ArrivalSink {
             caps: caps(1920, 1080, 60, 10_000),
@@ -3107,7 +3121,7 @@ mod tests {
             "builtin",
             0,
             vec![Box::new(sink)],
-            interrupt::requested,
+            &never(),
         )
         .unwrap();
         let a = arrivals.lock().unwrap();
@@ -3193,7 +3207,7 @@ mod tests {
         if o.ffmpeg.is_none() {
             return;
         }
-        let e = play(o).unwrap_err();
+        let e = play(o, &Ctx::new()).unwrap_err();
         assert_ne!(e.kind(), crate::error::ErrorKind::Unsupported, "{e}");
         assert!(e.to_string().contains("airplay"), "{e}");
     }

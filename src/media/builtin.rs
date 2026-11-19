@@ -32,13 +32,12 @@ use crate::error::{Error, Result};
 use crate::media::convert::{self, ColorSpec, PixelFormat, Yuv420Frame};
 use crate::media::h264enc;
 use crate::media::input::{
-    AudioOut, EncodedState, Input, StopFn, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
+    AudioOut, EncodedState, Input, Stop, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
 };
 use crate::media::rawin;
 use crate::media::slrw::{self, Kind, Packet, SlrwReader};
 use crate::media::source::StreamInfo;
 use crate::types::{AudioFamily, EncodedFrame};
-use crate::util::interrupt;
 use crate::util::ratio::Ratio;
 
 /// Raw frames waiting for the encoder; more are dropped.
@@ -160,7 +159,7 @@ pub struct BuiltinInput {
     last_request: Option<Instant>,
     counters: Arc<Counters>,
     what: &'static str,
-    stop: StopFn,
+    stop: Stop,
 }
 
 fn invalid(msg: String) -> io::Error {
@@ -169,14 +168,10 @@ fn invalid(msg: String) -> io::Error {
 
 impl BuiltinInput {
     /// Raw SLRW from the game (`--raw-video WxH@FPS:PIXFMT`, stdin).
-    pub fn open_slrw<R: Read + Send + 'static>(input: R, opts: BuiltinOptions) -> Result<Self> {
-        BuiltinInput::open_slrw_with(input, opts, interrupt::requested)
-    }
-
-    pub fn open_slrw_with<R: Read + Send + 'static>(
+    pub fn open_slrw<R: Read + Send + 'static>(
         input: R,
         opts: BuiltinOptions,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<Self> {
         let v = &opts.video_in;
         let limit = PixelFormat::from_name(&v.pix_fmt)
@@ -192,10 +187,10 @@ impl BuiltinInput {
         video_out: VideoOut,
         sample_rate: u32,
         audio_families: Vec<(AudioFamily, AudioOut)>,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<Self> {
         let audio = pattern_audio(sample_rate);
-        let pattern = TestPattern::new(video_out.size, video_out.fps, sample_rate, stop)?;
+        let pattern = TestPattern::new(video_out.size, video_out.fps, sample_rate, stop.clone())?;
         let opts = BuiltinOptions {
             video_in: RawVideoSpec {
                 size: video_out.size,
@@ -214,7 +209,7 @@ impl BuiltinInput {
         src: impl PacketSource,
         opts: BuiltinOptions,
         what: &'static str,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<Self> {
         let fmt = PixelFormat::from_name(&opts.video_in.pix_fmt).ok_or_else(|| {
             Error::unsupported(format!(
@@ -265,13 +260,13 @@ impl BuiltinInput {
                 .map_err(|e| Error::io("spawn encoder thread", e))?;
         }
         {
-            let (counters, go) = (counters.clone(), go.clone());
+            let (counters, go, stop2) = (counters.clone(), go.clone(), stop.clone());
             let frame_bytes = fmt.frame_size(opts.video_in.size.width, opts.video_in.size.height);
             let in_fps = opts.video_in.fps;
             std::thread::Builder::new()
                 .name("builtin-reader".into())
                 .spawn(move || {
-                    let gate = Gate { go, stop };
+                    let gate = Gate { go, stop: stop2 };
                     read_loop(
                         src,
                         frame_bytes,
@@ -310,7 +305,7 @@ impl BuiltinInput {
     /// Handles one event; `false` on a stop request.
     fn pump(&mut self) -> Result<bool> {
         loop {
-            if (self.stop)() {
+            if self.stop.requested() {
                 return Ok(false);
             }
             match self.rx.recv_timeout(STOP_POLL) {
@@ -335,7 +330,7 @@ impl BuiltinInput {
 /// Holds media time 0 back until the session pulls the first frame.
 struct Gate {
     go: Arc<AtomicBool>,
-    stop: StopFn,
+    stop: Stop,
 }
 
 impl Gate {
@@ -346,7 +341,7 @@ impl Gate {
     /// Waits until open; `false` on a stop request.
     fn wait(&self) -> bool {
         while !self.open() {
-            if (self.stop)() {
+            if self.stop.requested() {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -665,7 +660,7 @@ pub struct TestPattern {
     frames: u64,
     samples: u64,
     phase: f64,
-    stop: StopFn,
+    stop: Stop,
 }
 
 /// Samples per audio record (10 ms).
@@ -674,7 +669,7 @@ fn audio_chunk(rate: u32) -> u64 {
 }
 
 impl TestPattern {
-    pub fn new(size: Size, fps: Ratio, rate: u32, stop: StopFn) -> Result<TestPattern> {
+    pub fn new(size: Size, fps: Ratio, rate: u32, stop: Stop) -> Result<TestPattern> {
         if fps.num == 0 || fps.den == 0 || rate == 0 {
             return Err(Error::usage("test pattern: invalid frame or sample rate"));
         }
@@ -789,7 +784,7 @@ impl PacketSource for TestPattern {
         let (v, a) = (self.video_due_us(), self.audio_due_us());
         let due = v.min(a);
         loop {
-            if (self.stop)() {
+            if self.stop.requested() {
                 return Ok(None);
             }
             let at = start + Duration::from_micros(due);
@@ -827,8 +822,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::types::{AudioCodec, TrackKind};
 
-    fn never() -> bool {
-        false
+    fn never() -> crate::util::stop::Stop {
+        crate::util::stop::Stop::new()
     }
 
     #[test]
@@ -959,7 +954,7 @@ pub(crate) mod tests {
             ],
             threads: 1,
         };
-        let mut input = BuiltinInput::open_slrw_with(raw_stream(30, w, h), opts, never).unwrap();
+        let mut input = BuiltinInput::open_slrw(raw_stream(30, w, h), opts, never()).unwrap();
         let info = input.info().clone();
         assert_eq!((info.video.width, info.video.height), (64, 38));
         assert_eq!(info.video.fps, Ratio::integer(30));
@@ -1037,13 +1032,13 @@ pub(crate) mod tests {
             audio_families: vec![],
             threads: 1,
         };
-        let e = BuiltinInput::open_slrw_with(io::Cursor::new(Vec::new()), opts("yuyv422"), never)
+        let e = BuiltinInput::open_slrw(io::Cursor::new(Vec::new()), opts("yuyv422"), never())
             .err()
             .unwrap();
         assert!(e.to_string().contains("cannot read"), "{e}");
         // Errors in the stream surface from next_frame.
         let first = |s: Vec<u8>, pix: &str| {
-            let mut i = BuiltinInput::open_slrw_with(io::Cursor::new(s), opts(pix), never).unwrap();
+            let mut i = BuiltinInput::open_slrw(io::Cursor::new(s), opts(pix), never()).unwrap();
             i.next_frame().map(|f| f.is_some())
         };
         // A short frame.
@@ -1206,7 +1201,7 @@ pub(crate) mod tests {
             bitrate_kbps: 500,
             gop: 30,
         };
-        let input = BuiltinInput::test_pattern(out, 48_000, vec![], never).unwrap();
+        let input = BuiltinInput::test_pattern(out, 48_000, vec![], never()).unwrap();
         let c = assert_on_schedule(input, 15, 0, None);
         // The pattern made nothing before the session pulled.
         assert_eq!(c.early, 0, "{c:?}");
@@ -1239,7 +1234,7 @@ pub(crate) mod tests {
         // 0.8 s of game frames, starting right away.
         let game = raw_stream(48, 64, 36);
         let handed = game.handed.clone();
-        let input = BuiltinInput::open_slrw_with(game, opts, never).unwrap();
+        let input = BuiltinInput::open_slrw(game, opts, never()).unwrap();
         // Media time starts with this frame, or with the audio record of
         // the game frame before it (16.7 ms, 1500 ticks).
         let c = assert_on_schedule(input, 20, 1500, Some(&handed));
@@ -1249,11 +1244,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_pattern_runs_in_real_time() {
-        use std::sync::atomic::AtomicUsize;
-        static CALLS: AtomicUsize = AtomicUsize::new(0);
-        fn soon() -> bool {
-            CALLS.load(Ordering::SeqCst) > 0
-        }
+        let soon = Stop::new();
         let out = VideoOut {
             size: Size {
                 width: 160,
@@ -1264,7 +1255,7 @@ pub(crate) mod tests {
             gop: 30,
         };
         let fams = vec![(AudioFamily::AirPlay, AudioOut::Pcm { frame_samples: 352 })];
-        let mut input = BuiltinInput::test_pattern(out, 44_100, fams, soon).unwrap();
+        let mut input = BuiltinInput::test_pattern(out, 44_100, fams, soon.clone()).unwrap();
         // Pull until the frame at media time 0.5 s (45000 ticks) arrives.
         let t0 = Instant::now();
         let mut video = Vec::new();
@@ -1278,7 +1269,7 @@ pub(crate) mod tests {
         }
         let elapsed = t0.elapsed();
         let c = input.counts();
-        CALLS.store(1, Ordering::SeqCst);
+        soon.request();
         // Never ahead of real time; behind only by the encoder's latency.
         assert!(elapsed + Duration::from_millis(40) >= Duration::from_millis(500));
         assert!(
@@ -1302,7 +1293,7 @@ pub(crate) mod tests {
         // The beep is never dropped: 0.5 s at 44.1 kHz in 352-sample
         // frames are out before the video frame at 0.5 s.
         assert!(audio >= 22_050 / 352 - 1, "{audio}");
-        assert!(input.next_frame().unwrap().is_none() || soon());
+        assert!(input.next_frame().unwrap().is_none() || soon.requested());
         Box::new(input).finish(false).unwrap();
     }
 
@@ -1315,7 +1306,7 @@ pub(crate) mod tests {
             },
             Ratio::integer(30),
             48_000,
-            never,
+            never(),
         )
         .unwrap();
         let f = p.frame(3, 50_000, Duration::from_millis(1234));
@@ -1345,7 +1336,7 @@ mod preview {
             },
             Ratio::integer(30),
             48_000,
-            || false,
+            Stop::new(),
         )
         .unwrap();
         let wall = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();

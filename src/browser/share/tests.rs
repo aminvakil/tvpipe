@@ -257,8 +257,8 @@ fn stream(
     }
 }
 
-fn never() -> bool {
-    false
+fn never() -> crate::util::stop::Stop {
+    crate::util::stop::Stop::new()
 }
 
 fn config(receivers: &[&str]) -> PageConfig {
@@ -313,11 +313,11 @@ fn streams_video_and_pcm_until_the_share_ends() {
     let server = ShareServer::bind(0).unwrap();
     server.configure(&config(&["TV"]));
     let page = spawn_page(server.ws_url(), PageScript::default());
-    let cap = server.wait_capture(never).unwrap();
+    let cap = server.wait_capture(&never()).unwrap();
     assert_eq!((cap.width, cap.height, cap.audio), (640, 360, true));
     assert_eq!(cap.surface.as_deref(), Some("browser"));
     let mut input = server
-        .start(&plan(320, 180, 15, true), input_opts(true), never)
+        .start(&plan(320, 180, 15, true), input_opts(true), never())
         .unwrap();
     let info = input.info().clone();
     assert_eq!((info.video.width, info.video.height), (320, 180));
@@ -362,10 +362,10 @@ fn keyframes_on_request() {
             ..PageScript::default()
         },
     );
-    server.wait_capture(never).unwrap();
+    server.wait_capture(&never()).unwrap();
     // No periodic IDRs: every keyframe after the first was asked for.
     let mut input = server
-        .start(&plan(160, 96, 100_000, false), input_opts(false), never)
+        .start(&plan(160, 96, 100_000, false), input_opts(false), never())
         .unwrap();
     let mut keys = 0;
     let mut n = 0;
@@ -401,12 +401,12 @@ fn a_second_page_is_busy_and_a_closed_page_ends_the_input() {
             ..PageScript::default()
         },
     );
-    server.wait_capture(never).unwrap();
+    server.wait_capture(&never()).unwrap();
     let second = spawn_page(server.ws_url(), PageScript::default());
     let seen2 = second.join().unwrap();
     assert!(seen2.busy && seen2.plan.is_none() && seen2.closed);
     let mut input = server
-        .start(&plan(160, 96, 30, false), input_opts(false), never)
+        .start(&plan(160, 96, 30, false), input_opts(false), never())
         .unwrap();
     // The page closes its socket without `ended`: the input ends.
     let frames = drain(&mut input);
@@ -429,9 +429,9 @@ fn a_bad_record_fails_the_input() {
             ..PageScript::default()
         },
     );
-    server.wait_capture(never).unwrap();
+    server.wait_capture(&never()).unwrap();
     let mut input = server
-        .start(&plan(160, 96, 30, false), input_opts(false), never)
+        .start(&plan(160, 96, 30, false), input_opts(false), never())
         .unwrap();
     let mut err = None;
     for _ in 0..20 {
@@ -461,7 +461,7 @@ fn ended_before_the_plan_lets_another_capture_take_over() {
         .unwrap();
     tx.send_text(r#"{"type":"capture","width":320,"height":200,"audio":false}"#)
         .unwrap();
-    assert_eq!(server.wait_capture(never).unwrap().height, 200);
+    assert_eq!(server.wait_capture(&never()).unwrap().height, 200);
     tx.send_text(r#"{"type":"ended","reason":"changed my mind"}"#)
         .unwrap();
     // The server closes that connection; read until it does.
@@ -480,9 +480,9 @@ fn ended_before_the_plan_lets_another_capture_take_over() {
             ..PageScript::default()
         },
     );
-    assert_eq!(server.wait_capture(never).unwrap().height, 600);
+    assert_eq!(server.wait_capture(&never()).unwrap().height, 600);
     let mut input = server
-        .start(&plan(160, 120, 30, false), input_opts(false), never)
+        .start(&plan(160, 120, 30, false), input_opts(false), never())
         .unwrap();
     assert_eq!(drain(&mut input).len(), 5);
     drop(input);
@@ -504,9 +504,9 @@ fn rejoin_mode_keeps_streaming_across_pages() {
         ..PageScript::default()
     };
     let first = spawn_page(url.clone(), script.clone());
-    server.wait_capture(never).unwrap();
+    server.wait_capture(&never()).unwrap();
     let mut input = server
-        .start(&plan(160, 96, 10, true), input_opts(true), never)
+        .start(&plan(160, 96, 10, true), input_opts(true), never())
         .unwrap();
     let mut frames = Vec::new();
     // The first page streams and closes (a navigation): the input waits.
@@ -572,7 +572,7 @@ fn a_failed_source_ends_the_wait_and_the_input() {
         std::thread::sleep(Duration::from_millis(100));
         h.fail(Error::process("the browser died 4 times"));
     });
-    assert!(server.wait_capture(never).is_none());
+    assert!(server.wait_capture(&never()).is_none());
     t.join().unwrap();
     let e = server.failure().unwrap();
     assert_eq!(e.kind(), ErrorKind::Process);
@@ -592,9 +592,9 @@ fn a_failed_source_ends_the_wait_and_the_input() {
             ..PageScript::default()
         },
     );
-    server.wait_capture(never).unwrap();
+    server.wait_capture(&never()).unwrap();
     let mut input = server
-        .start(&plan(160, 96, 30, false), input_opts(false), never)
+        .start(&plan(160, 96, 30, false), input_opts(false), never())
         .unwrap();
     let mut n = 0;
     let err = loop {

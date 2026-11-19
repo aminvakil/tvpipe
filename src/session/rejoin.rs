@@ -38,6 +38,7 @@ use std::time::{Duration, Instant};
 use super::{address_target, parse_target, resolve_target, Target};
 use crate::airplay::session::MirrorOptions;
 use crate::cast::CastOptions;
+use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};
 use crate::media::clock::SessionClock;
 use crate::types::{
@@ -80,12 +81,13 @@ pub(super) struct Rejoin {
 
 impl Rejoin {
     /// Discovery and the real protocols.
-    pub fn system(window: Duration) -> Rejoin {
+    pub fn system(window: Duration, ctx: &Ctx) -> Rejoin {
+        let ctx = ctx.clone();
         Rejoin {
             window,
             backoff: Backoff::DEFAULT,
             resolve: Arc::new(resolve_target),
-            connect: Arc::new(super::connect_one),
+            connect: Arc::new(move |t, o, m| super::connect_one(t, o, m, &ctx)),
         }
     }
 }

@@ -226,14 +226,14 @@ fn rejoin(window: Duration, resolve: rejoin::Resolve, connect: rejoin::Connect) 
 }
 
 fn play(o: PlayOptions, r: &Rejoin) -> Result<()> {
-    play_rejoin(o, no_io(), &*r.connect, never, Some(r))
+    play_rejoin(o, no_io(), &*r.connect, never(), Some(r))
 }
 
 /// Waits until `name` accepted `n` frames on connection `conn`.
 fn wait_frames(book: &Book, name: &str, conn: usize, n: usize) {
     let until = Instant::now() + Duration::from_secs(20);
     while book.frames(name).iter().filter(|e| e.conn == conn).count() < n {
-        assert!(Instant::now() < until, "{name} never got {n} frames");
+        assert!(Instant::now() < until, "{name} never() got {n} frames");
         std::thread::sleep(Duration::from_millis(10));
     }
 }

@@ -45,7 +45,6 @@ use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioInfo, Capabilities, EncodePlan, EncodedFrame,
     Encoder, TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
 };
-use crate::util::interrupt;
 use crate::util::time::ticks_to_duration;
 
 /// How often blocking waits look at the stop flag.
@@ -63,7 +62,7 @@ const AUDIO_RESYNC: Duration = Duration::from_millis(50);
 const SLRW_QUEUE: usize = 64;
 
 /// The stop condition inputs poll (Ctrl-C by default; tests use their own).
-pub type StopFn = fn() -> bool;
+pub use crate::util::stop::Stop;
 
 /// A source of encoded frames for the fanout.
 pub trait Input: Send {
@@ -176,7 +175,7 @@ struct Watcher {
 }
 
 impl Watcher {
-    fn start(proc: Arc<Mutex<Process>>, stop: StopFn) -> Result<Watcher> {
+    fn start(proc: Arc<Mutex<Process>>, stop: Stop) -> Result<Watcher> {
         let done = Arc::new(AtomicBool::new(false));
         let flag = done.clone();
         let thread = std::thread::Builder::new()
@@ -184,7 +183,7 @@ impl Watcher {
             .spawn(move || {
                 let mut stop_at = None;
                 while !flag.load(Ordering::Acquire) {
-                    if stop() {
+                    if stop.requested() {
                         let at = *stop_at.get_or_insert_with(|| Instant::now() + KILL_GRACE);
                         if Instant::now() >= at {
                             lock(&proc).kill();
@@ -219,7 +218,7 @@ pub struct FfmpegInput {
     reader: MediaReader<ChildStdout>,
     info: StreamInfo,
     encoder: Option<Encoder>,
-    stop: StopFn,
+    stop: Stop,
 }
 
 impl FfmpegInput {
@@ -232,17 +231,7 @@ impl FfmpegInput {
         source: &Source,
         plan: &EncodePlan,
         raw: Option<(RawInput, Box<dyn Read + Send>)>,
-    ) -> Result<FfmpegInput> {
-        FfmpegInput::start_with(bin, probe, source, plan, raw, interrupt::requested)
-    }
-
-    pub fn start_with(
-        bin: &Path,
-        probe: &ffmpeg::Probe,
-        source: &Source,
-        plan: &EncodePlan,
-        raw: Option<(RawInput, Box<dyn Read + Send>)>,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<FfmpegInput> {
         let (loglevel, level) = if crate::log::enabled(Level::Debug) {
             ("info", Level::Debug)
@@ -255,7 +244,7 @@ impl FfmpegInput {
             .take_stdout()
             .ok_or_else(|| Error::process("ffmpeg stdout not piped"))?;
         let proc = Arc::new(Mutex::new(proc));
-        let watcher = Watcher::start(proc.clone(), stop)?;
+        let watcher = Watcher::start(proc.clone(), stop.clone())?;
         let forwarder = raw.map(|(r, input)| r.start(input)).transpose()?;
         let reader = match MediaReader::new(stdout, &inv.tracks) {
             Ok(r) => r,
@@ -282,7 +271,7 @@ impl Input for FfmpegInput {
     fn next_frame(&mut self) -> Result<Option<EncodedFrame>> {
         match self.reader.next_frame() {
             Ok(f) => Ok(f.map(|f| f.frame)),
-            Err(e) if (self.stop)() => {
+            Err(e) if self.stop.requested() => {
                 debug!("demuxer after stop request: {e}");
                 Ok(None)
             }
@@ -323,9 +312,9 @@ impl Input for FfmpegInput {
 // Passthrough
 
 /// Sleeps until `due`, in slices, returning `false` on a stop request.
-fn sleep_until(due: Instant, stop: StopFn) -> bool {
+fn sleep_until(due: Instant, stop: &Stop) -> bool {
     loop {
-        if stop() {
+        if stop.requested() {
             return false;
         }
         let now = Instant::now();
@@ -354,7 +343,7 @@ pub struct PassthroughInput {
     pcm: Option<PcmFramer>,
     /// B-frame experiment (see [`reorder_experiment`]).
     reorder: Option<ReorderStamp>,
-    stop: StopFn,
+    stop: Stop,
 }
 
 /// The timestamp B-frames carry in the reordering experiment.
@@ -425,16 +414,12 @@ impl PassthroughInput {
     /// Opens `path` for sending as checked: `plan` from
     /// [`passthrough::check`]. `realtime` paces frames at their pts (like
     /// ffmpeg's `-re`); `looped` starts over at the end.
-    pub fn open(path: &Path, plan: &PassPlan, realtime: bool, looped: bool) -> Result<Self> {
-        PassthroughInput::open_with(path, plan, realtime, looped, interrupt::requested)
-    }
-
-    pub fn open_with(
+    pub fn open(
         path: &Path,
         plan: &PassPlan,
         realtime: bool,
         looped: bool,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<Self> {
         let src = FileSource::open(path)?;
         let fi = src.info();
@@ -552,7 +537,7 @@ impl Input for PassthroughInput {
             if let Some(f) = self.pending.pop_front() {
                 return Ok(Some(f));
             }
-            if (self.stop)() {
+            if self.stop.requested() {
                 return Ok(None);
             }
             let Some(ff) = self.next_file_frame()? else {
@@ -604,7 +589,7 @@ impl Input for PassthroughInput {
                     .clock
                     .instant_for(dts, rate)
                     .unwrap_or_else(Instant::now);
-                if !sleep_until(due, self.stop) {
+                if !sleep_until(due, &self.stop) {
                     return Ok(None);
                 }
             }
@@ -807,7 +792,7 @@ pub struct SlrwEncodedInput {
     rx: Receiver<std::io::Result<Option<Packet>>>,
     info: StreamInfo,
     st: EncodedState,
-    stop: StopFn,
+    stop: Stop,
 }
 
 /// One family's audio path for an encoded-SLRW game.
@@ -986,14 +971,10 @@ impl SlrwEncodedInput {
     /// Starts reading `input` (the game's SLRW stream) and waits for the
     /// decoder configuration (an `h264-config` record or the first
     /// keyframe's SPS/PPS).
-    pub fn open<R: Read + Send + 'static>(input: R, opts: EncodedOptions) -> Result<Self> {
-        SlrwEncodedInput::open_with(input, opts, interrupt::requested)
-    }
-
-    pub fn open_with<R: Read + Send + 'static>(
+    pub fn open<R: Read + Send + 'static>(
         input: R,
         opts: EncodedOptions,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<Self> {
         if opts.video.pix_fmt != rawin::ENCODED_PIX_FMT {
             return Err(Error::usage(
@@ -1051,7 +1032,7 @@ impl SlrwEncodedInput {
     /// Handles one record; `false` on a stop request.
     fn pump(&mut self) -> Result<bool> {
         loop {
-            if (self.stop)() {
+            if self.stop.requested() {
                 return Ok(false);
             }
             match self.rx.recv_timeout(STOP_POLL) {
@@ -1436,10 +1417,9 @@ pub(crate) mod tests {
     use crate::cli::Size;
     use crate::media::passthrough::tests::{caps, fixture};
     use crate::util::ratio::Ratio;
-    use std::sync::atomic::AtomicUsize;
 
-    fn never() -> bool {
-        false
+    fn never() -> crate::util::stop::Stop {
+        crate::util::stop::Stop::new()
     }
 
     fn drain(input: &mut dyn Input) -> Vec<EncodedFrame> {
@@ -1456,7 +1436,7 @@ pub(crate) mod tests {
             audio_families: vec![AudioFamily::AirPlay, AudioFamily::Cast],
         };
         let mut input =
-            PassthroughInput::open_with(&fixture("bf0.mp4"), &plan, true, true, never).unwrap();
+            PassthroughInput::open(&fixture("bf0.mp4"), &plan, true, true, never()).unwrap();
         assert_eq!(input.info().audio.len(), 2);
         assert_eq!(input.describe(), "passthrough MP4");
         let t0 = Instant::now();
@@ -1504,7 +1484,7 @@ pub(crate) mod tests {
         };
         let open = |r| {
             let mut i =
-                PassthroughInput::open_with(&fixture("bframes.mp4"), &plan, false, false, never)
+                PassthroughInput::open(&fixture("bframes.mp4"), &plan, false, false, never())
                     .unwrap();
             i.set_reorder(r);
             i
@@ -1536,7 +1516,7 @@ pub(crate) mod tests {
             audio_families: vec![AudioFamily::AirPlay],
         };
         let mut input =
-            PassthroughInput::open_with(&fixture("pcm.mov"), &plan, false, false, never).unwrap();
+            PassthroughInput::open(&fixture("pcm.mov"), &plan, false, false, never()).unwrap();
         let a = input
             .info()
             .audio_for(AudioFamily::AirPlay)
@@ -1561,7 +1541,7 @@ pub(crate) mod tests {
             audio_families: vec![],
         };
         let mut input =
-            PassthroughInput::open_with(&fixture("live.mkv"), &plan, false, false, never).unwrap();
+            PassthroughInput::open(&fixture("live.mkv"), &plan, false, false, never()).unwrap();
         assert!(input.info().audio.is_empty());
         let t0 = Instant::now();
         let frames = drain(&mut input);
@@ -1573,16 +1553,17 @@ pub(crate) mod tests {
 
     #[test]
     fn passthrough_stops_on_request() {
-        static CALLS: AtomicUsize = AtomicUsize::new(0);
-        fn after_some() -> bool {
-            CALLS.fetch_add(1, Ordering::SeqCst) > 40
-        }
+        let after_some = Stop::new();
+        let s = after_some.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            s.request();
+        });
         let plan = PassPlan {
             audio_families: vec![],
         };
         let mut input =
-            PassthroughInput::open_with(&fixture("bf0.mp4"), &plan, true, true, after_some)
-                .unwrap();
+            PassthroughInput::open(&fixture("bf0.mp4"), &plan, true, true, after_some).unwrap();
         let t0 = Instant::now();
         let n = drain(&mut input).len();
         assert!(n < 30, "{n}");
@@ -1761,10 +1742,10 @@ pub(crate) mod tests {
         }
         slrw::write_packet(&mut s, Kind::End, 0, &[]).unwrap();
         let back = SharedBuf::default();
-        let mut input = SlrwEncodedInput::open_with(
+        let mut input = SlrwEncodedInput::open(
             io::Cursor::new(s),
             encoded_opts(Some(Box::new(back.clone()))),
-            never,
+            never(),
         )
         .unwrap();
         let info = input.info().clone();
@@ -1866,7 +1847,7 @@ pub(crate) mod tests {
             slrw::write_h264(&mut s, i as u64 * 33_333, i == 0, false, &strip(au)).unwrap();
         }
         let mut input =
-            SlrwEncodedInput::open_with(io::Cursor::new(s.clone()), encoded_opts(None), never)
+            SlrwEncodedInput::open(io::Cursor::new(s.clone()), encoded_opts(None), never())
                 .unwrap();
         assert_eq!(drain(&mut input).len(), 3);
         // Keyframe requests are off without a control record.
@@ -1876,7 +1857,7 @@ pub(crate) mod tests {
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
         slrw::write_h264(&mut s, 0, true, false, &strip(&aus[0])).unwrap();
-        let e = SlrwEncodedInput::open_with(io::Cursor::new(s), encoded_opts(None), never)
+        let e = SlrwEncodedInput::open(io::Cursor::new(s), encoded_opts(None), never())
             .err()
             .unwrap();
         assert!(e.to_string().contains("without SPS/PPS"), "{e}");
@@ -1884,22 +1865,16 @@ pub(crate) mod tests {
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
         slrw::write_packet(&mut s, Kind::Video, 0, &[0; 16]).unwrap();
-        assert!(
-            SlrwEncodedInput::open_with(io::Cursor::new(s), encoded_opts(None), never).is_err()
-        );
+        assert!(SlrwEncodedInput::open(io::Cursor::new(s), encoded_opts(None), never()).is_err());
         // Garbage that is not AVCC.
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
         slrw::write_h264(&mut s, 0, true, false, &[0, 0, 0, 9, 1]).unwrap();
-        assert!(
-            SlrwEncodedInput::open_with(io::Cursor::new(s), encoded_opts(None), never).is_err()
-        );
+        assert!(SlrwEncodedInput::open(io::Cursor::new(s), encoded_opts(None), never()).is_err());
         // Ends before a keyframe.
         let mut s = Vec::new();
         slrw::write_magic(&mut s).unwrap();
-        assert!(
-            SlrwEncodedInput::open_with(io::Cursor::new(s), encoded_opts(None), never).is_err()
-        );
+        assert!(SlrwEncodedInput::open(io::Cursor::new(s), encoded_opts(None), never()).is_err());
     }
 
     #[test]
@@ -1962,7 +1937,7 @@ pub(crate) mod tests {
             realtime: false,
             looped: false,
         };
-        let input = FfmpegInput::start_with(&bin, &probe, &src, &plan, None, never).unwrap();
+        let input = FfmpegInput::start(&bin, &probe, &src, &plan, None, never()).unwrap();
         let mut input: Box<dyn Input> = Box::new(input);
         assert!(input.describe().starts_with("ffmpeg"));
         let frames = drain(&mut *input);
@@ -2181,6 +2156,7 @@ mod experiments {
                 audio_families: families,
                 back_channel: None,
             },
+            Stop::new(),
         )
         .unwrap();
         let v = &input.info().video;

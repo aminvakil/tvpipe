@@ -3,11 +3,10 @@
 //! loopback WebSocket) to a fake Cast receiver and a fake AirPlay mirror
 //! receiver.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 
-use super::tests::{fake_airplay, never, SharedTally, Tallied};
+use super::tests::{connect_test, fake_airplay, never, SharedTally, Tallied};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
@@ -49,7 +48,7 @@ fn page_to_cast_and_airplay() {
     let (cast_tally, airplay_tally) = (SharedTally::default(), SharedTally::default());
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         Ok(match t {
-            Target::Browser(_) => connect_one(t, c, m)?,
+            Target::Browser(_) => connect_test(t, c, m)?,
             Target::Cast { addr, name } => {
                 Tallied::boxed(Box::new(cast::connect(*addr, name, c)?), None, &cast_tally)
             }
@@ -81,7 +80,7 @@ fn page_to_cast_and_airplay() {
         }),
         ..share_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)])
     };
-    share_with(o, &connect, never, &page_hook(&page, script)).unwrap();
+    share_with(o, &connect, never(), &page_hook(&page, script)).unwrap();
     let seen = joined(&page);
 
     // The page was told what to capture, then the plan.
@@ -127,11 +126,8 @@ fn page_to_cast_and_airplay() {
     );
 }
 
-static STOP: AtomicBool = AtomicBool::new(false);
-
-fn stop_requested() -> bool {
-    STOP.load(Ordering::SeqCst)
-}
+static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+    std::sync::LazyLock::new(crate::util::stop::Stop::new);
 
 /// Ctrl-C while streaming: the receiver gets its STOP and the page is
 /// told that tvpipe stopped.
@@ -163,14 +159,14 @@ fn stop_tells_the_page() {
             while tally.lock().unwrap().video < 10 && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            STOP.store(true, Ordering::SeqCst);
+            STOP.request();
         }
     });
     let o = ShareOptions {
         no_audio: true,
         ..share_opts(vec![rx.addr.to_string()])
     };
-    share_with(o, &connect, stop_requested, &page_hook(&page, script)).unwrap();
+    share_with(o, &connect, STOP.clone(), &page_hook(&page, script)).unwrap();
     stopper.join().unwrap();
     let seen = joined(&page);
     assert_eq!(seen.end.as_deref(), Some("tvpipe stopped"));
@@ -189,7 +185,7 @@ fn unreachable_receiver_ends_the_page() {
         frames: 5,
         ..PageScript::default()
     };
-    assert!(share_with(o, &connect_one, never, &page_hook(&page, script)).is_err());
+    assert!(share_with(o, &connect_test, never(), &page_hook(&page, script)).is_err());
     let seen = joined(&page);
     assert!(seen.plan.is_none());
     let end = seen.end.unwrap();
@@ -221,7 +217,7 @@ fn stream_size_follows_capture_and_receiver_limits() {
             no_audio: true,
             ..share_opts(vec![rx.addr.to_string()])
         };
-        share_with(o, &connect_one, never, &page_hook(&page, script)).unwrap();
+        share_with(o, &connect_test, never(), &page_hook(&page, script)).unwrap();
         let seen = joined(&page);
         let plan = seen.plan.unwrap();
         let size = (
@@ -299,9 +295,9 @@ fn browser_players_follow_the_capture() {
                     port: Some(0),
                     ..(**o).clone()
                 };
-                Ok(Box::new(BrowserSink::bind(&o, never)?))
+                Ok(Box::new(BrowserSink::bind(&o, never())?))
             }
-            _ => connect_one(t, c, m),
+            _ => connect_test(t, c, m),
         }
     };
     let script = PageScript {
@@ -324,7 +320,7 @@ fn browser_players_follow_the_capture() {
         no_audio: true,
         ..share_opts(vec!["browser".into()])
     };
-    share_with(o, &connect, never, &page_hook(&page, script.clone())).unwrap();
+    share_with(o, &connect, never(), &page_hook(&page, script.clone())).unwrap();
     let plan = joined(&page).plan.unwrap();
     assert_eq!(size(&plan), (1186, 864));
     assert_eq!(content(&plan), (0, 0, 1186, 864));
@@ -336,7 +332,7 @@ fn browser_players_follow_the_capture() {
         no_audio: true,
         ..share_opts(vec!["browser".into(), rx.addr.to_string()])
     };
-    share_with(o, &connect, never, &page_hook(&page, script)).unwrap();
+    share_with(o, &connect, never(), &page_hook(&page, script)).unwrap();
     let plan = joined(&page).plan.unwrap();
     assert_eq!(size(&plan), (1280, 720));
     assert!(content(&plan).0 > 0, "{plan}");
@@ -357,9 +353,9 @@ fn remote_shares_wait_for_the_local_yes() {
                     port: Some(0),
                     ..(**o).clone()
                 };
-                Ok(Box::new(BrowserSink::bind(&o, never)?))
+                Ok(Box::new(BrowserSink::bind(&o, never())?))
             }
-            _ => connect_one(t, c, m),
+            _ => connect_test(t, c, m),
         }
     };
     type Pages = std::sync::Arc<Mutex<Option<JoinHandle<(PageSeen, PageSeen)>>>>;
@@ -393,7 +389,7 @@ fn remote_shares_wait_for_the_local_yes() {
         no_audio: true,
         ..share_opts(vec!["browser".into()])
     };
-    share_rejoin(o, &connect, never, &hook, None, ShareKind::Page, &approve).unwrap();
+    share_rejoin(o, &connect, never(), &hook, None, ShareKind::Page, &approve).unwrap();
     let (first, second) = pages.lock().unwrap().take().unwrap().join().unwrap();
     assert!(first.plan.is_none(), "{first:?}");
     assert_eq!(

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use super::tests::{never, SharedTally, Tallied};
+use super::tests::{connect_test, never, SharedTally, Tallied};
 use super::*;
 use crate::airplay::session::MirrorOptions;
 use crate::browser::share::tests::{spawn_page, PageScript, PageSeen};
@@ -71,7 +71,7 @@ fn screen_page_to_cast() {
         }),
         ..opts(vec![rx.addr.to_string()])
     };
-    screen::screen_with(o, &connect, never, &source).unwrap();
+    screen::screen_with(o, &connect, never(), &source).unwrap();
     assert!(
         dropped.load(Ordering::SeqCst),
         "the browser was not stopped"
@@ -109,8 +109,8 @@ fn a_capture_that_fails_fails_the_session() {
         });
         Ok(Box::new(()))
     };
-    let e =
-        screen::screen_with(opts(vec![rx.addr.to_string()]), &connect, never, &source).unwrap_err();
+    let e = screen::screen_with(opts(vec![rx.addr.to_string()]), &connect, never(), &source)
+        .unwrap_err();
     assert!(e.to_string().contains("NotAllowedError"), "{e}");
     assert_eq!(tally.lock().unwrap().video, 0);
     let state = rx.shutdown();
@@ -125,8 +125,8 @@ fn a_capture_that_fails_fails_the_session() {
     };
     let e = screen::screen_with(
         opts(vec!["cast:127.0.0.1:1".into()]),
-        &connect_one,
-        never,
+        &connect_test,
+        never(),
         &source,
     )
     .unwrap_err();
@@ -165,17 +165,14 @@ fn stopping_in_the_browser_ends_the_session() {
         ..opts(vec![rx.addr.to_string()])
     };
     let t0 = Instant::now();
-    screen::screen_with(o, &connect, never, &source).unwrap();
+    screen::screen_with(o, &connect, never(), &source).unwrap();
     assert!(t0.elapsed() < Duration::from_secs(20));
     let state = rx.shutdown();
     assert!(state.lock().unwrap().stopped, "STOP not received");
 }
 
-static STOP: AtomicBool = AtomicBool::new(false);
-
-fn stop_requested() -> bool {
-    STOP.load(Ordering::SeqCst)
-}
+static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+    std::sync::LazyLock::new(crate::util::stop::Stop::new);
 
 /// The real thing: tvpipe's browser captures this computer's main screen
 /// (and its sound) for a few seconds. Needs a desktop session and the
@@ -205,7 +202,7 @@ fn chrome_captures_the_screen() {
                 target: target.clone(),
             },
             server,
-            stop_requested,
+            STOP.clone(),
         )?;
         *profile.lock().unwrap() = Some(b.profile_dir().to_owned());
         Ok(Box::new(b))
@@ -217,13 +214,13 @@ fn chrome_captures_the_screen() {
             while tally.lock().unwrap().video < 60 && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
-            STOP.store(true, Ordering::SeqCst);
+            STOP.request();
         }
     });
     screen::screen_with(
         opts(vec![rx.addr.to_string()]),
         &connect,
-        stop_requested,
+        STOP.clone(),
         &source,
     )
     .unwrap();

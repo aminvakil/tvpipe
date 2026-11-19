@@ -13,6 +13,7 @@ mod cast;
 mod cli;
 mod codec;
 mod crypto;
+mod ctx;
 mod error;
 mod machine;
 mod media;
@@ -25,10 +26,11 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let (global, command) = cli::parse_env();
+    let ctx = ctx::Ctx::new();
     if global.machine {
         machine::enable();
         machine::hello(command.name());
-        machine::start_router();
+        machine::start_router(ctx.stop.clone());
     }
     log::set_level(if global.debug {
         log::Level::Trace
@@ -39,14 +41,34 @@ fn main() -> ExitCode {
     });
     // Fine-grained timed waits for pacing (Windows; `util::timer`).
     util::timer::raise_resolution();
-    let rv = session::run(command);
+    // Ctrl-C and `q` stop sessions (not discover/pair, which end by
+    // themselves; pair reads its PIN from stdin).
+    let (session, reads_stdin) = match &command {
+        cli::Command::Play(o) | cli::Command::TestPattern(o) => {
+            (true, o.input == cli::InputSpec::Stdin)
+        }
+        cli::Command::Share(_) | cli::Command::Screen(_) => (true, false),
+        _ => (false, false),
+    };
+    if session {
+        if util::interrupt::install() {
+            util::interrupt::link(ctx.stop.clone());
+        } else {
+            warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
+        }
+        // With --machine, stdin belongs to the machine interface's router.
+        if !reads_stdin && !global.machine {
+            util::interrupt::watch_stdin(ctx.stop.clone());
+        }
+    }
+    let rv = session::run(command, &ctx);
     // A stream the machine interface refused is the command's error.
     let rv = match (rv, machine::failure()) {
         (_, Some(e)) => Err(e),
         // After a stop request (`q`, the machine interface's `stop` or
         // stdin closing) an error is its consequence, e.g. a receiver
         // that was still connecting.
-        (Err(e), None) if util::interrupt::requested() && !util::interrupt::signalled() => {
+        (Err(e), None) if ctx.stop.requested() && !util::interrupt::signalled() => {
             debug!("after the stop request: {e}");
             Ok(())
         }
@@ -70,7 +92,7 @@ fn main() -> ExitCode {
     }
     match rv {
         Ok(()) => {
-            machine::end_if_unsent(if util::interrupt::requested() {
+            machine::end_if_unsent(if ctx.stop.requested() {
                 "stopped"
             } else {
                 "done"

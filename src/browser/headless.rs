@@ -48,7 +48,7 @@ use crate::browser::launch::{Browser, Engine, LaunchOptions, Profile};
 use crate::browser::share::{ShareHandle, CAPTURE_JS};
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
-use crate::media::input::StopFn;
+use crate::media::input::Stop;
 
 /// Starts the share in a page (`headless.js`; called with the ws URL).
 pub const START_JS: &str = include_str!("headless.js");
@@ -166,7 +166,7 @@ impl Headless {
     /// Starts the browser and opens the URL; the share starts once the
     /// page has loaded. Errors up to the navigation are returned here,
     /// later ones end the share through `share`.
-    pub fn start(opts: HeadlessOptions, share: ShareHandle, stop: StopFn) -> Result<Headless> {
+    pub fn start(opts: HeadlessOptions, share: ShareHandle, stop: Stop) -> Result<Headless> {
         check_url(&opts.url)?;
         let profile = match &opts.profile {
             Some(dir) => Profile::persistent(dir)?,
@@ -590,7 +590,7 @@ struct Keeper {
     profile: Profile,
     share: ShareHandle,
     start_expr: String,
-    stop: StopFn,
+    stop: Stop,
     ctl: Arc<Ctl>,
     tab: Option<Tab>,
     /// When the browser was started again.
@@ -611,7 +611,7 @@ enum Exit {
 
 impl Keeper {
     fn stopping(&self) -> bool {
-        self.ctl.shutdown.load(Ordering::SeqCst) || (self.stop)()
+        self.ctl.shutdown.load(Ordering::SeqCst) || self.stop.requested()
     }
 
     fn run(&mut self) {

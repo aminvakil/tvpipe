@@ -34,7 +34,7 @@ use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
 use crate::media::h264;
 use crate::media::input::{
-    AudioOut, EncodedState, Input, StopFn, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
+    AudioOut, EncodedState, Input, Stop, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
 };
 use crate::media::rawin;
 use crate::media::slrw::{self, Kind, Packet};
@@ -528,10 +528,10 @@ impl ShareServer {
 
     /// Waits until a page starts a capture; `None` on a stop request (or
     /// a [`failure`](Self::failure)).
-    pub fn wait_capture(&self, stop: StopFn) -> Option<CaptureInfo> {
+    pub fn wait_capture(&self, stop: &Stop) -> Option<CaptureInfo> {
         let mut st = self.shared.lock();
         loop {
-            if stop() || st.failed.is_some() || st.ended {
+            if stop.requested() || st.failed.is_some() || st.ended {
                 return None;
             }
             if let Some(c) = &st.capture {
@@ -552,7 +552,7 @@ impl ShareServer {
         mut self,
         plan: &SharePlan,
         opts: ShareInputOptions,
-        stop: StopFn,
+        stop: Stop,
     ) -> Result<ShareInput> {
         let claimed = self.claim().and_then(|(sender, clock, agent)| {
             sender.send_text(&plan.to_json())?;
@@ -806,7 +806,7 @@ pub struct ShareInput {
     sender: Sender<TcpStream>,
     st: EncodedState,
     info: StreamInfo,
-    stop: StopFn,
+    stop: Stop,
     last_key_request: Option<Instant>,
     /// The page's AVCC length size (from its avcC).
     length_size: usize,
@@ -854,7 +854,7 @@ impl ShareInput {
     /// Waits up to [`STOP_POLL`] for one event and handles it; `false` on
     /// a stop request.
     fn pump(&mut self) -> Result<bool> {
-        if (self.stop)() {
+        if self.stop.requested() {
             return Ok(false);
         }
         match self.server.events.recv_timeout(STOP_POLL) {

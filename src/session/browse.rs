@@ -18,6 +18,7 @@ use std::any::Any;
 use super::*;
 use crate::browser::headless::{self, Headless, HeadlessOptions};
 use crate::browser::launch::{self, LaunchOptions};
+use crate::util::stop::Stop;
 
 /// The page's size without `--size`, before the receivers' shape.
 const BROWSE_SIZE: Size = Size {
@@ -31,7 +32,8 @@ const BROWSE_FPS: Ratio = Ratio::integer(30);
 type Launcher<'a> = &'a dyn Fn(&ShareServer, (u32, u32)) -> Result<Box<dyn Any>>;
 
 /// `share URL`.
-pub(super) fn browse(opts: ShareOptions) -> Result<()> {
+pub(super) fn browse(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
+    let stop = ctx.stop.clone();
     let page = opts
         .page
         .clone()
@@ -43,10 +45,6 @@ pub(super) fn browse(opts: ShareOptions) -> Result<()> {
     debug!("browser: using {}", bin.display());
     // Profiles (and browsers) a killed tvpipe left behind.
     launch::sweep_stale_profiles();
-    if !interrupt::install() {
-        warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
-    }
-    interrupt::watch_stdin();
     let o = page;
     let launcher = move |server: &ShareServer, viewport: (u32, u32)| -> Result<Box<dyn Any>> {
         let h = Headless::start(
@@ -62,25 +60,22 @@ pub(super) fn browse(opts: ShareOptions) -> Result<()> {
                 reload: o.reload,
             },
             server.handle(),
-            interrupt::requested,
+            stop.clone(),
         )?;
         Ok(Box::new(h))
     };
-    let rejoin = Rejoin::system(opts.reconnect);
-    browse_rejoin(
-        &opts,
-        &connect_one,
-        interrupt::requested,
-        &launcher,
-        Some(&rejoin),
-    )
+    let rejoin = Rejoin::system(opts.reconnect, ctx);
+    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        connect_one(t, o, m, ctx)
+    };
+    browse_rejoin(&opts, &connect, ctx.stop.clone(), &launcher, Some(&rejoin))
 }
 
 /// `share URL` with the connector, stop request and page source given.
 pub(super) fn browse_with(
     opts: &ShareOptions,
     connect: Connector<'_>,
-    stop: fn() -> bool,
+    stop: Stop,
     launch: Launcher<'_>,
 ) -> Result<()> {
     browse_rejoin(opts, connect, stop, launch, None)
@@ -90,7 +85,7 @@ pub(super) fn browse_with(
 fn browse_rejoin(
     opts: &ShareOptions,
     connect: Connector<'_>,
-    stop: fn() -> bool,
+    stop: Stop,
     launch: Launcher<'_>,
     rejoin: Option<&Rejoin>,
 ) -> Result<()> {
@@ -148,7 +143,7 @@ fn browse_rejoin(
     };
     let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)
         .map_err(|e| fail(&mut server, e))?;
-    if stop() {
+    if stop.requested() {
         stop_all(sinks);
         return Ok(());
     }
@@ -203,7 +198,7 @@ fn browse_rejoin(
             return Err(fail(&mut server, e));
         }
     };
-    let Some(cap) = server.wait_capture(stop) else {
+    let Some(cap) = server.wait_capture(&stop) else {
         stop_all(sinks);
         drop(source);
         return match server.failure() {
@@ -273,21 +268,21 @@ fn browse_rejoin(
                 Vec::new()
             },
         },
-        stop,
+        stop.clone(),
     );
     let input = match opened {
         Ok(i) => i,
         Err(e) => {
             stop_all(sinks);
             drop(source);
-            if stop() {
+            if stop.requested() {
                 info!("stopped");
                 return Ok(());
             }
             return Err(e);
         }
     };
-    let r = stream(Box::new(input), "browser", plan.latency_ms, sinks, stop);
+    let r = stream(Box::new(input), "browser", plan.latency_ms, sinks, &stop);
     drop(source);
     match r {
         Ok(EndReason::Interrupted) => {

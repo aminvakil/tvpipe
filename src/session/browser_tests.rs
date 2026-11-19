@@ -28,10 +28,9 @@
 //! through the same `share()`; everything after getDisplayMedia is the
 //! real path. Safari needs Develop > Allow Remote Automation (once).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::tests::{fake_airplay, SharedTally, Tallied};
+use super::tests::{connect_test, fake_airplay, SharedTally, Tallied};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
@@ -51,17 +50,14 @@ fn secs() -> u64 {
 
 /// One browser test at a time (they share the stop flag).
 static SERIAL: Mutex<()> = Mutex::new(());
-static STOP: AtomicBool = AtomicBool::new(false);
-
-fn stop_requested() -> bool {
-    STOP.load(Ordering::SeqCst)
-}
+static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+    std::sync::LazyLock::new(crate::util::stop::Stop::new);
 
 /// Runs `share` while `drive(url, report)` works the browser on another
 /// thread; the session stops when `drive` returns.
 fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    STOP.store(false, Ordering::SeqCst);
+    STOP.clear();
     if env("DEBUG").is_some() {
         crate::log::set_level(crate::log::Level::Debug);
     }
@@ -73,7 +69,7 @@ fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
     let (cast_tally, airplay_tally) = (SharedTally::default(), SharedTally::default());
     let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
         Ok(match t {
-            Target::Browser(_) => connect_one(t, c, m)?,
+            Target::Browser(_) => connect_test(t, c, m)?,
             Target::Cast { addr, name } => {
                 Tallied::boxed(Box::new(cast::connect(*addr, name, c)?), None, &cast_tally)
             }
@@ -99,7 +95,7 @@ fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
         let drive = drive.lock().unwrap().take().unwrap();
         *driver.lock().unwrap() = Some(std::thread::spawn(move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(url, report)));
-            STOP.store(true, Ordering::SeqCst);
+            STOP.request();
             r
         }));
     };
@@ -119,9 +115,9 @@ fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
         ..ShareOptions::default()
     };
     let r = if real.is_some() {
-        share_with(o, &connect_one, stop_requested, &hook)
+        share_with(o, &connect_test, STOP.clone(), &hook)
     } else {
-        share_with(o, &connect, stop_requested, &hook)
+        share_with(o, &connect, STOP.clone(), &hook)
     };
     let drove = driver.lock().unwrap().take().map(|h| h.join());
     for line in report.lock().unwrap().iter() {

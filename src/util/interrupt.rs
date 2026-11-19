@@ -15,12 +15,17 @@
 //!
 //! [`watch_stdin`] adds a std-only way to stop: `q` + Enter on a terminal.
 //! Other lines answer [`ask`] (the `share --tunnel` confirmation).
+//!
+//! The CLI only: the library never installs handlers or reads stdin.
+//! [`link`] forwards the process-wide flag to a session's [`Stop`].
 
 use std::io::{BufRead, IsTerminal};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Duration;
+
+use crate::util::stop::Stop;
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
 /// The stdin watcher runs (stdin is a terminal).
@@ -38,7 +43,7 @@ pub fn install() -> bool {
     sys::install()
 }
 
-/// Whether a stop was requested (Ctrl-C, SIGTERM, or `q` on stdin).
+/// Whether Ctrl-C or SIGTERM came.
 pub fn requested() -> bool {
     REQUESTED.load(Ordering::SeqCst)
 }
@@ -48,9 +53,21 @@ pub fn signalled() -> bool {
     SIGNALLED.load(Ordering::SeqCst)
 }
 
-/// Requests a stop from code (e.g. the stdin watcher).
-pub fn request() {
-    REQUESTED.store(true, Ordering::SeqCst);
+/// Forwards Ctrl-C/SIGTERM to `stop` (the signal handler may only touch
+/// an atomic, so a thread polls it).
+pub fn link(stop: Stop) {
+    let spawned = std::thread::Builder::new()
+        .name("tvpipe-ctrl-c".into())
+        .spawn(move || loop {
+            if requested() {
+                stop.request();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        });
+    if let Err(e) = spawned {
+        debug!("cannot watch for Ctrl-C: {e}");
+    }
 }
 
 /// Prints `question` and waits for a line on the terminal (after
@@ -80,13 +97,12 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
     answer
 }
 
-/// If stdin is a terminal, reads it on a background thread and requests a
-/// stop on a line `q` (like ffmpeg). Does nothing otherwise, so piped or
+/// If stdin is a terminal, reads it on a background thread and requests
+/// `stop` on a line `q` (like ffmpeg). Does nothing otherwise, so piped or
 /// closed stdin never stops a session.
-pub fn watch_stdin() {
+pub fn watch_stdin(stop: Stop) {
     let stdin = std::io::stdin();
-    // With --machine, stdin belongs to the machine interface's router.
-    if !stdin.is_terminal() || crate::machine::enabled() {
+    if !stdin.is_terminal() {
         return;
     }
     let spawned = std::thread::Builder::new()
@@ -95,7 +111,7 @@ pub fn watch_stdin() {
             for line in stdin.lock().lines() {
                 match line {
                     Ok(l) if l.trim().eq_ignore_ascii_case("q") => {
-                        request();
+                        stop.request();
                         return;
                     }
                     Ok(l) => {

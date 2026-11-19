@@ -195,12 +195,13 @@ pub struct Router(Arc<Shared>);
 
 static ROUTER: OnceLock<Router> = OnceLock::new();
 
-/// Starts the process's router on stdin (`main`, with `--machine`).
-pub fn start_router() {
+/// Starts the process's router on stdin (`main`, with `--machine`);
+/// `stop` is the session's.
+pub fn start_router(stop: crate::util::stop::Stop) {
     let r = Router::spawn(
         io::stdin(),
         Hooks {
-            stop: Box::new(crate::util::interrupt::request),
+            stop: Box::new(move || stop.request()),
             keyframe: Box::new(|| emit(event("keyframe"))),
         },
     );

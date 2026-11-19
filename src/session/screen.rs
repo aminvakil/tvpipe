@@ -23,7 +23,8 @@ const FFMPEG_SIZE: Size = Size {
     height: 1080,
 };
 
-pub(super) fn screen(opts: ScreenOptions) -> Result<()> {
+pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
+    let stop = ctx.stop.clone();
     let to_player = opts
         .share
         .to
@@ -48,14 +49,10 @@ pub(super) fn screen(opts: ScreenOptions) -> Result<()> {
         },
     };
     let Some(bin) = bin else {
-        return screen_ffmpeg(opts);
+        return screen_ffmpeg(opts, ctx);
     };
     debug!("browser: using {}", bin.display());
     launch::sweep_stale_profiles();
-    if !interrupt::install() {
-        warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
-    }
-    interrupt::watch_stdin();
     let target = opts.target.clone();
     let launcher = move |server: &ShareServer| -> Result<Box<dyn Any>> {
         let b = ScreenBrowser::start(
@@ -64,15 +61,18 @@ pub(super) fn screen(opts: ScreenOptions) -> Result<()> {
                 target: target.clone(),
             },
             server,
-            interrupt::requested,
+            stop.clone(),
         )?;
         Ok(Box::new(b))
     };
-    let rejoin = Rejoin::system(opts.share.reconnect);
+    let rejoin = Rejoin::system(opts.share.reconnect, ctx);
+    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        connect_one(t, o, m, ctx)
+    };
     share_rejoin(
         opts.share,
-        &connect_one,
-        interrupt::requested,
+        &connect,
+        ctx.stop.clone(),
         &launcher,
         Some(&rejoin),
         ShareKind::Screen,
@@ -101,7 +101,7 @@ fn chromium(explicit: Option<&std::path::Path>) -> Result<std::path::PathBuf> {
 pub(super) fn screen_with(
     opts: ShareOptions,
     connect: Connector<'_>,
-    stop: fn() -> bool,
+    stop: Stop,
     source: ShareSource<'_>,
 ) -> Result<()> {
     share_rejoin(
@@ -116,7 +116,7 @@ pub(super) fn screen_with(
 }
 
 /// The ffmpeg engine: `play` with this OS's capture arguments.
-fn screen_ffmpeg(opts: ScreenOptions) -> Result<()> {
+fn screen_ffmpeg(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
     let fps = opts.share.fps.unwrap_or(SHARE_FPS);
     let var = |k: &str| std::env::var(k).ok();
     let run = |prog: &str, args: &[&str]| -> Option<String> {
@@ -142,24 +142,27 @@ fn screen_ffmpeg(opts: ScreenOptions) -> Result<()> {
     }
     info!("screen: ffmpeg {}", input.args.join(" "));
     let s = opts.share;
-    play(PlayOptions {
-        to: s.to,
-        reconnect: s.reconnect,
-        browser: BrowserOptions {
-            open: s.open,
-            ..s.player
+    play(
+        PlayOptions {
+            to: s.to,
+            reconnect: s.reconnect,
+            browser: BrowserOptions {
+                open: s.open,
+                ..s.player
+            },
+            latency_ms: s.latency_ms,
+            size: Some(s.size.unwrap_or(FFMPEG_SIZE)),
+            fps: Some(fps),
+            bitrate_kbps: s.bitrate_kbps,
+            encoder: Encoder::default(),
+            no_audio: s.no_audio || !input.audio,
+            looped: false,
+            realtime: Some(false),
+            raw_video: None,
+            raw_audio: None,
+            ffmpeg: opts.ffmpeg,
+            input: InputSpec::FfmpegArgs(input.args.into_iter().map(OsString::from).collect()),
         },
-        latency_ms: s.latency_ms,
-        size: Some(s.size.unwrap_or(FFMPEG_SIZE)),
-        fps: Some(fps),
-        bitrate_kbps: s.bitrate_kbps,
-        encoder: Encoder::default(),
-        no_audio: s.no_audio || !input.audio,
-        looped: false,
-        realtime: Some(false),
-        raw_video: None,
-        raw_audio: None,
-        ffmpeg: opts.ffmpeg,
-        input: InputSpec::FfmpegArgs(input.args.into_iter().map(OsString::from).collect()),
-    })
+        ctx,
+    )
 }

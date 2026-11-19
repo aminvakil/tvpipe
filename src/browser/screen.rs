@@ -42,7 +42,7 @@ use crate::browser::share::{ShareHandle, ShareServer};
 use crate::cli::ScreenTarget;
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
-use crate::media::input::StopFn;
+use crate::media::input::Stop;
 
 /// The browser window while it starts (CSS pixels).
 const WINDOW: (u32, u32) = (520, 340);
@@ -127,7 +127,7 @@ impl ScreenBrowser {
     /// Starts the browser on the server's screen page; the capture starts
     /// once the server is configured. Errors up to the page are returned
     /// here, later ones end the share through the server's handle.
-    pub fn start(opts: ScreenOptions, server: &ShareServer, stop: StopFn) -> Result<ScreenBrowser> {
+    pub fn start(opts: ScreenOptions, server: &ShareServer, stop: Stop) -> Result<ScreenBrowser> {
         if Engine::of(&opts.bin) == Engine::Firefox {
             return Err(Error::unsupported(
                 "tvpipe screen needs a Chromium-based browser, not Firefox",
@@ -287,7 +287,7 @@ struct Keeper {
     opts: ScreenOptions,
     share: ShareHandle,
     start_expr: String,
-    stop: StopFn,
+    stop: Stop,
     ctl: Arc<Ctl>,
     /// Deleted (temporary) when the keeper ends, after the browser quit.
     _profile: Profile,
@@ -304,7 +304,7 @@ enum Exit {
 
 impl Keeper {
     fn stopping(&self) -> bool {
-        self.ctl.shutdown.load(Ordering::SeqCst) || (self.stop)()
+        self.ctl.shutdown.load(Ordering::SeqCst) || self.stop.requested()
     }
 
     fn run(&mut self) {
