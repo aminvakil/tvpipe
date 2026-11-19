@@ -78,7 +78,7 @@ jobs:
               export RUSTFLAGS="-C target-feature=+crt-static"
               ;;
           esac
-          cargo build --release --locked --target ${{ matrix.target }}
+          cargo build --release --locked -p tvpipe-cli --target ${{ matrix.target }}
       - name: Package
         id: package
         run: |

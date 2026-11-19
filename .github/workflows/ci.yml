@@ -32,11 +32,35 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      # Without the LGPL FairPlay crate (the library's default later on).
+      # The library alone, with its default features (LGPL-free).
       - if: runner.os == 'Linux'
-        run: cargo clippy -p tvpipe --all-targets --no-default-features -- -D warnings
+        run: cargo clippy -p tvpipe --all-targets -- -D warnings
       - if: runner.os == 'Linux'
-        run: cargo test -p tvpipe --no-default-features
+        run: cargo test -p tvpipe
+
+  # Every feature of the library on its own, and none (docs/rust-sdk-design.md §3).
+  features:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: One feature at a time
+        run: |
+          for f in "" airplay fairplay cast aac player share headless tunnel files ffmpeg h264; do
+            echo "::group::features [$f]"
+            cargo clippy -p tvpipe --no-default-features --features "$f" -- -D warnings
+            echo "::endgroup::"
+          done
+      # The library's own license field is LGPL-free, and so is its default
+      # dependency tree, while `fairplay` really pulls the LGPL crate in.
+      - name: License check
+        run: |
+          grep -qx 'license = "Apache-2.0"' crates/tvpipe/Cargo.toml
+          ! cargo tree -p tvpipe -e normal --prefix none --format '{p} {l}' | grep LGPL
+          cargo tree -p tvpipe -e normal --features fairplay --prefix none --format '{p} {l}' | grep -q LGPL
 
   msrv:
     runs-on: ubuntu-latest
