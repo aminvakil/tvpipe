@@ -230,8 +230,8 @@ key. Rust's std has none of these. Proposal:
 |---|---|---|
 | WebSocket through a Cloudflare quick tunnel | median 16.5–17.1 ms, p95 19.7 ms, max 26 ms | party-design §13 (client on the host's Mac, so the internet is crossed twice, as for a phone on the same Wi-Fi) |
 | WebSocket through OpenTunnel | median 43 ms, p95 47 ms | same |
-| WebSocket over the LAN (LAN mode, §3.2) | Wi-Fi: typically 2–10 ms, spikes of 50–200 ms when a phone's Wi-Fi power saving kicks in | to measure in phase 2 |
-| WebRTC data channel over the LAN | same Wi-Fi floor; no head-of-line blocking on unordered channels | to measure in phase 4 |
+| WebSocket over the LAN (LAN mode, §3.2) | Wi-Fi: typically 2–10 ms, spikes of 50–200 ms when a phone's Wi-Fi power saving kicks in | to measure in plan step 4 (§8) |
+| WebRTC data channel over the LAN | same Wi-Fi floor; no head-of-line blocking on unordered channels | to measure in plan step 7 |
 
 So for turn-based games (drawbluff) the tunnel is already fine: the TV's
 playout delay (100–300 ms) dominates. The fast path matters for
@@ -254,7 +254,7 @@ latest stick position or nothing.
 3. Not `str0m` (no ring backend, twice the size, measured below), not
    async `webrtc` (forces a runtime for no gain over its own core), not
    Chrome as the peer (an installed browser and 200 MB of RAM for a
-   data channel), unless measurements in phase 4 say otherwise.
+   data channel), unless measurements in plan step 7 say otherwise.
 
 ### 2.3 Measured: WebRTC stacks for a data channel answerer
 
@@ -431,7 +431,7 @@ the right column declares it (`PartyOptions::require_secure_context()`)
 and LAN-only is then refused at start with a clear error. Browsers mark
 the page "Not secure"; whether Chrome's HTTPS-First mode puts an
 interstitial in front of `http://` private addresses on current Android
-and whether iOS does anything similar is to check on devices in phase 2.
+and whether iOS does anything similar is to check on devices in plan step 4.
 
 **HTTPS on the LAN** was considered and left out: self-signed
 certificates (a full-page warning on every phone), installing a local CA
@@ -637,7 +637,7 @@ screen with the game's own art). Options, cheapest first:
 
 Recommendation when it is wanted: 2 as the first experiment (no new
 code paths, measures the encode budget), 3 as the real thing on top of
-the phase 4 fast path.
+the plan step 7 fast path.
 
 ## 8. Plan
 
