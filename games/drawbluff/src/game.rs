@@ -1343,7 +1343,7 @@ impl Table {
         Value::Array(out)
     }
 
-    /// Prompts nobody drew that are not this one: "lie for me" and decoys.
+    /// Prompts nobody drew that are not this one: the decoys.
     fn spares(&self, prompt: &str) -> Vec<String> {
         let key = title_key(prompt);
         self.deck
@@ -1353,25 +1353,13 @@ impl Table {
             .collect()
     }
 
-    /// Checks a lie (`{text}`, a string, or `{auto: true}` for "lie for
-    /// me": a prompt nobody drew).
+    /// Checks a lie (`{text}` or a string).
     fn lie(
-        &mut self,
+        &self,
         data: &Value,
         prompt: &str,
         moderated: Option<Moderation>,
     ) -> Result<String, PartyError> {
-        if data.get("auto").and_then(Value::as_bool) == Some(true) {
-            let pool = self.spares(prompt);
-            if pool.is_empty() {
-                return Err(PartyError::new("no-lies", "Out of ideas: write one"));
-            }
-            let pick = pool[self.rng.below(pool.len())].clone();
-            if let Some(i) = self.deck.iter().position(|t| *t == pick) {
-                self.deck.remove(i);
-            }
-            return Ok(pick);
-        }
         // Kept as typed; shown and compared in the display form.
         let text = lie_text(data).unwrap_or_default();
         if display_title(&text).is_empty() {

@@ -21,8 +21,6 @@ export interface BotOptions {
   think?: () => number;
   /** Never answer (to test deadlines). */
   silent?: boolean;
-  /** "Lie for me" instead of writing. */
-  autoLie?: boolean;
 }
 
 const LIES = [
@@ -133,7 +131,7 @@ export class Bot {
         if (!me.done) {
           const base = LIES[Math.floor(this.#rng() * LIES.length)]!;
           // Now and then the same idea as another bot (merged lies).
-          const lie = this.#o.autoLie ? { auto: true } : { text: this.#rng() < 0.3 ? base : `${base} ${this.name}` };
+          const lie = { text: this.#rng() < 0.3 ? base : `${base} ${this.name}` };
           this.#once(`lie:${turn}`, () => c.act("lie", lie));
         }
         return;

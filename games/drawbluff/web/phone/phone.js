@@ -414,12 +414,6 @@ class Pad {
     this.current = null;
   }
 
-  undo() {
-    const s = this.strokes.pop();
-    if (s) this.points -= (s.length - 2) / 2;
-    this.redraw();
-  }
-
   clear() {
     this.strokes = [];
     this.points = 0;
@@ -459,7 +453,7 @@ function draw(prompt) {
     sizes.forEach((b, j) => b.classList.toggle("chosen", j === i));
   };
   size(1);
-  tools.append(h("button", { onclick: () => p.undo() }, "undo"), h("button", { onclick: () => p.clear() }, "clear"));
+  tools.append(h("button", { onclick: () => p.clear() }, "clear"));
   let sent = false;
   const submit = async () => {
     if (sent) return;
@@ -524,7 +518,7 @@ function lie(me) {
       },
     },
     input,
-    h("div", { class: "row" }, h("button", { type: "button", onclick: () => send({ auto: true }) }, "Lie for me"), h("button", { type: "submit", class: "primary", style: "margin-top:0" }, "Send")),
+    h("button", { type: "submit", class: "primary" }, "Send"),
     err,
   );
   const role = `You're a liar for ${me.artist?.name ?? "this"}'s drawing${me.liars > 1 ? ` (one of ${me.liars})` : ""}.`;

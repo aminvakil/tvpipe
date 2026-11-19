@@ -573,7 +573,7 @@ What changed against the design while building it:
 - **`collect`** waits, with a deadline, also for players who are away
   (they may come back before it: a phone whose screen locked while
   drawing); `skipAway` stops waiting for them; `reply` makes the
-  acknowledgement's result (drawbluff answers "Lie for me" with the lie).
+  acknowledgement's result (drawbluff answers a lie with its display form).
 - **Screens' actions** are deduplicated per connection only (screens have
   no lasting identity).
 - **The repository's binary**: drawbluff and the live scripts use

@@ -412,8 +412,6 @@ pub struct BotOptions {
     pub think: (u64, u64),
     /// Never answer (to test deadlines).
     pub silent: bool,
-    /// "Lie for me" instead of writing.
-    pub auto_lie: bool,
 }
 
 impl BotOptions {
@@ -427,7 +425,6 @@ impl BotOptions {
             auto_start: false,
             think: (0, 300),
             silent: false,
-            auto_lie: false,
         }
     }
 }
@@ -528,16 +525,12 @@ impl Brain {
                 self.once(c, format!("draw:{turn}"), "draw", drawing);
             }
             Some("lie") if !done => {
-                let lie = if self.o.auto_lie {
-                    json!({ "auto": true })
+                let i = (self.random() * LIES.len() as f64) as usize % LIES.len();
+                // Now and then the same idea as another bot (merged lies).
+                let lie = if self.random() < 0.3 {
+                    json!({ "text": LIES[i] })
                 } else {
-                    let i = (self.random() * LIES.len() as f64) as usize % LIES.len();
-                    // Now and then the same idea as another bot (merged lies).
-                    if self.random() < 0.3 {
-                        json!({ "text": LIES[i] })
-                    } else {
-                        json!({ "text": format!("{} {}", LIES[i], c.name()) })
-                    }
+                    json!({ "text": format!("{} {}", LIES[i], c.name()) })
                 };
                 self.once(c, format!("lie:{turn}"), "lie", lie);
             }

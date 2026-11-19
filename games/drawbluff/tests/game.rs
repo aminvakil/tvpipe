@@ -206,12 +206,11 @@ fn a_whole_game_with_3_players() {
 }
 
 #[test]
-fn eight_players_one_round_lies_for_me() {
+fn eight_players_one_round_the_classic_games_most() {
     let host = Host::start(1);
     let mut o = BotOptions::new(host.port, &host.room, &host.key);
     o.seed = 8;
     o.think = (5, 5);
-    o.auto_lie = true;
     let players = bots(8, &o).unwrap();
     players[0].client.act("start", Value::Null).unwrap();
     let table = host.wait_end(Duration::from_secs(60));

@@ -354,22 +354,12 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     this.#abort.signal.addEventListener("abort", onAbort, { once: true });
     const answers = new Map<Player, string>();
     const lies: Lies = { spot, key, liars, deadline, answers, finished: false, done: Promise.resolve(answers), abort };
-    const spares = () => this.#deck.filter((t) => titleKey(t) !== titleKey(spot.prompt));
     lies.done = party
       .collect<string>("lie", {
         from: liars,
         until: deadline,
         signal: abort.signal,
         validate: (d, pl) => {
-          const auto = typeof d === "object" && d !== null && (d as { auto?: unknown }).auto === true;
-          if (auto) {
-            // "Lie for me": a prompt nobody drew.
-            const pool = spares();
-            const pick = pool[Math.floor(this.#rng() * pool.length)];
-            if (!pick) throw new PartyError("no-lies", "Out of ideas: write one");
-            this.#deck.splice(this.#deck.indexOf(pick), 1);
-            return pick;
-          }
           // Kept as typed; shown and compared in the display form.
           const text = cleanTitle(typeof d === "object" && d !== null ? (d as { text?: unknown }).text : d);
           if (!displayTitle(text)) throw new PartyError("empty", "Write a title");

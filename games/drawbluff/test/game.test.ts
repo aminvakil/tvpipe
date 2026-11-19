@@ -61,7 +61,7 @@ test("a whole game with 3 players", async () => {
   }
 });
 
-test("8 players, one round, everyone lies for me", async () => {
+test("8 players, one round (the classic game's most)", async () => {
   const { server, g, players } = await game(8, { rounds: 1 });
   try {
     const end = new Promise((r) => g.once("end", r));
