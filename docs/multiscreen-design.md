@@ -638,3 +638,83 @@ screen with the game's own art). Options, cheapest first:
 Recommendation when it is wanted: 2 as the first experiment (no new
 code paths, measures the encode budget), 3 as the real thing on top of
 the phase 4 fast path.
+
+## 8. Plan
+
+Smallest first; each step committed green (`cargo fmt`, `clippy -D
+warnings`, `cargo test --workspace`, and `npm test` in `npm/party` and
+`games/drawbluff` where touched), never pushed.
+
+1. **tvpipe groundwork** (small, no new behaviour for the CLI): public
+   `tvpipe::qr` and `tvpipe::Tunnel` (+ `Provider::Auto`) as planned in
+   party-design §3; `#[doc(hidden)] pub mod __web` (http, httpd,
+   websocket, access, iface, json); `httpd` with an explicit LAN bind and
+   a configurable connection cap; the access rule's LAN case. Tests for
+   each.
+2. **Vectors from Node**: the built `@tvpipe/party` is the oracle.
+   `crates/tvpipe-party/tests/vectors/` with `diff.txt`, `names.txt`,
+   `sessions/*.txt` written by a Node script against the Node server, and
+   replayed by `npm/party`'s tests; the shared client moves to
+   `crates/tvpipe-party/web/` with the byte-compare tests.
+3. **`tvpipe-party` over WebSocket, loopback and tunnel**: server,
+   rooms, players, views and diffs, actions with acks and replay,
+   `Collect`, limits, names, assets, the join link and QR; the vectors
+   pass; an example game (`examples/buzzer.rs`: a lobby, a button, the
+   fastest player on the terminal) with headless Chrome as the phone in
+   a live script.
+4. **LAN mode and `Join::Auto`**: the bind, the link, the access rule,
+   `require_secure_context`; measure LAN RTT next to §2.1's tunnel
+   numbers; check on real phones (iOS Safari, Android Chrome) what
+   plain HTTP on a private address shows, and the Windows firewall
+   prompt.
+5. **`tvpipe-canvas`**: canvas, paths and the accumulator, strokes,
+   TrueType, text, QR; known-answer and fuzz tests.
+6. **drawbluff in Rust**: rules with the shared vectors (TS tests gain
+   them too), the game on `Party`, the renderer, sound cues, bots,
+   `--web-screen`; the live check with `--host rust` for both screens;
+   then a real TV and a real phone if the owner wants.
+7. **WebRTC fast path** (after question 1): feature `webrtc` on `rtc`
+   with the `FastPath` seam, signaling messages, the `in` message, the
+   client's upgrade and fallback, a datagram fuzz target, LAN latency
+   and loss measurements (Wi-Fi with a phone, the `u` channel against
+   the WebSocket), the hybrid mode.
+8. **Docs and release**: `crates/tvpipe-party/README.md`,
+   `docs/party-protocol.md` (protocol v1 + the `rtc`/`in` additions split
+   out of party-design §5), a "Shipping a party game" page (§6.1), the
+   manual's party chapter for Rust, the release workflow publishing the
+   new crates with the others.
+
+Later, not planned: per-player video (§7, option 2 first), STUN
+opt-in, WASM controllers (game code compiled for the phone).
+
+## 9. Questions for the owner
+
+1. **Dependencies for WebRTC**: may `tvpipe-party` take `rtc` 0.21
+   (ring backend, 148 crates, +2.1 MB) as an optional dependency behind
+   the `webrtc` feature? Alternatives: `str0m` (C library, +4.3 MB, no
+   ring), a hand-rolled stack (several thousand lines, SCTP), Chrome as
+   the peer (an installed browser).
+2. **Async rule**: keep "no async runtime" for `tvpipe-party` (and
+   therefore `rtc`, not `webrtc`)? Recommended: yes.
+3. **Crates and names**: `tvpipe-party` and `tvpipe-canvas` as separate,
+   published crates (Apache-2.0, versioned with tvpipe)? Or the canvas
+   as a module of the party crate, or unpublished inside drawbluff?
+4. **Coupling**: `tvpipe-party` uses tvpipe internals through a
+   doc-hidden `__web` module with an exact version pin, rather than a
+   public `tvpipe::web` API. Agreed?
+5. **Emoji on the TV**: drop them from names on the TV (phones show
+   them), or embed a monochrome emoji font (~1 MB more)?
+6. **HTTPS on the LAN**: is a hosted name service (per-install names
+   with real certificates, like plex.direct) ever wanted, or is "hybrid
+   when online, plain HTTP when offline" the answer?
+7. **Default join mode**: `Join::Auto` (tunnel, LAN when offline), or
+   LAN first (no third party sees the game, faster, but no secure
+   context and no mobile-data players)?
+8. **JSON in game code**: hand-rolled `Value` + `json!` only, or also an
+   optional `serde` feature for games that already use serde?
+9. **drawbluff**: the Rust version next to the Node one in
+   `games/drawbluff/` (shared `web/`, shared vectors), with both kept
+   working? Or does the Rust one replace the Node host eventually?
+10. **Node as the oracle** for the first protocol vectors (step 2), so
+    the Rust server is built against the implementation that already
+    passed live checks?
