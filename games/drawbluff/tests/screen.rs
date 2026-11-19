@@ -195,3 +195,30 @@ fn render_speed() {
         );
     }
 }
+
+#[test]
+fn the_video_screen_with_50_players() {
+    // The same views as test/video.test.ts draws (`node test/vectors.ts --bless`).
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/vectors/screens-50.json");
+    let big = Value::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let out = std::env::var_os("DRAWBLUFF_SCREEN_OUT").map(std::path::PathBuf::from);
+    let now = big["now"].as_u64().unwrap();
+    let mut screen = Screen::new();
+    let mut canvas = Canvas::new(1280, 720);
+    for v in big["views"].as_array().unwrap() {
+        let name = v[0].as_str().unwrap();
+        let view = json!({ "roster": big["roster"].clone(), "screen": v[1].clone(), "join": big["join"].clone() });
+        screen.render(&mut canvas, &view, now);
+        let bright = canvas
+            .data()
+            .chunks(4)
+            .step_by(97)
+            .filter(|p| p[0] > 200 && p[1] > 200)
+            .count();
+        assert!(bright > 50, "{name}: {bright}");
+        if let Some(dir) = &out {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(format!("rust-{name}.ppm")), ppm(&canvas)).unwrap();
+        }
+    }
+}

@@ -498,15 +498,13 @@ impl Brain {
         let me = view.get("me").cloned().unwrap_or_default();
         let room = view.get("room").cloned().unwrap_or_default();
         let field = |v: &Value, k: &str| v.get(k).map(|x| x.to_string()).unwrap_or_default();
-        let artist = room
-            .get("artist")
-            .map(|a| field(a, "id"))
-            .unwrap_or_default();
-        let turn = format!(
-            "{}:{}:{artist}",
-            field(&room, "round"),
-            field(&room, "deadline")
-        );
+        // `me.key` names the drawing a lie or vote is for (`round.spot`).
+        let task_key = me
+            .get("key")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| field(&me, "deadline"));
+        let turn = format!("{}:{task_key}", field(&room, "round"));
         let done = me.get("done").and_then(Value::as_bool) == Some(true);
         match me.get("task").and_then(Value::as_str) {
             Some("lobby") => {
@@ -534,7 +532,12 @@ impl Brain {
                     json!({ "auto": true })
                 } else {
                     let i = (self.random() * LIES.len() as f64) as usize % LIES.len();
-                    json!({ "text": format!("{} {}", LIES[i], c.name()) })
+                    // Now and then the same idea as another bot (merged lies).
+                    if self.random() < 0.3 {
+                        json!({ "text": LIES[i] })
+                    } else {
+                        json!({ "text": format!("{} {}", LIES[i], c.name()) })
+                    }
                 };
                 self.once(c, format!("lie:{turn}"), "lie", lie);
             }

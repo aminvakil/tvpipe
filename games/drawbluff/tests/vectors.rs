@@ -2,8 +2,8 @@
 //! --bless` from `game/rules.ts`, the reference) against `src/rules.rs`.
 
 use drawbluff::rules::{
-    build_options, clean_title, options_for, reveal_order, score, shuffle, title_key,
-    validate_drawing, Rng,
+    build_options, clean_title, deal, options_for, pick_liars, plan, reveal_order, rotate, score,
+    share, shuffle, title_key, validate_drawing, Rng, PHONE_LIES,
 };
 use tvpipe_party::Value;
 
@@ -162,6 +162,54 @@ fn rules_vectors() {
                     (got, want) => panic!("{at}: got {got:?}, want error {want:?}"),
                 }
             }
+            "plan" => {
+                for row in b.json("table").as_array().unwrap() {
+                    let n = row[0].as_u64().unwrap() as usize;
+                    let p = plan(n);
+                    assert_eq!(
+                        (p.spotlights as u64, p.liars as u64, p.pipelined),
+                        (
+                            row[1].as_u64().unwrap(),
+                            row[2].as_u64().unwrap(),
+                            row[3].as_bool().unwrap()
+                        ),
+                        "{at}: {n}"
+                    );
+                }
+            }
+            "share" => {
+                for c in b.json("cases").as_array().unwrap() {
+                    let n: Vec<i64> = c
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|v| v.as_i64().unwrap())
+                        .collect();
+                    assert_eq!(share(n[0], n[1], n[2]), n[3], "{at}: {c}");
+                }
+            }
+            "liars" => {
+                let lied = b.json("lied");
+                let first = b.json("first");
+                let got = pick_liars(
+                    &strings(&b.json("pool")),
+                    |id| lied.get(id).and_then(Value::as_i64).unwrap_or(0),
+                    b.num("n") as usize,
+                    &mut Rng::new(b.num("seed") as u32),
+                    first.as_str(),
+                );
+                assert_eq!(got, strings(&b.json("liars")), "{at}");
+            }
+            "rotate" => {
+                let keys = b.json("keys");
+                let got = rotate(
+                    &strings(&b.json("pool")),
+                    |id| keys.get(id).and_then(Value::as_i64).unwrap(),
+                    b.num("n") as usize,
+                    &mut Rng::new(b.num("seed") as u32),
+                );
+                assert_eq!(got, strings(&b.json("picked")), "{at}");
+            }
             "turn" => {
                 let truth = b.json("truth");
                 let options = build_options(
@@ -173,18 +221,32 @@ fn rules_vectors() {
                 );
                 let got = Value::Array(options.iter().map(|o| o.to_value()).collect());
                 assert!(same(&got, &b.json("options")), "{at}: {got}");
-                let shown = b.json("shown");
-                for (voter, ids) in shown.as_object().unwrap().iter() {
+                let own = b.json("own");
+                for (voter, ids) in own.as_object().unwrap().iter() {
                     let got: Vec<&str> = options_for(voter, &options)
                         .iter()
                         .map(|o| o.id.as_str())
                         .collect();
                     assert_eq!(got, strings(ids), "{at}: {voter}");
                 }
+                let shown = deal(
+                    &options,
+                    &strings(&b.json("voting")),
+                    PHONE_LIES,
+                    &mut Rng::new(b.num("dealSeed") as u32),
+                );
+                let got = Value::Object(
+                    shown
+                        .iter()
+                        .map(|(v, ids)| (v.clone(), Value::from(ids.clone())))
+                        .collect(),
+                );
+                assert!(same(&got, &b.json("shown")), "{at}: {got}");
                 let artist = b.json("artist");
                 let scoring = score(
                     artist.as_str().unwrap(),
                     &options,
+                    &shown,
                     &pairs(&b.json("votes")),
                     b.num("round") as i64,
                 );
@@ -204,6 +266,14 @@ fn rules_vectors() {
                         .collect(),
                 );
                 assert!(same(&voters, &b.json("voters")), "{at}: {voters}");
+                let seen = Value::Object(
+                    scoring
+                        .seen
+                        .iter()
+                        .map(|(o, n)| (o.clone(), Value::from(*n)))
+                        .collect(),
+                );
+                assert!(same(&seen, &b.json("seen")), "{at}: {seen}");
                 let reveal: Vec<String> = reveal_order(&options, &scoring)
                     .iter()
                     .map(|o| o.id.clone())
@@ -213,7 +283,9 @@ fn rules_vectors() {
             other => panic!("{at}: unknown test {other}"),
         }
     }
-    for kind in ["rng", "shuffle", "title", "drawing", "turn"] {
+    for kind in [
+        "rng", "shuffle", "title", "drawing", "plan", "share", "liars", "rotate", "turn",
+    ] {
         assert!(
             seen.get(kind).copied().unwrap_or(0) > 0,
             "no {kind} vectors"

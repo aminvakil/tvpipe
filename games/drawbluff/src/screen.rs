@@ -195,6 +195,7 @@ impl Screen {
         match phase {
             Some("lobby") => self.lobby(&mut f, view),
             Some("draw") => self.draw(&mut f, view),
+            Some("gallery") => self.gallery(&mut f, view),
             Some("lie" | "vote") => self.guess(&mut f, view),
             Some("reveal") => self.reveal(&mut f, view),
             Some("scores" | "final") => self.board(&mut f, view),
@@ -210,7 +211,8 @@ impl Screen {
             }
         }
         let has_qr = view["join"].get("qr").is_some_and(|q| !q.is_null());
-        if phase.is_some_and(|p| p != "lobby") && has_qr {
+        // Not in the lobby (the big code), nor where the options fill the right side.
+        if phase.is_some_and(|p| !matches!(p, "lobby" | "vote" | "reveal")) && has_qr {
             self.corner(&mut f, view);
         }
     }
@@ -340,7 +342,12 @@ impl Screen {
         self.text(f, "Players", x0, 6.0 * vh, t(Face::Display, 4.2 * vh));
         let max = s["maxPlayers"].as_u64().unwrap_or(8) as usize;
         let min = s["minPlayers"].as_u64().unwrap_or(3) as usize;
-        for i in 0..max.min(12) {
+        let many = roster.len() > 8;
+        if many {
+            self.grid(f, roster, x0);
+        }
+        // Empty seats up to 8; past 8 players a denser grid (up to 50 names).
+        for i in 0..if many { 0 } else { max.min(8) } {
             let x = x0 + (i % 2) as f32 * (col_w + 1.6 * vw);
             let y = 16.0 * vh + (i / 2) as f32 * 10.5 * vh;
             let r = roster.get(i);
@@ -411,7 +418,7 @@ impl Screen {
             f,
             &hint,
             x0,
-            61.0 * vh,
+            if many { 84.0 } else { 61.0 } * vh,
             46.0 * vw,
             t(Face::Sans, 3.0 * vh),
             1.3,
@@ -419,12 +426,90 @@ impl Screen {
         );
     }
 
-    /// Who the phase waits for: a chip per player, ✓ when done.
-    fn chips(&mut self, f: &mut F<'_>, view: &Value, x: f32, y: f32, width: f32, center: bool) {
+    /// More than 8 players: a grid of names (3 columns, 5 past 24).
+    fn grid(&mut self, f: &mut F<'_>, roster: &[Value], x0: f32) {
+        let (vh, vw) = (f.vh, f.vw);
+        let cols = if roster.len() > 24 { 5 } else { 3 };
+        let gap = 0.8 * vw;
+        let cw = (46.0 * vw - (cols - 1) as f32 * gap) / cols as f32;
+        let rows = roster.len().div_ceil(cols);
+        let ch = (8.6 * vh).min((64.0 * vh - (rows - 1) as f32 * 0.8 * vh) / rows as f32);
+        let cap = if cols == 5 { 2.6 } else { 3.0 } * vh;
+        let size = (3.4 * vh).min(ch * 0.55).min(cap);
+        for (i, r) in roster.iter().enumerate() {
+            let x = x0 + (i % cols) as f32 * (cw + gap);
+            let y = 16.0 * vh + (i / cols) as f32 * (ch + 0.8 * vh);
+            let connected = r["connected"].as_bool() == Some(true);
+            let fill = Color::WHITE.alpha(if connected { 0.12 } else { 0.06 });
+            f.c.fill_rounded_rect(x, y, cw, ch, vh, fill);
+            let color = if connected { INK } else { INK.alpha(0.45) };
+            let mut tx = x + 0.8 * vw;
+            if r["vip"].as_bool() == Some(true) {
+                star(f.c, tx + 0.45 * size, y + ch / 2.0, 0.42 * size, ACCENT);
+                tx += size;
+            }
+            let name = r["name"].as_str().unwrap_or("?");
+            let o = t(Face::Semi, size)
+                .color(color)
+                .middle()
+                .max(x + cw - 0.8 * vw - tx);
+            self.text(f, name, tx, y + ch / 2.0, o);
+        }
+    }
+
+    /// Who the phase waits for: a chip per player, ✓ when done; more
+    /// than [`CHIPS`]: a count, a bar and the last few names.
+    #[allow(clippy::too_many_arguments)]
+    fn chips(
+        &mut self,
+        f: &mut F<'_>,
+        view: &Value,
+        x: f32,
+        y: f32,
+        width: f32,
+        center: bool,
+        verb: &str,
+    ) {
         let s = &view["screen"];
         let roster = list(&view["roster"]);
         let done: Vec<&str> = list(&s["done"]).iter().filter_map(|v| v.as_str()).collect();
         let (vh, vw) = (f.vh, f.vw);
+        let waiting: Vec<&str> = list(&s["waiting"])
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        if waiting.len() > CHIPS {
+            let n = waiting.iter().filter(|id| done.contains(id)).count();
+            let left: Vec<&str> = waiting
+                .iter()
+                .filter(|id| !done.contains(id))
+                .map(|id| {
+                    roster
+                        .iter()
+                        .find(|r| r["id"].as_str() == Some(id))
+                        .and_then(|r| r["name"].as_str())
+                        .unwrap_or("?")
+                })
+                .collect();
+            let bw = width.min(50.0 * vw);
+            let bx = if center { x + (width - bw) / 2.0 } else { x };
+            let tx = if center { x + width / 2.0 } else { x };
+            let align = |o: T| if center { o.center() } else { o };
+            let count = format!("{n} of {} {verb}", waiting.len());
+            self.text(f, &count, tx, y, align(t(Face::Display, 3.0 * vh)));
+            let track = Color::WHITE.alpha(0.12);
+            f.c.fill_rounded_rect(bx, y + 5.0 * vh, bw, 1.6 * vh, 0.8 * vh, track);
+            if n > 0 {
+                let fw = bw * n as f32 / waiting.len() as f32;
+                f.c.fill_rounded_rect(bx, y + 5.0 * vh, fw, 1.6 * vh, 0.8 * vh, OK);
+            }
+            if !left.is_empty() && left.len() <= 6 {
+                let line = format!("Waiting for {}", left.join(", "));
+                let o = align(t(Face::Sans, 2.3 * vh).color(INK.alpha(0.85))).max(width);
+                self.text(f, &line, tx, y + 8.4 * vh, o);
+            }
+            return;
+        }
         let o = t(Face::Sans, 2.4 * vh);
         let pad = 1.6 * vw;
         let gap = vh;
@@ -519,7 +604,43 @@ impl Screen {
             9,
         );
         self.timer(f, s["deadline"].as_u64(), w / 2.0, 56.0 * vh);
-        self.chips(f, view, 15.0 * vw, 68.0 * vh, 70.0 * vw, true);
+        self.chips(f, view, 15.0 * vw, 68.0 * vh, 70.0 * vw, true, "done");
+    }
+
+    /// The gallery: the round's drawings that do not get the stage, 4×2 a page.
+    fn gallery(&mut self, f: &mut F<'_>, view: &Value) {
+        let s = &view["screen"];
+        let (vh, vw) = (f.vh, f.vw);
+        let pages = s["pages"].as_u64().unwrap_or(1);
+        let mut head = format!("ROUND {} · THE GALLERY", num(&s["round"]));
+        if pages > 1 {
+            head.push_str(&format!(" · {} OF {pages}", num(&s["page"])));
+        }
+        let label = t(Face::Semi, 2.4 * vh).color(INK.alpha(0.7));
+        self.text(f, &head, 4.0 * vw, 5.0 * vh, label);
+        let cw = (92.0 * vw - 3.0 * 2.0 * vw) / 4.0;
+        let size = cw.min(29.0 * vh);
+        for (i, it) in list(&s["items"]).iter().take(8).enumerate() {
+            let cx = 4.0 * vw + (i % 4) as f32 * (cw + 2.0 * vw) + cw / 2.0;
+            let y = 10.0 * vh + (i / 4) as f32 * (size + 9.0 * vh);
+            let x = cx - size / 2.0;
+            f.c.fill_rounded_rect(x, y, size, size, 1.4 * vh, PAPER);
+            draw_drawing(f.c, &it["drawing"], x, y, size);
+            let prompt = it["prompt"].as_str().unwrap_or_default();
+            let o = t(Face::Semi, 2.2 * vh).color(ACCENT).center().max(cw);
+            self.text(f, prompt, cx, y + size + vh, o);
+            let by = format!("by {}", it["name"].as_str().unwrap_or("?"));
+            let o = t(Face::Sans, 2.0 * vh)
+                .center()
+                .max(cw)
+                .color(INK.alpha(0.8));
+            self.text(f, &by, cx, y + size + 4.0 * vh, o);
+        }
+        if !list(&s["liars"]).is_empty() {
+            let line = meanwhile(s);
+            let o = t(Face::Sans, 2.6 * vh).max(70.0 * vw);
+            self.text(f, &line, 4.0 * vw, 86.0 * vh, o);
+        }
     }
 
     /// The drawing on paper at the left; returns where the right column starts.
@@ -551,31 +672,36 @@ impl Screen {
         let x = self.drawing_box(f, &s["drawing"]);
         let width = w - x - 4.0 * vw;
         let label = t(Face::Semi, 2.4 * vh).color(INK.alpha(0.7));
+        let spots = s["spots"].as_u64().unwrap_or(0);
+        let spot = if spots > 1 {
+            format!(" · DRAWING {} OF {spots}", num(&s["spot"]))
+        } else {
+            String::new()
+        };
         if s["phase"].as_str() == Some("lie") {
             let artist = s["artist"]["name"].as_str().unwrap_or("Someone");
-            let head = format!("{} DREW THIS", artist.to_uppercase());
+            let head = format!("{} DREW THIS{spot}", artist.to_uppercase());
             self.text(f, &head, x, 6.0 * vh, label.max(width));
             let o = t(Face::Display, 4.2 * vh);
-            let used = self.para(
-                f,
-                "What is it called? Write a fake title on your phone.",
-                x,
-                11.0 * vh,
-                width,
-                o,
-                1.35,
-                9,
-            );
+            let liars = list(&s["waiting"]).len();
+            let what = if liars == 1 {
+                "What is it called? The liar is writing a fake title.".to_owned()
+            } else {
+                format!("What is it called? {liars} liars are writing fake titles.")
+            };
+            let used = self.para(f, &what, x, 11.0 * vh, width, o, 1.35, 9);
             self.timer(
                 f,
                 s["deadline"].as_u64(),
                 x + 6.5 * vh,
                 11.0 * vh + used + 9.0 * vh,
             );
-            self.chips(f, view, x, 11.0 * vh + used + 19.0 * vh, width, false);
+            let y = 11.0 * vh + used + 19.0 * vh;
+            self.chips(f, view, x, y, width, false, "done");
             return;
         }
-        self.text(f, "WHICH ONE IS THE REAL TITLE?", x, 6.0 * vh, label);
+        let head = format!("WHICH ONE IS THE REAL TITLE?{spot}");
+        self.text(f, &head, x, 6.0 * vh, label.max(width));
         let opts = list(&s["options"]);
         let oh = (9.0 * vh).min(60.0 * vh / opts.len().max(1) as f32);
         for (i, o) in opts.iter().enumerate() {
@@ -603,7 +729,16 @@ impl Screen {
             y - 2.2 * vh,
             width - 15.0 * vh,
             false,
+            "voted",
         );
+        let writing = s["writing"].as_u64().unwrap_or(0);
+        if writing > 0 {
+            let line = format!("Meanwhile {writing} liars write for the next drawing.");
+            let o = t(Face::Sans, 2.2 * vh)
+                .color(INK.alpha(0.8))
+                .max(width - 18.0 * vw);
+            self.text(f, &line, x, 95.0 * vh - 2.2 * vh, o);
+        }
     }
 
     fn reveal(&mut self, f: &mut F<'_>, view: &Value) {
@@ -661,27 +796,7 @@ impl Screen {
                 y + 4.0 * vh,
                 t(Face::Semi, size).color(DARK).max(max),
             );
-            let voters = names("voters");
-            let who = if truth {
-                if voters.is_empty() {
-                    "nobody found it".to_owned()
-                } else {
-                    format!(
-                        "found by {} · +{} each, {artist} +{}",
-                        voters.join(", "),
-                        num(&it["points"]),
-                        num(&it["artistPoints"])
-                    )
-                }
-            } else if decoy {
-                format!("{} fell for it (our lie)", voters.join(", "))
-            } else {
-                format!(
-                    "{} fell for it · +{}",
-                    voters.join(", "),
-                    num(&it["points"])
-                )
-            };
+            let who = reveal_line(it, artist);
             self.text(
                 f,
                 &who,
@@ -696,7 +811,15 @@ impl Screen {
         let s = &view["screen"];
         let (w, vh, vw) = (f.w, f.vh, f.vw);
         let last = s["phase"].as_str() == Some("final");
-        let scores = list(&s["scores"]);
+        let all = list(&s["scores"]);
+        // All players up to 8, else the top 5 (each phone shows its own rank).
+        let total = s["total"].as_u64().map_or(all.len(), |n| n as usize);
+        let scores = if total > 8 {
+            &all[..all.len().min(5)]
+        } else {
+            all
+        };
+        let highlights = list(&s["highlights"]);
         let title = if last {
             let name = scores
                 .first()
@@ -715,8 +838,37 @@ impl Screen {
             8.0 * vh,
             t(Face::Display, 6.0 * vh).center().max(90.0 * vw),
         );
-        let lw = 70.0 * vw;
-        let x = (w - lw) / 2.0;
+        let lw = if highlights.is_empty() { 70.0 } else { 60.0 } * vw;
+        let x = if highlights.is_empty() {
+            (w - lw) / 2.0
+        } else {
+            4.0 * vw
+        };
+        for (i, hl) in highlights.iter().enumerate() {
+            let hx = x + lw + 3.0 * vw;
+            let hy = 20.0 * vh + i as f32 * 15.0 * vh;
+            let hw = w - hx - 4.0 * vw;
+            f.c.fill_rounded_rect(hx, hy, hw, 13.0 * vh, 1.6 * vh, Color::WHITE.alpha(0.1));
+            let liar = hl["kind"].as_str() == Some("liar");
+            let tag = if liar { "BEST LIAR" } else { "SHARPEST EYE" };
+            let o = t(Face::Display, 1.9 * vh).color(ACCENT);
+            self.text(f, tag, hx + 1.6 * vw, hy + 1.6 * vh, o);
+            let name = hl["name"].as_str().unwrap_or("?");
+            let o = t(Face::Semi, 3.4 * vh).max(hw - 3.2 * vw);
+            self.text(f, name, hx + 1.6 * vw, hy + 4.6 * vh, o);
+            let what = if liar {
+                format!("fooled {}", num(&hl["count"]))
+            } else {
+                format!("found {} of {}", num(&hl["count"]), num(&hl["of"]))
+            };
+            let o = t(Face::Sans, 2.4 * vh).max(hw - 3.2 * vw);
+            self.text(f, &what, hx + 1.6 * vw, hy + 9.0 * vh, o);
+        }
+        if total > scores.len() {
+            let line = format!("{total} players · your rank is on your phone");
+            let o = t(Face::Sans, 2.6 * vh).center();
+            self.text(f, &line, w / 2.0, 84.0 * vh, o);
+        }
         let lh = (8.4 * vh).min(66.0 * vh / scores.len().max(1) as f32);
         for (i, l) in scores.iter().enumerate() {
             let y = 20.0 * vh + i as f32 * (lh + 1.2 * vh);
@@ -748,7 +900,10 @@ impl Screen {
                 name,
                 x + 7.0 * vw,
                 mid,
-                t(Face::Semi, 3.6 * vh).color(color).middle().max(36.0 * vw),
+                t(Face::Semi, 3.6 * vh)
+                    .color(color)
+                    .middle()
+                    .max(lw - 30.0 * vw),
             );
             let delta = l["delta"].as_i64().unwrap_or(0);
             if !last && delta != 0 {
@@ -800,7 +955,7 @@ impl Screen {
         let o = t(Face::Sans, 1.8 * vh).color(INK.alpha(0.85));
         self.para(
             f,
-            "Lost your phone's page? Scan to rejoin.",
+            "Scan to join (from the next round) or to rejoin.",
             x + size + 2.0 * vh,
             y + 2.0 * vh,
             bw - size - 3.0 * vh,
@@ -809,6 +964,63 @@ impl Screen {
             9,
         );
     }
+}
+
+/// Chips up to this many players waited for; more: a count, a bar and
+/// the last few names.
+const CHIPS: usize = 12;
+
+/// The gallery's line about the first drawing's liars.
+fn meanwhile(s: &Value) -> String {
+    let liars = list(&s["liars"]).len();
+    let done = list(&s["done"]).len();
+    let who = if liars == 1 {
+        "1 liar is".to_owned()
+    } else {
+        format!("{liars} liars are")
+    };
+    let artist = s["artist"]["name"].as_str().unwrap_or("the first");
+    format!("Meanwhile {who} writing for {artist}'s drawing · {done} done")
+}
+
+/// A reveal line's last row: who fell for it (names while they fit, else
+/// how many of those who saw it), as `revealLine` in `screen-video.ts`.
+fn reveal_line(it: &Value, artist: &str) -> String {
+    let voters: Vec<&str> = list(&it["voters"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let count = it["count"].as_u64().map_or(voters.len(), |n| n as usize);
+    let fits = count <= voters.len();
+    let names = if fits {
+        voters.join(", ")
+    } else {
+        format!("{count} of {}", num(&it["seen"]))
+    };
+    if it["truth"].as_bool() == Some(true) {
+        if count == 0 {
+            return "nobody found it".to_owned();
+        }
+        return format!(
+            "found by {names} · +{} each, {artist} +{}",
+            num(&it["points"]),
+            num(&it["artistPoints"])
+        );
+    }
+    let head = if fits {
+        format!("{names} fell for it")
+    } else {
+        format!("fooled {names}")
+    };
+    if it["decoy"].as_bool() == Some(true) {
+        return format!("{head} (our lie)");
+    }
+    let same = if it["same"].as_bool() == Some(true) {
+        " (same idea!)"
+    } else {
+        ""
+    };
+    format!("{head} · +{}{same}", num(&it["points"]))
 }
 
 fn list(v: &Value) -> &[Value] {

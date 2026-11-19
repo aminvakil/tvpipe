@@ -110,7 +110,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
             }
             "--lan" => a.join = Join::Lan(None),
             "--local" | "--no-tunnel" => a.join = Join::Local,
-            "--bots" => a.bots = number(&value("a number")?, 0, 7)?,
+            "--bots" => a.bots = number(&value("a number")?, 0, 49)?,
             "--rounds" => a.rounds = number(&value("a number")?, 1, 10)?,
             "--fast" => a.fast = true,
             "--size" => {
@@ -158,7 +158,7 @@ fn main() -> ExitCode {
         .phone(&PHONE)
         .screen(&SCREEN)
         .join(args.join)
-        .max_players(8);
+        .max_players(50);
     let mut party = match Party::start(options) {
         Ok(p) => p,
         Err(e) => {

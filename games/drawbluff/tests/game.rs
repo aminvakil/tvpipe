@@ -17,6 +17,7 @@ const FAST: Timings = Timings {
     reveal_step: 20,
     reveal_end: 20,
     scores: 20,
+    gallery: 20,
 };
 
 type Cmd = Box<dyn FnOnce(&mut Party, &mut Drawbluff) + Send>;
@@ -33,7 +34,13 @@ struct Host {
 
 impl Host {
     fn start(rounds: u32) -> Host {
-        let mut party = Party::start(PartyOptions::new().join(Join::Local)).unwrap();
+        let mut party = Party::start(
+            PartyOptions::new()
+                .join(Join::Local)
+                .max_players(50)
+                .max_sockets(128),
+        )
+        .unwrap();
         let mut game = Drawbluff::new(GameOptions {
             rounds,
             timings: FAST,
@@ -94,9 +101,13 @@ impl Host {
     }
 
     fn bots(&self, n: usize, seed: u32) -> Vec<Bot> {
+        self.bots_thinking(n, seed, (5, 5))
+    }
+
+    fn bots_thinking(&self, n: usize, seed: u32, think: (u64, u64)) -> Vec<Bot> {
         let mut o = BotOptions::new(self.port, &self.room, &self.key);
         o.seed = seed;
-        o.think = (5, 5);
+        o.think = think;
         bots(n, &o).unwrap()
     }
 
@@ -211,8 +222,8 @@ fn eight_players_one_round_lies_for_me() {
 }
 
 #[test]
-fn too_few_players_non_vip_start_join_while_running() {
-    let host = Host::start(1);
+fn too_few_players_non_vip_start_a_late_joiner_plays_from_the_next_round() {
+    let host = Host::start(2);
     let mut players = host.bots(2, 2);
     let e = players[0].client.act("start", Value::Null).unwrap_err();
     assert_eq!(e.code, "too-few");
@@ -220,9 +231,117 @@ fn too_few_players_non_vip_start_join_while_running() {
     let e = players[1].client.act("start", Value::Null).unwrap_err();
     assert_eq!(e.code, "not-vip");
     players[0].client.act("start", Value::Null).unwrap();
-    let e = host.bot("Late").err().unwrap();
-    assert_eq!(e.code, "locked");
-    host.wait_end(Duration::from_secs(30));
+    until("the first lies", || {
+        matches!(host.with(|_, g| g.phase()), "lie" | "vote")
+    });
+    let late = host.bot("Late").unwrap();
+    until("waiting", || task(&late) == "wait");
+    let end = Instant::now() + Duration::from_secs(15);
+    while task(&late) != "draw" {
+        assert!(Instant::now() < end, "no second round for the late joiner");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let table = host.wait_end(Duration::from_secs(30));
+    let mut names: Vec<&str> = table.iter().map(|l| l.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["Ada", "Bea", "Late", "Zed"]);
+}
+
+#[test]
+fn fifty_players_spotlights_pipelined_lies_sampled_options_every_phone_busy() {
+    let host = Host::start(2);
+    let players = host.bots_thinking(50, 50, (150, 150));
+    players[0].client.act("start", Value::Null).unwrap();
+    let mut problems: Vec<String> = Vec::new();
+    let mut checked = 0;
+    let mut last_vote = String::new();
+    let end = Instant::now() + Duration::from_secs(90);
+    loop {
+        let (phase, screen) = host.with(|p, g| (g.phase(), p.screen_view()["screen"].clone()));
+        if phase == "final" {
+            break;
+        }
+        assert!(Instant::now() < end, "no end; phases {:?}", host.phases());
+        let key = format!("{}:{}", screen["round"], screen["spot"]);
+        if phase == "vote" && key != last_vote {
+            // Checked once the vote's views are out.
+            thread::sleep(Duration::from_millis(60));
+            last_vote = key;
+            let screen = host.with(|p, _| p.screen_view()["screen"].clone());
+            if screen["phase"].as_str() != Some("vote") {
+                problems.push("the vote was over too soon to check".into());
+                continue;
+            }
+            checked += 1;
+            let voters: Vec<&str> = screen["waiting"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            let tv: Vec<&str> = screen["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|o| o["id"].as_str())
+                .collect();
+            let mut liars = 0;
+            for b in &players {
+                let view = b.client.view();
+                let me = &view["me"];
+                let id = b.client.id();
+                match me["task"].as_str().unwrap_or_default() {
+                    "vote" => {
+                        if !voters.contains(&id.as_str()) {
+                            problems.push(format!("{id} votes but is not waited for"));
+                        }
+                        let opts = me["options"].as_array().unwrap();
+                        if opts.len() > 6 {
+                            problems.push(format!("{id} has {} options", opts.len()));
+                        }
+                        let order: Vec<Option<usize>> = opts
+                            .iter()
+                            .map(|o| tv.iter().position(|t| Some(*t) == o["id"].as_str()))
+                            .collect();
+                        if order.iter().any(Option::is_none)
+                            || order.windows(2).any(|w| w[1] < w[0])
+                        {
+                            problems.push(format!("{id}: options not in the TV's order"));
+                        }
+                    }
+                    "lie" => liars += 1,
+                    "artist" => {}
+                    other => problems.push(format!("{id} has nothing to do: {other}")),
+                }
+            }
+            if screen["spot"].as_u64() < screen["spots"].as_u64() && liars == 0 {
+                problems.push(format!("no liars writing during vote {}", screen["spot"]));
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let table = host.wait_end(Duration::from_secs(5));
+    assert_eq!(table.len(), 50);
+    assert!(checked >= 6, "{checked} votes checked");
+    assert_eq!(
+        problems.iter().take(5).collect::<Vec<_>>(),
+        Vec::<&String>::new()
+    );
+    let phases = host.phases();
+    assert_eq!(phases.iter().filter(|p| **p == "reveal").count(), 12);
+    assert_eq!(phases.iter().filter(|p| **p == "gallery").count(), 2);
+    assert!(table[0].score < 40_000, "points scaled: {}", table[0].score);
+    let screen = host.with(|p, _| p.screen_view()["screen"].clone());
+    assert_eq!(screen["total"].as_u64(), Some(50));
+    assert_eq!(screen["scores"].as_array().map(<[Value]>::len), Some(8));
+    until("ranks of 50", || {
+        players
+            .iter()
+            .all(|b| b.client.view()["me"]["of"].as_u64() == Some(50))
+    });
+    for b in &players {
+        assert_eq!(b.errors(), Vec::<String>::new());
+    }
 }
 
 #[test]

@@ -249,10 +249,24 @@ pub fn shuffle<T: Clone>(items: &[T], rng: &mut Rng) -> Vec<T> {
 
 /// Points for a voter who found the truth.
 pub const POINTS_GUESS: i64 = 1000;
-/// Points for the artist, per voter who found the truth.
+/// Points for the artist, per voter who found the truth (scaled, see [`share`]).
 pub const POINTS_ARTIST: i64 = 1000;
-/// Points for a liar, per voter who fell for the lie.
+/// Points for a liar, per voter who fell for the lie (scaled, see [`share`]).
 pub const POINTS_FOOLED: i64 = 500;
+/// Points for each author of a lie several liars wrote ("same idea").
+pub const POINTS_SAME: i64 = 100;
+/// Voters beyond which points per voter are scaled down (today's most:
+/// 8 players).
+pub const REF_VOTERS: i64 = 7;
+
+/// `n` voters' worth of `base` points out of `seen` who could have: `n ·
+/// base` up to [`REF_VOTERS`], else `n · base · 7 / seen`, rounded half up.
+pub fn share(n: i64, base: i64, seen: i64) -> i64 {
+    if seen <= REF_VOTERS {
+        return n * base;
+    }
+    (2 * n * base * REF_VOTERS + seen).div_euclid(2 * seen)
+}
 
 /// The points of one drawing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -261,6 +275,9 @@ pub struct Scoring {
     pub points: Vec<(String, i64)>,
     /// Per option id (in the options' order): who picked it.
     pub voters: Vec<(String, Vec<String>)>,
+    /// Per option id (in the options' order): its exposure, how many
+    /// counted voters were shown it.
+    pub seen: Vec<(String, i64)>,
 }
 
 impl Scoring {
@@ -279,15 +296,32 @@ impl Scoring {
             .find(|(o, _)| o == option)
             .map_or(&[], |(_, v)| v.as_slice())
     }
+
+    /// How many counted voters were shown an option.
+    pub fn seen_of(&self, option: &str) -> i64 {
+        self.seen
+            .iter()
+            .find(|(o, _)| o == option)
+            .map_or(0, |(_, n)| *n)
+    }
 }
 
-/// Scores one drawing: `votes` are `(voter, option id)`; the artist's
-/// votes, votes for one's own lie and unknown options count for nothing.
-/// Round N counts N times.
-pub fn score(artist: &str, options: &[Choice], votes: &[(String, String)], round: i64) -> Scoring {
+/// Scores one drawing. `shown` is what each voter's phone offered (option
+/// ids); `votes` are `(voter, option id)` (a voter's later vote replaces
+/// the earlier, as a map would). Votes of the artist, for one's own lie,
+/// or for an option the voter was not shown count for nothing (and the
+/// voter not as exposure). Round N counts N times.
+pub fn score(
+    artist: &str,
+    options: &[Choice],
+    shown: &[(String, Vec<String>)],
+    votes: &[(String, String)],
+    round: i64,
+) -> Scoring {
     let mut s = Scoring {
         points: Vec::new(),
         voters: options.iter().map(|o| (o.id.clone(), Vec::new())).collect(),
+        seen: options.iter().map(|o| (o.id.clone(), 0)).collect(),
     };
     let add = |points: &mut Vec<(String, i64)>, id: &str, n: i64| match points
         .iter_mut()
@@ -296,24 +330,168 @@ pub fn score(artist: &str, options: &[Choice], votes: &[(String, String)], round
         Some((_, total)) => *total += n * round,
         None => points.push((id.to_owned(), n * round)),
     };
+    // One vote per voter, in the order they first voted.
+    let mut unique: Vec<(&str, &str)> = Vec::new();
     for (voter, option) in votes {
-        let Some((i, o)) = options.iter().enumerate().find(|(_, o)| o.id == *option) else {
+        match unique.iter_mut().find(|(v, _)| v == voter) {
+            Some(slot) => slot.1 = option,
+            None => unique.push((voter, option)),
+        }
+    }
+    let mut counted: Vec<(&str, usize)> = Vec::new();
+    for (voter, option) in unique {
+        let Some(mine) = shown.iter().find(|(v, _)| v == voter).map(|(_, ids)| ids) else {
             continue;
         };
-        if voter == artist || o.authors.contains(voter) {
+        let Some(i) = options.iter().position(|o| o.id == option) else {
+            continue;
+        };
+        let o = &options[i];
+        if !mine.contains(&o.id) || voter == artist || o.authors.iter().any(|a| a == voter) {
             continue;
         }
-        s.voters[i].1.push(voter.clone());
-        if o.truth {
+        counted.push((voter, i));
+        s.voters[i].1.push(voter.to_owned());
+        for id in mine {
+            if let Some(slot) = s.seen.iter_mut().find(|(o, _)| o == id) {
+                slot.1 += 1;
+            }
+        }
+    }
+    for &(voter, i) in &counted {
+        if options[i].truth {
             add(&mut s.points, voter, POINTS_GUESS);
-            add(&mut s.points, artist, POINTS_ARTIST);
-        } else {
+        }
+    }
+    for (i, o) in options.iter().enumerate() {
+        let n = s.voters[i].1.len() as i64;
+        let seen = s.seen[i].1;
+        if o.truth {
+            if n > 0 {
+                add(&mut s.points, artist, share(n, POINTS_ARTIST, seen));
+            }
+            continue;
+        }
+        if n > 0 {
             for a in &o.authors {
-                add(&mut s.points, a, POINTS_FOOLED);
+                add(&mut s.points, a, share(n, POINTS_FOOLED, seen));
+            }
+        }
+        if o.authors.len() > 1 {
+            for a in &o.authors {
+                add(&mut s.points, a, POINTS_SAME);
             }
         }
     }
     s
+}
+
+// ---------------------------------------------------------------------------
+// Scale: spotlights, liars, samples (docs/drawbluff-scale.md)
+
+/// Spotlight drawings per round (all of them with fewer players).
+pub const SPOTLIGHTS: usize = 6;
+/// Liars per drawing at most (8 options on the TV, as with 8 players).
+pub const MAX_LIARS: usize = 7;
+/// Lies a phone shows at most (with the truth: 6 buttons).
+pub const PHONE_LIES: usize = 5;
+/// From this many players the next drawing's liars write during the
+/// current vote.
+pub const PIPELINE_FROM: usize = 13;
+
+/// How a round goes with some number of players.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Plan {
+    /// Drawings that get lies, votes and a reveal on the TV.
+    pub spotlights: usize,
+    /// Liars per drawing.
+    pub liars: usize,
+    /// Whether the next drawing's liars write during the current vote.
+    pub pipelined: bool,
+}
+
+/// The plan for a round with `n` players.
+pub fn plan(n: usize) -> Plan {
+    let spotlights = n.min(SPOTLIGHTS);
+    if n >= PIPELINE_FROM {
+        return Plan {
+            spotlights,
+            liars: MAX_LIARS.min((n - 1) / 2),
+            pipelined: true,
+        };
+    }
+    Plan {
+        spotlights,
+        liars: n.saturating_sub(1).min(MAX_LIARS),
+        pipelined: false,
+    }
+}
+
+/// Takes `n` of `pool` by rotation: the lowest `key` first, ties at
+/// random (a shuffle, then a stable sort).
+pub fn rotate(pool: &[String], key: impl Fn(&str) -> i64, n: usize, rng: &mut Rng) -> Vec<String> {
+    let mut order: Vec<(i64, String)> = shuffle(pool, rng)
+        .into_iter()
+        .map(|id| (key(&id), id))
+        .collect();
+    order.sort_by_key(|(k, _)| *k);
+    order.into_iter().take(n).map(|(_, id)| id).collect()
+}
+
+/// A drawing's liars: `first` (when in the pool), then by rotation on
+/// `lied` (lies so far).
+pub fn pick_liars(
+    pool: &[String],
+    lied: impl Fn(&str) -> i64,
+    n: usize,
+    rng: &mut Rng,
+    first: Option<&str>,
+) -> Vec<String> {
+    let head: Vec<String> = first
+        .filter(|f| n > 0 && pool.iter().any(|p| p == f))
+        .map(|f| vec![f.to_owned()])
+        .unwrap_or_default();
+    let rest: Vec<String> = pool.iter().filter(|p| !head.contains(p)).cloned().collect();
+    let mut out = head;
+    let more = n - out.len();
+    out.extend(rotate(&rest, lied, more, rng));
+    out
+}
+
+/// What each voter's phone shows (in the dealt order): the truth and at
+/// most `max` lies (never their own), in the options' order. With more
+/// lies than that, voters are dealt in random order and each gets the
+/// lies dealt least so far (ties at random), so every lie reaches as many
+/// voters as the others ±1.
+pub fn deal(
+    options: &[Choice],
+    voters: &[String],
+    max: usize,
+    rng: &mut Rng,
+) -> Vec<(String, Vec<String>)> {
+    let mut dealt: Vec<usize> = vec![0; options.len()];
+    let mut out = Vec::new();
+    for v in shuffle(voters, rng) {
+        let mut lies: Vec<usize> = (0..options.len())
+            .filter(|&i| !options[i].truth && !options[i].authors.contains(&v))
+            .collect();
+        if lies.len() > max {
+            lies = shuffle(&lies, rng);
+            lies.sort_by_key(|&i| dealt[i]);
+            lies.truncate(max);
+        }
+        for &i in &lies {
+            dealt[i] += 1;
+        }
+        let ids = options
+            .iter()
+            .enumerate()
+            .filter(|(i, o)| o.truth || lies.contains(i))
+            .map(|(_, o)| o.id.clone())
+            .collect();
+        out.push((v, ids));
+    }
+    out
 }
 
 /// The options a voter sees: all but the ones they wrote.
