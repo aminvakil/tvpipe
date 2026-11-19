@@ -138,7 +138,8 @@ behind the library's opt-in `fairplay` feature).
 
 The Node SDK's tests run against the debug binary: `cargo build && cd
 npm/tvpipe && npm ci && npm run check && npm test`. A release bumps the
-version in `Cargo.toml`, `Cargo.lock` and `npm/tvpipe/package.json`
+version in `Cargo.toml`, `Cargo.lock`, `npm/tvpipe/package.json` and
+`npm/party/package.json` (with its `@tvpipe/sdk` peer dependency)
 together (CI checks), then tags `vX.Y.Z`; `release.yml` publishes the GitHub
 release and the npm packages. Programs in other languages can drive tvpipe
 through [`--machine`](docs/machine.md).

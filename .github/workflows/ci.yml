@@ -92,11 +92,15 @@ jobs:
         with:
           node-version: 22
       - run: cargo build
-      - name: The SDK's version is the crate's
+      - name: The npm packages' versions are the crate's
         run: |
           cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          sdk_version="$(node -p 'require("./npm/tvpipe/package.json").version')"
-          test "$cargo_version" = "$sdk_version" || { echo "npm/tvpipe/package.json has $sdk_version, Cargo.toml $cargo_version" >&2; exit 1; }
+          for pkg in tvpipe party; do
+            v="$(node -p "require('./npm/$pkg/package.json').version")"
+            test "$cargo_version" = "$v" || { echo "npm/$pkg/package.json has $v, Cargo.toml $cargo_version" >&2; exit 1; }
+          done
+          peer="$(node -p "require('./npm/party/package.json').peerDependencies['@tvpipe/sdk']")"
+          test "$cargo_version" = "$peer" || { echo "npm/party wants @tvpipe/sdk $peer, Cargo.toml $cargo_version" >&2; exit 1; }
       - working-directory: npm/tvpipe
         run: |
           npm ci
@@ -106,3 +110,17 @@ jobs:
         env:
           TVPIPE_BINARY: ${{ github.workspace }}/target/debug/tvpipe${{ runner.os == 'Windows' && '.exe' || '' }}
         run: npm test
+      # The party library (npm/party) and the demo game on it.
+      - working-directory: npm/party
+        env:
+          TVPIPE_BINARY: ${{ github.workspace }}/target/debug/tvpipe${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          npm ci
+          npm run build
+          npm run check
+          npm test
+      - working-directory: games/drawbluff
+        run: |
+          npm ci
+          npm run check
+          npm test

@@ -194,8 +194,10 @@ jobs:
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
             exit 1
           fi
-          sdk="$(node -p 'require("./npm/tvpipe/package.json").version')"
-          test "$sdk" = "$version" || { echo "npm/tvpipe/package.json has $sdk, Cargo.toml $version" >&2; exit 1; }
+          for pkg in tvpipe party; do
+            v="$(node -p "require('./npm/$pkg/package.json').version")"
+            test "$v" = "$version" || { echo "npm/$pkg/package.json has $v, Cargo.toml $version" >&2; exit 1; }
+          done
       - name: Build the SDK
         working-directory: npm/tvpipe
         run: |

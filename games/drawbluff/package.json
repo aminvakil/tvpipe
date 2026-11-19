@@ -1,7 +1,7 @@
 {
   "name": "drawbluff",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A Drawful-style party game on tvpipe: draw your prompt, fake the others' titles, find the real one",
   "license": "Apache-2.0",
   "type": "module",

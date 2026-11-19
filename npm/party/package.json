@@ -1,6 +1,6 @@
 {
   "name": "@tvpipe/party",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Party games on tvpipe: rooms, players, reconnects and state sync between a game host and phone browsers, with the main screen on a TV",
   "keywords": ["party-game", "jackbox", "websocket", "airplay", "chromecast", "tvpipe"],
   "homepage": "https://mitsuhiko.github.io/tvpipe/",
@@ -40,7 +40,7 @@
     "test": "node --test \"test/*.test.ts\""
   },
   "peerDependencies": {
-    "@tvpipe/sdk": "0.1.2"
+    "@tvpipe/sdk": "0.2.0"
   },
   "peerDependenciesMeta": {
     "@tvpipe/sdk": {
