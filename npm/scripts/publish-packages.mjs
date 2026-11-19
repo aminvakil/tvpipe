@@ -10,7 +10,7 @@
 // Authentication is npm's: trusted publishing (OIDC) in GitHub Actions,
 // else the user's npm login.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,5 +45,16 @@ for (const { name, dir } of packages) {
   if (values["dry-run"]) args.push("--dry-run");
   if (values.provenance) args.push("--provenance");
   console.log(`${name}@${version}: npm ${args.join(" ")}`);
-  execFileSync(npm, args, { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
+  const r = spawnSync(npm, args, { cwd: dir, encoding: "utf8", shell: process.platform === "win32" });
+  process.stdout.write(r.stdout ?? "");
+  process.stderr.write(r.stderr ?? "");
+  if (r.status !== 0) {
+    // `npm view` lags behind a publish for a while: a version published a
+    // moment ago (a rerun) is refused like this.
+    if (/cannot publish over (the )?previously (published|staged) version/i.test(r.stderr ?? "")) {
+      console.log(`${name}@${version}: already published, skipped`);
+      continue;
+    }
+    process.exit(r.status ?? 1);
+  }
 }
