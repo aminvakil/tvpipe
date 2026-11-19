@@ -44,6 +44,9 @@ pub(crate) enum Inbound {
     Closed { conn: ConnId },
     /// [`Waker::wake`](crate::Waker::wake): only ends a wait.
     Wake,
+    /// From the fast path's driver.
+    #[cfg(feature = "webrtc")]
+    Fast(crate::fast::driver::Up),
 }
 
 pub(crate) enum Incoming {

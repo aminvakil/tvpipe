@@ -24,6 +24,11 @@ const SLOW_LIMIT: usize = 256 * 1024;
 const ACK_CACHE: usize = 32;
 /// Largest message other than `act`.
 const MAX_CONTROL_MESSAGE: usize = 16 * 1024;
+/// Largest `in` message (continuous input: a stick, a tilt).
+const MAX_INPUT: usize = 4 * 1024;
+/// `in` messages per second on the unreliable channel, and at once.
+#[cfg(feature = "webrtc")]
+const INPUT_RATE: (f64, f64) = (120.0, 60.0);
 /// Largest exact integer in JavaScript.
 const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
 
@@ -266,6 +271,8 @@ pub struct Player {
     last_act: i64,
     results: VecDeque<(i64, Value)>,
     client: Option<ConnId>,
+    /// The latest `in` since the last poll.
+    input: Option<Value>,
 }
 
 impl Player {
@@ -399,6 +406,16 @@ pub enum Event {
     },
     /// An action to answer.
     Action(Action),
+    /// A player's continuous input (`in`: a stick, a tilt), the latest
+    /// since the last poll; earlier ones of the same poll are dropped.
+    /// Comes over the WebRTC fast path when there is one (unreliable,
+    /// unordered), else over the WebSocket.
+    Input {
+        /// Whose.
+        player: PlayerId,
+        /// What the phone sent.
+        data: Value,
+    },
 }
 
 /// What [`Moderate`] decides about a text.
@@ -451,6 +468,29 @@ struct Client {
     bucket: TokenBucket,
     /// Screens: action ids seen on this connection.
     last_act: i64,
+    /// The last `in` sequence number on this connection.
+    in_seq: i64,
+    #[cfg(feature = "webrtc")]
+    fast: ClientFast,
+}
+
+/// A client's WebRTC fast path.
+#[cfg(feature = "webrtc")]
+struct ClientFast {
+    /// The driver, if the party has one.
+    link: Option<crate::fast::driver::Link>,
+    /// The WebSocket's id, the driver's name for the peer.
+    peer: ConnId,
+    /// The client said `caps: ["rtc"]`.
+    capable: bool,
+    /// An offer went to the driver; the channels are not open yet.
+    pending: bool,
+    /// The channels are open: messages to the client go on `r`.
+    open: bool,
+    /// The stack failed on this client's input: no more offers.
+    refused: bool,
+    /// `in` on the unreliable channel.
+    bucket: TokenBucket,
 }
 
 impl Client {
@@ -458,12 +498,36 @@ impl Client {
         if self.conn.closed() {
             return false;
         }
+        #[cfg(feature = "webrtc")]
+        if self.fast.open {
+            if let Some(link) = &self.fast.link {
+                if link.send(crate::fast::driver::Cmd::Send {
+                    peer: self.conn.id,
+                    channel: crate::fast::Channel::Reliable,
+                    text: msg.to_string(),
+                }) {
+                    return true;
+                }
+            }
+        }
         if self.conn.buffered() > SLOW_LIMIT {
             bye(&self.conn, Bye::Slow, None);
             return false;
         }
         self.conn.send(msg.to_string());
         true
+    }
+}
+
+#[cfg(feature = "webrtc")]
+impl Drop for ClientFast {
+    /// The fast path lives as long as the WebSocket that signaled it.
+    fn drop(&mut self) {
+        if self.pending || self.open {
+            if let Some(link) = &self.link {
+                link.send(crate::fast::driver::Cmd::Close { peer: self.peer });
+            }
+        }
     }
 }
 
@@ -526,6 +590,9 @@ pub(crate) struct Core {
     joins: Joins,
     watch: ScreenWatch,
     watch_version: u64,
+    /// The fast path's driver, if it runs.
+    #[cfg(feature = "webrtc")]
+    pub fast: Option<crate::fast::driver::Link>,
 }
 
 pub(crate) struct CoreOptions {
@@ -571,6 +638,8 @@ impl Core {
             joins,
             watch: ScreenWatch(Arc::new(Mutex::new((0, Arc::new(Value::Null))))),
             watch_version: 0,
+            #[cfg(feature = "webrtc")]
+            fast: None,
         }
     }
 
@@ -612,7 +681,24 @@ impl Core {
     }
 
     pub fn events(&mut self) -> Vec<Event> {
+        for p in &mut self.players {
+            if let Some(data) = p.input.take() {
+                self.events.push_back(Event::Input {
+                    player: p.id.clone(),
+                    data,
+                });
+            }
+        }
         self.events.drain(..).collect()
+    }
+
+    /// Whether this player's phone has an open fast path.
+    #[cfg(feature = "webrtc")]
+    pub fn fast_path(&self, id: &PlayerId) -> bool {
+        self.player(id)
+            .and_then(|p| p.client)
+            .and_then(|c| self.clients.get(&c))
+            .is_some_and(|c| c.fast.open)
     }
 
     pub fn moderate(&self, text: &str, kind: &str) -> Moderation {
@@ -659,6 +745,8 @@ impl Core {
     pub fn handle(&mut self, inbound: Inbound) {
         match inbound {
             Inbound::Wake => {}
+            #[cfg(feature = "webrtc")]
+            Inbound::Fast(up) => self.fast_up(up),
             Inbound::Opened { conn } => {
                 if self.closed {
                     bye(&conn, Bye::RoomClosed, None);
@@ -790,7 +878,7 @@ impl Core {
                 }
                 self.screen_seq += 1;
                 let id = format!("s{}", self.screen_seq);
-                self.adopt(conn, role, id.clone(), None, at);
+                self.adopt(conn, role, id.clone(), None, &hello, at);
                 self.events.push_back(Event::Screen {
                     id,
                     role,
@@ -823,6 +911,7 @@ impl Core {
                     Role::Player,
                     id.as_str().to_owned(),
                     Some(id.clone()),
+                    hello,
                     at,
                 );
                 info(&format!("party {}: {name} is back", self.code));
@@ -878,12 +967,14 @@ impl Core {
             last_act: 0,
             results: VecDeque::new(),
             client: Some(conn.id),
+            input: None,
         });
         self.adopt(
             conn,
             Role::Player,
             id.as_str().to_owned(),
             Some(id.clone()),
+            hello,
             at,
         );
         info(&format!("party {}: {name} joined ({address})", self.code));
@@ -896,7 +987,19 @@ impl Core {
 
     /// Takes a socket after a good `hello`: sends `welcome` with the
     /// full view.
-    fn adopt(&mut self, conn: Conn, role: Role, id: String, player: Option<PlayerId>, at: Instant) {
+    fn adopt(
+        &mut self,
+        conn: Conn,
+        role: Role,
+        id: String,
+        player: Option<PlayerId>,
+        hello: &Object,
+        at: Instant,
+    ) {
+        #[cfg(not(feature = "webrtc"))]
+        let _ = hello;
+        #[cfg(feature = "webrtc")]
+        let peer = conn.id;
         let mut c = Client {
             conn,
             role,
@@ -907,6 +1010,21 @@ impl Core {
             waiting: false,
             bucket: TokenBucket::new(self.limits.rate, self.limits.burst, at),
             last_act: 0,
+            in_seq: 0,
+            #[cfg(feature = "webrtc")]
+            fast: ClientFast {
+                link: self.fast.clone(),
+                peer,
+                capable: role == Role::Player
+                    && hello
+                        .get("caps")
+                        .and_then(Value::as_array)
+                        .is_some_and(|caps| caps.iter().any(|c| c.as_str() == Some("rtc"))),
+                pending: false,
+                open: false,
+                refused: false,
+                bucket: TokenBucket::new(INPUT_RATE.0, INPUT_RATE.1, at),
+            },
         };
         let view = self.view_for(&c);
         let mut you = Object::new();
@@ -926,6 +1044,10 @@ impl Core {
         msg.insert("now", now_ms());
         msg.insert("view", Value::Object(view.clone()));
         msg.insert("rev", 0);
+        #[cfg(feature = "webrtc")]
+        if c.fast.capable && c.fast.link.is_some() {
+            msg.insert("rtc", true);
+        }
         c.sent = view;
         c.send(Value::Object(msg));
         self.clients.insert(c.conn.id, c);
@@ -958,6 +1080,9 @@ impl Core {
             }
         };
         let t = msg.get("t").and_then(Value::as_str).unwrap_or("");
+        if t == "in" && text.len() > MAX_INPUT {
+            return;
+        }
         if t != "act" && text.len() > MAX_CONTROL_MESSAGE {
             let c = self.drop_client(conn);
             return bye(&c.conn, Bye::Protocol, Some("too big"));
@@ -1013,8 +1138,36 @@ impl Core {
                 }
                 c.conn.close(1000, "left");
             }
+            "in" => self.input(conn, &msg),
+            #[cfg(feature = "webrtc")]
+            "rtc" => self.rtc(conn, &msg),
             // Unknown types are ignored.
             _ => {}
+        }
+    }
+
+    /// `{t: "in", s, data}`: the latest input wins, by `s` (per
+    /// connection); never answered. Players only.
+    fn input(&mut self, conn: ConnId, msg: &Object) {
+        let Some(c) = self.clients.get_mut(&conn) else {
+            return;
+        };
+        let s = msg
+            .get("s")
+            .and_then(Value::as_number)
+            .filter(|n| n.is_integer())
+            .and_then(|n| n.as_i64())
+            .filter(|&n| (1..=MAX_SAFE_INTEGER).contains(&n));
+        let (Some(s), Some(pid)) = (s, c.player.clone()) else {
+            return;
+        };
+        if s <= c.in_seq {
+            return;
+        }
+        c.in_seq = s;
+        let data = dedupe(msg.get("data").cloned().unwrap_or(Value::Null));
+        if let Some(p) = self.player_mut(&pid) {
+            p.input = Some(data);
         }
     }
 
@@ -1373,6 +1526,131 @@ impl Core {
             }
         }
     }
+}
+
+/// The fast path (docs/multiscreen-design.md §2.4): signaling over the
+/// WebSocket, the driver's reports.
+#[cfg(feature = "webrtc")]
+impl Core {
+    /// `{t: "rtc", sdp}`: an offer (answered by [`Up::Answer`]);
+    /// `{t: "rtc", state: "failed"}`: the client gave up (logged).
+    fn rtc(&mut self, conn: ConnId, msg: &Object) {
+        use crate::fast::driver::Cmd;
+        let code = self.code.clone();
+        let Some(c) = self.clients.get_mut(&conn) else {
+            return;
+        };
+        if let Some(sdp) = msg.get("sdp").and_then(Value::as_str) {
+            let link = match &c.fast.link {
+                Some(l) if c.fast.capable && !c.fast.refused => l.clone(),
+                _ => return c.conn.send(rtc_state("failed")),
+            };
+            // A new offer replaces the old connection: nothing more on it.
+            c.fast.open = false;
+            c.fast.pending = true;
+            let offer = Cmd::Offer {
+                peer: conn,
+                sdp: sdp.to_owned(),
+            };
+            if !link.send(offer) {
+                c.fast.pending = false;
+                c.conn.send(rtc_state("failed"));
+            }
+        } else if let Some(state) = msg.get("state").and_then(Value::as_str) {
+            let state: String = state.chars().take(32).collect();
+            info(&format!("party {code}: {}'s fast path: {state:?}", c.id));
+        }
+    }
+
+    fn fast_up(&mut self, up: crate::fast::driver::Up) {
+        use crate::fast::driver::{Cmd, Up};
+        use crate::fast::Channel;
+        let peer = match &up {
+            Up::Answer { peer, .. } | Up::Open(peer) | Up::Down { peer, .. } => *peer,
+            Up::Message { peer, .. } => *peer,
+        };
+        let code = self.code.clone();
+        let Some(c) = self.clients.get_mut(&peer) else {
+            // The socket went first; the driver may still have the peer.
+            if let Some(link) = &self.fast {
+                link.send(Cmd::Close { peer });
+            }
+            return;
+        };
+        match up {
+            Up::Answer { sdp: Ok(sdp), .. } if c.fast.pending => {
+                // Over the WebSocket: `r` is not open (or being replaced).
+                c.conn.send(
+                    Value::object()
+                        .with("t", "rtc")
+                        .with("sdp", sdp)
+                        .to_string(),
+                );
+            }
+            Up::Answer { sdp: Ok(_), .. } => {}
+            Up::Answer { sdp: Err(e), .. } => {
+                c.fast.pending = false;
+                info(&format!("party {code}: no fast path for {}: {e}", c.id));
+                c.conn.send(rtc_state("failed"));
+            }
+            Up::Open(_) => {
+                c.fast.pending = false;
+                c.fast.open = true;
+                info(&format!("party {code}: fast path open for {}", c.id));
+            }
+            Up::Down { why, .. } => {
+                let was = c.fast.open || c.fast.pending;
+                c.fast.pending = false;
+                c.fast.open = false;
+                if why == crate::fast::rtc::CRASHED {
+                    c.fast.refused = true;
+                    warn(&format!(
+                        "party {code}: the fast path failed on {}'s data; WebSocket only from now",
+                        c.id
+                    ));
+                } else {
+                    info(&format!("party {code}: fast path down for {}: {why}", c.id));
+                }
+                if was {
+                    c.conn.send(rtc_state("closed"));
+                }
+            }
+            Up::Message {
+                channel: Channel::Reliable,
+                text,
+                at,
+                ..
+            } => {
+                if c.fast.open {
+                    self.message(peer, Incoming::Text(text), at);
+                }
+            }
+            Up::Message {
+                channel: Channel::Unreliable,
+                text,
+                at,
+                ..
+            } => {
+                if !c.fast.open || text.len() > MAX_INPUT || !c.fast.bucket.take(at) {
+                    return;
+                }
+                if let Ok(Value::Object(msg)) = Value::parse(&text) {
+                    if msg.get("t").and_then(Value::as_str) == Some("in") {
+                        self.input(peer, &msg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `{t: "rtc", state}` as text.
+#[cfg(feature = "webrtc")]
+fn rtc_state(state: &str) -> String {
+    Value::object()
+        .with("t", "rtc")
+        .with("state", state)
+        .to_string()
 }
 
 fn info(msg: &str) {

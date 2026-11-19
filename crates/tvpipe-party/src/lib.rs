@@ -137,6 +137,17 @@ pub struct PartyOptions {
     max_message: usize,
     joins_per_minute: usize,
     moderate: Option<Moderate>,
+    #[cfg(feature = "webrtc")]
+    fast: FastOptions,
+}
+
+/// The fast path's settings (feature `webrtc`).
+#[cfg(feature = "webrtc")]
+#[derive(Debug, Clone)]
+struct FastOptions {
+    on: bool,
+    port: u16,
+    addrs: Option<Vec<IpAddr>>,
 }
 
 impl Default for PartyOptions {
@@ -164,6 +175,12 @@ impl PartyOptions {
             max_message: 256 * 1024,
             joins_per_minute: 20,
             moderate: None,
+            #[cfg(feature = "webrtc")]
+            fast: FastOptions {
+                on: true,
+                port: LAN_PORT,
+                addrs: None,
+            },
         }
     }
 
@@ -256,6 +273,32 @@ impl PartyOptions {
         self
     }
 
+    /// Whether phones may upgrade to WebRTC data channels on the LAN
+    /// (default yes; feature `webrtc`). The WebSocket stays and takes
+    /// over whenever the channels are not open.
+    #[cfg(feature = "webrtc")]
+    pub fn fast_path(mut self, on: bool) -> Self {
+        self.fast.on = on;
+        self
+    }
+
+    /// The fast path's UDP port (default [`LAN_PORT`], the next free one
+    /// if taken; 0: any), for firewall rules.
+    #[cfg(feature = "webrtc")]
+    pub fn fast_port(mut self, port: u16) -> Self {
+        self.fast.port = port;
+        self
+    }
+
+    /// The addresses phones reach the fast path on (default: the LAN
+    /// link's, or with a tunnel the default route's interface;
+    /// [`Join::Local`]: 127.0.0.1).
+    #[cfg(feature = "webrtc")]
+    pub fn fast_addrs(mut self, addrs: &[IpAddr]) -> Self {
+        self.fast.addrs = Some(addrs.to_vec());
+        self
+    }
+
     /// Checks names (and what the game passes to [`Party::moderate`]).
     pub fn moderate(mut self, f: impl Fn(&str, &str) -> Moderation + Send + 'static) -> Self {
         self.moderate = Some(Box::new(f));
@@ -278,6 +321,8 @@ pub struct Party {
     public: Option<String>,
     link: Link,
     qr: Option<QrCode>,
+    #[cfg(feature = "webrtc")]
+    fast: Option<fast::driver::Driver>,
 }
 
 impl std::fmt::Debug for Party {
@@ -381,6 +426,21 @@ impl Party {
             (None, Some(s)) => (Some(format!("http://{}", s.local_addr())), Link::Lan),
             (None, None) => (None, Link::Local),
         };
+        #[cfg(feature = "webrtc")]
+        let fast = start_fast(
+            &options.fast,
+            options.max_players,
+            options.max_message,
+            link,
+            &lan_server,
+            &shared,
+        );
+        #[cfg(feature = "webrtc")]
+        let mut core = core;
+        #[cfg(feature = "webrtc")]
+        {
+            core.fast = fast.as_ref().map(fast::driver::Driver::link);
+        }
         let mut party = Party {
             core,
             inbox,
@@ -392,6 +452,8 @@ impl Party {
             public,
             link,
             qr: None,
+            #[cfg(feature = "webrtc")]
+            fast,
         };
         let url = party.join_url();
         party.qr = QrCode::encode(&url);
@@ -475,6 +537,20 @@ impl Party {
     /// How phones reach the party.
     pub fn link(&self) -> Link {
         self.link
+    }
+
+    /// The fast path's UDP addresses (feature `webrtc`; empty when it
+    /// does not run).
+    #[cfg(feature = "webrtc")]
+    pub fn fast_addrs(&self) -> &[SocketAddr] {
+        self.fast.as_ref().map_or(&[], |d| d.locals())
+    }
+
+    /// Whether a player's phone talks over the fast path right now
+    /// (feature `webrtc`).
+    #[cfg(feature = "webrtc")]
+    pub fn fast_path(&self, id: &PlayerId) -> bool {
+        self.core.fast_path(id)
     }
 
     /// The LAN listener's address (LAN mode).
@@ -703,6 +779,71 @@ fn auto_tunnel(port: u16, timeout: Duration) -> tvpipe::Result<Tunnel> {
 
 /// The LAN listener: `port`, else the next free of the following 20
 /// (0: any).
+/// Starts the fast path's sockets and threads, or logs why not.
+#[cfg(feature = "webrtc")]
+fn start_fast(
+    o: &FastOptions,
+    max_players: usize,
+    max_message: usize,
+    link: Link,
+    lan: &Option<httpd::Server>,
+    shared: &Arc<Shared>,
+) -> Option<fast::driver::Driver> {
+    if !o.on {
+        return None;
+    }
+    let say = |msg: String| {
+        tvpipe::log::write(
+            tvpipe::log::Level::Warn,
+            "tvpipe_party",
+            format_args!("party: no fast path ({msg}); phones use the WebSocket"),
+        )
+    };
+    if !fast::available() {
+        say("built with panic = \"abort\"".into());
+        return None;
+    }
+    let ips: Vec<IpAddr> = match (&o.addrs, link) {
+        (Some(a), _) => a.clone(),
+        (None, Link::Local) => vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        (None, Link::Lan) => lan.iter().map(|s| s.local_addr().ip()).collect(),
+        (None, Link::Tunnel) => match iface::default_ipv4() {
+            Ok(ip) => vec![IpAddr::V4(ip)],
+            Err(e) => {
+                say(format!("no LAN address: {}", e.message()));
+                return None;
+            }
+        },
+    };
+    let ports: Vec<u16> = if o.port == 0 {
+        vec![0]
+    } else {
+        (o.port..=o.port.saturating_add(20)).chain([0]).collect()
+    };
+    let up = shared
+        .inbox
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let max_message = u32::try_from(max_message).unwrap_or(u32::MAX);
+    let mut last = String::from("no address");
+    for port in ports {
+        let addrs: Vec<SocketAddr> = ips.iter().map(|ip| SocketAddr::new(*ip, port)).collect();
+        let make = |locals: Vec<SocketAddr>| {
+            let mut ro = fast::rtc::RtcOptions::new(locals);
+            ro.max_peers = max_players.saturating_mul(2).max(4);
+            ro.max_message = max_message;
+            fast::rtc::RtcPath::new(ro)
+        };
+        match fast::driver::Driver::start(&addrs, make, up.clone()) {
+            Ok(d) => return Some(d),
+            Err(e) => last = e,
+        }
+    }
+    say(last);
+    None
+}
+
 fn bind_lan(
     ip: IpAddr,
     port: u16,

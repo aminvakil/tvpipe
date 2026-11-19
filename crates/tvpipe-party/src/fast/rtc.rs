@@ -211,7 +211,7 @@ impl RtcPath {
             p.down = Some(CRASHED.into());
         }
         if let Some(why) = p.down.take() {
-            self.forget(id);
+            self.close(id, Instant::now());
             self.events.push_back(FastEvent::Down { peer: id, why });
         }
     }
@@ -415,6 +415,7 @@ impl FastPath for RtcPath {
         self.events.pop_front()
     }
 
+    #[cfg(test)]
     fn peers(&self) -> usize {
         self.peers.len()
     }

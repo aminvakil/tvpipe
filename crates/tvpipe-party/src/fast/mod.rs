@@ -13,12 +13,10 @@
 //! - `r` (id 0): reliable and ordered; carries the WebSocket's messages.
 //! - `u` (id 1): unordered, no retransmits; carries `in` (latest wins).
 
-// Wired into the party in the next step.
-#![allow(dead_code)]
-
 use std::net::SocketAddr;
 use std::time::Instant;
 
+pub(crate) mod driver;
 pub(crate) mod rtc;
 pub(crate) mod stun;
 
@@ -101,7 +99,8 @@ pub(crate) trait FastPath: Send {
     /// The next event.
     fn poll_event(&mut self) -> Option<FastEvent>;
 
-    /// Peers now (tests, limits).
+    /// Peers now.
+    #[cfg(test)]
     fn peers(&self) -> usize;
 }
 
