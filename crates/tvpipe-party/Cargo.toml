@@ -42,3 +42,7 @@ tvpipe = { path = "../tvpipe", version = "=0.2.0", default-features = false, fea
 name = "buzzer"
 # Its test checks the embedded page list against the directory.
 test = true
+
+[[example]]
+name = "stick"
+test = true

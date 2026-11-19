@@ -366,6 +366,99 @@ right. Not now; revisit if the dependency weight of `rtc` is refused.
   network change (`online` event, page visible), and tells the host
   (`{t: "rtc", state: "failed"}`) for the logs.
 
+### 2.5 As built (plan step 7)
+
+- **Crate and feature.** `tvpipe-party`'s `webrtc` feature pulls `rtc`
+  0.21.1 (`default-features = false, features = ["crypto-ring"]`; rtc
+  needs Rust 1.89). The party's normal dependency tree grows from 13 to
+  150 crates; the `stick` example grows from 2.95 to 5.86 MB (release,
+  stripped, no LTO). Off by default.
+- **The seam** (`src/fast/mod.rs`): `FastPath` takes offers (`answer`),
+  datagrams and sends, and gives back transmits, events (`Open`,
+  `Message`, `Down`) and timeouts; it owns no socket and reads no clock.
+  `src/fast/rtc.rs` implements it: one ICE-lite answerer per phone, host
+  candidates only, one ECDSA P-256 certificate for all phones, the
+  channels **negotiated** out of band (`r` = stream 0, reliable and
+  ordered; `u` = stream 1, unordered, `maxRetransmits: 0`), so no DCEP
+  and no labels to trust. All phones share the sockets: a datagram finds
+  its peer by the host ufrag in a binding request's USERNAME
+  (`src/fast/stun.rs`, a 40-line hand-rolled peek), then by its learned
+  address pair (at most 8 per peer). Unopened peers are dropped after
+  10 s; `r` past 256 KiB unacknowledged drops the peer as too slow (the
+  WebSocket's latest-wins views take over).
+- **Threads** (`src/fast/driver.rs`): one blocking `UdpSocket` per
+  address, each with a reader thread, and a driver thread that owns the
+  stack. Readers and the party post into one bounded queue (4096;
+  datagrams past it are dropped like on the wire), so a command wakes
+  the driver as a datagram does; otherwise it sleeps until the stack's
+  next timeout. Idle with one open phone: 40 ms of CPU in 20 s.
+- **Addresses.** `PartyOptions::fast_addrs` (default: the LAN link's
+  address; with a tunnel the default route's interface, the **hybrid
+  mode**: signaling and the WebSocket through the tunnel, the channels on
+  the LAN; `Join::Local`: 127.0.0.1), `fast_port` (default 7420, else the
+  next free of the following 20, else any: one number for TCP and UDP in
+  firewall rules), `fast_path(false)`. `Party::fast_addrs()`,
+  `Party::fast_path(&PlayerId)`.
+- **Protocol** (additions to v1, ignored by peers that do not know them):
+  `hello.caps: ["rtc"]` (players whose browser has `RTCPeerConnection`);
+  `welcome.rtc: true` (the host runs the fast path); `{t: "rtc", sdp}`
+  both ways over the WebSocket (offer, answer); `{t: "rtc", state}` from
+  the host (`failed`: refused or bad offer; `closed`: it ended the
+  channels) and from the client (`failed`, `closed`: logged). On `r` the
+  client sends `act`, `ping`, `resync` (and could send `leave`); the host
+  sends everything the WebSocket would except `welcome`, `bye` and `rtc`.
+  `u` carries only `{t: "in", s, data}`. The channels live as long as the
+  WebSocket that signaled them.
+- **`in`** works everywhere: over the WebSocket too (Node hosts, no
+  feature, no channel), latest wins by `s` per connection, players only,
+  at most 4 KiB. Rust: `Event::Input { player, data }`, the latest per
+  poll, ahead of the poll's other events (so an action sent after an
+  `in` sees it). Node: `player.input` and the `input` event. A session
+  vector (`continuous input…`) is replayed by both hosts. On `u` the
+  host has a bucket of its own (120/s, 60 at once) and drops what is
+  over it silently; on the WebSocket `in` counts against the socket's
+  bucket (20/s), so the client sends it there at most every 100 ms (the
+  latest data).
+- **Ordering across paths.** Acts go on `r` only while no earlier act is
+  still unacknowledged on the WebSocket (the host takes ids in order and
+  treats a lower id as a replay). When `r` goes down the client sends
+  its `r`-pending acts again over the WebSocket; the host's per-player
+  cache answers ids it already ran. State with a revision not above the
+  client's is dropped (late from the other path); a gap asks for a
+  resync as before.
+- **Fuzz gate.** `src/fast/fuzz.rs`: random and mutated datagrams (seeded
+  from a real session) into a host with one phone before and after the
+  handshake, handshakes with 1 in 4 datagrams corrupted, mutated offers;
+  no panic (200 000 datagrams and 6 600 handshakes in a long run,
+  `TVPIPE_FUZZ_ITERS`). A scratch fuzz of rtc's own codecs (rtc-sctp's
+  `fuzzing` entry points, rtc-datachannel's `Message::unmarshal`; needs
+  `--cfg fuzzing`, so not a repository test) found **two panics in rtc
+  0.21.1** reachable by a peer that completed DTLS, i.e. any player:
+  `ErrorCause::unmarshal` (an ABORT or ERROR chunk with a cause longer
+  than the chunk) and `DataChannelThreshold::unmarshal` (a DCEP message
+  of type 0 shorter than 5 bytes). `docs/patches/rtc-0.21.1-unmarshal-panics.patch`
+  fixes both (3 million iterations clean with it), for upstream. Until a
+  release has them, every call into a peer's `RTCPeerConnection` runs
+  under `catch_unwind`: a panic costs that phone its channels
+  (`{t: "rtc", state: "closed"}`, WebSocket only for the rest of its
+  session) and nothing else; and with `panic = "abort"` the fast path
+  does not start (a warning), so "never panic on network data" holds.
+- **Tests.** In memory with virtual time (`src/fast/tests.rs`: an `rtc`
+  offerer as the phone; connect, four phones on one socket, both ways,
+  silence, loss, close, containment); end to end on real UDP
+  (`tests/fast.rs`: upgrade, `r` and `u`, `in` over the WebSocket, no
+  capability, a bad offer, the WebSocket closing); the client against a
+  scripted host and a fake `RTCPeerConnection` (`npm/party/test/rtc.test.ts`).
+- **Measured** (`scripts/live/party-rtc.ts`, headless Chrome 2026-11 on
+  the host's Mac, so the numbers are the stacks', not Wi-Fi's): act
+  round trips over `r` 0.5–0.8 ms p50 (1.1–1.3 p95) against 0.4–0.5 ms
+  over a LAN WebSocket; 60 Hz stick input over `u` 0.4–0.5 ms one way,
+  all 300 of 300 arrived. Hybrid (`auto`, a Cloudflare tunnel): over the
+  tunnel's WebSocket acts took 73 ms p50, 366 ms p95; over the LAN
+  channels 0.8 ms p50, 1.3 ms p95. Not measured yet: a real phone on
+  Wi-Fi (latency, loss on `u`, power saving), iOS Safari and Android
+  Chrome against the ICE-lite answer, the firewall prompt for UDP.
+
 ## 3. Join modes
 
 `PartyOptions::join(…)`: `Join::Tunnel(provider)`, `Join::Lan(bind)`, or
