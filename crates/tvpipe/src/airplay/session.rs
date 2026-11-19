@@ -470,6 +470,8 @@ impl<S: ControlStream> Session<S> {
                 width: 0,
                 height: 0,
                 max_fps: None,
+                max_width: 0,
+                max_height: 0,
                 from_display: false,
             },
             audio: AudioStream {

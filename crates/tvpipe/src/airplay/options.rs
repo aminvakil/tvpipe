@@ -18,6 +18,10 @@ pub struct MirrorOptions {
     /// No answer to `POST /feedback` (sent every 2 s) for this long: the
     /// receiver is lost (`push` fails with a timeout).
     pub feedback_timeout: Duration,
+    /// Plan up to the receiver's decoder maximum (`widthPixelsMax`),
+    /// not only its nominal canvas: a resolution chosen explicitly
+    /// (`share URL --resolution 1080p|4k`; docs/airplay-mirroring.md §2.6).
+    pub decoder_max: bool,
 }
 
 /// Default [`MirrorOptions::feedback_timeout`]: three missed `/feedback`
@@ -32,6 +36,7 @@ impl Default for MirrorOptions {
             name: "tvpipe".into(),
             ptp: true,
             feedback_timeout: FEEDBACK_TIMEOUT,
+            decoder_max: false,
         }
     }
 }

@@ -138,6 +138,7 @@ impl ScreenBrowser {
         let launch = LaunchOptions {
             bin: opts.bin.clone(),
             viewport: WINDOW,
+            scale: 1.0,
             visible: true,
             app: None,
             screen: Some(ScreenLaunch {

@@ -62,6 +62,12 @@ test("playshare: Node as the host page, phones and a TV page through tvpipe", { 
     assert.equal(info.name, "test-game");
     assert.equal(info.phone.mode, "local");
     assert.equal(info.tunnel.state, "off");
+    // The resolution: offered, chosen with the TVs, kept without one.
+    assert.deepEqual(info.resolutions, ["auto", "720p", "1080p", "2160p"]);
+    assert.deepEqual(await tvpipe.chosen(), { devices: [], resolution: "auto" });
+    assert.deepEqual(await tvpipe.select(["browser"], { resolution: "2160p" }), { devices: ["browser"], resolution: "2160p" });
+    assert.deepEqual(await tvpipe.select([]), { devices: [], resolution: "2160p" });
+    assert.deepEqual(await tvpipe.selection(), []);
 
     const party = await tvpipe.party({ lateJoin: "wait" });
     assert.equal(party.maxPlayers, 4);

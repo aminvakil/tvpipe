@@ -28,6 +28,12 @@ pub const MAX_TARGET_DELAY_MS: u32 = 5000;
 /// Smallest video bitrate the mirroring spec allows.
 pub const MIN_VIDEO_BITRATE: u32 = 300_000;
 pub const MIN_AUDIO_BITRATE: u32 = 32_000;
+/// What an ANSWER without video constraints is taken to allow when we
+/// offered more: openscreen's receiver defaults
+/// (`cast/streaming/public/receiver_constraints.h`: 1920x1080 at 30 fps,
+/// 10 Mbit/s; `constants.h`).
+pub const DEFAULT_RECEIVER_MAX: (u32, u32, u32) = (1920, 1080, 30);
+pub const DEFAULT_RECEIVER_MAX_BITRATE: u32 = 10_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamKind {
@@ -582,6 +588,7 @@ impl Negotiated {
         let ac = c.and_then(|c| c.audio.as_ref());
         let (mut max_width, mut max_height, mut max_fps, mut max_bitrate) =
             (0, 0, Ratio::new(0, 1), None);
+        let mut max_pixels = None;
         let mut video_codecs = Vec::new();
         if let Some(v) = &self.video {
             let (w, h) = v.offer.resolutions.first().copied().unwrap_or((1920, 1080));
@@ -600,6 +607,21 @@ impl Negotiated {
                     max_fps = vc.max_frame_rate;
                 }
                 max_bitrate = max_bitrate.map(|b| b.min(vc.max_bit_rate / 1000));
+                max_pixels = vc
+                    .max_pixels_per_second
+                    .filter(|p| p.is_finite() && *p >= 1.0)
+                    .map(|p| p.min(u64::MAX as f64) as u64);
+            } else if max_width > DEFAULT_RECEIVER_MAX.0 || max_height > DEFAULT_RECEIVER_MAX.1 {
+                // A receiver that says nothing about video while we
+                // offered more than 1080p: what openscreen's receivers
+                // take by default, not the offer.
+                let (w, h, fps) = DEFAULT_RECEIVER_MAX;
+                max_width = max_width.min(w);
+                max_height = max_height.min(h);
+                if max_fps.as_f64() > fps as f64 {
+                    max_fps = Ratio::new(fps, 1);
+                }
+                max_bitrate = max_bitrate.map(|b| b.min(DEFAULT_RECEIVER_MAX_BITRATE / 1000));
             }
         }
         let mut audio_formats = Vec::new();
@@ -633,6 +655,7 @@ impl Negotiated {
             audio_formats,
             audio_family: AudioFamily::Cast,
             max_bitrate_kbps: max_bitrate,
+            max_pixels_per_second: max_pixels,
             min_latency_ms: None,
             preferred_latency_ms: delay,
             display_aspect: self
@@ -778,9 +801,55 @@ mod tests {
         );
         assert_eq!(caps.audio_family, AudioFamily::Cast);
         assert_eq!(caps.max_bitrate_kbps, Some(10_000));
+        assert_eq!(caps.max_pixels_per_second, Some(62_208_000));
         assert_eq!(caps.preferred_latency_ms, Some(200));
         // aspectRatio wins over the dimensions' shape.
         assert_eq!(caps.display_aspect, Some((64, 27)));
+    }
+
+    #[test]
+    fn a_4k_offer_without_constraints_takes_openscreens_defaults() {
+        let uhd = Offer::new(&OfferOptions {
+            video: Some(VideoOptions {
+                codec: VideoCodec::H264,
+                max_bitrate: 20_000_000,
+                max_frame_rate: Ratio::new(60, 1),
+                resolutions: vec![(3840, 2160), (1920, 1080), (1280, 720)],
+            }),
+            ..OfferOptions::default()
+        })
+        .unwrap();
+        let video = |extra: &str| {
+            let a = Answer::parse(
+                &Value::parse(&format!(
+                    r#"{{"udpPort": 1, "sendIndexes": [2], "ssrcs": [7]{extra}}}"#
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+            Negotiated::new(&uhd, a).unwrap().capabilities()
+        };
+        let caps = video("");
+        assert_eq!((caps.max_width, caps.max_height), (1920, 1080));
+        assert_eq!(caps.max_fps, Ratio::new(30, 1));
+        assert_eq!(caps.max_bitrate_kbps, Some(10_000));
+        assert_eq!(caps.max_pixels_per_second, None);
+        // A receiver that says more gets the offer.
+        let caps = video(
+            r#", "constraints": {"video": {"maxDimensions": {"width": 3840, "height": 2160,
+               "frameRate": "60"}, "maxBitRate": 40000000, "maxPixelsPerSecond": 497664000}}"#,
+        );
+        assert_eq!((caps.max_width, caps.max_height), (3840, 2160));
+        assert_eq!(caps.max_fps, Ratio::new(60, 1));
+        assert_eq!(caps.max_bitrate_kbps, Some(20_000));
+        assert_eq!(caps.max_pixels_per_second, Some(497_664_000));
+        // A 1080p offer without constraints is the offer (as before).
+        let a = Answer::parse(
+            &Value::parse(r#"{"udpPort": 1, "sendIndexes": [2], "ssrcs": [7]}"#).unwrap(),
+        )
+        .unwrap();
+        let caps = Negotiated::new(&offer(), a).unwrap().capabilities();
+        assert_eq!((caps.max_width, caps.max_fps), (1920, Ratio::new(60, 1)));
     }
 
     #[test]

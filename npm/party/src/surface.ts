@@ -84,18 +84,23 @@ export function slrwRecord(kind: number, ptsUs: number, payload: Uint8Array, pre
   return out;
 }
 
-/** H.264 profiles and levels to try, the smallest level that fits first. */
-function codecs(width: number, height: number, fps: number): string[] {
+/**
+ * H.264 profiles and levels to try, the smallest level that fits first
+ * (browsers check only the frame size against the level, so a 4K60
+ * stream must ask for 5.2 itself).
+ */
+export function codecs(width: number, height: number, fps: number): string[] {
   const mbs = Math.ceil(width / 16) * Math.ceil(height / 16);
   const rate = mbs * fps;
-  // Levels 3.1, 4.0, 4.2, 5.1 (MaxFS, MaxMBPS).
+  // Levels 3.1, 4.0, 4.2, 5.1, 5.2 (MaxFS, MaxMBPS; H.264 Table A-1).
   const levels: [string, number, number][] = [
     ["1F", 3600, 108000],
     ["28", 8192, 245760],
     ["2A", 8704, 522240],
     ["33", 36864, 983040],
+    ["34", 36864, 2073600],
   ];
-  const level = (levels.find(([, fs, mbps]) => mbs <= fs && rate <= mbps) ?? levels[3]!)[0];
+  const level = (levels.find(([, fs, mbps]) => mbs <= fs && rate <= mbps) ?? levels[4]!)[0];
   // Constrained Baseline first (no B-frames anywhere), then Main and High.
   return [`avc1.42E0${level}`, `avc1.4D40${level}`, `avc1.6400${level}`];
 }

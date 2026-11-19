@@ -8,7 +8,7 @@
  * @module
  */
 export { Party, PartyError, Player, PROTOCOL, BYE, HELLO_TIMEOUT, token, LATE_JOIN, } from "./party.js";
-export { Tvpipe, TvpipeError, HostedParty, } from "./tvpipe.js";
+export { Tvpipe, TvpipeError, HostedParty, PICKER_MESSAGE, } from "./tvpipe.js";
 export { TvpipeRelay, frame, OP_TEXT, OP_BINARY } from "./relay.js";
 export { Emitter } from "./emitter.js";
 export { StateBox, diff, applyDiff, toJson } from "./sync.js";

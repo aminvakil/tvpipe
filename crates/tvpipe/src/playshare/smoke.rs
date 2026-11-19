@@ -154,7 +154,12 @@ impl Backend for Stand {
     fn pair(&self, _device: &str) -> Result<Box<dyn Pair>> {
         Err(Error::unsupported("no pairing in a smoke run"))
     }
-    fn cast(&self, url: &str, _to: &[String], _size: Option<(u32, u32)>) -> Result<Box<dyn Cast>> {
+    fn cast(
+        &self,
+        url: &str,
+        _to: &[String],
+        _picture: super::resolution::Picture,
+    ) -> Result<Box<dyn Cast>> {
         *self.cast.lock().unwrap_or_else(|e| e.into_inner()) = Some(url.to_owned());
         Ok(Box::new(Recorded))
     }
@@ -449,6 +454,7 @@ pub fn smoke(path: &Path, opts: &SmokeOptions) -> Result<SmokeReport> {
             &LaunchOptions {
                 bin,
                 viewport: (1280, 720),
+                scale: 1.0,
                 visible: false,
                 screen: None,
                 app: None,

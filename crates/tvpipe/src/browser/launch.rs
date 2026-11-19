@@ -541,8 +541,11 @@ fn ask_to_quit(rpc: &Cdp, engine: Engine) {
 #[derive(Debug, Clone)]
 pub struct LaunchOptions {
     pub bin: PathBuf,
-    /// The page's viewport (CSS pixels at scale 1): the stream size.
+    /// The page's viewport (CSS pixels): its layout.
     pub viewport: (u32, u32),
+    /// The device scale factor (Chromium-based, `share URL`): the tab
+    /// captures `viewport × scale` pixels. 1 elsewhere.
+    pub scale: f64,
     /// A normal window instead of `--headless=new`.
     pub visible: bool,
     /// `tvpipe screen`: a normal window whose page captures the desktop.
@@ -626,12 +629,17 @@ pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
         return app_args(opts, url, dir);
     }
     let (w, h) = opts.viewport;
+    let scale = valid_scale(opts.scale);
     let mut a: Vec<OsString> = Vec::new();
     if !opts.visible {
         a.push("--headless=new".into());
         // Headless tab capture is clamped to the screen (800x600 unless
-        // told otherwise).
-        a.push(format!("--screen-info={{0,0 {w}x{h}}}").into());
+        // told otherwise), in device pixels. Exactly the viewport's: a
+        // larger screen lets Chrome raise the captured tab's scale by
+        // itself once the capture runs (up to 2x, the page's
+        // devicePixelRatio changing under it).
+        let (pw, ph) = device_pixels(opts.viewport, scale);
+        a.push(format!("--screen-info={{0,0 {pw}x{ph}}}").into());
     }
     let mut dir_arg = OsString::from("--user-data-dir=");
     dir_arg.push(dir);
@@ -653,14 +661,39 @@ pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
         "--disable-background-timer-throttling",
         "--disable-renderer-backgrounding",
         "--disable-backgrounding-occluded-windows",
-        "--force-device-scale-factor=1",
     ] {
         a.push(s.into());
     }
+    // The page's layout stays `viewport` CSS pixels; it renders (and the
+    // tab is captured) at this scale. The switch, not --screen-info's
+    // devicePixelRatio (integers only) nor Emulation (the capture does
+    // not follow it).
+    a.push(format!("--force-device-scale-factor={scale}").into());
     // The window is resized to the exact viewport once it is up.
     a.push(format!("--window-size={w},{h}").into());
     a.push("about:blank".into());
     a
+}
+
+/// The scales tvpipe renders pages at (a page at 1/4 or 8 times its
+/// layout is a mistake, not a choice).
+pub const MIN_SCALE: f64 = 0.25;
+pub const MAX_SCALE: f64 = 8.0;
+
+/// `scale` within [`MIN_SCALE`]..=[`MAX_SCALE`] (1 when not a number).
+pub fn valid_scale(scale: f64) -> f64 {
+    if scale.is_finite() {
+        scale.clamp(MIN_SCALE, MAX_SCALE)
+    } else {
+        1.0
+    }
+}
+
+/// The device pixels of a `viewport` (CSS pixels) at `scale`, rounded
+/// (the headless screen's size: the capture cannot be larger).
+pub fn device_pixels(viewport: (u32, u32), scale: f64) -> (u32, u32) {
+    let px = |v: u32| ((v as f64 * scale).round() as u32).max(1);
+    (px(viewport.0), px(viewport.1))
 }
 
 /// The command line of `tvpipe game play`'s window: an app window on
@@ -1486,6 +1519,7 @@ mod tests {
         let opts = LaunchOptions {
             bin: bin.into(),
             viewport: (640, 360),
+            scale: 1.0,
             visible: false,
             app: None,
             screen: None,
@@ -1536,6 +1570,7 @@ mod tests {
         let o = LaunchOptions {
             bin: "chrome".into(),
             viewport: (1280, 720),
+            scale: 1.0,
             visible: false,
             app: None,
             screen: None,
@@ -1557,6 +1592,43 @@ mod tests {
             assert!(a.iter().any(|x| x == want), "{want} missing: {a:?}");
         }
         assert_eq!(a.last().unwrap(), "about:blank");
+        // A 1280x720 layout rendered at 1080p and at 4K: the window and
+        // the layout stay, the screen is exactly the capture.
+        for (scale, screen, dsf) in [
+            (
+                1.5,
+                "--screen-info={0,0 1920x1080}",
+                "--force-device-scale-factor=1.5",
+            ),
+            (
+                3.0,
+                "--screen-info={0,0 3840x2160}",
+                "--force-device-scale-factor=3",
+            ),
+            (
+                0.5,
+                "--screen-info={0,0 640x360}",
+                "--force-device-scale-factor=0.5",
+            ),
+        ] {
+            let a: Vec<String> = args(&LaunchOptions { scale, ..o.clone() }, Path::new("/tmp/p"))
+                .into_iter()
+                .map(|s| s.into_string().unwrap())
+                .collect();
+            for want in [screen, dsf, "--window-size=1280,720"] {
+                assert!(a.iter().any(|x| x == want), "{want} missing: {a:?}");
+            }
+            assert_eq!(
+                a.iter()
+                    .filter(|x| x.starts_with("--force-device-scale-factor"))
+                    .count(),
+                1
+            );
+        }
+        // A 1100x760 layout fitted to 1080p, rounded.
+        assert_eq!(device_pixels((1100, 760), 1080.0 / 760.0), (1563, 1080));
+        assert_eq!(valid_scale(f64::NAN), 1.0);
+        assert_eq!(valid_scale(100.0), MAX_SCALE);
         let visible: Vec<OsString> = args(
             &LaunchOptions {
                 visible: true,

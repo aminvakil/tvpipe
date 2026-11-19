@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 
 use crate::browser::bidi;
 use crate::browser::cdp::Event;
-use crate::browser::launch::{Browser, Engine, LaunchOptions, Profile};
+use crate::browser::launch::{self, Browser, Engine, LaunchOptions, Profile};
 use crate::browser::share::{ShareHandle, CAPTURE_JS};
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
@@ -166,8 +166,19 @@ impl Headless {
     /// Starts the browser and opens the URL; the share starts once the
     /// page has loaded. Errors up to the navigation are returned here,
     /// later ones end the share through `share`.
-    pub fn start(opts: HeadlessOptions, share: ShareHandle, stop: Stop) -> Result<Headless> {
+    pub fn start(mut opts: HeadlessOptions, share: ShareHandle, stop: Stop) -> Result<Headless> {
         check_url(&opts.url)?;
+        if opts.launch.engine() == Engine::Firefox && opts.launch.scale != 1.0 {
+            // Whether Firefox's tab capture follows a BiDi device pixel
+            // ratio is not verified: its page renders at scale 1 and the
+            // picture is scaled to the stream.
+            warn!(
+                "browser: Firefox renders the page at scale 1, not {} (the picture is scaled \
+                 to the stream; a Chromium-based browser renders it sharper)",
+                opts.launch.scale
+            );
+            opts.launch.scale = 1.0;
+        }
         let profile = match &opts.profile {
             Some(dir) => Profile::persistent(dir)?,
             None => Profile::temporary()?,
@@ -180,8 +191,9 @@ impl Headless {
         );
         let tab = Tab::open(&opts, &profile, true)?;
         let product = tab.browser.product.clone();
+        let (pw, ph) = launch::device_pixels(opts.launch.viewport, opts.launch.scale);
         info!(
-            "browser: {} {} ({}x{}, profile {})",
+            "browser: {} {} ({}x{}{}, profile {})",
             product,
             if opts.launch.visible {
                 "in a window"
@@ -190,6 +202,11 @@ impl Headless {
             },
             opts.launch.viewport.0,
             opts.launch.viewport.1,
+            if opts.launch.scale != 1.0 {
+                format!(" CSS at {}x = {pw}x{ph}", opts.launch.scale)
+            } else {
+                String::new()
+            },
             if opts.profile.is_some() {
                 profile_dir.display().to_string()
             } else {
@@ -316,7 +333,9 @@ impl Tab {
     fn open(opts: &HeadlessOptions, profile: &Profile, first: bool) -> Result<Tab> {
         let browser = Browser::launch(&opts.launch, profile)?;
         let (target, session) = match browser.engine {
-            Engine::Chromium => attach(&browser, opts.launch.viewport)?,
+            Engine::Chromium => {
+                attach_scaled(&browser, opts.launch.viewport, Some(opts.launch.scale))?
+            }
             Engine::Firefox => (
                 firefox::attach(&browser, opts.launch.viewport)?,
                 String::new(),
@@ -404,7 +423,9 @@ impl Tab {
     /// Makes the page's viewport `want` again.
     fn fit(&self, want: (u32, u32)) -> Result<()> {
         match self.browser.engine {
-            Engine::Chromium => fit_viewport(&self.browser, &self.target, &self.session, want),
+            Engine::Chromium => {
+                fit_viewport(&self.browser, &self.target, &self.session, want).map(|_| ())
+            }
             Engine::Firefox => firefox::set_viewport(self.browser.cdp(), &self.target, want),
         }
     }
@@ -428,6 +449,17 @@ impl Tab {
 /// session), events on, CSP bypassed, loopback allowed, focused, the
 /// viewport at `viewport`. Returns its target and session ids.
 pub fn attach(browser: &Browser, viewport: (u32, u32)) -> Result<(String, String)> {
+    attach_scaled(browser, viewport, None)
+}
+
+/// [`attach`], warning when the page's device scale is not `scale`
+/// (`LaunchOptions::scale`; e.g. a `--visible` window on a screen that
+/// cannot hold the scaled page).
+pub fn attach_scaled(
+    browser: &Browser,
+    viewport: (u32, u32),
+    scale: Option<f64>,
+) -> Result<(String, String)> {
     let cdp = browser.cdp();
     cdp.call(
         None,
@@ -481,7 +513,22 @@ pub fn attach(browser: &Browser, viewport: (u32, u32)) -> Result<(String, String
         "Emulation.setFocusEmulationEnabled",
         Value::object().with("enabled", true),
     );
-    fit_viewport(browser, &target, &session, viewport)?;
+    let dpr = fit_viewport(browser, &target, &session, viewport)?;
+    match scale {
+        Some(s) if (dpr - s).abs() > 0.01 => warn!(
+            "browser: the page renders at device scale {dpr}, not {s}: the tab is captured at \
+             {}x{} (the picture is scaled to the stream)",
+            (viewport.0 as f64 * dpr).round(),
+            (viewport.1 as f64 * dpr).round()
+        ),
+        Some(_) => {}
+        None if dpr != 1.0 => {
+            // A window on a scaled screen: the capture is scaled to the
+            // stream.
+            debug!("browser: the page's device scale is {dpr}, not 1");
+        }
+        None => {}
+    }
     Ok((target, session))
 }
 
@@ -519,10 +566,12 @@ fn grant_loopback(cdp: &crate::browser::cdp::Cdp) {
 }
 
 /// Makes the page's viewport exactly `want` (CSS pixels): the window is
-/// resized by the difference.
-fn fit_viewport(b: &Browser, target: &str, session: &str, want: (u32, u32)) -> Result<()> {
+/// resized by the difference. Returns the page's device scale
+/// (`devicePixelRatio`).
+fn fit_viewport(b: &Browser, target: &str, session: &str, want: (u32, u32)) -> Result<f64> {
     let cdp = b.cdp();
     let mut inner = (0, 0);
+    let mut dpr = 1.0;
     for _ in 0..3 {
         let v = cdp.evaluate(
             session,
@@ -541,13 +590,9 @@ fn fit_viewport(b: &Browser, target: &str, session: &str, want: (u32, u32)) -> R
             return Err(Error::protocol(format!("browser: odd viewport {v}")));
         };
         inner = (w as u32, h as u32);
-        if scale != 1.0 {
-            // A window on a scaled screen (--visible): the capture is
-            // scaled to the stream.
-            debug!("browser: the page's device scale is {scale}, not 1");
-        }
+        dpr = scale;
         if inner == want {
-            return Ok(());
+            return Ok(dpr);
         }
         let win = cdp.call(
             None,
@@ -581,7 +626,7 @@ fn fit_viewport(b: &Browser, target: &str, session: &str, want: (u32, u32)) -> R
         "browser: the page is {}x{}, not {}x{} (a screen too small?); the picture is scaled to fit",
         inner.0, inner.1, want.0, want.1
     );
-    Ok(())
+    Ok(dpr)
 }
 
 /// The keeper thread's state.

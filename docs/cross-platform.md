@@ -185,6 +185,51 @@ in another on the same user-defined bridge network.
   the SYN), not a few microseconds: tests that count retries in a short
   window fail the connects themselves.
 
+## macOS: tvpipe's browser and the user's browser
+
+A known limitation, documented for users in the manual's
+[A web page on the TV](../site/manual/07-web-page.md) chapter (Limitations).
+Investigated 2026-11-19 with Chrome 157 on macOS 26.
+
+- Every process started from a browser's app bundle checks in with
+  LaunchServices as that app: headless ones as `BackgroundOnly`, windowed
+  ones as `Foreground` (`lsappinfo list`), whatever `--user-data-dir`.
+- LaunchServices sends app opens (Dock, Spotlight, `open -a`/`-b`) and
+  URLs from other apps to the oldest running instance of the app. It
+  matches instances by the main executable's file, not the bundle path.
+  A headless instance is activated too (it becomes `Foreground` and gets
+  focus, and the URL lands in an invisible tab). Starting tvpipe's browser
+  with `open -n` does not change this.
+- So the user's browser is affected only while tvpipe's instance is older:
+  the user's was not running when tvpipe started, or was quit since.
+
+Rejected workarounds (do not retry without new information):
+
+- Blocking the check-in: Chrome aborts without LaunchServices, also
+  headless (`sandbox-exec` denying `com.apple.coreservices.launchservicesd`,
+  exit 134). `sandbox-exec` also breaks Chrome's own helper sandbox.
+  argv[0], `CFProcessPath`, symlinked or hardlinked bundles do not help or
+  do not start.
+- chrome-headless-shell: it checks in without a bundle id (harmless), but
+  cannot capture its tab (no `--auto-accept-this-tab-capture`, no tab
+  audio even with the fake-media switches), and ignores `--app`.
+- An APFS clone of the user's browser (`cp -c -R`): separate for
+  LaunchServices with Google's signature intact, but the clone registers
+  itself with GoogleUpdater as the Chrome install (`ecp`) and writes
+  `LastRunAppBundlePath`, also headless. `--disable-updater-scheduler`
+  stops the former (undocumented); the latter needs writing back. The
+  clone also shows up as a second https handler. Too brittle.
+- A wrapper bundle with its own bundle id: only a clone with an edited
+  Info.plist, re-signed ad hoc, runs (losing Google's entitlements,
+  hardened runtime and library validation; a new TCC identity for
+  `tvpipe screen` on every Chrome update).
+- Chrome for Testing (`com.google.chrome.for.testing`) avoids the problem
+  and passes all browser tests (visible windows need `--disable-infobars`),
+  but few users have it installed; downloading it was not wanted.
+- The user's running Chrome cannot be driven: it has no DevTools port
+  (Chrome 136+ ignores `--remote-debugging-port` on the default profile),
+  and tvpipe's switches only apply at startup.
+
 ## Unverified on Windows
 
 - Multicast egress: mDNS queries go out from a socket bound to the

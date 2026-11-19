@@ -93,7 +93,8 @@ folder makes it):
 | `pages.host`, `pages.tv`, `pages.phone` | required | entry documents, paths relative to `root` |
 | `pages.launcher` | optional | the game's own launcher (§7); default tvpipe's |
 | `players.min`, `players.max` | optional | shown by the launcher, given to the host library; `max` (default 8, at most 1000) sizes the relay's connection limit |
-| `tv.width`, `tv.height` | optional | the TV page's viewport (default: the receivers' shape, at most 1920x1080, as `share URL`) |
+| `tv.width`, `tv.height` | optional | the TV page's viewport, its layout size in CSS pixels (default: the receivers' shape, at most 1920x1080, as `share URL`) |
+| `tv.resolution` | optional | `"choice"` (default): people choose the TV picture's resolution, tvpipe renders the layout at it (§9.1); `"fixed"`: exactly `tv.width`×`tv.height` (needs both) |
 | `limits` | optional | the relay's per-connection limits (§6.3); bounded by tvpipe's maxima |
 
 Unknown fields are ignored (forward compatibility); a missing or wrong
@@ -154,13 +155,13 @@ ignored, or `unknown-method`.
 
 | Method | Params → value | |
 |---|---|---|
-| `info` | → `{name, title, players, pages, tv, phone: {url, mode, lan}, tunnel, version, launcher}` | `phone.url`: the base phones use (`https://HOST/`, `http://IP:P'/` or `http://127.0.0.1:P/`), `mode` `tunnel`/`lan`/`local` |
+| `info` | → `{name, title, players, pages, tv, phone: {url, mode, lan}, tunnel, version, launcher, resolutions}` | `phone.url`: the base phones use (`https://HOST/`, `http://IP:P'/` or `http://127.0.0.1:P/`), `mode` `tunnel`/`lan`/`local` |
 | `devices.watch` | `{on: bool}` → the current list | discovery runs while any socket watches; `devices` events with the whole list when it changes |
-| `select` / `selection` | `{devices: [name]}` → `{devices}` | the launcher's choice, kept by tvpipe for the host page (a navigation away) |
+| `select` / `selection` | `{devices: [name], resolution?}` → `{devices, resolution}` | the launcher's (or the cast picker's) choice, kept by tvpipe for the host page (a navigation away); `resolution` `auto`, `720p`, `1080p`, `2160p` (§9.1; absent: unchanged, default `auto`; `null` in the answer when `tv.resolution` is fixed) |
 | `pair.start` | `{device}` → `{}` | AirPlay PIN pairing; `pair` events `{device, state: connecting\|pin\|done\|failed, error?}` |
 | `pair.pin` | `{device, pin}` | the PIN the TV shows |
 | `pair.cancel` | `{device}` | |
-| `cast.start` | `{page, to?}` → `{}` | `page`: a path on the local origin with its fragment (the TV page and its screen key); `to`: device names (default: the selection), `"browser"` for a tab on this computer. Replaces a running cast. `cast` events `{state: starting\|streaming\|failed\|stopped, receivers: [{name, state}], player?, error?}` |
+| `cast.start` | `{page, to?, resolution?}` → `{}` | `page`: a path on the local origin with its fragment (the TV page and its screen key); `to`: device names (default: the selection), `"browser"` for a tab on this computer; `resolution` (default: the selection's; ignored when fixed). Replaces a running cast (the TVs restart the picture). `cast` events `{state: starting\|streaming\|failed\|stopped, receivers: [{name, state}], player?, resolution?, error?}` |
 | `cast.stop` | | the TVs get TEARDOWN; the headless browser quits |
 | `qr` | `{text}` → `{size, rows}` | tvpipe's QR encoder (`util::qr`): `rows` of `"0"`/`"1"` |
 | `relay.attach` | `{}` → `{public, local}` | this socket becomes the relay host (§6); a newer attach replaces it |
@@ -251,6 +252,8 @@ The window first shows **tvpipe's standard launcher**
   (AirPlay, Cast, both), "pair" for AirPlay receivers that show a PIN and
   are not paired (`pair.start`, a PIN field, `pair.pin`), and
   **"A browser tab on this computer"** (`browser`) for trying without a TV,
+- the picture's resolution (Auto, 720p, 1080p, 4K; §9.1) unless the game's
+  `tv.resolution` is fixed,
 - multi-select, then **Start**: `select`, then `location.assign(pages.host)`.
 
 The contract for a game's own launcher (any page of the bundle, with
@@ -260,6 +263,26 @@ page casts (`party.cast()`, §8), because only the host knows the TV
 page's screen key. A launcher may also skip TVs (an empty selection:
 the TV page is opened in a tab or on an HDMI screen by hand, the host
 shows its link).
+
+### 7.1 The cast picker: other TVs while the game runs
+
+`tvpipe.showCastPicker()` (or `party.changeCast()`, which also casts)
+opens the launcher again, with `?mode=change`, in a modal `<dialog>`
+with an `<iframe>` over the host page: the game's own launcher if
+`pages.launcher` names one, else tvpipe's. The host page stays (a
+navigation would end the relay and send the phones back); the picker
+has its own API socket (same origin, the session cookie).
+
+In change mode the launcher shows the chosen TVs ticked and the chosen
+resolution, pairing works as before, and its buttons are **Apply** and
+**Cancel** (also Escape). Apply saves the choice (`select`, which may
+leave no TV) and posts `{type: "tvpipe:cast-picker", selection}` to the
+parent (`PICKER_MESSAGE`, same origin only); Cancel posts `selection:
+null`. The page then casts again: `cast.start` replaces the running
+cast, so every TV restarts its picture (a gap of a second or two; adding
+a TV without the others restarting is a later step). No TVs: the page
+stops the cast. A game's own launcher implements the same contract when
+it sees `?mode=change`.
 
 ## 8. The game library (`@tvpipe/party`)
 
@@ -310,10 +333,13 @@ the transport section names the relay, and the hosts table has one host.
 ### 8.3 `Tvpipe` (the API client)
 
 `Tvpipe.connect({url?, token?})`, `info()`, `devices(on)` + the
-`devices` event, `select()`, `selection()`, `pair(device)` (an object
-with `state`, `submit(pin)`, `cancel()`), `cast({page, to})`,
-`stopCast()`, `qr(text)`, `quit()`, `relay()` (attaches; returns the
-`Relay`), events `devices`, `pair`, `cast`, `tunnel`, `closing`.
+`devices` event, `select(devices, {resolution?})`, `selection()` (the
+TVs), `chosen()` (TVs and resolution), `pair(device)` (an object
+with `state`, `submit(pin)`, `cancel()`), `cast({page, to, resolution})`,
+`stopCast()`, `showCastPicker()` (§7.1), `qr(text)`, `quit()`, `relay()`
+(attaches; returns the `Relay`), events `devices`, `pair`, `cast`,
+`tunnel`, `closing`. `HostedParty.changeCast()`: the picker, then
+`cast()` (or `stopCast()` without TVs).
 
 ## 9. Casting
 
@@ -328,6 +354,65 @@ fails (every receiver gone) is reported (`cast` event `failed`); the
 host decides whether to retry (the library offers `party.cast()` again,
 drawbluff shows the error and a button). `browser` casts to the player
 page (`--to browser`): the event's `player` is its URL.
+
+### 9.1 Resolution
+
+The TV page has a **layout** and the cast a **resolution**, and they are
+independent: the layout is the page's viewport in CSS pixels (`tv`, else
+the receivers' screen shape within 1920x1080), the resolution is how many
+pixels the TVs get (Auto, 720p, 1080p, 4K: the boxes 1920x1080 (Auto's
+most), 1280x720, 1920x1080, 3840x2160). tvpipe's browser renders the
+layout at the **device scale factor** `s` that fits it into the box, so
+the page looks the same at every resolution, only sharper: a 1280x720
+layout is drawn at 1.5x for 1080p and 3x for 4K (`devicePixelRatio` is
+`s`; pages that draw canvases should size their backing store with it).
+Smaller boxes scale down (a 1920x1080 layout at 720p is `s` = 0.667).
+
+1. The offer is the box (Cast: its first `resolutions` entry, with
+   1920x1080 and 1280x720 below it); AirPlay plans up to the canvas, or
+   with an explicit 1080p or 4K up to its decoder maximum
+   (`widthPixelsMax`, docs/airplay-mirroring.md §2.6).
+2. The receivers answer; the frame is the receivers' shape around the
+   layout at `s`, shrunk to their limits (size, frame rate, bitrate, a
+   Cast ANSWER's `maxPixelsPerSecond`; an ANSWER without constraints
+   under an offer above 1080p counts as openscreen's defaults, 1080p30 at
+   10 Mbit/s).
+3. The effective scale is the layout's fit into that frame (rounded down
+   to 1/10000) and the browser starts with it: Chrome's
+   `--force-device-scale-factor=s` and a headless screen of exactly the
+   layout × `s` device pixels (`--screen-info`). A larger screen would let
+   Chrome raise the captured tab's scale by itself once the capture runs
+   (up to 2x, the page's `devicePixelRatio` changing under it); a smaller
+   one clamps the capture. `Emulation.setDeviceMetricsOverride` and
+   `--screen-info`'s `devicePixelRatio` are not used: the capture does not
+   follow the first, the second takes integers only.
+4. The page's H.264 level follows the frame (`capture.js`: 4.0/4.2 for
+   1080p at 30/60 fps, 5.1/5.2 for 4K).
+
+**Auto** is up to 1080p within the receivers' limits: 4K costs the
+computer about nine times the rendering of 720p and only happens when
+chosen. A different resolution is a new cast (the TVs restart the
+picture). `tv.resolution: "fixed"` keeps the old behaviour: the page is
+exactly `tv` at scale 1 and the stream that size (shrunk, with the
+layout, when a receiver cannot take it). `share URL --resolution` and
+`--size` (the layout) are the same machinery outside games; the SDK's
+`Options::resolution`.
+
+Firefox renders at scale 1 (tvpipe warns): whether its tab capture
+follows a BiDi device pixel ratio is not verified.
+
+**Verified** (Chrome 157, macOS, M5 Max, 2026-11): a 1280x720 layout at
+`s` = 1.5 and 3 captures exactly 1920x1080 and 3840x2160 (also 1.35 for
+1280x800, 0.667 down); the hardware H.264 encoder keeps up at 4K30 and
+4K60 (about 17 ms per frame, no drops, Chrome at about a third of a core
+with a canvas animation redrawn every frame); the opt-in test
+`chrome_browser_4k_to_cast` sends 3840x2160 at level 5.1 to the fake
+Cast receiver. **Not verified on hardware:** whether an Apple TV shows a
+4K (or 1080p above its 1280x720 canvas) H.264 stream at full resolution
+(Apple's own senders seem to send 4K as HEVC); what a real Google TV or
+Chromecast ANSWERs to a 4K offer (openscreen's defaults are 1080p30);
+software encoding (no hardware encoder) at 4K; AirPlay's 12 Mbit/s
+ceiling at 4K (follow-up: a hardware test before raising it).
 
 ## 10. Lifecycle
 
@@ -396,7 +481,12 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
 - **Bundle**: paths normalized, nothing outside `root`, zip bombs bounded
   (size, entries, ratio checked as it inflates), CRCs checked.
 - **The window's browser** has its own temporary profile: no cookies or
-  extensions of the user's browser, nothing of the game kept.
+  extensions of the user's browser, nothing of the game kept. Pages the
+  window's pages open (targets with an opener: `target="_blank"`,
+  `window.open`) go to the system's browser (`platform::open_url`, http
+  and https only) and are closed in tvpipe's; targets without an opener
+  (what macOS routes to tvpipe's browser, docs/cross-platform.md) stay,
+  so nothing loops back.
 - **What is public**: every file of the bundle (phones need them; the
   host page is code, not a secret) and the relay socket. A stranger with
   the tunnel's hostname can load pages but not join without the join key.

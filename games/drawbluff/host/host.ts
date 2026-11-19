@@ -89,6 +89,8 @@ function renderPlayers(): void {
 
 function renderCast(s: CastStatus): void {
   const list = $("tvs");
+  // Stopped on purpose (no TVs chosen): as before the first cast.
+  const none = s.state === "stopped" && !s.error && !s.receivers?.length;
   const rows = (s.receivers ?? []).map((r) => {
     const li = document.createElement("li");
     const name = document.createElement("span");
@@ -103,14 +105,40 @@ function renderCast(s: CastStatus): void {
   if (rows.length === 0) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = s.state === "starting" ? t.starting(s.to) : s.error ? t.tvFailed(s.error) : t.tvState(s.state);
+    li.textContent = none ? t.page.noTv : s.state === "starting" ? t.starting(s.to) : s.error ? t.tvFailed(s.error) : t.tvState(s.state);
     rows.push(li);
   }
   list.replaceChildren(...rows);
-  $("cast-again").hidden = !(s.state === "failed" || s.state === "stopped");
+  $("cast-again").hidden = none || !(s.state === "failed" || s.state === "stopped");
   const player = $<HTMLAnchorElement>("player");
   player.hidden = !s.player;
   if (s.player) player.href = s.player;
+}
+
+/**
+ * tvpipe's cast picker over this page: other TVs, another resolution.
+ * The TV page (or the canvas) goes to the new choice; none stops it.
+ */
+async function changeTvs(): Promise<void> {
+  showError(null);
+  let sel;
+  try {
+    sel = await tvpipe.showCastPicker();
+  } catch (err) {
+    showError((err as Error).message);
+    return;
+  }
+  if (!sel) return;
+  if (sel.devices.length > 0) {
+    await cast();
+    return;
+  }
+  surface?.close();
+  surface = undefined;
+  stopCanvas?.();
+  stopCanvas = undefined;
+  await party.stopCast().catch(() => {});
+  renderCast({ state: "stopped" });
 }
 
 /** How the TV gets its picture (docs/playshare-design.md §17). */
@@ -288,6 +316,7 @@ async function main(): Promise<void> {
   };
   $("quit").onclick = () => void tvpipe.quit();
   $("cast-again").onclick = () => void cast();
+  $("change-tv").onclick = () => void changeTvs();
   const mode = $<HTMLSelectElement>("tvmode");
   if (!htmlInCanvas) {
     mode.disabled = true;

@@ -61,6 +61,7 @@ enum PlayshareArg {
     Window,
     Browser,
     Port,
+    Resolution,
 }
 
 #[derive(Copy, Clone)]
@@ -142,6 +143,7 @@ enum ShareArg {
     Visible,
     Reload,
     Browser,
+    Resolution,
     Url,
 }
 
@@ -313,6 +315,10 @@ static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
             .long("port")
             .value("PORT")
             .help("The window's port on 127.0.0.1 (default: any)"),
+        Opt::new(PlayshareArg::Resolution)
+            .long("resolution")
+            .value("RES")
+            .help("The TV picture: auto, 720p, 1080p or 4k (default auto; the window can change it)"),
     ])
     .args(&[Pos::new(PlayshareArg::Path, "PATH").help("The game: a folder or a .zip with tvpipe.json")])
     .after_help(
@@ -663,7 +669,11 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
         Opt::new(ShareArg::Size)
             .long("size")
             .value("WxH")
-            .help("Output video size (default: the capture, or with URL the receivers' screen shape; at most 1920x1080)"),
+            .help("Output video size (default: the capture's, at most 1920x1080); with URL the page's layout in CSS pixels (default: the receivers' screen shape within 1920x1080)"),
+        Opt::new(ShareArg::Resolution)
+            .long("resolution")
+            .value("RES")
+            .help("With URL: render the page at auto, 720p, 1080p or 4k (default auto: up to 1080p within the receivers' limits); the layout stays, a higher device scale factor fills the picture"),
         Opt::new(ShareArg::Fps)
             .long("fps")
             .value("N")
@@ -721,10 +731,11 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
          (Chrome, Edge, Safari 16.4+, Firefox 130+) and press Share. Closing the page or\n\
          stopping the share ends the session.\n\
          \n\
-         With URL: tvpipe starts a Chromium-based browser (or Firefox) with a profile of its\n\
-         own (never yours), sized to the stream, opens URL and shares that tab with its\n\
-         sound. It is started again if it crashes; Ctrl-C or 'q' stops. Sites that refuse\n\
-         automated browsers (e.g. Google Meet) do not work.",
+         With URL: tvpipe starts a Chromium-based browser (or Firefox) with a profile\n\
+         of its own (never yours), lays the page out at --size, renders it at\n\
+         --resolution, opens URL and shares that tab with its sound. It is started\n\
+         again if it crashes; Ctrl-C or 'q' stops. Sites that refuse automated\n\
+         browsers (e.g. Google Meet) do not work.",
     );
 
 static SCREEN: Cli<ScreenArg> = Cli::new("screen")
@@ -969,7 +980,7 @@ fn parse_tunnel(mut p: Parser<TunnelArg>, g: &mut Global) -> Result<Command, Err
 }
 
 fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
-    use tvpipe::__cli::playshare::{Options, TunnelChoice, WindowMode};
+    use tvpipe::__cli::playshare::{Options, Resolution, TunnelChoice, WindowMode};
     let mut o = Options::default();
     let mut path = None;
     let (mut tunnel, mut no_tunnel) = (None, false);
@@ -1007,6 +1018,13 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
             }
             PlayshareArg::Browser => o.browser = Some(p.value::<String>()?.into()),
             PlayshareArg::Port => o.port = p.value()?,
+            PlayshareArg::Resolution => {
+                let v: String = p.value()?;
+                o.resolution = match Resolution::parse(&v) {
+                    Some(r) => r,
+                    None => return Err(p.error("--resolution: auto, 720p, 1080p or 4k")),
+                };
+            }
         }
     }
     if no_tunnel && tunnel.is_some() {
@@ -1231,6 +1249,13 @@ fn parse_share(mut p: Parser<ShareArg>, g: &mut Global) -> Result<Command, Error
                 page.reload = Some(Duration::from_secs_f64(min * 60.0));
             }
             ShareArg::Browser => page.browser = Some(p.value()?),
+            ShareArg::Resolution => {
+                let v: String = p.value()?;
+                match tvpipe::Resolution::parse(&v) {
+                    Some(r) => page.resolution = Some(r),
+                    None => return Err(p.error("--resolution: auto, 720p, 1080p or 4k")),
+                }
+            }
             ShareArg::Url => url = Some(p.value::<String>()?),
         }
     }
@@ -1259,11 +1284,14 @@ fn parse_share(mut p: Parser<ShareArg>, g: &mut Global) -> Result<Command, Error
                 ));
             }
             page.url = url;
+            // The CLI always renders a layout at a resolution (--size is
+            // the layout); the SDK's default keeps the page the stream.
+            page.resolution = Some(page.resolution.unwrap_or_default());
             o.page = Some(page);
         }
         None if page != PageOptions::default() => {
             return Err(p.error(
-                "--visible, --profile, --reload and --browser are for 'share URL' (tvpipe's own browser)",
+                "--visible, --profile, --reload, --browser and --resolution are for 'share URL' (tvpipe's own browser)",
             ));
         }
         None => {}
@@ -1576,7 +1604,7 @@ mod tests {
 
     #[test]
     fn playshare_options() {
-        use tvpipe::__cli::playshare::{TunnelChoice, WindowMode};
+        use tvpipe::__cli::playshare::{Resolution, TunnelChoice, WindowMode};
         let Ok((_, Command::Playshare(o))) = parse_from(&["game", "play", "games/x"]) else {
             panic!()
         };
@@ -1584,6 +1612,7 @@ mod tests {
         assert_eq!(o.tunnel, TunnelChoice::Auto);
         assert_eq!(o.window, WindowMode::App);
         assert_eq!(o.lan, None);
+        assert_eq!(o.resolution, Resolution::Auto);
         let Ok((_, Command::Playshare(o))) = parse_from(&[
             "game",
             "play",
@@ -1593,10 +1622,13 @@ mod tests {
             "none",
             "--port",
             "8000",
+            "--resolution",
+            "4k",
             "x.zip",
         ]) else {
             panic!()
         };
+        assert_eq!(o.resolution, Resolution::P2160);
         assert_eq!(o.tunnel, TunnelChoice::Provider(Provider::Cloudflare));
         assert_eq!(o.lan, Some(Some("192.168.1.5".parse().unwrap())));
         assert_eq!((o.window, o.port), (WindowMode::None, 8000));
@@ -1612,6 +1644,7 @@ mod tests {
             &["game", "play", "--tunnel=nope", "x"],
             &["game", "play", "--window", "tab", "x"],
             &["game", "play", "--lan=nope", "x"],
+            &["game", "play", "--resolution", "8k", "x"],
         ] {
             assert!(parse_from(bad).is_err(), "{bad:?}");
         }
@@ -1642,6 +1675,18 @@ mod tests {
         assert_eq!(o.size.map(|s| (s.width, s.height)), Some((1280, 720)));
         assert!(parse_from(&["share"]).is_err());
         assert!(parse_from(&["share", "https://x"]).is_err());
+        // With URL: --size is the layout, rendered at --resolution (auto
+        // when not given).
+        let (_, cmd) =
+            parse_from(&["share", "https://x", "--to", "TV", "--size", "1280x720"]).unwrap();
+        let Command::Share(o) = cmd else { panic!() };
+        assert_eq!(o.page.unwrap().resolution, Some(tvpipe::Resolution::Auto));
+        let (_, cmd) =
+            parse_from(&["share", "https://x", "--to", "TV", "--resolution", "4k"]).unwrap();
+        let Command::Share(o) = cmd else { panic!() };
+        assert_eq!(o.page.unwrap().resolution, Some(tvpipe::Resolution::P2160));
+        assert!(parse_from(&["share", "https://x", "--to", "TV", "--resolution", "8k"]).is_err());
+        assert!(parse_from(&["share", "--to", "TV", "--resolution", "1080p"]).is_err());
         // --tunnel exposes the share page; not with URL.
         let (_, cmd) = parse_from(&["share", "--to", "TV", "--tunnel"]).unwrap();
         let Command::Share(o) = cmd else { panic!() };
@@ -1793,6 +1838,7 @@ mod tests {
                 visible: true,
                 reload: Some(Duration::from_secs(30)),
                 browser: Some("/opt/chrome".into()),
+                resolution: Some(tvpipe::Resolution::Auto),
             })
         );
         let (_, cmd) = parse_from(&["share", "--to", "TV", "file:///tmp/x.html"]).unwrap();

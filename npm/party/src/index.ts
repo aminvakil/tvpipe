@@ -36,6 +36,7 @@ export {
   Tvpipe,
   TvpipeError,
   HostedParty,
+  PICKER_MESSAGE,
   type CastStatus,
   type ConnectOptions,
   type Device,
@@ -43,6 +44,8 @@ export {
   type PairStatus,
   type PartyLinks,
   type ReceiverStatus,
+  type Resolution,
+  type Selection,
   type TunnelInfo,
   type TvpipeEvents,
 } from "./tvpipe.ts";

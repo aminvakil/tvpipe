@@ -1879,6 +1879,25 @@ fn screen_label(screen: Option<(u32, u32)>) -> String {
 /// default for the planned size (not the offer's).
 fn share_plan(d: &Desired, caps: &[&Capabilities], bitrate_given: bool) -> Result<EncodePlan> {
     plan(d, Encoder::Auto, caps, false).map(|mut p| {
+        let rate = caps.iter().filter_map(|c| c.max_pixels_per_second).min();
+        let size = Size {
+            width: p.video.width,
+            height: p.video.height,
+        };
+        let fitted = fit_pixel_rate(size, p.video.fps, rate);
+        if fitted != size {
+            info!(
+                "plan: {}x{}@{} is more than a receiver decodes ({} pixels/s): {}x{}",
+                size.width,
+                size.height,
+                p.video.fps,
+                rate.unwrap_or(0),
+                fitted.width,
+                fitted.height
+            );
+            p.video.width = fitted.width;
+            p.video.height = fitted.height;
+        }
         if !bitrate_given {
             let size = Size {
                 width: p.video.width,
@@ -1888,6 +1907,25 @@ fn share_plan(d: &Desired, caps: &[&Capabilities], bitrate_given: bool) -> Resul
         }
         p
     })
+}
+
+#[cfg(feature = "share")]
+/// `size` at `fps` made small enough (same shape, even sides) that its
+/// pixel rate is at most `max` (a Cast receiver's `maxPixelsPerSecond`).
+/// The frame rate stays: a page-encoded stream lowers its size instead.
+fn fit_pixel_rate(size: Size, fps: Ratio, max: Option<u64>) -> Size {
+    let Some(max) = max.filter(|&m| m > 0) else {
+        return size;
+    };
+    let rate = size.width as f64 * size.height as f64 * fps.as_f64().max(1.0);
+    if rate <= max as f64 {
+        return size;
+    }
+    let k = (max as f64 / rate).sqrt();
+    let w = ((size.width as f64 * k).floor() as u32).max(2);
+    let h = ((size.height as f64 * k).floor() as u32).max(2);
+    // The same shape, even sides.
+    fit(size.width, size.height, w, h)
 }
 
 /// `--latency` bounds (AirPlay accepts 5–2000 ms, Cast 1–5000 ms; the
@@ -2453,6 +2491,7 @@ mod tests {
             }],
             audio_family: AudioFamily::Cast,
             max_bitrate_kbps: Some(kbps),
+            max_pixels_per_second: None,
             min_latency_ms: None,
             preferred_latency_ms: Some(200),
             display_aspect: None,
@@ -2538,6 +2577,32 @@ mod tests {
         assert_eq!(fit(1080, 1920, 1920, 1080), s(606, 1080));
         assert_eq!(fit(641, 481, 1920, 1080), s(640, 480));
         assert_eq!(fit(0, 0, 1920, 1080), s(2, 2));
+    }
+
+    #[cfg(feature = "share")]
+    #[test]
+    fn pixel_rate_lowers_the_size() {
+        let s = |w, h| Size {
+            width: w,
+            height: h,
+        };
+        let fps30 = Ratio::integer(30);
+        let rate_1080 = Some(1920 * 1080 * 30);
+        assert_eq!(
+            fit_pixel_rate(s(3840, 2160), fps30, rate_1080),
+            s(1920, 1080)
+        );
+        assert_eq!(
+            fit_pixel_rate(s(1920, 1080), fps30, rate_1080),
+            s(1920, 1080)
+        );
+        assert_eq!(fit_pixel_rate(s(3840, 2160), fps30, None), s(3840, 2160));
+        assert_eq!(fit_pixel_rate(s(3840, 2160), fps30, Some(0)), s(3840, 2160));
+        // 60 fps keeps its rate: the picture gets smaller.
+        let small = fit_pixel_rate(s(1920, 1080), Ratio::integer(60), rate_1080);
+        assert!(small.width < 1920 && small.width % 2 == 0, "{small:?}");
+        assert!(small.width as u64 * small.height as u64 * 60 <= 1920 * 1080 * 30);
+        assert_eq!(fit_pixel_rate(s(3840, 2160), fps30, Some(1)), s(2, 2));
     }
 
     pub(super) fn opts() -> PlayOptions {

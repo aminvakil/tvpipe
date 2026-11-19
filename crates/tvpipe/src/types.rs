@@ -105,6 +105,10 @@ pub struct Capabilities {
     /// Which audio encode this receiver consumes.
     pub audio_family: AudioFamily,
     pub max_bitrate_kbps: Option<u32>,
+    /// The most pixels per second it decodes (width × height × fps), if
+    /// it says (a Cast ANSWER's `maxPixelsPerSecond`). Page-encoded
+    /// streams (`share`) lower their size to fit it.
+    pub max_pixels_per_second: Option<u64>,
     /// The lowest playout delay the receiver accepts, if it says.
     pub min_latency_ms: Option<u32>,
     /// The playout delay the receiver prefers, if it says.
@@ -121,6 +125,73 @@ pub struct Capabilities {
 /// The screen shape of a TV that does not say (TVs and projectors are
 /// 16:9).
 pub const DEFAULT_DISPLAY_ASPECT: (u32, u32) = (16, 9);
+
+/// A resolution for pages tvpipe's browser renders (`share URL
+/// --resolution`, `game play`'s TV picture): the page keeps its CSS
+/// layout and is rendered at a device scale factor that fills this box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Resolution {
+    /// What the receivers take, at most [`AUTO_MAX`].
+    #[default]
+    Auto,
+    /// 1280x720.
+    P720,
+    /// 1920x1080.
+    P1080,
+    /// 3840x2160 (4K).
+    P2160,
+}
+
+/// The largest picture [`Resolution::Auto`] picks (4K only when chosen:
+/// it costs the computer much more).
+pub const AUTO_MAX: (u32, u32) = (1920, 1080);
+
+impl Resolution {
+    /// Every choice, in the order the launcher shows them.
+    pub const ALL: [Resolution; 4] = [
+        Resolution::Auto,
+        Resolution::P720,
+        Resolution::P1080,
+        Resolution::P2160,
+    ];
+
+    /// `auto`, `720p`, `1080p`, `2160p` (or `4k`).
+    pub fn parse(s: &str) -> Option<Resolution> {
+        match s {
+            "auto" => Some(Resolution::Auto),
+            "720p" => Some(Resolution::P720),
+            "1080p" => Some(Resolution::P1080),
+            "2160p" | "4k" | "4K" => Some(Resolution::P2160),
+            _ => None,
+        }
+    }
+
+    /// Its name on the API (`auto`, `720p`, `1080p`, `2160p`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Resolution::Auto => "auto",
+            Resolution::P720 => "720p",
+            Resolution::P1080 => "1080p",
+            Resolution::P2160 => "2160p",
+        }
+    }
+
+    /// The box the picture fits in (16:9; other shapes fit inside it).
+    pub fn bounds(self) -> (u32, u32) {
+        match self {
+            Resolution::Auto => AUTO_MAX,
+            Resolution::P720 => (1280, 720),
+            Resolution::P1080 => (1920, 1080),
+            Resolution::P2160 => (3840, 2160),
+        }
+    }
+
+    /// Chosen explicitly (not `Auto`): receivers may be asked for more
+    /// than their nominal screen (an AirPlay receiver's decoder maximum).
+    pub fn explicit(self) -> bool {
+        self != Resolution::Auto
+    }
+}
 
 /// `w:h` reduced (`(1920, 1080)` → `(16, 9)`); `None` for a zero side.
 pub fn aspect_of(w: u32, h: u32) -> Option<(u32, u32)> {

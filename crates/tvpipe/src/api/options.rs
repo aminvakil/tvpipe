@@ -13,7 +13,7 @@ use crate::opts::{
     Size, DEFAULT_RECONNECT,
 };
 use crate::storage::Storage;
-use crate::types::Encoder;
+use crate::types::{Encoder, Resolution};
 use crate::util::ratio::Ratio;
 
 pub use crate::net::tunnel::Provider as TunnelProvider;
@@ -499,6 +499,20 @@ impl Options {
     /// running it headless.
     pub fn visible_browser(mut self, visible: bool) -> Self {
         self.page.get_or_insert_with(PageOptions::default).visible = visible;
+        self
+    }
+
+    /// `share URL`: render the page at this resolution. The page keeps
+    /// its CSS layout ([`size`](Options::size), default the receivers'
+    /// screen shape within 1920x1080) and tvpipe's browser raises its
+    /// device scale factor so the picture fills the resolution's box
+    /// (within the receivers' limits; [`Resolution::Auto`]: at most
+    /// 1080p). Without it, `size` is the stream's size and the page's,
+    /// at scale 1.
+    pub fn resolution(mut self, resolution: Resolution) -> Self {
+        self.page
+            .get_or_insert_with(PageOptions::default)
+            .resolution = Some(resolution);
         self
     }
 

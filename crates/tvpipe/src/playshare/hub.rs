@@ -20,6 +20,7 @@ use crate::util::stop::Stop;
 use super::backend::{Backend, Cast, Discover, Pair};
 use super::bundle::Bundle;
 use super::conn::{self, Next, Out, WindowCounter};
+use super::resolution::{Picture, Resolution};
 
 /// Relay frame ops (§6.2).
 pub const OP_TEXT: u8 = 1;
@@ -98,6 +99,8 @@ pub(super) struct St {
     pub(super) apis: HashMap<u64, Api>,
     host: Option<u64>,
     selection: Vec<String>,
+    /// The chosen resolution (the launcher's or the cast picker's).
+    resolution: Resolution,
     upgrades: WindowCounter,
     discovery: Option<Box<dyn Discover>>,
     devices: Value,
@@ -164,6 +167,13 @@ pub fn frame(op: u8, conn: u32, payload: &[u8]) -> Vec<u8> {
     f
 }
 
+/// A `resolution` parameter.
+fn parse_resolution(v: &Value) -> Result<Resolution> {
+    v.as_str().and_then(Resolution::parse).ok_or_else(|| {
+        Error::usage("resolution is auto, 720p, 1080p or 2160p").with_code("bad-resolution")
+    })
+}
+
 /// The pseudo-receiver for a browser tab on this computer.
 pub fn browser_device() -> Value {
     Value::object()
@@ -195,6 +205,7 @@ impl Hub {
                 apis: HashMap::new(),
                 host: None,
                 selection: Vec::new(),
+                resolution: Resolution::Auto,
                 upgrades: WindowCounter::new(UPGRADES_PER_MINUTE, Duration::from_secs(60)),
                 discovery: None,
                 devices: Value::array(Vec::<Value>::new()),
@@ -589,11 +600,18 @@ impl Hub {
                     .take(16)
                     .map(str::to_owned)
                     .collect();
+                let resolution = match params.get("resolution") {
+                    None | Some(Value::Null) => None,
+                    Some(r) => Some(parse_resolution(r)?),
+                };
                 let mut st = self.lock();
                 st.selection = names;
-                Ok(Value::object().with("devices", st.selection.clone()))
+                if let Some(r) = resolution {
+                    st.resolution = r;
+                }
+                Ok(self.selection_value(&st))
             }
-            "selection" => Ok(Value::object().with("devices", self.lock().selection.clone())),
+            "selection" => Ok(self.selection_value(&self.lock())),
             "pair.start" => {
                 let device = params
                     .get("device")
@@ -710,6 +728,32 @@ impl Hub {
             .with("tunnel", self.tunnel_value())
             .with("local", self.local_origin())
             .with("version", self.version)
+            .with("resolutions", self.resolutions())
+    }
+
+    /// The resolution until someone chooses one (`--resolution`).
+    pub fn set_resolution(&self, r: Resolution) {
+        self.lock().resolution = r;
+    }
+
+    /// The resolutions people may choose (none: `tv.resolution` fixed).
+    fn resolutions(&self) -> Value {
+        if self.bundle.manifest.tv_fixed {
+            return Value::array(Vec::<Value>::new());
+        }
+        Value::array(Resolution::ALL.iter().map(|r| r.as_str()))
+    }
+
+    /// `select`'s and `selection`'s answer.
+    fn selection_value(&self, st: &St) -> Value {
+        Value::object().with("devices", st.selection.clone()).with(
+            "resolution",
+            if self.bundle.manifest.tv_fixed {
+                Value::Null
+            } else {
+                Value::from(st.resolution.as_str())
+            },
+        )
     }
 
     fn cast_start(self: &Arc<Hub>, params: &Value) -> Result<Value> {
@@ -737,6 +781,15 @@ impl Hub {
         if to.is_empty() {
             return Err(Error::usage("no receivers chosen").with_code("no-receivers"));
         }
+        let resolution = match params.get("resolution") {
+            None | Some(Value::Null) => self.lock().resolution,
+            Some(r) => parse_resolution(r)?,
+        };
+        let manifest = &self.bundle.manifest;
+        let picture = Picture {
+            layout: manifest.tv_size,
+            resolution: (!manifest.tv_fixed).then_some(resolution),
+        };
         let url = format!("{}{page}", self.local_origin());
         let old = self.lock().cast.take();
         if let Some((c, _)) = old {
@@ -746,11 +799,12 @@ impl Hub {
             "cast",
             Value::object()
                 .with("state", "starting")
-                .with("to", to.clone()),
+                .with("to", to.clone())
+                .with_opt("resolution", picture.resolution.map(Resolution::as_str)),
         );
         info!("playshare: casting to {}", to.join(", "));
         self.progress(Progress::Casting(to.clone()));
-        match self.backend.cast(&url, &to, self.bundle.manifest.tv_size) {
+        match self.backend.cast(&url, &to, picture) {
             Ok(mut job) => {
                 if self.stop.requested() {
                     job.stop();

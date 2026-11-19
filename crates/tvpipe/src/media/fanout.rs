@@ -546,6 +546,7 @@ mod tests {
             audio_formats: vec![],
             audio_family: family,
             max_bitrate_kbps: None,
+            max_pixels_per_second: None,
             min_latency_ms: None,
             preferred_latency_ms: None,
             display_aspect: None,

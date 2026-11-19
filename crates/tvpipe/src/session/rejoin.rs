@@ -596,6 +596,7 @@ mod tests {
             }],
             audio_family: AudioFamily::Cast,
             max_bitrate_kbps: None,
+            max_pixels_per_second: None,
             min_latency_ms: None,
             preferred_latency_ms: None,
             display_aspect: None,

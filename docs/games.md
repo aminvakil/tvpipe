@@ -106,7 +106,8 @@ drawbluff/
 | `pages.phone` | required | the phone page; `/` on the phones' link redirects to it |
 | `pages.launcher` | optional | the game's own launcher instead of tvpipe's ([Pages](#the-pages)) |
 | `players.min`, `players.max` | optional | shown in the launcher; `max` (default 8, at most 1000) sizes the relay's connection limit and is the library's default `maxPlayers` |
-| `tv.width`, `tv.height` | optional | the TV page's viewport (160–3840 × 120–2160; default: the receivers' shape) |
+| `tv.width`, `tv.height` | optional | the TV page's viewport, its layout in CSS pixels (160–3840 × 120–2160; default: the receivers' shape) |
+| `tv.resolution` | optional | `"choice"` (default): the launcher's resolution (Auto, 720p, 1080p, 4K) renders the layout sharper or softer, never differently laid out ([Resolution](#resolution)); `"fixed"`: exactly `tv.width`×`tv.height` pixels |
 | `limits.message` | optional | the largest message from a phone, 1 KiB–1 MiB (default 256 KiB; larger: closed with 1009) |
 | `limits.rate`, `limits.burst` | optional | messages per second per phone (1–200, default 20) and at once (default 50); more: closed with 4008 |
 
@@ -424,6 +425,24 @@ can join a running game is the game's choice.
 `--browser PATH` (or `$TVPIPE_BROWSER`) picks the browser for the window
 and for the TV page; with only Firefox, the window opens in the system's
 browser. `--port PORT` fixes the window's port on 127.0.0.1.
+
+In the app window, a page the host page opens (a link with
+`target="_blank"`, `window.open`) opens in the system's browser instead,
+where it can be presented in a video call; drawbluff's "Open the TV view"
+is one. Navigations of the window itself stay in it.
+
+## Resolution
+
+The TV page keeps its layout (`tv.width`×`tv.height` CSS pixels) at
+every resolution; tvpipe renders it at a device scale factor: a 1280x720
+layout is drawn at 1.5x for 1080p and 3x for 4K (`devicePixelRatio`
+tells the page; a canvas should size its backing store with it). The
+launcher (and the cast picker) offer Auto, 720p, 1080p and 4K; `--resolution`
+sets the start. Auto is up to 1080p within what the TVs take; 4K only
+when chosen (it costs the computer about nine times the rendering of
+720p, and TVs may refuse it: a Chromecast that does not allow 4K gets
+1080p). Changing it restarts the picture on the TVs. A game whose TV
+page must be exactly its size sets `"resolution": "fixed"`.
 
 ## Ending
 

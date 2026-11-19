@@ -58,8 +58,12 @@ pub struct Manifest {
     pub pages: Pages,
     pub min_players: u32,
     pub max_players: u32,
-    /// The TV page's viewport.
+    /// The TV page's viewport (its layout size in CSS pixels).
     pub tv_size: Option<(u32, u32)>,
+    /// `tv.resolution: "fixed"`: the TV gets exactly `tv_size`, people
+    /// cannot choose a resolution (else tvpipe scales the page to the
+    /// chosen one, the layout unchanged).
+    pub tv_fixed: bool,
     pub limits: Limits,
 }
 
@@ -182,6 +186,7 @@ impl Manifest {
             }
         }
         let mut tv_size = None;
+        let mut tv_fixed = false;
         if let Some(t) = v.get("tv").filter(|t| !t.is_null()) {
             let w = num(t, "width", 160, 3840, "tv.width")?;
             let h = num(t, "height", 120, 2160, "tv.height")?;
@@ -189,6 +194,23 @@ impl Manifest {
                 (Some(w), Some(h)) => tv_size = Some((w & !1, h & !1)),
                 (None, None) => {}
                 _ => return Err(field("\"tv\" needs both width and height")),
+            }
+            match t.get("resolution") {
+                None | Some(Value::Null) => {}
+                Some(r) => match r.as_str() {
+                    Some("choice") => {}
+                    Some("fixed") if tv_size.is_some() => tv_fixed = true,
+                    Some("fixed") => {
+                        return Err(field(
+                            "\"tv.resolution\": \"fixed\" needs tv.width and tv.height",
+                        ))
+                    }
+                    _ => {
+                        return Err(field(
+                            "\"tv.resolution\" is \"choice\" (the default) or \"fixed\"",
+                        ))
+                    }
+                },
             }
         }
         let mut limits = Limits::default();
@@ -211,6 +233,7 @@ impl Manifest {
             min_players,
             max_players,
             tv_size,
+            tv_fixed,
             limits,
         })
     }
@@ -240,7 +263,10 @@ impl Manifest {
             .with(
                 "tv",
                 match self.tv_size {
-                    Some((w, h)) => Value::object().with("width", w).with("height", h),
+                    Some((w, h)) => Value::object()
+                        .with("width", w)
+                        .with("height", h)
+                        .with("resolution", if self.tv_fixed { "fixed" } else { "choice" }),
                     None => Value::Null,
                 },
             )

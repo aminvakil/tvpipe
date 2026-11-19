@@ -126,6 +126,11 @@ pub struct Canvas {
     pub height: u32,
     /// `maxFPS` of the display, if known.
     pub max_fps: Option<u32>,
+    /// The decoder's maximum (`widthPixelsMax`×`heightPixelsMax`, at
+    /// least the canvas): what an explicitly chosen resolution may use
+    /// (§2.6).
+    pub max_width: u32,
+    pub max_height: u32,
     /// Whether `displays` was present.
     pub from_display: bool,
 }
@@ -158,6 +163,8 @@ pub fn canvas(info: &Plist, features: u64) -> Canvas {
             width,
             height,
             max_fps: None,
+            max_width: width,
+            max_height: height,
             from_display: false,
         };
     };
@@ -170,9 +177,12 @@ pub fn canvas(info: &Plist, features: u64) -> Canvas {
     } else {
         nominal
     };
+    let (w, h) = (w & !1, h & !1);
     Canvas {
-        width: w & !1,
-        height: h & !1,
+        width: w,
+        height: h,
+        max_width: (max.0 & !1).max(w),
+        max_height: (max.1 & !1).max(h),
         max_fps: d
             .get("maxFPS")
             .and_then(Plist::as_i128)
@@ -403,10 +413,12 @@ mod tests {
             (canvas(&before.raw, before.features | 1 << bit::SCREEN_1080P)).width,
             1920
         );
-        // After SETUP #1: 1280x720 nominal, 4K max, so 1280x720.
+        // After SETUP #1: 1280x720 nominal, 4K max, so 1280x720; the
+        // decoder's 4K for an explicit choice.
         let c = canvas(&after.raw, after.features);
         assert!(c.from_display);
         assert_eq!((c.width, c.height, c.max_fps), (1280, 720, Some(60)));
+        assert_eq!((c.max_width, c.max_height), (3840, 2160));
         // initialVolume 0.0 is "loud", not corrected for Apple TVs: no volume sent.
         assert_eq!(info_volume(before), Some(0.0));
         assert_eq!(initial_volume(before, info_volume(before)), None);
@@ -438,13 +450,28 @@ mod tests {
             0,
         );
         assert_eq!((c.width, c.height), (1920, 1080));
+        assert_eq!((c.max_width, c.max_height), (1920, 1080));
         let c = canvas(
             &disp(Plist::dict().with("width", 1001i64).with("height", 701i64)),
             0,
         );
         assert_eq!((c.width, c.height), (1000, 700));
+        assert_eq!((c.max_width, c.max_height), (1000, 700));
         let c = canvas(&Plist::dict(), 1 << bit::SCREEN_MIRRORING);
         assert_eq!((c.width, c.height), (1280, 720));
+        assert_eq!((c.max_width, c.max_height), (1280, 720));
+        // A 4K TV: nominal 3840x2160 is the canvas.
+        let c = canvas(
+            &disp(
+                Plist::dict()
+                    .with("widthPixels", 3840i64)
+                    .with("heightPixels", 2160i64)
+                    .with("widthPixelsMax", 3840i64)
+                    .with("heightPixelsMax", 2160i64),
+            ),
+            0,
+        );
+        assert_eq!((c.width, c.height, c.max_width), (3840, 2160, 3840));
     }
 
     #[test]

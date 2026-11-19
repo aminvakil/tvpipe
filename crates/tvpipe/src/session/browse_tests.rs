@@ -15,6 +15,7 @@ use crate::browser::share::tests::{spawn_page, PageScript, PageSeen};
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
 use crate::codec::json::Value;
 use crate::opts::PageOptions;
+use crate::types::Resolution;
 
 fn browse_opts(to: Vec<String>) -> ShareOptions {
     ShareOptions {
@@ -73,24 +74,25 @@ fn pages_to_cast_and_airplay_across_a_navigation() {
     };
     let viewport = Mutex::new(None);
     let seen: std::sync::Arc<Mutex<Vec<PageSeen>>> = Default::default();
-    let launcher = |server: &ShareServer, vp: (u32, u32)| -> Result<Box<dyn std::any::Any>> {
-        *viewport.lock().unwrap() = Some(vp);
-        let url = server.ws_url();
-        let handle = server.handle();
-        let t = std::thread::spawn(move || {
-            let script = PageScript {
-                frames: 20,
-                capture: vp,
-                send_ended: false,
-                ..PageScript::default()
-            };
-            let first = spawn_page(url.clone(), script.clone()).join().unwrap();
-            let second = spawn_page(url, script).join().unwrap();
-            handle.end("the browser was closed");
-            vec![first, second]
-        });
-        Ok(Box::new(FakeBrowser(Some(t), seen.clone())))
-    };
+    let launcher =
+        |server: &ShareServer, vp: (u32, u32), _: f64| -> Result<Box<dyn std::any::Any>> {
+            *viewport.lock().unwrap() = Some(vp);
+            let url = server.ws_url();
+            let handle = server.handle();
+            let t = std::thread::spawn(move || {
+                let script = PageScript {
+                    frames: 20,
+                    capture: vp,
+                    send_ended: false,
+                    ..PageScript::default()
+                };
+                let first = spawn_page(url.clone(), script.clone()).join().unwrap();
+                let second = spawn_page(url, script).join().unwrap();
+                handle.end("the browser was closed");
+                vec![first, second]
+            });
+            Ok(Box::new(FakeBrowser(Some(t), seen.clone())))
+        };
     let o = ShareOptions {
         // Small, so the built-in encoder in the fake page is quick.
         size: Some(Size {
@@ -139,7 +141,7 @@ fn page_size_follows_the_receivers_and_a_browser_failure_stops_them() {
     // The fake receiver's ANSWER allows 1280x720: the page is that.
     let rx = FakeReceiver::spawn(CastFake::default());
     let viewport = Mutex::new(None);
-    let launcher = |_: &ShareServer, vp: (u32, u32)| -> Result<Box<dyn std::any::Any>> {
+    let launcher = |_: &ShareServer, vp: (u32, u32), _: f64| -> Result<Box<dyn std::any::Any>> {
         *viewport.lock().unwrap() = Some(vp);
         Err(Error::not_found(
             "browser: cannot open x: net::ERR_NAME_NOT_RESOLVED",
@@ -176,17 +178,18 @@ fn page_size_follows_the_receivers_and_a_browser_failure_stops_them() {
 #[test]
 fn a_browser_that_fails_later_fails_the_session() {
     let rx = FakeReceiver::spawn(CastFake::default());
-    let launcher = |server: &ShareServer, _: (u32, u32)| -> Result<Box<dyn std::any::Any>> {
-        let handle = server.handle();
-        // The page never shares; the keeper gives up.
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
-            handle.fail(Error::protocol(
-                "the page cannot share itself: NotAllowedError",
-            ));
-        });
-        Ok(Box::new(()))
-    };
+    let launcher =
+        |server: &ShareServer, _: (u32, u32), _: f64| -> Result<Box<dyn std::any::Any>> {
+            let handle = server.handle();
+            // The page never shares; the keeper gives up.
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                handle.fail(Error::protocol(
+                    "the page cannot share itself: NotAllowedError",
+                ));
+            });
+            Ok(Box::new(()))
+        };
     let o = ShareOptions {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
@@ -195,6 +198,223 @@ fn a_browser_that_fails_later_fails_the_session() {
     assert!(e.to_string().contains("NotAllowedError"), "{e}");
     let state = rx.shutdown();
     assert!(state.lock().unwrap().stopped);
+}
+
+/// `share URL` with `o` until the browser starts (it fails): the layout
+/// and the scale the page was launched with.
+fn launched(o: &ShareOptions, connect: Connector<'_>) -> ((u32, u32), f64) {
+    let got = Mutex::new(None);
+    let launcher = |_: &ShareServer, vp: (u32, u32), s: f64| -> Result<Box<dyn std::any::Any>> {
+        *got.lock().unwrap() = Some((vp, s));
+        Err(Error::not_found("browser: not in this test"))
+    };
+    let e = browse::browse_with(o, connect, &never(), &launcher).unwrap_err();
+    assert!(e.to_string().contains("not in this test"), "{e}");
+    got.into_inner()
+        .unwrap()
+        .expect("the browser was not started")
+}
+
+/// `share URL --resolution r` (and `--size` as the layout).
+fn at_resolution(to: Vec<String>, layout: Option<(u32, u32)>, r: Resolution) -> ShareOptions {
+    let mut o = ShareOptions {
+        no_audio: true,
+        size: layout.map(|(width, height)| Size { width, height }),
+        ..browse_opts(to)
+    };
+    o.page.as_mut().unwrap().resolution = Some(r);
+    o
+}
+
+/// The first (largest) resolution of the Cast OFFER's video stream.
+fn offered(st: &crate::cast::fake_receiver::State) -> (u32, u32) {
+    let offer = st.offer.as_ref().expect("no OFFER");
+    let video = offer["offer"]["supportedStreams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["type"].as_str() == Some("video_source"))
+        .unwrap()
+        .clone();
+    let res = &video["resolutions"].as_array().unwrap()[0];
+    (
+        res["width"].as_u32().unwrap(),
+        res["height"].as_u32().unwrap(),
+    )
+}
+
+#[test]
+fn a_resolution_renders_the_layout_at_a_scale() {
+    use crate::cast::fake_receiver::VideoLimits;
+    use Resolution::*;
+    let uhd = VideoLimits {
+        max: (3840, 2160, 30),
+        max_bit_rate: 40_000_000,
+        max_pixels_per_second: None,
+    };
+    let hd720 = VideoLimits::default();
+    // A 4K maximum, but only 1080p30's pixel rate (openscreen's default).
+    let rate_1080 = VideoLimits {
+        max_pixels_per_second: Some(1920 * 1080 * 30),
+        ..uhd
+    };
+    // (the ANSWER's video constraints, --size, --resolution) ->
+    // (layout, scale, the OFFER's largest resolution)
+    type Case = (
+        Option<VideoLimits>,
+        Option<(u32, u32)>,
+        Resolution,
+        (u32, u32),
+        f64,
+        (u32, u32),
+    );
+    let cases: [Case; 12] = [
+        (
+            Some(uhd),
+            Some((1280, 720)),
+            P2160,
+            (1280, 720),
+            3.0,
+            (3840, 2160),
+        ),
+        (
+            Some(uhd),
+            Some((1280, 720)),
+            P1080,
+            (1280, 720),
+            1.5,
+            (1920, 1080),
+        ),
+        (
+            Some(uhd),
+            Some((1280, 720)),
+            Auto,
+            (1280, 720),
+            1.5,
+            (1920, 1080),
+        ),
+        (
+            Some(uhd),
+            Some((1280, 720)),
+            P720,
+            (1280, 720),
+            1.0,
+            (1280, 720),
+        ),
+        (Some(uhd), None, P2160, (1920, 1080), 2.0, (3840, 2160)),
+        (Some(uhd), None, Auto, (1920, 1080), 1.0, (1920, 1080)),
+        (
+            Some(uhd),
+            Some((960, 720)),
+            P2160,
+            (960, 720),
+            3.0,
+            (3840, 2160),
+        ),
+        // The receiver allows 720p: the layout stays, the scale shrinks.
+        (
+            Some(hd720),
+            Some((1280, 720)),
+            P2160,
+            (1280, 720),
+            1.0,
+            (3840, 2160),
+        ),
+        (Some(hd720), None, Auto, (1920, 1080), 0.6666, (1920, 1080)),
+        // maxPixelsPerSecond lowers the size (not the frame rate).
+        (
+            Some(rate_1080),
+            Some((1280, 720)),
+            P2160,
+            (1280, 720),
+            1.5,
+            (3840, 2160),
+        ),
+        // No constraints under a 4K offer: openscreen's 1080p30.
+        (
+            None,
+            Some((1280, 720)),
+            P2160,
+            (1280, 720),
+            1.5,
+            (3840, 2160),
+        ),
+        (
+            None,
+            Some((1280, 720)),
+            P1080,
+            (1280, 720),
+            1.5,
+            (1920, 1080),
+        ),
+    ];
+    for (video, layout, r, want_layout, want_scale, want_offer) in cases {
+        let rx = FakeReceiver::spawn(CastFake {
+            video,
+            ..CastFake::default()
+        });
+        let o = at_resolution(vec![rx.addr.to_string()], layout, r);
+        let (vp, scale) = launched(&o, &connect_test);
+        let what = format!("{video:?} {layout:?} {r:?}");
+        assert_eq!(vp, want_layout, "{what}");
+        assert!((scale - want_scale).abs() < 1e-3, "{what}: scale {scale}");
+        let state = rx.shutdown();
+        let st = state.lock().unwrap();
+        assert_eq!(offered(&st), want_offer, "{what}");
+    }
+}
+
+#[test]
+fn an_explicit_resolution_uses_an_apple_tvs_decoder() {
+    // The fake is the dev Apple TV: 1280x720 nominal, 3840x2160 max.
+    for (r, want) in [
+        (Resolution::Auto, 1.0),
+        (Resolution::P1080, 1.5),
+        (Resolution::P2160, 3.0),
+    ] {
+        let fake = FakeMirror::start(Behaviour {
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let connect = |t: &Target, c: &CastOptions, m: &MirrorOptions| -> Result<Box<dyn Sink>> {
+            match t {
+                Target::AirPlay { .. } => fake_airplay(
+                    &fake,
+                    "fake-airplay",
+                    &MirrorOptions {
+                        ptp: false,
+                        ..m.clone()
+                    },
+                ),
+                _ => connect_test(t, c, m),
+            }
+        };
+        let o = at_resolution(vec![format!("airplay:{}", fake.addr)], Some((1280, 720)), r);
+        let (vp, scale) = launched(&o, &connect);
+        assert_eq!(vp, (1280, 720), "{r:?}");
+        assert!((scale - want).abs() < 1e-3, "{r:?}: scale {scale}");
+    }
+}
+
+#[test]
+fn scale_arithmetic() {
+    use Resolution::*;
+    let s = |w, h| Size {
+        width: w,
+        height: h,
+    };
+    assert_eq!(browse::requested_size((1280, 720), P2160), s(3840, 2160));
+    assert_eq!(browse::requested_size((1280, 720), P1080), s(1920, 1080));
+    assert_eq!(browse::requested_size((1920, 1080), P720), s(1280, 720));
+    assert_eq!(browse::requested_size((1280, 720), Auto), s(1920, 1080));
+    // Other shapes fit inside the box.
+    assert_eq!(browse::requested_size((1280, 800), P1080), s(1728, 1080));
+    assert_eq!(browse::requested_size((1100, 760), P1080), s(1562, 1080));
+    assert_eq!(browse::render_scale((1280, 720), (3840, 2160)), 3.0);
+    assert_eq!(browse::render_scale((1280, 720), (1920, 1080)), 1.5);
+    // A 4:3 layout in a 16:9 frame: the height decides (bars beside).
+    assert_eq!(browse::render_scale((960, 720), (1920, 1080)), 1.5);
+    assert_eq!(browse::render_scale((1920, 1080), (1280, 720)), 0.6666);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,27 +555,29 @@ fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
     };
     let profile = Mutex::new(None);
     let viewport = Mutex::new(None);
-    let launcher = |server: &ShareServer, vp: (u32, u32)| -> Result<Box<dyn std::any::Any>> {
-        *viewport.lock().unwrap() = Some(vp);
-        let h = crate::browser::headless::Headless::start(
-            crate::browser::headless::HeadlessOptions {
-                url: page_url.clone(),
-                launch: crate::browser::launch::LaunchOptions {
-                    bin: bin.clone().into(),
-                    viewport: vp,
-                    visible: headed,
-                    app: None,
-                    screen: None,
+    let launcher =
+        |server: &ShareServer, vp: (u32, u32), scale: f64| -> Result<Box<dyn std::any::Any>> {
+            *viewport.lock().unwrap() = Some(vp);
+            let h = crate::browser::headless::Headless::start(
+                crate::browser::headless::HeadlessOptions {
+                    url: page_url.clone(),
+                    launch: crate::browser::launch::LaunchOptions {
+                        bin: bin.clone().into(),
+                        viewport: vp,
+                        scale,
+                        visible: headed,
+                        app: None,
+                        screen: None,
+                    },
+                    profile: None,
+                    reload: Some(Duration::from_secs(4)),
                 },
-                profile: None,
-                reload: Some(Duration::from_secs(4)),
-            },
-            server.handle(),
-            STOP.clone(),
-        )?;
-        *profile.lock().unwrap() = Some(h.profile_dir().to_path_buf());
-        Ok(Box::new(h))
-    };
+                server.handle(),
+                STOP.clone(),
+            )?;
+            *profile.lock().unwrap() = Some(h.profile_dir().to_path_buf());
+            Ok(Box::new(h))
+        };
     let o = browse_opts(vec![rx.addr.to_string(), "browser".into()]);
     let t0 = Instant::now();
     let r = browse::browse_with(&o, &connect, &Ctx::from(STOP.clone()), &launcher);
@@ -417,6 +639,149 @@ fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
     let _ = std::fs::remove_file(&path);
 
     // Nothing left behind.
+    let dir = profile.lock().unwrap().clone().unwrap();
+    assert!(!dir.exists(), "{} is still there", dir.display());
+    let left = processes_with(&dir.to_string_lossy());
+    assert!(left.is_empty(), "browser processes left: {left:#?}");
+}
+
+// TVPIPE_TEST_CHROME=/path/to/chrome cargo test --release chrome_browser_4k -- --ignored --nocapture
+//
+// `tvpipe share URL --size 1280x720 --resolution 4k` on the test page to
+// a fake Cast receiver that allows 3840x2160@30: the page keeps its
+// 1280x720 layout and renders at 3x, the tab is captured at 3840x2160,
+// the browser's H.264 is 3840x2160 at level 5.1 and arrives at about the
+// page's frame rate for TVPIPE_TEST_BROWSER_SECS (default 6).
+
+#[test]
+#[ignore]
+fn chrome_browser_4k_to_cast() {
+    use crate::cast::fake_receiver::VideoLimits;
+    let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
+        eprintln!("TVPIPE_TEST_CHROME not set");
+        return;
+    };
+    if std::env::var("TVPIPE_TEST_BROWSER_DEBUG").is_ok() {
+        crate::log::set_level(crate::log::Level::Debug);
+    }
+    let secs: u64 = std::env::var("TVPIPE_TEST_BROWSER_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(6);
+    static STOP: std::sync::LazyLock<crate::util::stop::Stop> =
+        std::sync::LazyLock::new(crate::util::stop::Stop::new);
+    STOP.clear();
+    let handler: crate::net::httpd::Handler = std::sync::Arc::new(move |req| {
+        use crate::net::httpd::{error_response, response, Reply};
+        if req.target != "/" {
+            return Reply::Response(error_response(404, "Not Found"));
+        }
+        Reply::Response(response(
+            200,
+            "OK",
+            "text/html; charset=utf-8",
+            TEST_PAGE.as_bytes().to_vec(),
+        ))
+    });
+    let site = crate::net::httpd::Server::bind(([127, 0, 0, 1], 0).into(), handler).unwrap();
+    let page_url = format!("http://127.0.0.1:{}/", site.local_addr().port());
+
+    let rx = FakeReceiver::spawn(CastFake {
+        video: Some(VideoLimits {
+            max: (3840, 2160, 30),
+            max_bit_rate: 40_000_000,
+            max_pixels_per_second: None,
+        }),
+        ..CastFake::default()
+    });
+    let tally = SharedTally::default();
+    let connect = |t: &Target, c: &CastOptions, _: &MirrorOptions| -> Result<Box<dyn Sink>> {
+        match t {
+            Target::Cast { addr, name } => Ok(Tallied::boxed(
+                Box::new(cast::connect(*addr, name, c)?),
+                None,
+                &tally,
+            )),
+            _ => unreachable!(),
+        }
+    };
+    let profile = Mutex::new(None);
+    let launched_at = Mutex::new(None);
+    let launch = Mutex::new(None);
+    let launcher =
+        |server: &ShareServer, vp: (u32, u32), scale: f64| -> Result<Box<dyn std::any::Any>> {
+            *launch.lock().unwrap() = Some((vp, scale));
+            *launched_at.lock().unwrap() = Some(Instant::now());
+            let h = crate::browser::headless::Headless::start(
+                crate::browser::headless::HeadlessOptions {
+                    url: page_url.clone(),
+                    launch: crate::browser::launch::LaunchOptions {
+                        bin: bin.clone().into(),
+                        viewport: vp,
+                        scale,
+                        visible: false,
+                        app: None,
+                        screen: None,
+                    },
+                    profile: None,
+                    reload: None,
+                },
+                server.handle(),
+                STOP.clone(),
+            )?;
+            *profile.lock().unwrap() = Some(h.profile_dir().to_path_buf());
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(secs + 2));
+                STOP.request();
+            });
+            Ok(Box::new(h))
+        };
+    let o = at_resolution(
+        vec![rx.addr.to_string()],
+        Some((1280, 720)),
+        Resolution::P2160,
+    );
+    let r = browse::browse_with(&o, &connect, &Ctx::from(STOP.clone()), &launcher);
+    let elapsed = launched_at.lock().unwrap().unwrap().elapsed().as_secs_f64();
+    r.unwrap();
+    assert_eq!(*launch.lock().unwrap(), Some(((1280, 720), 3.0)));
+
+    // About the page's 30 fps once it shares (a second or two after the
+    // start).
+    let t = *tally.lock().unwrap();
+    eprintln!("cast {t:?} in {elapsed:.1} s");
+    assert!(
+        t.video as f64 > (elapsed - 2.5) * 20.0,
+        "{t:?} in {elapsed:.1} s"
+    );
+    let state = rx.shutdown();
+    let st = state.lock().unwrap();
+    let v = st.streams.iter().find(|s| s.codec == "h264").unwrap();
+    let annexb: Vec<u8> = v.frames.values().flat_map(|f| f.data.clone()).collect();
+    // The SPS: High/Main/Baseline at level 5.1 (3840x2160@30).
+    let sps = annexb
+        .windows(4)
+        .position(|w| w[..3] == [0, 0, 1] && w[3] & 0x1f == 7)
+        .map(|i| &annexb[i + 4..i + 7])
+        .expect("no SPS");
+    eprintln!("SPS profile {} level {}", sps[0], sps[2]);
+    assert_eq!(sps[2], 51, "level_idc");
+    let path = std::env::temp_dir().join(format!("tvpipe-4k-test-{}.h264", std::process::id()));
+    std::fs::write(&path, &annexb).unwrap();
+    match std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=width,height", "-of", "csv=p=0"])
+        .arg(&path)
+        .output()
+    {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            eprintln!("ffprobe: {}", stdout.trim());
+            assert_eq!(stdout.trim(), "3840,2160");
+        }
+        Err(e) => eprintln!("no ffprobe ({e}); not checking the size"),
+    }
+    let _ = std::fs::remove_file(&path);
     let dir = profile.lock().unwrap().clone().unwrap();
     assert!(!dir.exists(), "{} is still there", dir.display());
     let left = processes_with(&dir.to_string_lossy());
@@ -485,33 +850,35 @@ fn browser_survives_crashes(bin: String, crash: fn(&std::path::Path, &SharedTall
     };
     let profile = std::sync::Arc::new(Mutex::new(None));
     let driver = Mutex::new(None);
-    let launcher = |server: &ShareServer, vp: (u32, u32)| -> Result<Box<dyn std::any::Any>> {
-        let h = crate::browser::headless::Headless::start(
-            crate::browser::headless::HeadlessOptions {
-                url: page_url.clone(),
-                launch: crate::browser::launch::LaunchOptions {
-                    bin: bin.clone().into(),
-                    viewport: vp,
-                    visible: false,
-                    app: None,
-                    screen: None,
+    let launcher =
+        |server: &ShareServer, vp: (u32, u32), scale: f64| -> Result<Box<dyn std::any::Any>> {
+            let h = crate::browser::headless::Headless::start(
+                crate::browser::headless::HeadlessOptions {
+                    url: page_url.clone(),
+                    launch: crate::browser::launch::LaunchOptions {
+                        bin: bin.clone().into(),
+                        viewport: vp,
+                        scale,
+                        visible: false,
+                        app: None,
+                        screen: None,
+                    },
+                    profile: None,
+                    reload: None,
                 },
-                profile: None,
-                reload: None,
-            },
-            server.handle(),
-            STOP.clone(),
-        )?;
-        let dir = h.profile_dir().to_path_buf();
-        *profile.lock().unwrap() = Some(dir.clone());
-        let tally = tally.clone();
-        *driver.lock().unwrap() = Some(std::thread::spawn(move || {
-            let r = std::panic::catch_unwind(|| crash(&dir, &tally));
-            STOP.request();
-            r
-        }));
-        Ok(Box::new(h))
-    };
+                server.handle(),
+                STOP.clone(),
+            )?;
+            let dir = h.profile_dir().to_path_buf();
+            *profile.lock().unwrap() = Some(dir.clone());
+            let tally = tally.clone();
+            *driver.lock().unwrap() = Some(std::thread::spawn(move || {
+                let r = std::panic::catch_unwind(|| crash(&dir, &tally));
+                STOP.request();
+                r
+            }));
+            Ok(Box::new(h))
+        };
     let o = ShareOptions {
         size: Some(Size {
             width: 640,

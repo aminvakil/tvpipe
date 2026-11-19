@@ -250,6 +250,13 @@ canvas itself is used (rounded down to even).
 - The encoded size is announced only in the codec packet (§6.2); [HW] a
   1920×1080 stream was accepted while the canvas said 1280×720 (rendering
   not confirmed).
+- tvpipe (not the reference): an explicitly chosen resolution (`share URL
+  --resolution 1080p|4k`, a game's 1080p/4K) may plan up to the decoder
+  maximum (`widthPixelsMax`×`heightPixelsMax`, at least the canvas)
+  instead of the canvas; `auto` keeps the canvas. Whether the receiver
+  then shows the larger picture at full resolution or scales it is not
+  verified, nor 4K H.264 at all (Apple's own senders seem to mirror 4K as
+  HEVC, feature 42). The 12000 kbit/s ceiling (§6.6) stays for now.
 
 ### 2.7 Latency profile
 

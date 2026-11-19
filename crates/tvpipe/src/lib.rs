@@ -74,7 +74,7 @@ pub use error::{Error, ErrorKind, Result};
 pub use events::{EndInfo, Event, Paired, PinRequest, Started, Stats};
 pub use net::discover::{AirPlayService, CastService, DeviceInfo as Device, Endpoint};
 pub use storage::{storage_fn, Storage, StorageBackend, StorageFn};
-pub use types::Encoder;
+pub use types::{Encoder, Resolution};
 
 /// The game input format (docs/slrw.md): what `tvpipe play -` reads on
 /// stdin, for programs that run the `tvpipe` command instead of linking
@@ -124,6 +124,7 @@ pub mod __cli {
     pub use crate::net::tunnel::{start as start_tunnel, Tunnel};
     #[cfg(feature = "playshare")]
     pub mod playshare {
+        pub use crate::playshare::resolution::Resolution;
         pub use crate::playshare::tool::{run as game_tool, ToolAction, ToolOptions};
         pub use crate::playshare::{run, Options, TunnelChoice, WindowMode};
     }

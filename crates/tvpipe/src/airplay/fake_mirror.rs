@@ -90,6 +90,28 @@ pub struct Behaviour {
     /// Advertise FairPlay (feature 14). The fake cannot do it, so both
     /// `/fp-setup` requests get 404 (a FairPlay build goes on without).
     pub fairplay_bit: bool,
+    /// The display it reports once a session exists: nominal and
+    /// decoder-maximum pixels and `maxFPS` (default: the dev Apple TV's
+    /// 1280x720, 3840x2160 max, 60 fps).
+    pub display: Display,
+}
+
+/// A display in `/info` (`displays[0]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Display {
+    pub size: (u32, u32),
+    pub max: (u32, u32),
+    pub max_fps: u32,
+}
+
+impl Default for Display {
+    fn default() -> Display {
+        Display {
+            size: (1280, 720),
+            max: (3840, 2160),
+            max_fps: 60,
+        }
+    }
 }
 
 impl Default for Behaviour {
@@ -107,6 +129,7 @@ impl Default for Behaviour {
             legacy_no_fairplay: false,
             hang_feedback: false,
             fairplay_bit: false,
+            display: Display::default(),
         }
     }
 }
@@ -213,7 +236,7 @@ fn reply(req: &Request, status: u16, body: Option<Plist>) -> Response {
     r
 }
 
-fn info(with_displays: bool, fairplay: bool) -> Plist {
+fn info(display: Option<Display>, fairplay: bool) -> Plist {
     let features = if fairplay {
         FEATURES | 1 << 14
     } else {
@@ -229,15 +252,15 @@ fn info(with_displays: bool, fairplay: bool) -> Plist {
             "supportedFormats",
             Plist::dict().with("screenStream", 0x144_0800i64),
         );
-    if with_displays {
+    if let Some(d) = display {
         p = p.with(
             "displays",
             Plist::array([Plist::dict()
-                .with("widthPixels", 1280i64)
-                .with("heightPixels", 720i64)
-                .with("widthPixelsMax", 3840i64)
-                .with("heightPixelsMax", 2160i64)
-                .with("maxFPS", 60i64)]),
+                .with("widthPixels", d.size.0 as i64)
+                .with("heightPixels", d.size.1 as i64)
+                .with("widthPixelsMax", d.max.0 as i64)
+                .with("heightPixelsMax", d.max.1 as i64)
+                .with("maxFPS", d.max_fps as i64)]),
         );
     }
     p
@@ -282,7 +305,9 @@ fn handle(req: &Request, ctx: &Arc<Ctx>) -> Response {
             req,
             200,
             Some(info(
-                ctx.session.load(Ordering::Acquire),
+                ctx.session
+                    .load(Ordering::Acquire)
+                    .then_some(ctx.behaviour.display),
                 ctx.behaviour.fairplay_bit,
             )),
         ),
@@ -422,7 +447,10 @@ fn run_events<S: Read + std::io::Write>(conn: &mut Conn<S>, ctx: &Ctx) {
     {
         let body = Plist::dict()
             .with("type", "updateInfo")
-            .with("value", info(true, ctx.behaviour.fairplay_bit))
+            .with(
+                "value",
+                info(Some(ctx.behaviour.display), ctx.behaviour.fairplay_bit),
+            )
             .to_bytes();
         let req = Request::new("POST", "/command", crate::net::http::Version::Rtsp10)
             .header("CSeq", "1")

@@ -38,9 +38,10 @@ By default through a public link: OpenTunnel, which tvpipe sets up once and reus
 | `--tunnel=opentunnel`, `--tunnel=cloudflare` | Who carries the phones' link (default: OpenTunnel, then Cloudflare) |
 | `--no-tunnel` | No public link: phones on the Wi-Fi (`--lan`) or this computer only |
 | `--lan`, `--lan=IP` | Also serve phones on the Wi-Fi, at `http://IP:7420` |
-| `--window=open` | The game's window in your usual browser instead of tvpipe's own |
+| `--window=open` | The game's window in your usual browser instead of tvpipe's own. Links the game's window opens in a new tab, like the TV view, open in your usual browser either way |
 | `--window=none` | No window: tvpipe prints its link |
 | `--browser PATH` | The browser for the window and for rendering the TV |
+| `--resolution RES` | The TV picture at the start: `auto` (up to 1080p, the default), `720p`, `1080p` or `4k`; the window can change it. The game looks the same, only sharper |
 
 The QR code holds the link with the room's code and a key, so only people who can see the TV can join. On the Wi-Fi (`--lan`) the page is plain HTTP and the key crosses the network unencrypted: use the public link on networks with strangers. With Cloudflare, Cloudflare can read the game's traffic. With OpenTunnel, nobody else can.
 

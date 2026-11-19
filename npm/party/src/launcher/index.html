@@ -47,6 +47,11 @@
       <p class="lead" id="message">The game shows on the TVs you pick. Everyone plays on their own phone.</p>
       <ul id="devices" class="devices"></ul>
       <p id="searching" class="searching">Looking for TVs on this network: they appear here as they answer.</p>
+      <div id="res" class="res" hidden>
+        <span class="lbl">Picture</span>
+        <div id="res-options" class="seg" role="radiogroup" aria-label="Resolution"></div>
+        <p id="res-note" class="res-note"></p>
+      </div>
       <p id="error" class="error bad" hidden></p>
       <div class="buttons">
         <button id="start" class="btn primary" disabled>Start</button>
@@ -55,7 +60,7 @@
     </div>
   </section>
 
-  <section class="row sec">
+  <section class="row sec" id="phones-row">
     <div class="meta"><span class="lbl">Phones</span></div>
     <p class="body phones" id="phones">–</p>
   </section>

@@ -116,6 +116,7 @@ pub fn capabilities(opts: &PlayerOptions) -> Capabilities {
         audio_formats,
         audio_family: AudioFamily::AirPlay,
         max_bitrate_kbps: None,
+        max_pixels_per_second: None,
         min_latency_ms: None,
         preferred_latency_ms: Some(opts.latency_ms),
         // Any shape: the page fits the picture into its window, so

@@ -941,6 +941,7 @@ pub(crate) mod tests {
                 .collect(),
             audio_family: family,
             max_bitrate_kbps: Some(10_000),
+            max_pixels_per_second: None,
             min_latency_ms: None,
             preferred_latency_ms: None,
             display_aspect: None,

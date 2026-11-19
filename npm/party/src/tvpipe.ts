@@ -7,6 +7,7 @@
  *   const tvpipe = await Tvpipe.connect();
  *   const party = await tvpipe.party({ lateJoin: "wait" });   // the host
  *   await party.cast();                                      // the TV page on the chosen TVs
+ *   await party.changeCast();                                // the cast picker: other TVs, resolution
  */
 
 import { Emitter } from "./emitter.ts";
@@ -30,6 +31,20 @@ export interface TunnelInfo {
   error?: string;
 }
 
+/**
+ * The TV picture's resolution (docs/playshare-design.md §9.1): the TV page
+ * keeps its layout, tvpipe renders it at this size. `auto`: what the TVs
+ * take, at most 1080p.
+ */
+export type Resolution = "auto" | "720p" | "1080p" | "2160p";
+
+/** What the launcher (or the cast picker) chose. */
+export interface Selection {
+  devices: string[];
+  /** `null`: the game's `tv.resolution` is `fixed`. */
+  resolution: Resolution | null;
+}
+
 /** `info`: the game and how phones reach it. */
 export interface Info {
   name: string;
@@ -37,7 +52,9 @@ export interface Info {
   players: { min: number; max: number };
   /** Absolute paths on the local origin. */
   pages: Pages;
-  tv: { width: number; height: number } | null;
+  tv: { width: number; height: number; resolution: "choice" | "fixed" } | null;
+  /** The resolutions people may choose (empty: the game's is fixed). */
+  resolutions: Resolution[];
   phone: { url: string; mode: "tunnel" | "lan" | "local"; lan?: string };
   tunnel: TunnelInfo;
   /** `http://127.0.0.1:PORT`. */
@@ -77,6 +94,8 @@ export interface CastStatus {
   receivers?: ReceiverStatus[];
   /** The page of the `browser` receiver. */
   player?: string;
+  /** The resolution asked for (none: the game's own size). */
+  resolution?: Resolution;
   error?: string;
   to?: string[];
 }
@@ -114,6 +133,11 @@ export interface ConnectOptions {
   /** Default the global one. */
   WebSocket?: typeof WebSocket;
 }
+
+/** tvpipe's standard launcher. */
+const LAUNCHER = "/_tvpipe/launcher/";
+/** The message the launcher in change mode sends its parent page. */
+export const PICKER_MESSAGE = "tvpipe:cast-picker";
 
 type Waiter = { resolve: (v: any) => void; reject: (e: Error) => void };
 
@@ -229,13 +253,24 @@ export class Tvpipe extends Emitter<TvpipeEvents> {
     return this.call("devices.watch", { on });
   }
 
-  /** The launcher's choice, kept by tvpipe across the navigation to the host page. */
-  async select(devices: string[]): Promise<void> {
-    await this.call("select", { devices });
+  /**
+   * The launcher's choice, kept by tvpipe across the navigation to the
+   * host page: the TVs and the resolution (default: unchanged).
+   */
+  async select(devices: string[], opts: { resolution?: Resolution | undefined } = {}): Promise<Selection> {
+    const params: Record<string, unknown> = { devices };
+    if (opts.resolution) params["resolution"] = opts.resolution;
+    return this.call("select", params);
   }
 
+  /** The chosen TVs. */
   async selection(): Promise<string[]> {
-    return (await this.call<{ devices: string[] }>("selection")).devices;
+    return (await this.chosen()).devices;
+  }
+
+  /** The chosen TVs and resolution. */
+  chosen(): Promise<Selection> {
+    return this.call("selection");
   }
 
   /** AirPlay PIN pairing: `pair` events say when the PIN is wanted. */
@@ -251,11 +286,59 @@ export class Tvpipe extends Emitter<TvpipeEvents> {
     await this.call("pair.cancel", { device });
   }
 
-  /** Casts a page of this game (a path with its fragment) to `to` (default: the selection). */
-  cast(opts: { page: string; to?: string[] | undefined }): Promise<CastStatus> {
+  /**
+   * Casts a page of this game (a path with its fragment) to `to`, at
+   * `resolution` (default: the selection's). Replaces a running cast.
+   */
+  cast(opts: { page: string; to?: string[] | undefined; resolution?: Resolution | undefined }): Promise<CastStatus> {
     const params: Record<string, unknown> = { page: opts.page };
     if (opts.to) params["to"] = opts.to;
+    if (opts.resolution) params["resolution"] = opts.resolution;
     return this.call("cast.start", params);
+  }
+
+  /**
+   * The cast picker (docs/playshare-design.md §7.1): the launcher (the
+   * game's own, else tvpipe's) in a dialog over this page, to choose
+   * other TVs or another resolution while the game runs. It saves the
+   * choice (`select`); resolves with it, or `null` when cancelled. The
+   * caller casts again (`HostedParty.changeCast` does both).
+   */
+  async showCastPicker(): Promise<Selection | null> {
+    const doc = globalThis.document;
+    if (!doc) throw new TvpipeError("unsupported", "the cast picker needs a page");
+    const info = await this.info();
+    const src = `${info.pages.launcher ?? LAUNCHER}?mode=change`;
+    return new Promise((resolve) => {
+      const dialog = doc.createElement("dialog");
+      dialog.className = "tvpipe-cast-picker";
+      dialog.style.cssText =
+        "padding:0;border:0;border-radius:12px;width:min(760px,94vw);height:min(680px,90vh);overflow:hidden;background:transparent;box-shadow:0 20px 60px rgb(0 0 0 / 40%)";
+      const frame = doc.createElement("iframe");
+      frame.title = "Change the TVs";
+      frame.src = src;
+      frame.style.cssText = "display:block;width:100%;height:100%;border:0";
+      dialog.append(frame);
+      const done = (sel: Selection | null) => {
+        removeEventListener("message", onMessage);
+        dialog.close();
+        dialog.remove();
+        resolve(sel);
+      };
+      const onMessage = (ev: MessageEvent) => {
+        if (ev.source !== frame.contentWindow || ev.origin !== globalThis.location.origin) return;
+        const d = ev.data as { type?: unknown; selection?: Selection | null } | null;
+        if (d?.type !== PICKER_MESSAGE) return;
+        done(d.selection ?? null);
+      };
+      addEventListener("message", onMessage);
+      dialog.addEventListener("cancel", (ev) => {
+        ev.preventDefault();
+        done(null);
+      });
+      doc.body.append(dialog);
+      dialog.showModal();
+    });
   }
 
   async stopCast(): Promise<void> {
@@ -406,8 +489,22 @@ export class HostedParty extends Party {
   }
 
   /** Casts the TV page to `to` (default: what the launcher chose). */
-  cast(to?: string[]): Promise<CastStatus> {
-    return this.tvpipe.cast({ page: this.links.tv, to });
+  cast(to?: string[], opts: { resolution?: Resolution | undefined } = {}): Promise<CastStatus> {
+    return this.tvpipe.cast({ page: this.links.tv, to, resolution: opts.resolution });
+  }
+
+  /**
+   * The cast picker over the host page, then the TV page on what was
+   * chosen (no TVs: the cast stops). `null` when cancelled.
+   */
+  async changeCast(): Promise<CastStatus | null> {
+    const sel = await this.tvpipe.showCastPicker();
+    if (!sel) return null;
+    if (sel.devices.length === 0) {
+      await this.stopCast();
+      return { state: "stopped" };
+    }
+    return this.cast();
   }
 
   stopCast(): Promise<void> {

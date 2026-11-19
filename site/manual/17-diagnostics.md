@@ -55,3 +55,4 @@ Colours follow `NO_COLOR` and `CLICOLOR=0`, and `CLICOLOR_FORCE` or `FORCE_COLOR
 | An Apple TV fails with `fairplay-required` | This tvpipe was built without FairPlay. Use a release, or build it with the default features. |
 | tvpipe does not stop | Press `Ctrl-C` a second time. |
 | A site does not show with `share URL` | It refuses controlled browsers. See [limitations](web-page.md#s4). |
+| macOS: your browser does not open, or links go nowhere, while tvpipe runs | tvpipe's own browser takes them. Start your browser before tvpipe. See [limitations](web-page.md#s4). |

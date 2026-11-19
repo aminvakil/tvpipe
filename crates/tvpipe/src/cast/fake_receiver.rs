@@ -199,6 +199,30 @@ pub struct Options {
     pub seed: u32,
     /// Refuse the LAUNCH.
     pub fail_launch: bool,
+    /// The ANSWER's video constraints; `None`: an ANSWER without
+    /// `constraints`.
+    pub video: Option<VideoLimits>,
+}
+
+/// The video constraints a fake ANSWER carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoLimits {
+    /// `maxDimensions`: width, height, frame rate.
+    pub max: (u32, u32, u32),
+    /// `maxBitRate` in bit/s.
+    pub max_bit_rate: u32,
+    /// `maxPixelsPerSecond`, when it says.
+    pub max_pixels_per_second: Option<u64>,
+}
+
+impl Default for VideoLimits {
+    fn default() -> VideoLimits {
+        VideoLimits {
+            max: (1280, 720, 30),
+            max_bit_rate: 5_000_000,
+            max_pixels_per_second: None,
+        }
+    }
 }
 
 impl Default for Options {
@@ -207,6 +231,7 @@ impl Default for Options {
             loss: 0.0,
             seed: 0x1234_5678,
             fail_launch: false,
+            video: Some(VideoLimits::default()),
         }
     }
 }
@@ -500,40 +525,41 @@ fn control(conn: &mut ServerConn, ctx: &Ctx<'_>, next_ssrc: &mut u32) {
                         silent: false,
                     });
                 }
+                let mut body = Value::object()
+                    .with("udpPort", st.answer_port)
+                    .with("sendIndexes", Value::array(idx))
+                    .with("ssrcs", Value::array(ssrcs));
+                if let Some(v) = opts.video {
+                    let mut video = Value::object()
+                        .with(
+                            "maxDimensions",
+                            Value::object()
+                                .with("width", v.max.0)
+                                .with("height", v.max.1)
+                                .with("frameRate", v.max.2.to_string()),
+                        )
+                        .with("maxBitRate", v.max_bit_rate);
+                    if let Some(p) = v.max_pixels_per_second {
+                        video = video.with("maxPixelsPerSecond", p as f64);
+                    }
+                    body = body.with(
+                        "constraints",
+                        Value::object()
+                            .with(
+                                "audio",
+                                Value::object()
+                                    .with("maxSampleRate", 48000)
+                                    .with("maxChannels", 2)
+                                    .with("maxBitRate", 256000),
+                            )
+                            .with("video", video),
+                    );
+                }
                 let answer = Value::object()
                     .with("type", "ANSWER")
                     .with("seqNum", seq)
                     .with("result", "ok")
-                    .with(
-                        "answer",
-                        Value::object()
-                            .with("udpPort", st.answer_port)
-                            .with("sendIndexes", Value::array(idx))
-                            .with("ssrcs", Value::array(ssrcs))
-                            .with(
-                                "constraints",
-                                Value::object()
-                                    .with(
-                                        "audio",
-                                        Value::object()
-                                            .with("maxSampleRate", 48000)
-                                            .with("maxChannels", 2)
-                                            .with("maxBitRate", 256000),
-                                    )
-                                    .with(
-                                        "video",
-                                        Value::object()
-                                            .with(
-                                                "maxDimensions",
-                                                Value::object()
-                                                    .with("width", 1280)
-                                                    .with("height", 720)
-                                                    .with("frameRate", "30"),
-                                            )
-                                            .with("maxBitRate", 5_000_000),
-                                    ),
-                            ),
-                    );
+                    .with("answer", body);
                 drop(st);
                 reply(conn, &msg, messages::NS_WEBRTC, &answer);
             }

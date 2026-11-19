@@ -710,14 +710,23 @@ impl<S: ControlStream> MirrorSink<S> {
         } else {
             Vec::new()
         };
+        // An explicit resolution may go up to the decoder's maximum (a
+        // stream larger than the canvas was accepted, §2.6; whether it is
+        // shown at full resolution is not verified).
+        let (max_width, max_height) = if opts.decoder_max {
+            (c.max_width.max(c.width), c.max_height.max(c.height))
+        } else {
+            (c.width, c.height)
+        };
         let caps = Capabilities {
-            max_width: c.width,
-            max_height: c.height,
+            max_width,
+            max_height,
             max_fps: Ratio::integer(fps),
             video_codecs: vec![VideoCodec::H264],
             audio_formats,
             audio_family: AudioFamily::AirPlay,
             max_bitrate_kbps: Some(MAX_BITRATE_KBPS),
+            max_pixels_per_second: None,
             min_latency_ms: None,
             preferred_latency_ms: Some(session.leads.video_ms),
             // The canvas from SETUP is the screen's shape.
@@ -725,13 +734,18 @@ impl<S: ControlStream> MirrorSink<S> {
                 .or(Some(crate::types::DEFAULT_DISPLAY_ASPECT)),
         };
         info!(
-            "airplay: {name}: session ready ({}, {}x{}@{fps}, audio {:?})",
+            "airplay: {name}: session ready ({}, {}x{}@{fps}{}, audio {:?})",
             match session.timeline {
                 Timeline::Ptp(_) => "PTP",
                 Timeline::Ntp => "NTP",
             },
             c.width,
             c.height,
+            if (max_width, max_height) != (c.width, c.height) {
+                format!(", up to its decoder's {max_width}x{max_height}")
+            } else {
+                String::new()
+            },
             caps.audio_formats.first().map(|f| f.codec)
         );
         MirrorSink {
@@ -1409,6 +1423,21 @@ mod tests {
             }
         }
         s
+    }
+
+    #[test]
+    fn an_explicit_resolution_may_use_the_decoder_maximum() {
+        // The fake is the dev Apple TV: 1280x720 nominal, 3840x2160 max.
+        let fake = FakeMirror::start(Behaviour::default());
+        let opts = MirrorOptions {
+            decoder_max: true,
+            ..MirrorOptions::default()
+        };
+        let mut sink = connect(&fake, &opts);
+        let caps = sink.capabilities().clone();
+        assert_eq!((caps.max_width, caps.max_height), (3840, 2160));
+        assert_eq!(caps.display_aspect, Some((16, 9)));
+        sink.stop().unwrap();
     }
 
     #[test]

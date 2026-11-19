@@ -35,7 +35,18 @@ fn manifest_fields_and_errors() {
     assert_eq!(m.pages.launcher, None);
     assert_eq!((m.min_players, m.max_players), (3, 50));
     assert_eq!(m.tv_size, Some((1280, 720)));
+    assert!(!m.tv_fixed);
     assert_eq!(m.limits.rate, 30);
+    let fixed = Manifest::parse(
+        r#"{"name":"g","pages":{"host":"h","tv":"t","phone":"p"},
+            "tv":{"width":1280,"height":720,"resolution":"fixed"}}"#,
+    )
+    .unwrap();
+    assert!(fixed.tv_fixed);
+    assert_eq!(
+        fixed.to_value().get("tv").unwrap().to_json(),
+        r#"{"width":1280,"height":720,"resolution":"fixed"}"#
+    );
     assert_eq!(m.limits.burst, 50);
     for (bad, says) in [
         ("[]", "object"),
@@ -82,6 +93,14 @@ fn manifest_fields_and_errors() {
         (
             r#"{"name":"g","pages":{"host":"h","tv":"t","phone":"p"},"limits":{"message":10}}"#,
             "limits.message",
+        ),
+        (
+            r#"{"name":"g","pages":{"host":"h","tv":"t","phone":"p"},"tv":{"resolution":"fixed"}}"#,
+            "tv.resolution",
+        ),
+        (
+            r#"{"name":"g","pages":{"host":"h","tv":"t","phone":"p"},"tv":{"width":640,"height":480,"resolution":"4k"}}"#,
+            "tv.resolution",
         ),
     ] {
         let e = Manifest::parse(bad).unwrap_err().to_string();
@@ -189,6 +208,7 @@ fn embedded_files_match_the_directory() {
 #[derive(Default)]
 struct Log {
     casts: Vec<(String, Vec<String>)>,
+    pictures: Vec<super::resolution::Picture>,
     stopped: usize,
     pins: Vec<String>,
 }
@@ -332,16 +352,15 @@ impl Backend for Fake {
         &self,
         url: &str,
         to: &[String],
-        _size: Option<(u32, u32)>,
+        picture: super::resolution::Picture,
     ) -> crate::error::Result<Box<dyn Cast>> {
         if self.fail_cast {
             return Err(crate::error::Error::closed("no such TV").with_code("not-found"));
         }
-        self.log
-            .lock()
-            .unwrap()
-            .casts
-            .push((url.to_owned(), to.to_vec()));
+        let mut log = self.log.lock().unwrap();
+        log.casts.push((url.to_owned(), to.to_vec()));
+        log.pictures.push(picture);
+        drop(log);
         Ok(Box::new(FakeCast {
             log: self.log.clone(),
             polls: 0,
@@ -829,6 +848,78 @@ fn cast_failure_is_reported() {
     assert_eq!(
         r.get("error").unwrap().get("code").and_then(Value::as_str),
         Some("no-receivers")
+    );
+}
+
+/// The resolution: chosen with the selection, overridden per cast,
+/// offered in `info`.
+#[test]
+fn resolution_is_chosen() {
+    use super::resolution::{Picture, Resolution};
+    let s = Setup::new("game");
+    let mut w = api(&s);
+    let value = |r: Value| r.get("value").cloned().unwrap_or(Value::Null);
+    let info = value(call(&mut w, "info", Value::object()));
+    assert_eq!(
+        info.get("resolutions").unwrap().to_json(),
+        r#"["auto","720p","1080p","2160p"]"#
+    );
+    let sel = value(call(&mut w, "selection", Value::object()));
+    assert_eq!(sel.get("resolution").and_then(Value::as_str), Some("auto"));
+    let r = call(
+        &mut w,
+        "select",
+        Value::object()
+            .with("devices", vec!["TV"])
+            .with("resolution", "2160p"),
+    );
+    assert_eq!(
+        value(r).get("resolution").and_then(Value::as_str),
+        Some("2160p")
+    );
+    // A select without one keeps it.
+    call(
+        &mut w,
+        "select",
+        Value::object().with("devices", vec!["TV"]),
+    );
+    let r = call(
+        &mut w,
+        "cast.start",
+        Value::object().with("page", "/tv.html"),
+    );
+    assert_eq!(r.get("ok").and_then(Value::as_bool), Some(true), "{r}");
+    let r = call(
+        &mut w,
+        "cast.start",
+        Value::object()
+            .with("page", "/tv.html")
+            .with("resolution", "720p"),
+    );
+    assert_eq!(r.get("ok").and_then(Value::as_bool), Some(true), "{r}");
+    for (method, params) in [
+        ("select", Value::object().with("devices", vec!["TV"])),
+        ("cast.start", Value::object().with("page", "/tv.html")),
+    ] {
+        let r = call(&mut w, method, params.with("resolution", "8k"));
+        assert_eq!(
+            r.get("error").unwrap().get("code").and_then(Value::as_str),
+            Some("bad-resolution"),
+            "{method}"
+        );
+    }
+    assert_eq!(
+        s.log.lock().unwrap().pictures,
+        [
+            Picture {
+                layout: None,
+                resolution: Some(Resolution::P2160)
+            },
+            Picture {
+                layout: None,
+                resolution: Some(Resolution::P720)
+            },
+        ]
     );
 }
 

@@ -117,7 +117,10 @@ time 0 from the first record it keeps and times audio by its sample count
 
 The H.264 must have no B-frames (decode order = presentation order). The
 script asks for Constrained Baseline first (then Main, High), at the
-smallest level that fits the plan, with `latencyMode: "realtime"`.
+smallest level that fits the plan, with `latencyMode: "realtime"`
+(browsers check only the frame size against the level: 4K60 must ask for
+5.2 itself; Chrome's hardware encoder on macOS writes the level asked
+for).
 
 ## Stream size and shape
 
@@ -135,8 +138,21 @@ a 16:10 capture stretched to 16:9). So:
 - **Size:** the smallest frame of that shape that holds the capture at
   1:1 (no upscaling), shrunk to the tightest receiver limit. Cast is
   offered up to 1920x1080@60 (or `--size`/`--fps`/`--bitrate`), and its
-  ANSWER constraints narrow that; AirPlay's limit is its canvas.
-  `--size` sets the frame exactly. The frame rate is `--fps` or 30.
+  ANSWER constraints narrow that (also its `maxPixelsPerSecond`: the
+  size shrinks, the frame rate stays; an ANSWER without constraints under
+  an offer above 1080p counts as openscreen's 1080p30 at 10 Mbit/s);
+  AirPlay's limit is its canvas. `--size` sets the frame exactly. The
+  frame rate is `--fps` or 30.
+- **`share URL`:** the page is laid out at `--size` (CSS pixels; default
+  the receivers' shape within 1920x1080) and rendered at `--resolution`
+  (`auto`: up to 1080p; `720p`, `1080p`, `4k`): tvpipe's Chromium-based
+  browser gets the device scale factor that fills the resolution's box
+  within the receivers' limits, and a headless screen of exactly that
+  many pixels, so the tab is captured at the stream's size
+  (docs/playshare-design.md §9.1). An explicit 1080p or 4K lets an
+  AirPlay receiver go up to its decoder maximum (docs/airplay-mirroring.md
+  §2.6). The SDK without `Options::resolution` keeps the page the
+  stream's size at scale 1.
 - **Picture:** the capture is centered inside at its own aspect ratio
   (`browser::layout::place`, the same arithmetic as `place` in
   `capture.js`, checked against each other by the Chrome test); the page

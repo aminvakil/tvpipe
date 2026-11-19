@@ -26,10 +26,16 @@ fn opener(url: &str) -> (&'static str, Vec<String>) {
     }
 }
 
+/// Whether [`open_url`] opens `url`: `http://` or `https://`, nothing a
+/// shell (cmd's `start`) would interpret.
+pub fn can_open_url(url: &str) -> bool {
+    (url.starts_with("http://") || url.starts_with("https://"))
+        && !url.bytes().any(|b| b <= b' ' || b"\"^&|<>%".contains(&b))
+}
+
 /// Opens `url` in the default browser (does not wait for it).
 pub fn open_url(url: &str) -> Result<()> {
-    // Nothing a shell (cmd's `start`) would interpret.
-    if !url.starts_with("http://") || url.bytes().any(|b| b <= b' ' || b"\"^&|<>%".contains(&b)) {
+    if !can_open_url(url) {
         return Err(Error::usage(format!("not opening {url:?}")));
     }
     let (cmd, args) = opener(url);
@@ -305,6 +311,22 @@ pub fn kill_pid(pid: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openable_urls() {
+        assert!(can_open_url("http://127.0.0.1:8765/?t=abc"));
+        assert!(can_open_url("https://example.trycloudflare.com/x"));
+        for u in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "http://x/?a=1&b=2",
+            "http://x/%20",
+            "http://x/ y",
+            "https://x/\"q\"",
+        ] {
+            assert!(!can_open_url(u), "{u}");
+        }
+    }
 
     #[test]
     fn app_bundles() {

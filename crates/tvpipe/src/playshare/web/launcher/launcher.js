@@ -3,7 +3,7 @@
  * they are found, AirPlay PIN pairing, then the game's host page. A game
  * may bring its own launcher with the same API.
  */
-import { Tvpipe } from "../lib/tvpipe.js";
+import { PICKER_MESSAGE, Tvpipe } from "../lib/tvpipe.js";
 const $ = (id) => document.getElementById(id);
 const KIND = {
     airplay: "AirPlay",
@@ -11,7 +11,20 @@ const KIND = {
     both: "AirPlay · Cast",
     browser: "This computer",
 };
+/**
+ * `?mode=change`: the cast picker (docs/playshare-design.md §7.1), in a
+ * dialog over the host page while the game runs: it saves the choice and
+ * tells the page, which casts again. Else the start of the game.
+ */
+const changing = new URLSearchParams(location.search).get("mode") === "change";
+const RESOLUTION_LABEL = { auto: "Auto", "720p": "720p", "1080p": "1080p", "2160p": "4K" };
+const RESOLUTION_NOTE = {
+    auto: "What the TVs take, up to 1080p.",
+    "2160p": "4K needs a 4K TV and a fast computer.",
+};
 const selected = new Set();
+/** `null`: the game's picture has a fixed size. */
+let resolution = null;
 const pairing = new Map();
 let devices = [];
 let info;
@@ -106,7 +119,8 @@ function render() {
         return li;
     }));
     $("searching").hidden = devices.some((d) => d.kind !== "browser");
-    $("start").disabled = selected.size === 0 || starting !== null;
+    // The picker may also take every TV away (the cast stops).
+    $("start").disabled = (selected.size === 0 && !changing) || starting !== null;
     renderState();
 }
 function renderPhones() {
@@ -153,12 +167,51 @@ function closePin() {
     if (dlg.open)
         dlg.close();
 }
+/** The resolution buttons (none when the game's size is fixed). */
+function renderResolution() {
+    const box = $("res");
+    const choices = info?.resolutions ?? [];
+    box.hidden = choices.length === 0 || resolution === null;
+    if (box.hidden)
+        return;
+    $("res-options").replaceChildren(...choices.map((r) => {
+        const b = el("button", "", RESOLUTION_LABEL[r] ?? r);
+        b.type = "button";
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", String(r === resolution));
+        b.onclick = () => {
+            resolution = r;
+            renderResolution();
+        };
+        return b;
+    }));
+    $("res-note").textContent = (resolution && RESOLUTION_NOTE[resolution]) ?? "";
+}
+/** The cast picker's answer to the page it is in (`null`: cancelled). */
+function answer(selection) {
+    if (window.parent !== window) {
+        window.parent.postMessage({ type: PICKER_MESSAGE, selection }, location.origin);
+        return;
+    }
+    // Opened by itself: nothing to tell.
+    starting = selection ? "Saved" : null;
+    render();
+}
 async function start(devicesToUse) {
     showError(null);
+    if (changing) {
+        try {
+            answer(await tvpipe.select(devicesToUse, { resolution: resolution ?? undefined }));
+        }
+        catch (err) {
+            showError(err.message);
+        }
+        return;
+    }
     starting = devicesToUse.some((d) => d !== "browser") ? "Casting…" : "Starting…";
     render();
     try {
-        await tvpipe.select(devicesToUse);
+        await tvpipe.select(devicesToUse, { resolution: resolution ?? undefined });
         await tvpipe.watchDevices(false);
         location.assign(info.pages.host);
     }
@@ -204,9 +257,19 @@ async function main() {
     const { min, max } = info.players;
     $("players").textContent = min === max ? `${min}` : `${min}–${max}`;
     $("message").textContent = `${info.title} shows on the TVs you pick. Everyone plays on their own phone.`;
+    if (changing) {
+        document.documentElement.dataset["mode"] = "change";
+        $("title").textContent = "Change the TVs";
+        $("message").textContent = "The TVs you pick show the game; they start the picture again.";
+        $("start").textContent = "Apply";
+        $("no-tv").textContent = "Cancel";
+    }
     renderPhones();
-    for (const name of await tvpipe.selection())
+    const chosen = await tvpipe.chosen();
+    for (const name of chosen.devices)
         selected.add(name);
+    resolution = chosen.resolution;
+    renderResolution();
     tvpipe.on("devices", (list) => {
         devices = list;
         render();
@@ -238,7 +301,13 @@ async function main() {
     devices = await tvpipe.watchDevices(true);
     render();
     $("start").onclick = () => void start([...selected]);
-    $("no-tv").onclick = () => void start([]);
+    $("no-tv").onclick = () => (changing ? answer(null) : void start([]));
+    if (changing) {
+        addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape" && !$("pin").open)
+                answer(null);
+        });
+    }
     $("pin-form").onsubmit = (ev) => {
         ev.preventDefault();
         const pin = $("pin-input").value.trim();

@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use super::resolution::Picture;
 use crate::codec::json::Value;
 use crate::error::Result;
 use crate::storage::Storage;
@@ -70,7 +71,7 @@ pub trait Backend: Send + Sync {
     fn discover(&self) -> Result<Box<dyn Discover>>;
     fn pair(&self, device: &str) -> Result<Box<dyn Pair>>;
     /// Casts the page at `url` (on the local origin) to `to`.
-    fn cast(&self, url: &str, to: &[String], size: Option<(u32, u32)>) -> Result<Box<dyn Cast>>;
+    fn cast(&self, url: &str, to: &[String], picture: Picture) -> Result<Box<dyn Cast>>;
     /// A session for a surface's encoded frames.
     fn surface(&self, to: &[String], spec: SurfaceSpec) -> Result<Box<dyn SurfaceSink>>;
 }
@@ -291,14 +292,12 @@ impl Backend for Real {
         Err(crate::error::Error::unsupported("pairing needs AirPlay"))
     }
 
-    fn cast(&self, url: &str, to: &[String], size: Option<(u32, u32)>) -> Result<Box<dyn Cast>> {
+    fn cast(&self, url: &str, to: &[String], picture: Picture) -> Result<Box<dyn Cast>> {
         let mut opts = crate::api::Options::new().storage(self.storage.clone());
         for t in to {
             opts = opts.to(t.as_str());
         }
-        if let Some((w, h)) = size {
-            opts = opts.size(w, h);
-        }
+        opts = picture_options(opts, picture);
         if let Some(b) = &self.browser {
             opts = opts.browser_path(b.clone());
         }
@@ -307,5 +306,64 @@ impl Backend for Real {
             session: Mutex::new(session),
             error: None,
         }))
+    }
+}
+
+/// The share options of a TV picture: fixed (`tv.resolution: "fixed"`)
+/// is exactly the layout at scale 1, as the stream's size (the receivers'
+/// shape without one); a chosen resolution renders the layout (`None`:
+/// the receivers' shape within 1920x1080) at the device scale factor
+/// that fills the resolution's box (docs/playshare-design.md §9.1).
+fn picture_options(opts: crate::api::Options, picture: Picture) -> crate::api::Options {
+    let opts = match picture.layout {
+        Some((w, h)) => opts.size(w, h),
+        None => opts,
+    };
+    match picture.resolution {
+        Some(r) => opts.resolution(r),
+        None => opts,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::playshare::resolution::Resolution;
+
+    /// (`--size`, the page's resolution) of a picture's `share URL`.
+    fn mapped(picture: Picture) -> (Option<(u32, u32)>, Option<Resolution>) {
+        let o =
+            picture_options(crate::api::Options::new(), picture).share_options(Some("http://x/"));
+        (
+            o.size.map(|s| (s.width, s.height)),
+            o.page.and_then(|p| p.resolution),
+        )
+    }
+
+    #[test]
+    fn pictures_map_to_share_options() {
+        // Fixed: the layout is the stream, at scale 1 (no resolution).
+        let fixed = Picture {
+            layout: Some((1280, 720)),
+            resolution: None,
+        };
+        assert_eq!(mapped(fixed), (Some((1280, 720)), None));
+        // A choice: the layout rendered at the resolution.
+        let chosen = Picture {
+            layout: Some((1280, 720)),
+            resolution: Some(Resolution::P2160),
+        };
+        assert_eq!(mapped(chosen), (Some((1280, 720)), Some(Resolution::P2160)));
+        // No layout: the receivers' shape within 1920x1080, at auto.
+        let shaped = Picture {
+            layout: None,
+            resolution: Some(Resolution::Auto),
+        };
+        assert_eq!(mapped(shaped), (None, Some(Resolution::Auto)));
+        let neither = Picture {
+            layout: None,
+            resolution: None,
+        };
+        assert_eq!(mapped(neither), (None, None));
     }
 }

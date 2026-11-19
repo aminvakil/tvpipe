@@ -240,6 +240,14 @@ pub struct PageOptions {
     pub visible: bool,
     pub reload: Option<Duration>,
     pub browser: Option<PathBuf>,
+    /// `--resolution`: the page keeps its CSS layout (`--size`, default
+    /// the receivers' shape within 1920x1080) and is rendered at a device
+    /// scale factor that fills this box, within the receivers' limits
+    /// (docs/playshare-design.md §9.1). `None`: the page is exactly the
+    /// stream (`--size`, else the receivers' shape) at scale 1, its
+    /// layout following the receivers' limits (the SDK's default, a
+    /// game's `tv.resolution: "fixed"`).
+    pub resolution: Option<crate::types::Resolution>,
 }
 
 #[derive(Debug, Clone)]

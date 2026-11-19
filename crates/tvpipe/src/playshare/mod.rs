@@ -21,6 +21,7 @@ pub mod bundle;
 pub mod check;
 pub mod conn;
 pub mod hub;
+pub mod resolution;
 pub mod scan;
 pub mod server;
 pub mod smoke;
@@ -77,6 +78,9 @@ pub struct Options {
     pub browser: Option<PathBuf>,
     /// The local listener's port (0: any).
     pub port: u16,
+    /// `--resolution`: the TV picture's at the start (the launcher and
+    /// the cast picker change it).
+    pub resolution: resolution::Resolution,
 }
 
 /// A started playshare: the hub, its listeners and the tunnel.
@@ -107,6 +111,7 @@ impl Running {
     ) -> Result<Running> {
         let token = crate::util::hex::encode(&crate::crypto::ring::random_array::<16>()?);
         let hub = Hub::new(bundle, token, backend, stop);
+        hub.set_resolution(opts.resolution);
         let _ = hub.events.set(events);
         let servers = Servers::start(&hub, opts.port, opts.lan)?;
         let tunnel = start_tunnel(&hub, opts.tunnel);
@@ -198,6 +203,7 @@ pub fn run(opts: &Options, ctx: &Ctx) -> Result<()> {
             events.progress(Progress::Phones(n));
         }
         if window.owned() {
+            window.pass_out_new_pages();
             if window.closed() {
                 break "the window was closed";
             }

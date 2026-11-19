@@ -12,7 +12,7 @@ Give `share` a URL and tvpipe opens it in a hidden browser of its own and puts i
 ## Showing a page
 
 :::aside Size
-The page gets the shape of the TV, up to 1920×1080. `--size` sets another size.
+The page gets the shape of the TV, laid out at up to 1920×1080. `--size` sets another layout. `--resolution` (`auto`, `720p`, `1080p`, `4k`) sets how sharp it is on the TV: the layout stays, tvpipe renders it at a higher scale. `auto` goes up to 1080p as far as the TV allows; 4K only when you ask for it.
 :::
 
 ```sh
@@ -25,7 +25,12 @@ $ tvpipe share ./slides.html --to TV
 
 Starting takes about a second. If the page reloads or navigates, the TV shows a short gap of about half a second. If the page or the browser crashes, tvpipe starts it again.
 
-`--visible`, `--profile`, `--reload` and `--browser` only work with a URL.
+```sh
+# a 1280×720 dashboard, sharp on a 4K TV
+$ tvpipe share https://status.example.com --to TV --size 1280x720 --resolution 4k
+```
+
+`--visible`, `--profile`, `--reload`, `--browser` and `--resolution` only work with a URL. 4K needs a TV that takes it (an Apple TV is asked for its full decoder size; a Chromecast that allows only 1080p gets 1080p) and a computer with a hardware video encoder. Firefox renders at the page's own size.
 
 ## Pages that need a login
 
@@ -62,3 +67,5 @@ Firefox shows the page with its sound too. Its own speakers stay quiet while tvp
 ## Limitations
 
 Some sites refuse browsers that are controlled by a program. tvpipe does not hide that, so those sites do not work, and tvpipe reports their answer (401, 403 or 429). Video calls are an example. For those, open the call in your normal browser and present a [browser tab](browser.md) in it.
+
+On macOS, the system treats tvpipe's hidden browser as a running copy of that browser, Chrome for example. While it runs and your own Chrome does not, opening Chrome from the Dock or Spotlight, or a link from another app, goes to tvpipe's browser, and nothing seems to happen. Start your browser before tvpipe and keep it open, or stop tvpipe first. Another way is to give tvpipe a browser you do not use yourself with `--browser`. The same goes for [`tvpipe screen`](screen.md) and the window of [`tvpipe game play`](party.md), where `--window=open` uses your usual browser instead.

@@ -278,6 +278,7 @@ impl Info {
             audio_formats,
             audio_family: AudioFamily::AirPlay,
             max_bitrate_kbps: None,
+            max_pixels_per_second: None,
             min_latency_ms: latency,
             preferred_latency_ms: None,
             // The screen's shape comes with the SETUP canvas.

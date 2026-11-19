@@ -26,6 +26,21 @@ main { flex: 1; }
        color: var(--ink-2); padding: 5px 7px 4px; border: 1px solid var(--rule); border-radius: 2px; }
 
 .searching { margin: 14px 0 0; font-size: 13.5px; color: var(--ink-3); }
+
+/* The resolution: one of a few. */
+.res { margin-top: 26px; }
+.res .lbl { display: block; margin-bottom: 10px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+.seg button { font: 500 14px/1 var(--sans, inherit); padding: 9px 16px; border: 0; border-right: 1px solid var(--rule);
+              background: var(--bg); color: var(--ink-2); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button:hover { background: var(--panel); }
+.seg button[aria-checked="true"] { background: var(--accent); color: var(--bg); }
+.res-note { margin: 10px 0 0; font-size: 13.5px; color: var(--ink-3); }
+.res-note:empty { display: none; }
+
+/* The cast picker (in a dialog over the host page): the TVs only. */
+[data-mode="change"] #phones-row, [data-mode="change"] .foot { display: none; }
 .error { margin: 18px 0 0; font-size: 14.5px; }
 .ph .buttons { margin-top: 30px; }
 
