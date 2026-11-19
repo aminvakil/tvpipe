@@ -16,7 +16,7 @@ Every command lists all of its options with `--help`.
 | `pair`, `unpair` | Pairs with an Apple TV, or forgets the pairing. |
 | `play` | Plays a file or URL, or mirrors a camera or the screen. See [Playing media](play.md). |
 | `screen` | Mirrors a screen or a window, with the computer's sound. See [Sharing the screen](screen.md). |
-| `share` | Shares a browser tab, a window, the screen or a web page. See [Sharing](share.md). |
+| `share` | Shares a browser tab or a web page. See [Sharing the screen](screen.md#s3) and [A web page on the TV](web-page.md). |
 | `preview` | Plays in a browser tab. See [Playing to a browser](browser.md). |
 | `test-pattern` | Sends a test pattern. See [Latency](latency.md). |
 | `debug-pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |

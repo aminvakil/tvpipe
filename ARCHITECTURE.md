@@ -145,7 +145,7 @@ user's view in [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/).
 encoded SLRW over a localhost WebSocket, so it takes the same path
 (passthrough video, PCM or built-in AAC). Protocol:
 [`docs/share-protocol.md`](docs/share-protocol.md); for users:
-[Sharing a tab or screen](https://mitsuhiko.github.io/tvpipe/manual/share/). Receivers stretch what
+[Sharing the screen](https://mitsuhiko.github.io/tvpipe/manual/screen/). Receivers stretch what
 they get to fill their screen, so sinks report their screen shape
 (`Capabilities::display_aspect`: Cast from the ANSWER's `display`, else
 16:9, AirPlay from the SETUP canvas; `None` for the browser player, which

@@ -24,7 +24,7 @@ tvpipe reads files at playback speed. A live source already arrives at that spee
 ## Screens and cameras
 
 :::aside Tip
-For the screen or a window, [screen](screen.md) is simpler and sends the sound too. For a browser tab, use [share](share.md).
+For the screen, a window or a browser tab, [Sharing the screen](screen.md) is simpler and sends the sound too.
 :::
 
 Everything after `--` goes to ffmpeg as its input, so anything ffmpeg can capture works.

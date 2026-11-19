@@ -92,17 +92,21 @@ minutes (`--tunnel-ttl`). Details: [`docs/tunnels.md`](docs/tunnels.md).
 | Page | Covers |
 |---|---|
 | [Overview](https://mitsuhiko.github.io/tvpipe/manual/) | what tvpipe does and does not do |
+| [Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) | the installers, ffmpeg, building from source |
 | [Quick start](https://mitsuhiko.github.io/tvpipe/manual/quick-start/) | find a TV, pair it, play a file |
-| [Receivers](https://mitsuhiko.github.io/tvpipe/manual/receivers/) | `discover`, `pair`, `unpair`, `--to` |
-| [Playing media](https://mitsuhiko.github.io/tvpipe/manual/play/) | files, URLs, cameras, the screen |
-| [Sharing a tab or screen](https://mitsuhiko.github.io/tvpipe/manual/share/) | `share` |
+| [Receivers](https://mitsuhiko.github.io/tvpipe/manual/receivers/) | `discover`, `pair`, `unpair`, `--to`, reconnecting |
+| [Playing media](https://mitsuhiko.github.io/tvpipe/manual/play/) | files, URLs, cameras |
+| [Sharing the screen](https://mitsuhiko.github.io/tvpipe/manual/screen/) | `screen` and `share`: the screen, a window or a browser tab |
 | [A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/) | `share URL` |
 | [Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/) | `preview`, `--to browser`, OBS, video calls |
+| [Public links](https://mitsuhiko.github.io/tvpipe/manual/links/) | `--tunnel` |
 | [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
-| [Options](https://mitsuhiko.github.io/tvpipe/manual/options/) | the streaming options and encoders |
+| [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
+| [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
 | [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | `test-pattern`, `--latency`, measuring |
+| [ffmpeg and encoding](https://mitsuhiko.github.io/tvpipe/manual/encoding/) | when ffmpeg runs, `debug-pipeline` |
 
 ## Development
 
