@@ -153,7 +153,7 @@ fn mixed_receivers_share_one_timeline() {
         }
     };
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
-    play_with(o, no_io(), &connect, never()).unwrap();
+    play_with(o, no_io(), &connect, &never()).unwrap();
 
     // One budget: no --latency with both families = the default everywhere.
     let m = seen_mirror.lock().unwrap().clone().unwrap();
@@ -294,7 +294,7 @@ fn unreachable_receiver_is_left_out() {
         "cast:127.0.0.1:1".into(),
         format!("airplay:{}", fake.addr),
     ]);
-    play_with(o, no_io(), &connect, never()).unwrap();
+    play_with(o, no_io(), &connect, &never()).unwrap();
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     assert!(st.stopped);
@@ -312,7 +312,7 @@ fn unreachable_receiver_is_left_out() {
 
     // Nobody reachable: the session fails with the connect error.
     let o = pattern_opts(vec!["cast:127.0.0.1:1".into(), "cast:127.0.0.1:2".into()]);
-    let e = play_with(o, no_io(), &connect, never()).unwrap_err();
+    let e = play_with(o, no_io(), &connect, &never()).unwrap_err();
     assert_eq!(e.kind(), crate::error::ErrorKind::Io, "{e}");
 }
 
@@ -327,7 +327,7 @@ fn airplay_receiver_leaving_does_not_stop_cast() {
     let tallies = Tallies::default();
     let connect = mixed_connector(&fake, Some(45), None, &tallies);
     let o = pattern_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)]);
-    play_with(o, no_io(), &connect, never()).unwrap();
+    play_with(o, no_io(), &connect, &never()).unwrap();
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     assert!(st.stopped);
@@ -351,7 +351,7 @@ fn cast_receiver_leaving_does_not_stop_airplay() {
         rx.shutdown()
     });
     let t0 = Instant::now();
-    play_with(o, no_io(), &connect, never()).unwrap();
+    play_with(o, no_io(), &connect, &never()).unwrap();
     let state = killer.join().unwrap();
     // 45 frames at 30 fps: the AirPlay sink was given all of them, well
     // after the Cast one left, and its receiver got what it accepted.
@@ -381,7 +381,7 @@ fn stop_request_tears_every_receiver_down() {
         STOP_REQUESTED.request();
         Instant::now()
     });
-    play_with(o, no_io(), &connect, STOP_REQUESTED.clone()).unwrap();
+    play_with(o, no_io(), &connect, &Ctx::from(STOP_REQUESTED.clone())).unwrap();
     let asked = stopper.join().unwrap();
     // No draining and no playout tail: down within a moment.
     assert!(

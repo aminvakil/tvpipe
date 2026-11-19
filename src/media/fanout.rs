@@ -29,17 +29,20 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
+use crate::events::{Events, ReceiverState};
 use crate::media::clock::{MediaClock, SessionClock, Tolerance};
 use crate::media::source::StreamInfo;
 use crate::types::{AudioFamily, EncodedFrame, Sink, SinkStatus, TrackKind, VIDEO_CLOCK_RATE};
 use crate::util::stop::Stop;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct FanoutConfig {
     /// Frames queued per sink (video and audio together).
     pub max_frames: usize,
     /// Bytes queued per sink.
     pub max_bytes: usize,
+    /// Where receiver state changes go.
+    pub events: Events,
 }
 
 impl Default for FanoutConfig {
@@ -48,6 +51,7 @@ impl Default for FanoutConfig {
         FanoutConfig {
             max_frames: 96,
             max_bytes: 16 << 20,
+            events: Events::none(),
         }
     }
 }
@@ -160,10 +164,12 @@ impl Fanout {
             let video = info.video.clone();
             let audio = info.audio_for(family).cloned();
             let thread_shared = shared.clone();
+            let events = config.events.clone();
             let thread = std::thread::Builder::new()
                 .name(format!("sink-{name}"))
                 .spawn(move || {
-                    let end = run_sink(sink, &video, audio.as_ref(), &thread_shared, &view);
+                    let end =
+                        run_sink(sink, &video, audio.as_ref(), &thread_shared, &view, &events);
                     let mut st = thread_shared.lock();
                     st.dead = true;
                     st.started = true;
@@ -365,6 +371,7 @@ fn run_sink(
     audio: Option<&crate::types::AudioInfo>,
     shared: &Shared,
     clock: &SessionClock,
+    events: &Events,
 ) -> SinkEnd {
     let name = sink.name().to_owned();
     let started = sink.start(video, audio);
@@ -372,7 +379,7 @@ fn run_sink(
     shared.cond.notify_all();
     if let Err(e) = started {
         error!("{name}: start failed: {e}");
-        crate::machine::receiver(&name, None, "failed", Some(&e));
+        events.receiver(&name, None, ReceiverState::Failed, Some(&e));
         let _ = sink.stop();
         return SinkEnd::Failed(e);
     }
@@ -456,9 +463,9 @@ fn run_sink(
         }
     }
     match &end {
-        SinkEnd::Stopped => crate::machine::receiver(&name, None, "stopped", None),
-        SinkEnd::Finished => crate::machine::receiver(&name, None, "ended", None),
-        SinkEnd::Failed(e) => crate::machine::receiver(&name, None, "failed", Some(e)),
+        SinkEnd::Stopped => events.receiver(&name, None, ReceiverState::Stopped, None),
+        SinkEnd::Finished => events.receiver(&name, None, ReceiverState::Ended, None),
+        SinkEnd::Failed(e) => events.receiver(&name, None, ReceiverState::Failed, Some(e)),
     }
     end
 }
@@ -690,6 +697,7 @@ mod tests {
         let cfg = FanoutConfig {
             max_frames: 3,
             max_bytes: 1 << 20,
+            ..FanoutConfig::default()
         };
         let f = Fanout::new(vec![Box::new(slow), Box::new(fast)], &info(), cfg).unwrap();
         let wait_for = |log: &Log, n: usize| {

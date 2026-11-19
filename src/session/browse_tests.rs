@@ -99,7 +99,7 @@ fn pages_to_cast_and_airplay_across_a_navigation() {
         }),
         ..browse_opts(vec![rx.addr.to_string(), format!("airplay:{}", fake.addr)])
     };
-    browse::browse_with(&o, &connect, never(), &launcher).unwrap();
+    browse::browse_with(&o, &connect, &never(), &launcher).unwrap();
     assert_eq!(*viewport.lock().unwrap(), Some((320, 180)));
     let seen = std::mem::take(&mut *seen.lock().unwrap());
     assert_eq!(seen.len(), 2);
@@ -149,7 +149,7 @@ fn page_size_follows_the_receivers_and_a_browser_failure_stops_them() {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
     };
-    let e = browse::browse_with(&o, &connect_test, never(), &launcher).unwrap_err();
+    let e = browse::browse_with(&o, &connect_test, &never(), &launcher).unwrap_err();
     assert!(e.to_string().contains("ERR_NAME_NOT_RESOLVED"), "{e}");
     assert_eq!(*viewport.lock().unwrap(), Some((1280, 720)));
     let state = rx.shutdown();
@@ -191,7 +191,7 @@ fn a_browser_that_fails_later_fails_the_session() {
         no_audio: true,
         ..browse_opts(vec![rx.addr.to_string()])
     };
-    let e = browse::browse_with(&o, &connect_test, never(), &launcher).unwrap_err();
+    let e = browse::browse_with(&o, &connect_test, &never(), &launcher).unwrap_err();
     assert!(e.to_string().contains("NotAllowedError"), "{e}");
     let state = rx.shutdown();
     assert!(state.lock().unwrap().stopped);
@@ -317,7 +317,7 @@ fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
                     port: Some(0),
                     ..(**o).clone()
                 };
-                let sink = BrowserSink::bind(&o, never())?;
+                let sink = BrowserSink::bind(&o, &never())?;
                 let url = format!("{}&stats=1", sink.url());
                 let bin = b.clone();
                 *viewer.lock().unwrap() = Some(std::thread::spawn(move || {
@@ -357,7 +357,7 @@ fn browser_to_cast_and_player(bin: String, headed: bool, view: fn(&str, &str)) {
     };
     let o = browse_opts(vec![rx.addr.to_string(), "browser".into()]);
     let t0 = Instant::now();
-    let r = browse::browse_with(&o, &connect, STOP.clone(), &launcher);
+    let r = browse::browse_with(&o, &connect, &Ctx::from(STOP.clone()), &launcher);
     let secs = t0.elapsed().as_secs_f64();
     let watched = viewer.lock().unwrap().take().map(|h| h.join().unwrap());
     if let Some(Err(panic)) = watched {
@@ -517,7 +517,7 @@ fn browser_survives_crashes(bin: String, crash: fn(&std::path::Path, &SharedTall
         }),
         ..browse_opts(vec![rx.addr.to_string()])
     };
-    let r = browse::browse_with(&o, &connect, STOP.clone(), &launcher);
+    let r = browse::browse_with(&o, &connect, &Ctx::from(STOP.clone()), &launcher);
     let drove = driver.lock().unwrap().take().map(|h| h.join().unwrap());
     if let Some(Err(panic)) = drove {
         std::panic::resume_unwind(panic);

@@ -39,7 +39,11 @@ use std::time::{Duration, Instant};
 use crate::browser::access::{Access, Via};
 use crate::browser::fonts;
 use crate::codec::json::Value;
+use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};
+use crate::events::{
+    Event, Events, PlayerEvent, TunnelEvent, TunnelPage, ViewerEvent, ViewerState,
+};
 use crate::media::clock::{SessionClock, SinkClock, Tolerance};
 use crate::media::h264;
 use crate::media::slrw::{self, Kind};
@@ -52,7 +56,6 @@ use crate::types::{
     TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
 };
 use crate::util::ratio::Ratio;
-use crate::util::stop::Stop;
 
 pub const PLAYER_HTML: &str = include_str!("player.html");
 pub const PLAYER_JS: &str = include_str!("player.js");
@@ -431,6 +434,8 @@ struct Shared {
     epoch: Instant,
     state: Mutex<State>,
     cv: Condvar,
+    /// `viewer` events.
+    events: Events,
 }
 
 impl Shared {
@@ -564,13 +569,12 @@ impl Shared {
             ""
         };
         info!("{}: a viewer connected (tab {id}{from})", self.name);
-        crate::machine::emit(
-            crate::machine::event("viewer")
-                .with("name", self.name.as_str())
-                .with("tab", id)
-                .with("state", "connected")
-                .with("public", via == Via::Public),
-        );
+        self.events.emit(Event::Viewer(ViewerEvent {
+            name: self.name.clone(),
+            tab: id,
+            state: ViewerState::Connected,
+            public: via == Via::Public,
+        }));
         let why = loop {
             if self.lock().shutdown {
                 break "tvpipe stopped".to_owned();
@@ -603,12 +607,12 @@ impl Shared {
             self.cv.notify_all();
             d
         };
-        crate::machine::emit(
-            crate::machine::event("viewer")
-                .with("name", self.name.as_str())
-                .with("tab", id)
-                .with("state", "disconnected"),
-        );
+        self.events.emit(Event::Viewer(ViewerEvent {
+            name: self.name.clone(),
+            tab: id,
+            state: ViewerState::Disconnected,
+            public: via == Via::Public,
+        }));
         info!(
             "{}: viewer left (tab {id}: {why}{})",
             self.name,
@@ -690,7 +694,8 @@ pub struct BrowserSink {
 impl BrowserSink {
     /// Listens on 127.0.0.1 and prints the URL; with `wait_for_viewer`,
     /// returns once a tab is connected (or `stop` says so: an error).
-    pub fn bind(opts: &PlayerOptions, stop: Stop) -> Result<BrowserSink> {
+    pub fn bind(opts: &PlayerOptions, ctx: &Ctx) -> Result<BrowserSink> {
+        let stop = &ctx.stop;
         let token = match &opts.token {
             Some(t) => t.clone(),
             None => new_token()?,
@@ -730,15 +735,15 @@ impl BrowserSink {
                 ..State::default()
             }),
             cv: Condvar::new(),
+            events: ctx.events.clone(),
         });
         *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
         let url = format!("http://127.0.0.1:{port}/?t={token}");
         info!("{}: open {url} to watch", opts.name);
-        crate::machine::emit(
-            crate::machine::event("player")
-                .with("name", opts.name.as_str())
-                .with("url", url.as_str()),
-        );
+        ctx.events.emit(Event::Player(PlayerEvent {
+            name: opts.name.clone(),
+            url: url.clone(),
+        }));
         if opts.open {
             if let Err(e) = crate::browser::platform::open_url(&url) {
                 warn!("{}: --open: {e}", opts.name);
@@ -764,13 +769,12 @@ impl BrowserSink {
                     .unwrap_or_default()
             );
             let public = format!("https://{}/?t={token}&delay={delay}", t.host());
-            crate::machine::emit(
-                crate::machine::event("tunnel")
-                    .with("page", "player")
-                    .with("name", opts.name.as_str())
-                    .with("provider", provider.name())
-                    .with("url", public.as_str()),
-            );
+            ctx.events.emit(Event::Tunnel(TunnelEvent {
+                page: TunnelPage::Player,
+                name: Some(opts.name.clone()),
+                provider: provider.name().to_owned(),
+                url: public.clone(),
+            }));
             Some(t)
         } else {
             None

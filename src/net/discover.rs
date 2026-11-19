@@ -51,12 +51,22 @@ fn browse(
 }
 
 /// The `discover` command body.
-pub fn run(timeout: Duration, json: bool, interfaces: &[Ipv4Addr]) -> Result<()> {
+pub fn run(
+    timeout: Duration,
+    json: bool,
+    interfaces: &[Ipv4Addr],
+    ctx: &crate::ctx::Ctx,
+) -> Result<()> {
     let devices = discover(timeout, interfaces)?;
     let store = stored_pairings();
-    if crate::machine::enabled() {
-        let list = Value::array(devices.iter().map(|d| device_json(d, store.as_ref())));
-        crate::machine::emit(crate::machine::event("devices").with("devices", list));
+    if ctx.events.active() {
+        ctx.events
+            .emit(crate::events::Event::Devices(crate::events::DevicesEvent {
+                devices: devices
+                    .iter()
+                    .map(|d| DeviceInfo::new(d, store.as_ref()))
+                    .collect(),
+            }));
         return Ok(());
     }
     let out = if json {
@@ -144,7 +154,7 @@ pub fn to_json(devices: &[Device]) -> String {
 
 /// [`to_json`] with `paired` on AirPlay entries when the store is given.
 fn to_json_with(devices: &[Device], store: Option<&Store>) -> String {
-    let list = Value::array(devices.iter().map(|d| device_json(d, store)));
+    let list = Value::array(devices.iter().map(|d| DeviceInfo::new(d, store).to_value()));
     format!("{list:#}\n")
 }
 
@@ -170,52 +180,244 @@ fn is_paired(d: &Device, store: &Store) -> bool {
     store.find(&q).is_some()
 }
 
-fn device_json(d: &Device, store: Option<&Store>) -> Value {
-    let mut v = Value::object()
-        .with("name", d.name.as_str())
-        .with(
-            "addresses",
-            Value::array(d.addrs().iter().map(|a| a.to_string())),
-        )
-        .with_opt("model", d.model());
-    for (key, ap) in [("airplay", &d.airplay), ("raop", &d.raop)] {
-        let Some(ap) = ap else { continue };
-        let t = &ap.txt;
-        let o = endpoint_json(&ap.endpoint)
-            .with_opt("model", t.model.as_deref())
-            .with_opt("srcvers", t.srcvers.as_deref())
-            .with_opt("osvers", t.osvers.as_deref())
-            .with_opt("deviceid", t.deviceid.as_deref())
-            .with_opt("features", t.features.map(format_features))
-            .with_opt("flags", t.flags.map(|f| format!("{f:#x}")))
-            .with_opt("pk", t.pk.as_deref().map(hex::encode))
-            .with("mirroring", t.supports_mirroring())
-            .with("password", t.password_required())
-            .with("pin", t.pin_required())
-            .with_opt("paired", store.map(|s| is_paired(d, s)));
-        v = v.with(key, o);
-    }
-    if let Some(c) = &d.cast {
-        let t = &c.txt;
-        let o = endpoint_json(&c.endpoint)
-            .with_opt("friendly_name", t.friendly_name.as_deref())
-            .with_opt("model", t.model.as_deref())
-            .with_opt("id", t.id.as_deref())
-            .with_opt("capabilities", t.capabilities)
-            .with_opt("status", t.status.as_deref())
-            .with("video", d.cast_video())
-            .with("group", t.is_group());
-        v = v.with("cast", o);
-    }
-    v
+/// A discovered receiver as programs see it (`discover --json`, the
+/// `devices` event): its name, addresses, and the services it offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DeviceInfo {
+    pub name: String,
+    pub addresses: Vec<IpAddr>,
+    pub model: Option<String>,
+    /// The `_airplay._tcp` service.
+    pub airplay: Option<AirPlayService>,
+    /// The `_raop._tcp` service (AirPlay audio; older receivers).
+    pub raop: Option<AirPlayService>,
+    /// The `_googlecast._tcp` service.
+    pub cast: Option<CastService>,
 }
 
-fn endpoint_json(ep: &device::Endpoint) -> Value {
-    Value::object()
-        .with("instance", ep.instance.as_str())
-        .with("host", ep.host.as_str())
-        .with("port", ep.port)
-        .with("address", ep.addr().to_string())
+/// Where a service is reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Endpoint {
+    /// The mDNS instance name.
+    pub instance: String,
+    pub host: String,
+    pub port: u16,
+    /// `ip:port`.
+    pub address: String,
+}
+
+/// An AirPlay (or RAOP) service and what its TXT record says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AirPlayService {
+    pub endpoint: Endpoint,
+    pub model: Option<String>,
+    pub srcvers: Option<String>,
+    pub osvers: Option<String>,
+    pub deviceid: Option<String>,
+    /// The feature bits, as advertised (`0xLOW,0xHIGH`).
+    pub features: Option<String>,
+    pub flags: Option<String>,
+    /// The receiver's public key (hex).
+    pub pk: Option<String>,
+    /// Supports screen mirroring (video).
+    pub mirroring: bool,
+    /// Needs a password (not supported).
+    pub password: bool,
+    /// Shows a PIN to pair.
+    pub pin: bool,
+    /// Whether the storage has a pairing for it (when known).
+    pub paired: Option<bool>,
+}
+
+/// A Google Cast service and what its TXT record says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CastService {
+    pub endpoint: Endpoint,
+    pub friendly_name: Option<String>,
+    pub model: Option<String>,
+    pub id: Option<String>,
+    pub capabilities: Option<u64>,
+    pub status: Option<String>,
+    /// Plays video (not an audio-only speaker).
+    pub video: bool,
+    /// A speaker group.
+    pub group: bool,
+}
+
+impl DeviceInfo {
+    /// From a merged device; `store`, if given, marks paired AirPlay
+    /// receivers.
+    pub(crate) fn new(d: &Device, store: Option<&Store>) -> DeviceInfo {
+        let airplay = |ap: &Option<device::AirPlayEndpoint>| {
+            ap.as_ref().map(|ap| {
+                let t = &ap.txt;
+                AirPlayService {
+                    endpoint: Endpoint::new(&ap.endpoint),
+                    model: t.model.clone(),
+                    srcvers: t.srcvers.clone(),
+                    osvers: t.osvers.clone(),
+                    deviceid: t.deviceid.clone(),
+                    features: t.features.map(format_features),
+                    flags: t.flags.map(|f| format!("{f:#x}")),
+                    pk: t.pk.as_deref().map(hex::encode),
+                    mirroring: t.supports_mirroring(),
+                    password: t.password_required(),
+                    pin: t.pin_required(),
+                    paired: store.map(|s| is_paired(d, s)),
+                }
+            })
+        };
+        DeviceInfo {
+            name: d.name.clone(),
+            addresses: d.addrs(),
+            model: d.model().map(str::to_owned),
+            airplay: airplay(&d.airplay),
+            raop: airplay(&d.raop),
+            cast: d.cast.as_ref().map(|c| {
+                let t = &c.txt;
+                CastService {
+                    endpoint: Endpoint::new(&c.endpoint),
+                    friendly_name: t.friendly_name.clone(),
+                    model: t.model.clone(),
+                    id: t.id.clone(),
+                    capabilities: t.capabilities,
+                    status: t.status.clone(),
+                    video: d.cast_video(),
+                    group: t.is_group(),
+                }
+            }),
+        }
+    }
+
+    /// The `discover --json` object.
+    pub(crate) fn to_value(&self) -> Value {
+        let mut v = Value::object()
+            .with("name", self.name.as_str())
+            .with(
+                "addresses",
+                Value::array(self.addresses.iter().map(|a| a.to_string())),
+            )
+            .with_opt("model", self.model.as_deref());
+        for (key, ap) in [("airplay", &self.airplay), ("raop", &self.raop)] {
+            let Some(ap) = ap else { continue };
+            let o = ap
+                .endpoint
+                .to_value()
+                .with_opt("model", ap.model.as_deref())
+                .with_opt("srcvers", ap.srcvers.as_deref())
+                .with_opt("osvers", ap.osvers.as_deref())
+                .with_opt("deviceid", ap.deviceid.as_deref())
+                .with_opt("features", ap.features.as_deref())
+                .with_opt("flags", ap.flags.as_deref())
+                .with_opt("pk", ap.pk.as_deref())
+                .with("mirroring", ap.mirroring)
+                .with("password", ap.password)
+                .with("pin", ap.pin)
+                .with_opt("paired", ap.paired);
+            v = v.with(key, o);
+        }
+        if let Some(c) = &self.cast {
+            let o = c
+                .endpoint
+                .to_value()
+                .with_opt("friendly_name", c.friendly_name.as_deref())
+                .with_opt("model", c.model.as_deref())
+                .with_opt("id", c.id.as_deref())
+                .with_opt("capabilities", c.capabilities)
+                .with_opt("status", c.status.as_deref())
+                .with("video", c.video)
+                .with("group", c.group);
+            v = v.with("cast", o);
+        }
+        v
+    }
+
+    /// Parses a `discover --json` object.
+    pub(crate) fn from_value(v: &Value) -> Result<DeviceInfo> {
+        let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+        let flag = |v: &Value, k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
+        let airplay = |k: &str| -> Result<Option<AirPlayService>> {
+            let Some(a) = v.get(k).filter(|a| !a.is_null()) else {
+                return Ok(None);
+            };
+            Ok(Some(AirPlayService {
+                endpoint: Endpoint::from_value(a)?,
+                model: s(a, "model"),
+                srcvers: s(a, "srcvers"),
+                osvers: s(a, "osvers"),
+                deviceid: s(a, "deviceid"),
+                features: s(a, "features"),
+                flags: s(a, "flags"),
+                pk: s(a, "pk"),
+                mirroring: flag(a, "mirroring"),
+                password: flag(a, "password"),
+                pin: flag(a, "pin"),
+                paired: a.get("paired").and_then(Value::as_bool),
+            }))
+        };
+        let cast = match v.get("cast").filter(|c| !c.is_null()) {
+            Some(c) => Some(CastService {
+                endpoint: Endpoint::from_value(c)?,
+                friendly_name: s(c, "friendly_name"),
+                model: s(c, "model"),
+                id: s(c, "id"),
+                capabilities: c.get("capabilities").and_then(Value::as_u64),
+                status: s(c, "status"),
+                video: flag(c, "video"),
+                group: flag(c, "group"),
+            }),
+            None => None,
+        };
+        Ok(DeviceInfo {
+            name: v.require_str("name")?.to_owned(),
+            addresses: v
+                .require_array("addresses")?
+                .iter()
+                .map(|a| {
+                    a.as_str()
+                        .and_then(|a| a.parse().ok())
+                        .ok_or_else(|| crate::error::Error::malformed("device: bad address"))
+                })
+                .collect::<Result<_>>()?,
+            model: s(v, "model"),
+            airplay: airplay("airplay")?,
+            raop: airplay("raop")?,
+            cast,
+        })
+    }
+}
+
+impl Endpoint {
+    fn new(ep: &device::Endpoint) -> Endpoint {
+        Endpoint {
+            instance: ep.instance.clone(),
+            host: ep.host.clone(),
+            port: ep.port,
+            address: ep.addr().to_string(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        Value::object()
+            .with("instance", self.instance.as_str())
+            .with("host", self.host.as_str())
+            .with("port", self.port)
+            .with("address", self.address.as_str())
+    }
+
+    fn from_value(v: &Value) -> Result<Endpoint> {
+        Ok(Endpoint {
+            instance: v.require_str("instance")?.to_owned(),
+            host: v.require_str("host")?.to_owned(),
+            port: u16::try_from(v.require_u32("port")?)
+                .map_err(|_| crate::error::Error::malformed("device: bad port"))?,
+            address: v.require_str("address")?.to_owned(),
+        })
+    }
 }
 
 #[cfg(test)]

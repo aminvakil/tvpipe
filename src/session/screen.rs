@@ -72,7 +72,7 @@ pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
     share_rejoin(
         opts.share,
         &connect,
-        ctx.stop.clone(),
+        ctx,
         &launcher,
         Some(&rejoin),
         ShareKind::Screen,
@@ -101,13 +101,13 @@ fn chromium(explicit: Option<&std::path::Path>) -> Result<std::path::PathBuf> {
 pub(super) fn screen_with(
     opts: ShareOptions,
     connect: Connector<'_>,
-    stop: Stop,
+    ctx: &Ctx,
     source: ShareSource<'_>,
 ) -> Result<()> {
     share_rejoin(
         opts,
         connect,
-        stop,
+        ctx,
         source,
         None,
         ShareKind::Screen,

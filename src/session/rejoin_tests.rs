@@ -222,11 +222,12 @@ fn rejoin(window: Duration, resolve: rejoin::Resolve, connect: rejoin::Connect) 
         },
         resolve,
         connect,
+        events: crate::events::Events::none(),
     }
 }
 
 fn play(o: PlayOptions, r: &Rejoin) -> Result<()> {
-    play_rejoin(o, no_io(), &*r.connect, never(), Some(r))
+    play_rejoin(o, no_io(), &*r.connect, &never(), Some(r))
 }
 
 /// Waits until `name` accepted `n` frames on connection `conn`.

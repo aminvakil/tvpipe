@@ -249,12 +249,17 @@ fn pin_after_eof_is_an_error() {
 
 #[test]
 fn keyframe_lines_become_events() {
-    // Without --machine nothing is written; the parser itself must not
-    // choke on partial lines.
-    let mut w = KeyframeEvents::new();
+    // Partial lines are put together; other words are ignored.
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s = seen.clone();
+    let mut w = KeyframeEvents::new(Events::to(move |e| s.lock().unwrap().push(e)));
     w.write_all(b"keyf").unwrap();
-    w.write_all(b"rame\nkeyframe\n").unwrap();
+    w.write_all(b"rame\nkeyframe\nother\n").unwrap();
     assert!(w.line.is_empty());
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Event::Keyframe, Event::Keyframe]
+    );
     w.write_all(&[b'x'; 1000]).unwrap();
     assert_eq!(w.line.len(), 256);
 }

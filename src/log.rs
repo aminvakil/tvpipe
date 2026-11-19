@@ -19,9 +19,32 @@ pub enum Level {
     Trace = 5,
 }
 
+/// One log line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Record {
+    pub level: Level,
+    /// The module that logged it, without the crate name (`airplay::sink`).
+    pub module: String,
+    pub message: String,
+}
+
 impl Level {
+    /// Parses a level's wire name (`as_str`).
+    pub fn from_wire(s: &str) -> Option<Level> {
+        [
+            Level::Error,
+            Level::Warn,
+            Level::Info,
+            Level::Debug,
+            Level::Trace,
+        ]
+        .into_iter()
+        .find(|l| l.as_str() == s)
+    }
+
     /// The level in `log` events (`--machine`).
-    pub fn id(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Level::Error => "error",
             Level::Warn => "warn",
@@ -61,7 +84,7 @@ pub fn write(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
     if crate::machine::enabled() {
         crate::machine::emit(
             crate::machine::event("log")
-                .with("level", level.id())
+                .with("level", level.as_str())
                 .with("module", module)
                 .with("message", args.to_string()),
         );

@@ -71,7 +71,7 @@ fn screen_page_to_cast() {
         }),
         ..opts(vec![rx.addr.to_string()])
     };
-    screen::screen_with(o, &connect, never(), &source).unwrap();
+    screen::screen_with(o, &connect, &never(), &source).unwrap();
     assert!(
         dropped.load(Ordering::SeqCst),
         "the browser was not stopped"
@@ -109,7 +109,7 @@ fn a_capture_that_fails_fails_the_session() {
         });
         Ok(Box::new(()))
     };
-    let e = screen::screen_with(opts(vec![rx.addr.to_string()]), &connect, never(), &source)
+    let e = screen::screen_with(opts(vec![rx.addr.to_string()]), &connect, &never(), &source)
         .unwrap_err();
     assert!(e.to_string().contains("NotAllowedError"), "{e}");
     assert_eq!(tally.lock().unwrap().video, 0);
@@ -126,7 +126,7 @@ fn a_capture_that_fails_fails_the_session() {
     let e = screen::screen_with(
         opts(vec!["cast:127.0.0.1:1".into()]),
         &connect_test,
-        never(),
+        &never(),
         &source,
     )
     .unwrap_err();
@@ -165,7 +165,7 @@ fn stopping_in_the_browser_ends_the_session() {
         ..opts(vec![rx.addr.to_string()])
     };
     let t0 = Instant::now();
-    screen::screen_with(o, &connect, never(), &source).unwrap();
+    screen::screen_with(o, &connect, &never(), &source).unwrap();
     assert!(t0.elapsed() < Duration::from_secs(20));
     let state = rx.shutdown();
     assert!(state.lock().unwrap().stopped, "STOP not received");
@@ -220,7 +220,7 @@ fn chrome_captures_the_screen() {
     screen::screen_with(
         opts(vec![rx.addr.to_string()]),
         &connect,
-        STOP.clone(),
+        &Ctx::from(STOP.clone()),
         &source,
     )
     .unwrap();

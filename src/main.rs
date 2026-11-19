@@ -15,6 +15,7 @@ mod codec;
 mod crypto;
 mod ctx;
 mod error;
+mod events;
 mod machine;
 mod media;
 mod net;
@@ -26,8 +27,9 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let (global, command) = cli::parse_env();
-    let ctx = ctx::Ctx::new();
+    let mut ctx = ctx::Ctx::new();
     if global.machine {
+        ctx.events = machine::events();
         machine::enable();
         machine::hello(command.name());
         machine::start_router(ctx.stop.clone());
@@ -61,7 +63,22 @@ fn main() -> ExitCode {
             util::interrupt::watch_stdin(ctx.stop.clone());
         }
     }
-    let rv = session::run(command, &ctx);
+    let io = session::GameIo {
+        // With --machine, the stdin router hands SLRW over and keyframe
+        // requests become events.
+        stdin: machine::stdin_reader(),
+        stdout: if global.machine {
+            Box::new(machine::KeyframeEvents::new(ctx.events.clone()))
+        } else {
+            Box::new(std::io::stdout())
+        },
+    };
+    let rv = match command {
+        cli::Command::Pair { target, pin } => {
+            airplay::pair::pair(&target, pin.as_deref(), &ctx, &mut |req| prompt_pin(req))
+        }
+        command => session::run(command, &ctx, io),
+    };
     // A stream the machine interface refused is the command's error.
     let rv = match (rv, machine::failure()) {
         (_, Some(e)) => Err(e),
@@ -104,4 +121,24 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Reads the PIN from stdin after prompting on stderr; with `--machine`,
+/// the router's `pin` command answers the `pin-required` event.
+fn prompt_pin(req: &events::PinRequest) -> error::Result<String> {
+    use std::io::{BufRead, Write};
+    if let Some(router) = machine::router() {
+        return router.wait_pin();
+    }
+    eprint!("Enter the PIN shown on {}: ", req.name);
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| error::Error::io("read PIN", e))?;
+    if line.is_empty() {
+        return Err(error::Error::usage("no PIN entered"));
+    }
+    Ok(line.trim().to_owned())
 }

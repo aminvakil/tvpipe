@@ -6,7 +6,6 @@
 //! it), and switches the connection to the encrypted channel. The
 //! returned [`Control`] carries the RTSP client and the shared secret.
 
-use std::io::{BufRead, Write as _};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -14,7 +13,9 @@ use crate::airplay::credentials::{Identity, Query, Receiver, Store};
 use crate::airplay::info::get_info;
 use crate::airplay::pairing::{self, Shared};
 use crate::airplay::secure::SecureStream;
+use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};
+use crate::events::{Event, Paired, PinRequest, Unpaired};
 use crate::net::device::Device;
 use crate::net::discover;
 use crate::net::http::Conn;
@@ -223,30 +224,6 @@ pub fn connect(target: &Target, store: &Store) -> Result<Control> {
     }
 }
 
-/// Reads the PIN from stdin after prompting on stderr; with `--machine`,
-/// a `pin-required` event and the router's `pin` command.
-fn prompt_pin(label: &str, addr: SocketAddr) -> Result<String> {
-    if let Some(router) = crate::machine::router() {
-        crate::machine::emit(
-            crate::machine::event("pin-required")
-                .with("name", label)
-                .with("address", addr.to_string()),
-        );
-        return router.wait_pin();
-    }
-    eprint!("Enter the PIN shown on {label}: ");
-    let _ = std::io::stderr().flush();
-    let mut line = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut line)
-        .map_err(|e| Error::io("read PIN", e))?;
-    if line.is_empty() {
-        return Err(Error::usage("no PIN entered"));
-    }
-    Ok(line.trim().to_owned())
-}
-
 /// Pairs with `target` and stores the credentials in `store`. With `pin`
 /// given, the receiver is assumed to have a fixed PIN and
 /// `/pair-pin-start` is skipped; without it, the TV shows a PIN and
@@ -299,13 +276,26 @@ pub fn pair_with(
     Ok(record)
 }
 
-/// The `pair` command body.
-pub fn pair(target: &str, pin: Option<&str>) -> Result<()> {
+/// The `pair` command body. `get_pin` is asked for the PIN the TV shows,
+/// after a `pin-required` event.
+pub fn pair(
+    target: &str,
+    pin: Option<&str>,
+    ctx: &Ctx,
+    get_pin: &mut dyn FnMut(&PinRequest) -> Result<String>,
+) -> Result<()> {
     let target = resolve(target)?;
     let mut store = Store::open_default()?;
     let label = target.label();
     info!("pairing with {label} at {}", target.addr);
-    let record = pair_with(&target, &mut store, pin, || prompt_pin(&label, target.addr))?;
+    let record = pair_with(&target, &mut store, pin, || {
+        let req = PinRequest {
+            name: label.clone(),
+            address: target.addr.to_string(),
+        };
+        ctx.events.emit(Event::PinRequired(req.clone()));
+        get_pin(&req)
+    })?;
     info!(
         "paired with {} (receiver id {}); credentials in {}",
         record.name,
@@ -317,13 +307,12 @@ pub fn pair(target: &str, pin: Option<&str>) -> Result<()> {
     let mut control = connect_with(target.addr, &store.identity, Auth::Verified(record))?;
     let info = get_info(&mut control.client)?;
     let caps = info.capabilities();
-    if crate::machine::enabled() {
-        crate::machine::emit(
-            crate::machine::event("paired")
-                .with("name", label.as_str())
-                .with_opt("model", info.model.as_deref())
-                .with("file", store.path().display().to_string()),
-        );
+    if ctx.events.active() {
+        ctx.events.emit(Event::Paired(Paired {
+            name: label,
+            model: info.model.clone(),
+            file: Some(store.path().display().to_string()),
+        }));
         return Ok(());
     }
     println!(
@@ -338,16 +327,15 @@ pub fn pair(target: &str, pin: Option<&str>) -> Result<()> {
 }
 
 /// The `unpair` command body: forgets the stored pairing.
-pub fn unpair(target: &str) -> Result<()> {
+pub fn unpair(target: &str, ctx: &Ctx) -> Result<()> {
     let mut store = Store::open_default()?;
     let removed = forget(&mut store, target, resolve)?;
     for r in &removed {
-        if crate::machine::enabled() {
-            crate::machine::emit(
-                crate::machine::event("unpaired")
-                    .with("name", r.name.as_str())
-                    .with("id", r.id_display()),
-            );
+        if ctx.events.active() {
+            ctx.events.emit(Event::Unpaired(Unpaired {
+                name: r.name.clone(),
+                id: r.id_display(),
+            }));
         } else {
             println!("Forgot pairing with {} ({})", r.name, r.id_display());
         }
@@ -656,7 +644,13 @@ mod hardware {
     fn hardware_pair() {
         let Some(t) = atv() else { return };
         let mut store = Store::open_default().unwrap();
-        let r = pair_with(&t, &mut store, None, || prompt_pin("the TV", t.addr)).unwrap();
+        let r = pair_with(&t, &mut store, None, || {
+            eprint!("PIN: ");
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).unwrap();
+            Ok(line.trim().to_owned())
+        })
+        .unwrap();
         eprintln!("paired: {} ({})", r.name, r.id_display());
     }
 

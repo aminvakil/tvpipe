@@ -40,6 +40,7 @@ use crate::airplay::session::MirrorOptions;
 use crate::cast::CastOptions;
 use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};
+use crate::events::{Events, ReceiverState};
 use crate::media::clock::SessionClock;
 use crate::types::{
     AudioFamily, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus, TrackKind, VideoInfo,
@@ -77,6 +78,8 @@ pub(super) struct Rejoin {
     pub backoff: Backoff,
     pub resolve: Resolve,
     pub connect: Connect,
+    /// Where `lost`, `reconnected` and `gave-up` go.
+    pub events: Events,
 }
 
 impl Rejoin {
@@ -87,6 +90,7 @@ impl Rejoin {
             window,
             backoff: Backoff::DEFAULT,
             resolve: Arc::new(resolve_target),
+            events: ctx.events.clone(),
             connect: Arc::new(move |t, o, m| super::connect_one(t, o, m, &ctx)),
         }
     }
@@ -242,7 +246,10 @@ impl Rejoining {
             return;
         };
         info!("lost {} ({e}); reconnecting…", self.name);
-        crate::machine::receiver(&self.name, None, "lost", Some(&e));
+        self.job
+            .rejoin
+            .events
+            .receiver(&self.name, None, ReceiverState::Lost, Some(&e));
         let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let worker = Worker {
@@ -279,7 +286,10 @@ impl Rejoining {
             Err(TryRecvError::Empty) => Ok(()),
             Ok(Outcome::Back(sink)) => {
                 info!("{} back after {secs:.1} s", self.name);
-                crate::machine::receiver(&self.name, None, "reconnected", None);
+                self.job
+                    .rejoin
+                    .events
+                    .receiver(&self.name, None, ReceiverState::Reconnected, None);
                 self.state = State::Live {
                     sink,
                     need_key: true,
@@ -293,7 +303,10 @@ impl Rejoining {
                     e.kind(),
                     format!("gave up reconnecting after {secs:.1} s: {e}"),
                 );
-                crate::machine::receiver(&self.name, None, "gave-up", Some(&e));
+                self.job
+                    .rejoin
+                    .events
+                    .receiver(&self.name, None, ReceiverState::GaveUp, Some(&e));
                 Err(e)
             }
             Ok(Outcome::Incompatible(e)) => {

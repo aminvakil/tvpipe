@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
+use crate::events::{Event, Events};
 use crate::media::slrw;
 
 /// The protocol version in `hello`. New fields and event types do not
@@ -57,11 +58,24 @@ pub fn emit(event: Value) {
     if event["type"].as_str() == Some("end") {
         END_SENT.store(true, Ordering::SeqCst);
     }
-    let line = event.to_json();
+    write_line(&event.to_json());
+}
+
+fn write_line(line: &str) {
     let mut out = io::stdout().lock();
     let _ = out.write_all(line.as_bytes());
     let _ = out.write_all(b"\n");
     let _ = out.flush();
+}
+
+/// The session's events as lines on stdout.
+pub fn events() -> Events {
+    Events::to(|e| {
+        if matches!(e, Event::End(_)) {
+            END_SENT.store(true, Ordering::SeqCst);
+        }
+        write_line(&e.to_json());
+    })
 }
 
 /// `hello`, the first event.
@@ -114,17 +128,15 @@ pub fn receiver(name: &str, protocol: Option<&str>, state: &str, error: Option<&
 /// `keyframe` line becomes a `keyframe` event.
 pub struct KeyframeEvents {
     line: Vec<u8>,
+    events: Events,
 }
 
 impl KeyframeEvents {
-    pub fn new() -> KeyframeEvents {
-        KeyframeEvents { line: Vec::new() }
-    }
-}
-
-impl Default for KeyframeEvents {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(events: Events) -> KeyframeEvents {
+        KeyframeEvents {
+            line: Vec::new(),
+            events,
+        }
     }
 }
 
@@ -134,8 +146,8 @@ impl Write for KeyframeEvents {
             if b == b'\n' {
                 let word = String::from_utf8_lossy(&self.line).trim().to_owned();
                 self.line.clear();
-                if !word.is_empty() {
-                    emit(event(&word));
+                if word == "keyframe" {
+                    self.events.emit(Event::Keyframe);
                 }
             } else if self.line.len() < 256 {
                 self.line.push(b);

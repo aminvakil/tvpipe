@@ -115,9 +115,9 @@ fn share_in_browser(drive: impl FnOnce(String, Report) + Send + 'static) {
         ..ShareOptions::default()
     };
     let r = if real.is_some() {
-        share_with(o, &connect_test, STOP.clone(), &hook)
+        share_with(o, &connect_test, &Ctx::from(STOP.clone()), &hook)
     } else {
-        share_with(o, &connect, STOP.clone(), &hook)
+        share_with(o, &connect, &Ctx::from(STOP.clone()), &hook)
     };
     let drove = driver.lock().unwrap().take().map(|h| h.join());
     for line in report.lock().unwrap().iter() {

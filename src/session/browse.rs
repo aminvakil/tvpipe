@@ -18,7 +18,6 @@ use std::any::Any;
 use super::*;
 use crate::browser::headless::{self, Headless, HeadlessOptions};
 use crate::browser::launch::{self, LaunchOptions};
-use crate::util::stop::Stop;
 
 /// The page's size without `--size`, before the receivers' shape.
 const BROWSE_SIZE: Size = Size {
@@ -68,35 +67,37 @@ pub(super) fn browse(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
     let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
         connect_one(t, o, m, ctx)
     };
-    browse_rejoin(&opts, &connect, ctx.stop.clone(), &launcher, Some(&rejoin))
+    browse_rejoin(&opts, &connect, ctx, &launcher, Some(&rejoin))
 }
 
 /// `share URL` with the connector, stop request and page source given.
 pub(super) fn browse_with(
     opts: &ShareOptions,
     connect: Connector<'_>,
-    stop: Stop,
+    ctx: &Ctx,
     launch: Launcher<'_>,
 ) -> Result<()> {
-    browse_rejoin(opts, connect, stop, launch, None)
+    browse_rejoin(opts, connect, ctx, launch, None)
 }
 
 /// `browse_with` with the reconnect hooks.
 fn browse_rejoin(
     opts: &ShareOptions,
     connect: Connector<'_>,
-    stop: Stop,
+    ctx: &Ctx,
     launch: Launcher<'_>,
     rejoin: Option<&Rejoin>,
 ) -> Result<()> {
     crate::util::timer::raise_resolution();
+    let stop = &ctx.stop;
     let mut server = ShareServer::bind(0)?;
     server.set_rejoin(true);
     let fail = |server: &mut ShareServer, e: Error| {
         server.set_end_reason(&e.to_string());
         e
     };
-    let mut targets = resolve_all(&opts.to, rejoin).map_err(|e| fail(&mut server, e))?;
+    let mut targets =
+        resolve_all(&opts.to, rejoin, &ctx.events).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     let pcm = RawAudioSpec {
         sample_rate: builtin::pattern_sample_rate(
@@ -141,7 +142,7 @@ fn browse_rejoin(
         audio,
         ..Default::default()
     };
-    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin, &ctx.events)
         .map_err(|e| fail(&mut server, e))?;
     if stop.requested() {
         stop_all(sinks);
@@ -198,7 +199,7 @@ fn browse_rejoin(
             return Err(fail(&mut server, e));
         }
     };
-    let Some(cap) = server.wait_capture(&stop) else {
+    let Some(cap) = server.wait_capture(stop) else {
         stop_all(sinks);
         drop(source);
         return match server.failure() {
@@ -206,7 +207,7 @@ fn browse_rejoin(
             None => Ok(()),
         };
     };
-    capture_event(&cap);
+    capture_event(&cap, &ctx.events);
     debug!(
         "browser: the page shares {} ms after the start",
         t0.elapsed().as_millis()
@@ -282,7 +283,13 @@ fn browse_rejoin(
             return Err(e);
         }
     };
-    let r = stream(Box::new(input), "browser", plan.latency_ms, sinks, &stop);
+    let r = stream(
+        Box::new(input),
+        events::Route::Browser,
+        plan.latency_ms,
+        sinks,
+        ctx,
+    );
     drop(source);
     match r {
         Ok(EndReason::Interrupted) => {

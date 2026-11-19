@@ -11,10 +11,6 @@ use crate::browser::protocol;
 use crate::media::clock::MediaClock;
 use crate::net::websocket::{self, Message};
 
-fn never() -> crate::util::stop::Stop {
-    crate::util::stop::Stop::new()
-}
-
 /// An avcC (Constrained Baseline, level 3.1) from the built-in encoder.
 fn avcc() -> Vec<u8> {
     let enc = crate::media::h264enc::Encoder::new(crate::media::h264enc::Config {
@@ -143,7 +139,7 @@ fn wait_viewers(sink: &BrowserSink, n: usize) {
 }
 
 fn started(clock: &Arc<MediaClock>) -> BrowserSink {
-    let mut sink = BrowserSink::bind(&PlayerOptions::default(), never()).unwrap();
+    let mut sink = BrowserSink::bind(&PlayerOptions::default(), &crate::ctx::Ctx::new()).unwrap();
     sink.set_clock(SessionClock::new(clock.clone()));
     sink
 }
@@ -209,7 +205,7 @@ fn http(addr: u16, raw: &str) -> String {
 
 #[test]
 fn page_server_checks_token_host_and_origin() {
-    let sink = BrowserSink::bind(&PlayerOptions::default(), never()).unwrap();
+    let sink = BrowserSink::bind(&PlayerOptions::default(), &crate::ctx::Ctx::new()).unwrap();
     let port = sink.shared.access.port();
     let token = sink.shared.access.token().to_owned();
     let get = |target: &str, host: &str, extra: &str| {
@@ -535,7 +531,7 @@ fn waits_for_a_viewer_or_a_stop() {
         ..PlayerOptions::default()
     };
     let h = std::thread::spawn(move || {
-        BrowserSink::bind(&opts, STOP.clone()).map(|s| s.url().to_owned())
+        BrowserSink::bind(&opts, &crate::ctx::Ctx::from(STOP.clone())).map(|s| s.url().to_owned())
     });
     std::thread::sleep(Duration::from_millis(100));
     STOP.request();
@@ -594,7 +590,7 @@ fn the_url_uses_the_given_token_and_the_fixed_port_or_another() {
         token: Some(token.clone()),
         ..PlayerOptions::default()
     };
-    let sink = BrowserSink::bind(&opts, never()).unwrap();
+    let sink = BrowserSink::bind(&opts, &crate::ctx::Ctx::new()).unwrap();
     assert_ne!(sink.shared.access.port(), DEFAULT_PORT);
     assert!(
         sink.url().ends_with(&format!("/?t={token}")),
@@ -609,5 +605,5 @@ fn the_url_uses_the_given_token_and_the_fixed_port_or_another() {
         port: Some(port),
         ..PlayerOptions::default()
     };
-    assert!(BrowserSink::bind(&opts, never()).is_err());
+    assert!(BrowserSink::bind(&opts, &crate::ctx::Ctx::new()).is_err());
 }

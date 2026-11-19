@@ -42,9 +42,12 @@ use crate::cli::{
     BrowserOptions, Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size,
     BROWSER_TARGET,
 };
-use crate::codec::json::Value;
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
+use crate::events::{
+    self, AudioStarted, CaptureEvent, ConnectedEvent, EndInfo, Event, Events, ReceiverEnd,
+    ReceiverEndInfo, ReceiverState, ReceiverStats, SharePageEvent, Started, Stats, VideoStarted,
+};
 use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
 use crate::media::ffmpeg::{self, Source};
@@ -57,18 +60,17 @@ use crate::types::{
     TrackKind, VideoCodec, VideoPlan,
 };
 use crate::util::ratio::Ratio;
-use crate::util::stop::Stop;
 
-pub fn run(cmd: Command, ctx: &Ctx) -> Result<()> {
+pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
     match cmd {
         Command::Discover {
             timeout,
             json,
             interfaces,
-        } => crate::net::discover::run(timeout, json, &interfaces),
-        Command::Pair { target, pin } => crate::airplay::pair::pair(&target, pin.as_deref()),
-        Command::Unpair { target } => crate::airplay::pair::unpair(&target),
-        Command::Play(opts) | Command::TestPattern(opts) => play(opts, ctx),
+        } => crate::net::discover::run(timeout, json, &interfaces, ctx),
+        Command::Pair { .. } => Err(Error::usage("pair is not a session")),
+        Command::Unpair { target } => crate::airplay::pair::unpair(&target, ctx),
+        Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),
         Command::Share(opts) => share(opts, ctx),
         Command::Screen(opts) => screen::screen(opts, ctx),
@@ -596,7 +598,7 @@ fn connect_one(
                 &target, mirror,
             )?))
         }
-        Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, ctx.stop.clone())?)),
+        Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, ctx)?)),
     }
 }
 
@@ -670,7 +672,11 @@ fn keep_working<T>(what: &str, results: Vec<(String, Result<T>)>) -> Result<Vec<
 
 /// Resolves every `--to` in parallel (discovery browses for names), with
 /// the reconnect hooks' resolver when there are some.
-fn resolve_all(queries: &[String], rejoin: Option<&Rejoin>) -> Result<Vec<Target>> {
+fn resolve_all(
+    queries: &[String],
+    rejoin: Option<&Rejoin>,
+    events: &Events,
+) -> Result<Vec<Target>> {
     let resolve: &(dyn Fn(&str) -> Result<Target> + Sync) = match rejoin {
         Some(r) => &*r.resolve,
         None => &resolve_target,
@@ -688,7 +694,7 @@ fn resolve_all(queries: &[String], rejoin: Option<&Rejoin>) -> Result<Vec<Target
                     .join()
                     .unwrap_or_else(|_| Err(Error::process("resolve thread panicked")));
                 if let Err(e) = &r {
-                    crate::machine::receiver(q, None, "failed", Some(e));
+                    events.receiver(q, None, ReceiverState::Failed, Some(e));
                 }
                 (q.clone(), r)
             })
@@ -705,6 +711,7 @@ fn connect_all(
     opts: &CastOptions,
     mirror: &crate::airplay::session::MirrorOptions,
     rejoin: Option<&Rejoin>,
+    events: &Events,
 ) -> Result<Vec<Box<dyn Sink>>> {
     let results: Vec<(String, Result<Box<dyn Sink>>)> = std::thread::scope(|s| {
         let handles: Vec<_> = targets
@@ -728,31 +735,36 @@ fn connect_all(
                     .unwrap_or_else(|_| Err(Error::process("connect thread panicked")));
                 let name = target_name(t).to_owned();
                 match &r {
-                    Ok(_) => {
-                        crate::machine::receiver(&name, Some(target_protocol(t)), "connected", None)
-                    }
-                    Err(e) => {
-                        crate::machine::receiver(&name, Some(target_protocol(t)), "failed", Some(e))
-                    }
+                    Ok(_) => events.receiver(
+                        &name,
+                        Some(target_protocol(t)),
+                        ReceiverState::Connected,
+                        None,
+                    ),
+                    Err(e) => events.receiver(
+                        &name,
+                        Some(target_protocol(t)),
+                        ReceiverState::Failed,
+                        Some(e),
+                    ),
                 }
                 (name, r)
             })
             .collect()
     });
     let sinks = keep_working("connected", results)?;
-    crate::machine::emit(crate::machine::event("connected").with(
-        "receivers",
-        Value::array(sinks.iter().map(|s| s.name().to_owned())),
-    ));
+    events.emit(Event::Connected(ConnectedEvent {
+        receivers: sinks.iter().map(|s| s.name().to_owned()).collect(),
+    }));
     Ok(sinks)
 }
 
-/// The receiver's protocol in machine-interface events.
-fn target_protocol(t: &Target) -> &'static str {
+/// The receiver's protocol in events.
+fn target_protocol(t: &Target) -> events::Protocol {
     match t {
-        Target::Cast { .. } => "cast",
-        Target::AirPlay { .. } => "airplay",
-        Target::Browser(_) => "browser",
+        Target::Cast { .. } => events::Protocol::Cast,
+        Target::AirPlay { .. } => events::Protocol::AirPlay,
+        Target::Browser(_) => events::Protocol::Browser,
     }
 }
 
@@ -868,27 +880,25 @@ fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Resu
     Ok(builtin)
 }
 
-/// The game's ends of our stdio (SLRW in, keyframe requests out).
-struct GameIo {
-    stdin: Box<dyn std::io::Read + Send>,
-    stdout: Box<dyn std::io::Write + Send>,
+/// The game's ends of our stdio (SLRW in, keyframe requests out): the
+/// CLI's stdin and stdout, or the machine interface's router.
+pub struct GameIo {
+    pub stdin: Box<dyn std::io::Read + Send>,
+    pub stdout: Box<dyn std::io::Write + Send>,
+}
+
+impl GameIo {
+    /// No game: an empty input, requests go nowhere.
+    pub fn none() -> GameIo {
+        GameIo {
+            stdin: Box::new(std::io::empty()),
+            stdout: Box::new(std::io::sink()),
+        }
+    }
 }
 
 fn play(opts: PlayOptions, ctx: &Ctx) -> Result<()> {
-    play_io(
-        opts,
-        GameIo {
-            // With --machine, the stdin router hands SLRW over and
-            // keyframe requests become events.
-            stdin: crate::machine::stdin_reader(),
-            stdout: if crate::machine::enabled() {
-                Box::new(crate::machine::KeyframeEvents::new())
-            } else {
-                Box::new(std::io::stdout())
-            },
-        },
-        ctx,
-    )
+    play_io(opts, GameIo::none(), ctx)
 }
 
 fn play_io(opts: PlayOptions, io: GameIo, ctx: &Ctx) -> Result<()> {
@@ -896,13 +906,13 @@ fn play_io(opts: PlayOptions, io: GameIo, ctx: &Ctx) -> Result<()> {
     let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
         connect_one(t, o, m, ctx)
     };
-    play_rejoin(opts, io, &connect, ctx.stop.clone(), Some(&rejoin))
+    play_rejoin(opts, io, &connect, ctx, Some(&rejoin))
 }
 
 /// `play` with the connector and the stop request (Ctrl-C, SIGTERM, `q`)
 /// given: the tests use fakes and their own stop flag.
-fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>, stop: Stop) -> Result<()> {
-    play_rejoin(opts, io, connect, stop, None)
+fn play_with(opts: PlayOptions, io: GameIo, connect: Connector<'_>, ctx: &Ctx) -> Result<()> {
+    play_rejoin(opts, io, connect, ctx, None)
 }
 
 /// `play_with` with the reconnect hooks (`None`: no reconnecting; names
@@ -911,11 +921,12 @@ fn play_rejoin(
     opts: PlayOptions,
     io: GameIo,
     connect: Connector<'_>,
-    stop: Stop,
+    ctx: &Ctx,
     rejoin: Option<&Rejoin>,
 ) -> Result<()> {
     // Also here for the tests, which do not go through `main`.
     crate::util::timer::raise_resolution();
+    let stop = &ctx.stop;
     let mut tools = Tools::new(opts.ffmpeg.as_deref());
 
     // 1. The input. A missing local file fails before any TV is touched.
@@ -997,7 +1008,7 @@ fn play_rejoin(
             }
         }
     }
-    let mut targets = resolve_all(&opts.to, rejoin)?;
+    let mut targets = resolve_all(&opts.to, rejoin, &ctx.events)?;
     // The built-in test pattern's beep: 44.1 kHz when AirPlay listens.
     let pattern_rate =
         builtin::pattern_sample_rate(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
@@ -1024,7 +1035,7 @@ fn play_rejoin(
         audio,
         ..Default::default()
     };
-    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)?;
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin, &ctx.events)?;
     if stop.requested() {
         stop_all(sinks);
         return Ok(());
@@ -1061,10 +1072,10 @@ fn play_rejoin(
         _ => Route::Ffmpeg,
     };
     let route_name = match &route {
-        Route::Passthrough(..) => "passthrough",
-        Route::Encoded => "encoded",
-        Route::Builtin => "builtin",
-        Route::Ffmpeg => "ffmpeg",
+        Route::Passthrough(..) => events::Route::Passthrough,
+        Route::Encoded => events::Route::Encoded,
+        Route::Builtin => events::Route::Builtin,
+        Route::Ffmpeg => events::Route::Ffmpeg,
     };
     let opened: Result<(Box<dyn Input>, u32)> = (|| match route {
         Route::Passthrough(path, plan) => {
@@ -1185,7 +1196,7 @@ fn play_rejoin(
             return Err(e);
         }
     };
-    match stream(input, route_name, latency_ms, sinks, &stop) {
+    match stream(input, route_name, latency_ms, sinks, ctx) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1256,7 +1267,7 @@ fn share(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
     share_rejoin(
         opts,
         &connect,
-        ctx.stop.clone(),
+        ctx,
         &|_| Ok(Box::new(())),
         Some(&rejoin),
         ShareKind::Page,
@@ -1264,16 +1275,15 @@ fn share(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
     )
 }
 
-/// `capture` (`--machine`): what the page shares.
-fn capture_event(cap: &crate::browser::protocol::CaptureInfo) {
-    crate::machine::emit(
-        crate::machine::event("capture")
-            .with_opt("surface", cap.surface.as_deref())
-            .with_opt("label", cap.label.as_deref())
-            .with("width", cap.width)
-            .with("height", cap.height)
-            .with("audio", cap.audio),
-    );
+/// `capture`: what the page shares.
+fn capture_event(cap: &crate::browser::protocol::CaptureInfo, events: &Events) {
+    events.emit(Event::Capture(CaptureEvent {
+        surface: cap.surface.clone(),
+        label: cap.label.clone(),
+        width: cap.width,
+        height: cap.height,
+        audio: cap.audio,
+    }));
 }
 
 /// What feeds a share: the user's page (`share`) or tvpipe's browser
@@ -1371,7 +1381,7 @@ fn describe_remote(cap: &CaptureInfo) -> String {
 fn share_with(
     opts: ShareOptions,
     connect: Connector<'_>,
-    stop: Stop,
+    ctx: &Ctx,
     on_listening: &dyn Fn(&ShareServer),
 ) -> Result<()> {
     let yes = opts.yes;
@@ -1382,7 +1392,7 @@ fn share_with(
     share_rejoin(
         opts,
         connect,
-        stop,
+        ctx,
         &source,
         None,
         ShareKind::Page,
@@ -1394,20 +1404,23 @@ fn share_with(
 fn share_rejoin(
     opts: ShareOptions,
     connect: Connector<'_>,
-    stop: Stop,
+    ctx: &Ctx,
     source: ShareSource<'_>,
     rejoin: Option<&Rejoin>,
     kind: ShareKind,
     approve: Approver<'_>,
 ) -> Result<()> {
     crate::util::timer::raise_resolution();
+    let stop = &ctx.stop;
     let mut server = ShareServer::bind(0)?;
     if kind == ShareKind::Page {
         info!(
             "open {} in a browser and choose what to share (Ctrl-C to stop)",
             server.url()
         );
-        crate::machine::emit(crate::machine::event("share-page").with("url", server.url()));
+        ctx.events.emit(Event::SharePage(SharePageEvent {
+            url: server.url().to_owned(),
+        }));
         if opts.open {
             if let Err(e) = crate::browser::platform::open_url(server.url()) {
                 warn!("--open: {e}");
@@ -1425,12 +1438,12 @@ fn share_rejoin(
                 .unwrap_or_default(),
             if opts.yes { ", unless --yes" } else { "" }
         );
-        crate::machine::emit(
-            crate::machine::event("tunnel")
-                .with("page", "share")
-                .with("provider", provider.name())
-                .with("url", url.as_str()),
-        );
+        ctx.events.emit(Event::Tunnel(events::TunnelEvent {
+            page: events::TunnelPage::Share,
+            name: None,
+            provider: provider.name().to_owned(),
+            url: url.clone(),
+        }));
     }
     let fail = |server: &mut ShareServer, e: Error| {
         server.set_end_reason(&e.to_string());
@@ -1438,7 +1451,8 @@ fn share_rejoin(
     };
     // Stopped (a browser quits) when this function returns.
     let _source = source(&server).map_err(|e| fail(&mut server, e))?;
-    let mut targets = resolve_all(&opts.to, rejoin).map_err(|e| fail(&mut server, e))?;
+    let mut targets =
+        resolve_all(&opts.to, rejoin, &ctx.events).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     // One PCM stream for both families: 44.1 kHz when AirPlay listens.
     let pcm = RawAudioSpec {
@@ -1459,7 +1473,7 @@ fn share_rejoin(
     server.set_status("waiting", "Press Share and pick what to show.", &names);
     // A capture over the tunnel waits for the local user's yes.
     let cap = loop {
-        let Some(cap) = server.wait_capture(&stop) else {
+        let Some(cap) = server.wait_capture(stop) else {
             return match server.failure() {
                 Some(e) => Err(e),
                 None => Ok(()),
@@ -1481,7 +1495,7 @@ fn share_rejoin(
         server.decline("the host did not accept the share");
         server.set_status("waiting", "Press Share and pick what to show.", &names);
     };
-    capture_event(&cap);
+    capture_event(&cap, &ctx.events);
     let audio = !opts.no_audio && cap.audio;
     if !opts.no_audio && !cap.audio {
         match kind {
@@ -1537,7 +1551,7 @@ fn share_rejoin(
         ..Default::default()
     };
     server.set_status("connecting", "", &names);
-    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin)
+    let sinks = connect_all(&targets, connect, &cast_opts, &mirror, rejoin, &ctx.events)
         .map_err(|e| fail(&mut server, e))?;
     if stop.requested() {
         stop_all(sinks);
@@ -1637,7 +1651,13 @@ fn share_rejoin(
             return Err(e);
         }
     };
-    match stream(Box::new(input), "browser", plan.latency_ms, sinks, &stop) {
+    match stream(
+        Box::new(input),
+        events::Route::Browser,
+        plan.latency_ms,
+        sinks,
+        ctx,
+    ) {
         Ok(EndReason::Interrupted) => {
             info!("stopped");
             Ok(())
@@ -1862,11 +1882,12 @@ fn ffmpeg_source(
 /// are stopped on every path.
 fn stream(
     mut input: Box<dyn Input>,
-    route: &str,
+    route: events::Route,
     latency_ms: u32,
     sinks: Vec<Box<dyn Sink>>,
-    stop: &Stop,
+    ctx: &Ctx,
 ) -> Result<EndReason> {
+    let stop = &ctx.stop;
     let info = input.info().clone();
     let v = &info.video;
     debug!(
@@ -1885,7 +1906,11 @@ fn stream(
             .collect::<String>()
     );
     // On failure the sinks are dropped, which stops them.
-    let fanout = match Fanout::new(sinks, &info, FanoutConfig::default()) {
+    let config = FanoutConfig {
+        events: ctx.events.clone(),
+        ..FanoutConfig::default()
+    };
+    let fanout = match Fanout::new(sinks, &info, config) {
         Ok(f) => f,
         Err(e) => {
             let _ = input.finish(false);
@@ -1901,7 +1926,8 @@ fn stream(
         warn!("a receiver is slow to start; streaming anyway");
     }
     debug!("sinks started in {} ms", ready.elapsed().as_millis());
-    crate::machine::emit(started_event(route, &info, latency_ms));
+    ctx.events
+        .emit(Event::Started(started_event(route, &info, latency_ms)));
     let t0 = Instant::now();
     let mut frames = [0u64; 2];
     let mut input_error = None;
@@ -1910,9 +1936,13 @@ fn stream(
         if stop.requested() {
             break EndReason::Interrupted;
         }
-        if crate::machine::enabled() && Instant::now() >= next_stats {
+        if ctx.events.active() && Instant::now() >= next_stats {
             next_stats += STATS_INTERVAL;
-            crate::machine::emit(stats_event(t0.elapsed(), frames, &fanout.stats()));
+            ctx.events.emit(Event::Stats(stats_event(
+                t0.elapsed(),
+                frames,
+                &fanout.stats(),
+            )));
         }
         match input.next_frame() {
             Ok(Some(f)) => {
@@ -1972,7 +2002,12 @@ fn stream(
             st.pushed, st.sink_dropped, st.dropped_full, st.dropped_waiting
         );
     }
-    crate::machine::emit(end_event(end, input_error.as_ref(), &ends, &stats));
+    ctx.events.emit(Event::End(end_event(
+        end,
+        input_error.as_ref(),
+        &ends,
+        &stats,
+    )));
     if let Some(e) = input_error {
         return Err(e);
     }
@@ -1992,95 +2027,102 @@ fn stream(
 /// How often `stats` events go out (`--machine`).
 const STATS_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The machine interface's `started` event.
-fn started_event(route: &str, info: &crate::media::source::StreamInfo, latency_ms: u32) -> Value {
+/// The `started` event.
+fn started_event(
+    route: events::Route,
+    info: &crate::media::source::StreamInfo,
+    latency_ms: u32,
+) -> Started {
     let v = &info.video;
-    crate::machine::event("started")
-        .with("route", route)
-        .with(
-            "video",
-            Value::object()
-                .with(
-                    "codec",
-                    match v.codec {
-                        VideoCodec::H264 => "h264",
-                        VideoCodec::Hevc => "hevc",
-                    },
-                )
-                .with("width", v.width)
-                .with("height", v.height)
-                .with("fps", v.fps.as_f64()),
-        )
-        .with(
-            "audio",
-            Value::array(info.audio.iter().map(|(_, a)| {
-                let codec = match a.codec {
+    Started {
+        route,
+        video: VideoStarted {
+            codec: match v.codec {
+                VideoCodec::H264 => "h264",
+                VideoCodec::Hevc => "hevc",
+            }
+            .to_owned(),
+            width: v.width,
+            height: v.height,
+            fps: v.fps.as_f64(),
+        },
+        audio: info
+            .audio
+            .iter()
+            .map(|(_, a)| AudioStarted {
+                codec: match a.codec {
                     AudioCodec::Alac => "alac",
                     AudioCodec::AacLc => "aac-lc",
                     AudioCodec::AacEld => "aac-eld",
                     AudioCodec::Opus => "opus",
                     AudioCodec::PcmS16le => "pcm-s16le",
-                };
-                Value::object()
-                    .with("codec", codec)
-                    .with("sample_rate", a.sample_rate)
-                    .with("channels", a.channels)
-            })),
-        )
-        .with("latency_ms", latency_ms)
+                }
+                .to_owned(),
+                sample_rate: a.sample_rate,
+                channels: a.channels,
+            })
+            .collect(),
+        latency_ms,
+    }
 }
 
-fn sink_stats_json(name: &str, st: &crate::media::fanout::SinkStats) -> Value {
-    Value::object()
-        .with("name", name)
-        .with("pushed", st.pushed)
-        .with("dropped", st.sink_dropped)
-        .with("dropped_full", st.dropped_full)
-        .with("dropped_waiting", st.dropped_waiting)
+fn receiver_stats(name: &str, st: &crate::media::fanout::SinkStats) -> ReceiverStats {
+    ReceiverStats {
+        name: name.to_owned(),
+        pushed: st.pushed,
+        dropped: st.sink_dropped,
+        dropped_full: st.dropped_full,
+        dropped_waiting: st.dropped_waiting,
+    }
 }
 
-/// The machine interface's `stats` event.
+/// The `stats` event.
 fn stats_event(
     elapsed: Duration,
     frames: [u64; 2],
     stats: &[(String, crate::media::fanout::SinkStats)],
-) -> Value {
-    crate::machine::event("stats")
-        .with("elapsed_ms", elapsed.as_millis() as u64)
-        .with("video_frames", frames[0])
-        .with("audio_frames", frames[1])
-        .with(
-            "receivers",
-            Value::array(stats.iter().map(|(n, st)| sink_stats_json(n, st))),
-        )
+) -> Stats {
+    Stats {
+        elapsed_ms: elapsed.as_millis() as u64,
+        video_frames: frames[0],
+        audio_frames: frames[1],
+        receivers: stats.iter().map(|(n, st)| receiver_stats(n, st)).collect(),
+    }
 }
 
-/// The machine interface's `end` event.
+/// The `end` event of a session.
 fn end_event(
     end: EndReason,
     input_error: Option<&Error>,
     ends: &[(String, SinkEnd)],
     stats: &[(String, crate::media::fanout::SinkStats)],
-) -> Value {
+) -> EndInfo {
     let reason = match end {
-        _ if input_error.is_some() => "error",
-        EndReason::Eof => "eof",
-        EndReason::Interrupted => "stopped",
-        EndReason::ReceiversGone => "receivers-gone",
+        _ if input_error.is_some() => events::EndReason::Error,
+        EndReason::Eof => events::EndReason::Eof,
+        EndReason::Interrupted => events::EndReason::Stopped,
+        EndReason::ReceiversGone => events::EndReason::ReceiversGone,
     };
-    let receivers = ends.iter().zip(stats).map(|((name, how), (_, st))| {
-        let (state, error) = match how {
-            SinkEnd::Stopped => ("stopped", None),
-            SinkEnd::Finished => ("ended", None),
-            SinkEnd::Failed(e) => ("failed", Some(e.to_string())),
-        };
-        sink_stats_json(name, st)
-            .with("end", state)
-            .with_opt("error", error)
-    });
-    crate::machine::event("end")
-        .with("reason", reason)
-        .with("receivers", Value::array(receivers))
+    let receivers = ends
+        .iter()
+        .zip(stats)
+        .map(|((name, how), (_, st))| {
+            let (end, error) = match how {
+                SinkEnd::Stopped => (ReceiverEnd::Stopped, None),
+                SinkEnd::Finished => (ReceiverEnd::Ended, None),
+                SinkEnd::Failed(e) => (ReceiverEnd::Failed, Some(e.to_string())),
+            };
+            ReceiverEndInfo {
+                stats: receiver_stats(name, st),
+                end,
+                error,
+            }
+        })
+        .collect();
+    EndInfo {
+        reason,
+        receivers: Some(receivers),
+    }
 }
 
 mod browse;
@@ -2760,9 +2802,9 @@ mod tests {
         )?))
     }
 
-    /// Never asks to stop.
-    pub(super) fn never() -> Stop {
-        Stop::new()
+    /// A context that never asks to stop.
+    pub(super) fn never() -> Ctx {
+        Ctx::new()
     }
 
     /// The real connector, with a context of its own.
@@ -2909,7 +2951,7 @@ mod tests {
             raw_opts(rx.addr.to_string(), 48_000),
             raw_game_io(48_000),
             &connect,
-            never(),
+            &never(),
         )
         .unwrap();
         let c = builtin::take_finished_counts().expect("built-in input");
@@ -2964,7 +3006,7 @@ mod tests {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
         };
-        play_with(o, io, &connect, never()).unwrap();
+        play_with(o, io, &connect, &never()).unwrap();
         let t = *tally.lock().unwrap();
         let state = rx.shutdown();
         let st = state.lock().unwrap();
@@ -2993,7 +3035,7 @@ mod tests {
             raw_opts(to.clone(), 44_100),
             raw_game_io(44_100),
             &connect,
-            never(),
+            &never(),
         )
         .unwrap();
         {
@@ -3038,7 +3080,7 @@ mod tests {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
         };
-        play_with(o, io, &connect, never()).unwrap();
+        play_with(o, io, &connect, &never()).unwrap();
         let t = *tally.lock().unwrap();
         let r = fake.rec();
         assert!(r.teardown);
@@ -3109,7 +3151,7 @@ mod tests {
             bitrate_kbps: 300,
             gop: 30,
         };
-        let input = BuiltinInput::test_pattern(out, 48_000, vec![], never()).unwrap();
+        let input = BuiltinInput::test_pattern(out, 48_000, vec![], never().stop).unwrap();
         let arrivals = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = ArrivalSink {
             caps: caps(1920, 1080, 60, 10_000),
@@ -3118,7 +3160,7 @@ mod tests {
         };
         stream(
             Box::new(input),
-            "builtin",
+            events::Route::Builtin,
             0,
             vec![Box::new(sink)],
             &never(),
