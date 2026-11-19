@@ -3,7 +3,7 @@ title: Latency
 summary: The test pattern, measuring the delay, statistics.
 group: Development
 spec:
-  Command: `test-pattern`
+  Command: `debug pattern`
   Option: `--latency MS`
 ---
 
@@ -16,7 +16,7 @@ The pattern needs no ffmpeg.
 :::
 
 ```sh
-$ tvpipe test-pattern --to TV
+$ tvpipe debug pattern --to TV
 ```
 
 ![The test pattern: colour bars, a UTC clock, frame number and media time](shots/test-pattern.png "Colour bars, the UTC time at which the frame was made, the frame number and the media time. A square flashes and a beep sounds once a second."){.crt}

@@ -3,21 +3,21 @@ title: Party games
 summary: Games on the TV that everyone plays with their phone.
 group: Use
 spec:
-  Command: `tvpipe playshare GAME`
+  Command: `tvpipe game play GAME`
   Package: `@tvpipe/party` (npm, for writing games)
   A game: a folder or a zip with `tvpipe.json`
   Example: `games/drawbluff`
 ---
 
-`tvpipe playshare` runs games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. Nobody installs anything: a game is a small web app, and tvpipe serves it, puts its main screen on the TV and connects the phones.
+`tvpipe game play` runs games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. Nobody installs anything: a game is a small web app, and tvpipe serves it, puts its main screen on the TV and connects the phones.
 
 ```sh
-$ tvpipe playshare games/drawbluff     # a folder with tvpipe.json
-$ tvpipe playshare drawbluff.zip       # or a zip of one
+$ tvpipe game play games/drawbluff     # a folder with tvpipe.json
+$ tvpipe game play drawbluff.zip       # or a zip of one
 ```
 
 :::aside Not released yet
-`playshare` and `@tvpipe/party` come out with the next release. Until then, use them from a clone of the repository.
+`tvpipe game` and `@tvpipe/party` come out with the next release. Until then, use them from a clone of the repository.
 :::
 
 ## Playing
@@ -70,8 +70,8 @@ A game is a small web app: a host page with the rules, a TV page, a phone page a
 
 ```sh
 $ cd games/drawbluff && npm install && npm run build
-$ tvpipe playshare .
-$ npm run zip && tvpipe playshare drawbluff.zip
+$ tvpipe game play .
+$ npm run zip && tvpipe game play drawbluff.zip
 ```
 
 Its window shows the room code and the QR code, the TVs, the players, the number of rounds, the timers and whether latecomers join at the next round, at the next drawing, or not at all, and a preview of the TV. **Add a bot** adds fake players, to try it alone.

@@ -15,7 +15,7 @@ spec:
 `--tunnel-ttl MIN` lets new viewers join for MIN minutes only.
 :::
 
-With the player, anyone with the link watches in their browser. That is `preview`, or `play`, `screen` and `test-pattern` with `--to browser`.
+With the player, anyone with the link watches in their browser. That is `preview`, or `play`, `screen` and `debug pattern` with `--to browser`.
 
 ```sh
 $ tvpipe preview movie.mp4 --tunnel
@@ -45,19 +45,19 @@ Programs that use `--machine` or the [Node SDK](node.md) have no terminal to ask
 ## Any web app
 
 :::aside QR codes
-`tvpipe qr TEXT` prints any link as a QR code, `--svg` as an SVG file.
+`tvpipe debug qr TEXT` prints any link as a QR code, `--svg` as an SVG file.
 :::
 
-`tvpipe tunnel PORT` puts a server of your own on a public link, for example a web app on port 8080. It runs until you stop it.
+`tvpipe debug tunnel PORT` puts a server of your own on a public link, for example a web app on port 8080. It runs until you stop it.
 
 ```sh
-$ tvpipe tunnel 8080
-$ tvpipe tunnel 8080 --tunnel=opentunnel
+$ tvpipe debug tunnel 8080
+$ tvpipe debug tunnel 8080 --tunnel=opentunnel
 ```
 
 Your server answers everything that comes in, so it decides who may do what.
 
-[Party games](party.md) do not need this: `tvpipe playshare` starts its own link for the phones, OpenTunnel, else Cloudflare, reusing the last quick tunnel.
+[Party games](party.md) do not need this: `tvpipe game play` starts its own link for the phones, OpenTunnel, else Cloudflare, reusing the last quick tunnel.
 
 ## Providers
 

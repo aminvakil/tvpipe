@@ -1,9 +1,9 @@
 ---
 title: Making party games
-summary: Build a game for tvpipe playshare, check it, pack it into a zip, and run it.
+summary: Build a game for tvpipe, check it, pack it into a zip, and run it.
 group: Use
 spec:
-  Commands: `bundle`; `playshare`
+  Commands: `game new`, `game check`; `game pack`, `game play`
   Library: `@tvpipe/party` (served by tvpipe at `/_tvpipe/lib/`)
   Browser: Chrome, Edge, Chromium or Brave for the window and `--smoke`
   Example: `games/drawbluff`
@@ -18,8 +18,8 @@ The game runs in browsers. tvpipe relays the phones to the host page, and the `@
 ## Start a game
 
 ```sh
-$ tvpipe bundle --init my-game
-$ tvpipe playshare my-game
+$ tvpipe game new my-game
+$ tvpipe game play my-game
 ```
 
 The starter is a buzzer in plain JavaScript: the host counts rounds and points, the TV shows the QR code and who buzzed first, phones get a big button. Edit a file, reload the page, and the change is there.
@@ -121,9 +121,9 @@ A TV page made of HTML can be drawn into a canvas in Chrome 157 and later (HTML-
 ## Check and pack
 
 ```sh
-$ tvpipe bundle --check my-game     # what would break, with file and line
-$ tvpipe bundle my-game             # my-game.zip
-$ tvpipe bundle my-game --smoke     # and run it once in a headless browser
+$ tvpipe game check my-game          # what would break, with file and line
+$ tvpipe game pack my-game           # my-game.zip
+$ tvpipe game pack my-game --smoke   # and run it once in a headless browser
 ```
 
 :::aside Same files, same zip
@@ -132,28 +132,26 @@ The zip is the same byte for byte when the files are: entries are sorted and car
 
 | Option | |
 |---|---|
-| `-o FILE` | The zip to write. Default: `NAME.zip` here, `NAME` from `tvpipe.json`. |
-| `--check` | Only check a folder or a zip, and write nothing. |
+| `-o FILE` | `game pack`: the zip to write. Default: `NAME.zip` here, `NAME` from `tvpipe.json`. |
 | `--smoke` | Also run the game once without TVs, with a fake phone. |
 | `--strict` | Warnings fail too, for CI. |
-| `--init DIR` | A starter game in a new or empty folder. |
 | `--browser PATH` | The Chromium based browser for `--smoke`. |
 
-`tvpipe bundle` checks `tvpipe.json`, then follows every page through its HTML, CSS and JavaScript imports. It reports missing files, names that differ only in case (they work on a Mac and break in the zip), TypeScript that was never built, imports a browser cannot resolve, files that come from the internet, and names that break on other systems. `--smoke` starts the game without TVs, opens the launcher, the host page, the TV page and the phone page in a headless browser, lets a fake phone join, and reports errors from any of them. `--strict` makes warnings fail too, for CI.
+`tvpipe game check` checks `tvpipe.json`, then follows every page through its HTML, CSS and JavaScript imports. It reports missing files, names that differ only in case (they work on a Mac and break in the zip), TypeScript that was never built, imports a browser cannot resolve, files that come from the internet, and names that break on other systems. `--smoke` starts the game without TVs, opens the launcher, the host page, the TV page and the phone page in a headless browser, lets a fake phone join, and reports errors from any of them. `--strict` makes warnings fail too, for CI. `game pack` runs the same checks before it packs.
 
-Share the zip. A zip made by hand, with the Finder's Compress for example, works too, but `tvpipe bundle` checks the game and leaves out what does not belong.
+Share the zip. A zip made by hand, with the Finder's Compress for example, works too, but `tvpipe game pack` checks the game and leaves out what does not belong.
 
 ## Play
 
 ```sh
-$ tvpipe playshare my-game.zip
+$ tvpipe game play my-game.zip
 ```
 
 The window shows the TVs, and the game starts on the ones you pick. [Party games](party.md) covers the window, how phones get in, and how a game ends.
 
 | Problem | Try |
 |---|---|
-| The game does not start | `tvpipe bundle --check` on it lists what is wrong |
+| The game does not start | `tvpipe game check` on it lists what is wrong |
 | No TVs in the list | Same network, TV awake, AirPlay or casting turned on. `tvpipe discover` shows what the network has. |
 | Phones cannot open the link | `--tunnel=cloudflare`, or `--lan` with the phones on the same Wi-Fi |
 | The game needs a newer tvpipe | Update tvpipe. The game's `tvpipe.json` says which version it is made for. |

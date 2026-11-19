@@ -3,7 +3,7 @@ title: ffmpeg and encoding
 summary: When tvpipe needs ffmpeg, and checking an input.
 group: Development
 spec:
-  Command: `debug-pipeline`
+  Command: `debug pipeline`
   Flag: `-v`
 ---
 
@@ -26,8 +26,8 @@ A file is sent unchanged when it is an MP4, MOV or MKV with H.264 video, without
 
 ## Checking an input
 
-`debug-pipeline` reads an input without a receiver and prints every frame. `--raw` shows what ffmpeg delivers before tvpipe’s settings.
+`debug pipeline` reads an input without a receiver and prints every frame. `--raw` shows what ffmpeg delivers before tvpipe’s settings.
 
 ```sh
-$ tvpipe debug-pipeline movie.mp4
+$ tvpipe debug pipeline movie.mp4
 ```

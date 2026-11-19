@@ -52,7 +52,7 @@ The address stays the same between runs, so the source keeps working the next ti
 
 ## With other commands
 
-The player options `--open`, `--port`, `--wait-for-viewer` and `--new-token` work with `play`, `preview`, `share` and `test-pattern`, whenever one of the receivers is `--to browser`. `share --open` without a URL opens the share page instead.
+The player options `--open`, `--port`, `--wait-for-viewer` and `--new-token` work with `play`, `preview`, `share` and `debug pattern`, whenever one of the receivers is `--to browser`. `share --open` without a URL opens the share page instead.
 
 ## Video calls
 

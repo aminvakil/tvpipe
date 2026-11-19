@@ -3,7 +3,7 @@ title: Commands and options
 summary: Every command, and the options they share.
 group: Reference
 spec:
-  Commands: `play`, `preview`; `share`, `test-pattern`
+  Commands: `play`, `preview`; `share`, `debug pattern`
 ---
 
 Every command lists all of its options with `--help`.
@@ -18,12 +18,12 @@ Every command lists all of its options with `--help`.
 | `screen` | Mirrors a screen or a window, with the computer's sound. See [Sharing the screen](screen.md). |
 | `share` | Shares a browser tab or a web page. See [Sharing the screen](screen.md#s3) and [A web page on the TV](web-page.md). |
 | `preview` | Plays in a browser tab. See [Playing to a browser](browser.md). |
-| `test-pattern` | Sends a test pattern. See [Latency](latency.md). |
-| `playshare` | Plays a party game: a web app on the TV, phones join with a QR code. See [Party games](party.md). |
-| `bundle` | Checks a party game, packs it into a zip, or starts a new one. See [Making party games](making-games.md). |
-| `tunnel` | Puts a server on this computer on a public link. See [Public links](links.md#s3). |
-| `qr` | Prints a QR code, `--svg` or `--rows` for programs. |
-| `debug-pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |
+| `game play` | Plays a party game: a web app on the TV, phones join with a QR code. See [Party games](party.md). |
+| `game new`, `game check`, `game pack` | Starts a party game, checks it, or packs it into a zip. See [Making party games](making-games.md). |
+| `debug pattern` | Sends a test pattern. See [Latency](latency.md). |
+| `debug pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |
+| `debug tunnel` | Puts a server on this computer on a public link. See [Public links](links.md#s3). |
+| `debug qr` | Prints a QR code, `--svg` or `--rows` for programs. |
 
 ## Streaming
 
