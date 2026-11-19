@@ -248,6 +248,12 @@ naming its host, TV and phone pages. Design and protocols:
   game with a stand-in receiver backend and a headless browser over
   DevTools, and joins with a fake phone over the relay. `--init` writes
   the starter game embedded from `playshare/template/`.
+- **Surfaces** (`playshare/surface.rs`): a page encodes a canvas with
+  WebCodecs and sends SLRW records over `/_tvpipe/surface`; tvpipe feeds
+  them to a `Stream` (the program's-own-H.264 path) per surface, with
+  keyframe requests back. No second browser; one surface per TV. Measured
+  against the tab path and recommended for canvas games:
+  [`docs/playshare-design.md`](docs/playshare-design.md) §17.
 
 ## Timing and Latency
 

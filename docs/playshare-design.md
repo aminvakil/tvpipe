@@ -10,7 +10,8 @@ TV rendering) and the Node host of `docs/party-design.md` (§2 B, §4, §7,
 Contents: 1. decisions, 2. the pieces, 3. the bundle, 4. listeners and
 URLs, 5. the local API, 6. the relay, 7. the launcher, 8. the game
 library, 9. casting, 10. lifecycle, 11. tunnels, 12. security, 13.
-tests, 14. what goes, 15. plan.
+tests, 14. what goes, 15. plan, 16. as built, 17. surfaces: canvases
+beamed without a second browser.
 
 ## 1. Decisions (the owner's, final)
 
@@ -486,3 +487,168 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   mode with a phone; a game's own launcher (only the contract and the
   standard one); the host page keeping its state across a reload
   (`sessionStorage`), so a reload sends phones back to their name entry.
+
+## 17. Surfaces: canvases beamed without a second browser
+
+The TV page of §9 needs a second, headless browser that renders the page
+and captures its tab. A **surface** skips it: the game draws its TV
+picture into a canvas (2D, WebGL, an `OffscreenCanvas` in a worker), the
+library encodes it with WebCodecs in the page, and tvpipe streams the
+H.264 and PCM on the path a program's own H.264 takes
+([`Stream`](../crates/tvpipe/src/api/stream.rs), `docs/slrw.md`) to
+AirPlay, Cast or the `browser` player. Each surface is its own session,
+so two canvases can go to two TVs: one game, different pictures per
+screen.
+
+### 17.1 How it works
+
+```
+page (window or worker)                      tvpipe
+ canvas ─ new VideoFrame(canvas) ─ VideoEncoder ─┐
+ Web Audio node ─ AudioWorklet ─ s16 PCM ────────┤ SLRW records over
+                                                 │ ws /_tvpipe/surface?id=N
+            {"t":"keyframe"} / status / stats ◀──┤ (token, local origin)
+                                                 ▼
+                         surface.rs: onto the Stream's clock ─ Stream (H.264 in)
+                                                 ─▶ AirPlay / Cast / browser
+```
+
+- **API** (§5): `surface.open {width, height, fps, to?, audio?, bitrate?}`
+  starts a `Stream` (`Options::h264(w, h, fps)`, PCM 48 kHz stereo with
+  `audio`) to `to` (default: the launcher's choice) and answers `{id, path}`;
+  `surface.close {id}`; `surface` events with each surface's state and
+  receivers (as `cast`). At most 8 at once; all stop at the end (§10).
+- **Socket** `/_tvpipe/surface?id=N` (local listener, the API token: the
+  window's cookie also reaches workers): binary messages are SLRW
+  records (`u8 kind | u64le pts_us | u32le len | payload`: 4 config,
+  3 H.264 with flags, 2 PCM), `pts_us` the page's wall clock
+  (`performance.timeOrigin + now()`); text `{"t":"log",codec,agent}`.
+  tvpipe answers `{"t":"keyframe"}` (a receiver wants an IDR),
+  `{"t":"status",…}` and once a second `{"t":"stats",fps,kbps,lagMs,lagMaxMs,dropped}`
+  (`lagMs`: from the page's frame to tvpipe).
+- **Clock**: tvpipe puts the first record at "now on the stream's clock,
+  less its age" and keeps the others at their distance from it, so the
+  page's frames are stamped as an in-process game stamps its own.
+  PCM waits for the first queued frame (before it the stream is not
+  open, and queued sound would be stale).
+- **The library** (`npm/party/src/surface.ts`): `tvpipe.surface({canvas,
+  fps, to, audio: {context, node}})` opens a surface and returns a
+  `SurfaceEncoder`; the game calls `frame()` after drawing (paced down to
+  the surface's rate), or `clock: "timer"`. `tvpipe.openSurface()` plus
+  `new SurfaceEncoder(info, offscreenCanvas)` runs the encoder in a
+  worker. H.264 Constrained Baseline at the smallest level that fits
+  (then Main, High), `latencyMode: "realtime"`, hardware preferred, an
+  IDR every 2 s and on request. Backpressure: a frame is skipped while
+  the encoder holds more than 2 or the socket more than 4 MiB.
+  `captureAudio(context, node)` taps a Web Audio node with an
+  AudioWorklet (10 ms of s16 PCM per record).
+- **Warm-up** (as `capture.js`, `docs/share-protocol.md`): a hardware
+  encoder's first pictures come out most of a second after their frames
+  (VideoToolbox in Chrome: ~0.9 s). A first keyframe that old anchored
+  tvpipe's media clock that late, and since the clock keeps early frames'
+  instants (up to 1 s, for ffmpeg's bursts) every later frame kept the
+  delay: ~1 s of latency for the whole session until the encoder side
+  dropped chunks until a keyframe at most 150 ms old.
+
+### 17.2 Measured
+
+`node games/beam/measure.ts` (`games/beam`: a WebGL demo, 400 instanced
+triangles on an animated shader field, a beep a second; every picture
+carries the wall clock in ms as a row of blocks). tvpipe playshare
+release build, the `browser` receiver, the player page in a second
+headless Chrome reading the blocks back from its canvas: latency is
+glass to glass on one machine including the player's 100 ms playout
+delay; CPU from `ps` (user + system, 15 s; 100 % = one core). macOS
+26.6 on Apple silicon, Chrome 157, Firefox 160, Safari 26.6,
+2026-11-19.
+
+| Run (1280x720@30 unless said) | Latency p50 / p95 | Frames at the player | CPU: tvpipe (+ its browser) | CPU: the window |
+|---|---|---|---|---|
+| tab capture (`share URL` of the same picture as a page) | 109–192 / 111–195 ms (4 runs) | 25–27/s | 24–32 % | 11–13 % |
+| surface, drawn and encoded per `requestAnimationFrame` | 119–123 / 123–126 ms | 26–27/s | 1 % | 25–27 % |
+| surface, a timer | 110–123 / 112–126 ms | 26/s | 1 % | 22–24 % |
+| surface, an `OffscreenCanvas` in a worker | 120–130 / 124–133 ms | 25–26/s | 1 % | 16–19 % |
+| surface 1920x1080@60 | 133–137 / 135–138 ms | 49–60/s | 1 % | 19–21 % |
+| two surfaces to two receivers | 121 and 127 / 123 and 128 ms | 27 and 30/s | 1 % | 21–31 % |
+| Firefox 160 (headless window, its own H.264 encoder) | 169–236 ms | 18/s (tvpipe: 12–23/s) | 0 % | 82 % (software WebGL) |
+| Safari 26.6 (a window in the background) | 258 / 263 ms | 15.5/s (tvpipe: 15–19/s) | 1 % | 36 % |
+
+From page to tvpipe a frame takes 6–11 ms (`lagMs`; Firefox 23 ms),
+encoding 6–10 ms (VideoToolbox, `avc1.42E01F`/`42E02A` "hw" in all
+three browsers). Every surface run had no frames dropped or skipped.
+
+**A hidden window** (a real Chrome window, minimized; the page reports
+`visibilityState: hidden`):
+
+| Clock | With playshare's switches (`--disable-background-timer-throttling`, `--disable-renderer-backgrounding`, `--disable-backgrounding-occluded-windows`: our app window) | Without them (a user's browser, `--window open`) |
+|---|---|---|
+| `requestAnimationFrame` | 0 frames/s (stops) | 0 frames/s |
+| a timer on the page | 20–26/s | 1/s |
+| a worker (`OffscreenCanvas`, a timer there) | 26–28/s | 27–29/s |
+
+### 17.3 HTML-in-Canvas: DOM TV pages as surfaces
+
+Chrome 157 (stable since 2026-11-03, after an origin trial) draws HTML
+into a canvas: `<canvas layoutsubtree content="drawable">` with
+`drawable` children, `ctx.drawElementImage(element, …)` in the canvas's
+`paint` event, `canvas.requestPaint()` for the next one. A same-origin
+`<iframe drawable>` is drawn with its document (checked: the inner page's
+pixels in the canvas). So a game's existing DOM TV page can become a
+surface without changes: the host page puts the TV page in such an
+iframe, draws it every frame and encodes the canvas. drawbluff's host
+page does this with **TV picture: drawn here** (`host.ts`,
+`beamCanvas`); a whole game ran that way (`node test/live/playshare.ts
+--tv canvas`: the TV picture through the `browser` receiver, every
+phase as with the tab). Limits: Chromium only (the setting is disabled
+elsewhere); painting stops while the window is hidden, like
+`requestAnimationFrame` (the TV freezes, the game goes on); the TV page's
+own sound stays in the window unless the game routes it into
+`captureAudio`.
+
+### 17.4 Result and recommendation
+
+It holds up, and it is the better path for anything drawn in a canvas:
+
+- **Cheaper**: no second browser. CPU for the same picture: the window
+  ~20–27 % and tvpipe ~1 % against ~11 % and ~30 % (tvpipe's headless
+  Chrome rendering, capturing and encoding): about half overall, and one
+  process tree less to start, crash-restart and sweep.
+- **As fast or faster**: 110–137 ms glass to glass against 109–192 ms
+  (tab capture adds a frame of capture and a compositor round trip and
+  varied more between runs). Keyframes come on request at once and the
+  frame pacing is the game's own (the frame it drew is the frame sent).
+- **Any WebCodecs browser** runs the encoder: Chrome, Firefox and Safari
+  all streamed with hardware H.264. The window no longer needs Chrome's
+  tab-capture switches or a Local Network Access grant, so `--window
+  open` (the system's browser) is a first-class host.
+- **Multi-screen for real**: one surface per TV, each its own session,
+  different pictures; measured two at once at full rate.
+- **The catch is visibility**: a surface drawn in `requestAnimationFrame`
+  stops when the window is minimized or hidden. A worker with an
+  `OffscreenCanvas` and a timer is unaffected in every case measured; a
+  page timer is fine only in our own app window (its switches), and
+  throttled to 1/s in an ordinary browser. The tab path (§9) does not
+  care what the window does.
+
+Recommendation, as implemented:
+
+1. **Canvas games use surfaces** (`tvpipe.surface()`), drawn and encoded
+   in a worker (`OffscreenCanvas`) so a hidden window does not matter;
+   on the main thread only when the game accepts that (our app window
+   with a timer works, `requestAnimationFrame` does not).
+2. **DOM TV pages keep the tab path** (`party.cast()`) by default: it
+   needs nothing from the window. HTML-in-Canvas is the opt-in for
+   Chrome 157+ where one browser matters more than a minimized window
+   (drawbluff offers both).
+3. **Multi-screen games** open a surface per screen (or mix: a surface
+   for one TV, the tab path for another).
+4. Sound: Web Audio routed through `captureAudio`; a DOM page's own
+   `<audio>` is not captured on the surface path.
+
+Not done yet: surfaces in the standard launcher's vocabulary (a game
+asks for them in its host page); per-surface receiver choice in the
+launcher (the API takes `to`, the launcher only has one selection);
+real TVs (only the `browser` receiver was measured; AirPlay and Cast take
+the same H.264 as from a native game); Safari and Firefox were checked
+only with a window in the background (Safari) or headless (Firefox),
+not hidden; HTML-in-Canvas in a worker (`captureElementImage`).
