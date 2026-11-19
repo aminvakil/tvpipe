@@ -1,0 +1,16 @@
+[package]
+name = "tvpipe-canvas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "A small software 2D renderer for RGBA video frames: shapes, anti-aliased paths and strokes, TrueType text, QR codes"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["canvas", "rasterizer", "truetype", "2d", "graphics"]
+categories = ["graphics", "rendering"]
+include = ["/Cargo.toml", "/README.md", "/src/", "/tests/"]
+
+[dependencies]

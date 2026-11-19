@@ -578,6 +578,40 @@ points, 40 lines of text with a warm glyph cache) should render in
 under 10 ms on one core; the renderer redraws only when the view or an
 animation changes, otherwise it re-sends the last frame.
 
+### 5.1 As built (plan step 5)
+
+`crates/tvpipe-canvas` (no dependencies), about 2 000 lines with tests:
+`Canvas` (RGBA8, straight alpha, clip, source-over; `fill_rect`,
+`fill_rounded_rect`, `fill_circle`, `fill_path`, `stroke_path`,
+`stroke_polyline`, `draw_rgba`/`draw_canvas`, `draw_rgba_scaled`
+(bilinear, premultiplied), `draw_qr` (any module grid: `tvpipe::QrCode`'s
+`size()`/`dark()`, so the crate needs no tvpipe)), `Path` (lines, quads,
+cubics, rects, rounded rects, ellipses, arcs; flattened to 0.02 px),
+the font-rs accumulator with clipping on all four sides, capsule
+strokes, `Font` (cmap 4/12, hmtx, simple and composite glyphs, `kern`
+format 0 **and GPOS pair adjustment** (formats 1 and 2, extension
+lookups): the subset fonts carry kerning only in GPOS), `Text` (layout,
+kerning, measure, `Align`, `Baseline`, wrap, ellipsis, fallback fonts,
+glyph cache per font/size/quarter pixel, `strip_emoji`/`is_emoji`).
+
+- TTFs come from the WOFF2 the pages use, made once by
+  `scripts/fonts/ttf.py` (fontTools via `uvx`): variable fonts pinned to
+  static instances (Plex Sans 400 and 600, Sixtyfour's default), subset
+  to Latin, Latin-1, Latin Extended-A and common punctuation, hinting
+  dropped, GPOS `kern` kept: `games/drawbluff/fonts/` (18–31 KB each,
+  OFL.txt next to them) and the test font
+  `crates/tvpipe-canvas/tests/fonts/plex-sans.ttf` (16 KB).
+- Known answers come from fontTools, not from the renderer itself
+  (`tests/fonts/plex-sans.txt`): glyph ids, advances, the outlines' exact
+  areas (`AreaPen`) and bounds (`BoundsPen`) and GPOS kerning. At 1000
+  px/em the coverage sum matches the area within 0.3 % and the ink box
+  the bounds within a pixel; at 32 px within 2 %. A rendered line is
+  checked against `tests/fonts/line.pgm` (`TVPIPE_BLESS=1`); truncated
+  and byte-mutated fonts parse, outline and draw without panicking.
+- Speed (`examples/frame.rs`, release): a busy 1280×720 frame with two
+  drawings of 6 000 points, 40 lines of text and a QR grid in 6.5 ms on
+  one Apple M-series core.
+
 ## 6. Shipping and security
 
 ### 6.1 Platform prompts and signing

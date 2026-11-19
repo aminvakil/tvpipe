@@ -1,0 +1,98 @@
+# Known answers for tests/fonts/plex-sans.ttf, written by scripts/fonts/ttf.py (fontTools).
+units_per_em = 1000
+ascender = 1025
+descender = -275
+
+char = U+0041
+glyph = 27
+advance = 641
+area = 130732.0
+bounds = 23 0 618 698
+composite = false
+
+char = U+0048
+glyph = 34
+advance = 707
+area = 143386.0
+bounds = 93 0 614 698
+composite = false
+
+char = U+004F
+glyph = 41
+advance = 708
+area = 150779.0
+bounds = 58 -12 650 710
+composite = false
+
+char = U+0065
+glyph = 5
+advance = 549
+area = 110222.2
+bounds = 47 -12 502 528
+composite = false
+
+char = U+0067
+glyph = 7
+advance = 528
+area = 160489.4
+bounds = 43 -212 520 586
+composite = false
+
+char = U+002E
+glyph = 67
+advance = 272
+area = 13228.5
+bounds = 75 -12 197 117
+composite = false
+
+char = U+00E9
+glyph = 96
+advance = 549
+area = 123320.7
+bounds = 47 -12 502 779
+composite = true
+
+char = U+0026
+glyph = 63
+advance = 694
+area = 167510.6
+bounds = 72 -12 668 710
+composite = false
+
+char = U+00C4
+glyph = 99
+advance = 641
+area = 148599.0
+bounds = 23 0 618 894
+composite = true
+
+char = U+2026
+glyph = 68
+advance = 803
+area = 39685.5
+bounds = 75 -12 728 117
+composite = true
+
+pair = AV
+kern = -41
+
+pair = To
+kern = -65
+
+pair = Ty
+kern = -40
+
+pair = LT
+kern = -70
+
+pair = VA
+kern = -41
+
+pair = ab
+kern = 0
+
+pair = Pa
+kern = -10
+
+pair = F.
+kern = -80

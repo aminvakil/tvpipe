@@ -605,6 +605,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tvpipe-canvas"
+version = "0.2.0"
+
+[[package]]
 name = "tvpipe-cli"
 version = "0.2.0"
 dependencies = [

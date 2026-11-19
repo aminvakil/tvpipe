@@ -65,6 +65,7 @@ jobs:
         run: |
           cargo doc -p tvpipe --no-deps --all-features
           cargo doc -p tvpipe-party --no-deps --all-features
+          cargo doc -p tvpipe-canvas --no-deps
       # The library's own license field is LGPL-free, and so is its default
       # dependency tree, while `fairplay` really pulls the LGPL crate in.
       - name: License check
