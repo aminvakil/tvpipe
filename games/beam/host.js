@@ -14,7 +14,24 @@ globalThis.beam = state;
 
 const tvpipe = await Tvpipe.connect();
 const chosen = params.has("to") ? params.get("to").split(",") : await tvpipe.selection();
+$("tvs").textContent = chosen.length ? chosen.join(", ") : "none";
+// The status column: a state with a dot (tvpipe's .state).
+function showState() {
+  const states = Object.entries(state.status).filter(([k]) => !k.endsWith("Player")).map(([, v]) => v);
+  if (state.cast) states.push(state.cast.state);
+  const [text, cls] =
+    state.errors.length > 0 || states.includes("failed")
+      ? ["Failed", "bad"]
+      : !state.running
+        ? ["Ready", ""]
+        : states.includes("streaming")
+          ? ["Streaming", "ok on"]
+          : ["Starting…", "on"];
+  $("state").textContent = text;
+  $("state").className = `state ${cls}`;
+}
 const show = () => {
+  showState();
   $("status").textContent = JSON.stringify({ to: chosen, codec: state.codec, status: state.status, cast: state.cast, errors: state.errors }, null, 1);
   $("stats").textContent = Object.entries(state.stats).map(([k, s]) => `${k}: ${JSON.stringify(s)}`).join("\n");
 };

@@ -39,6 +39,7 @@
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { background: var(--bg); color: var(--ink); }
 body { margin: 0; font: 400 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: var(--link); }
