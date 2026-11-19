@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use tvpipe::__web::websocket::{self, Message};
 use tvpipe_party::{
-    json, Event, Join, Limits, Object, Party, PartyError, PartyOptions, PlayerId, Role, Source,
-    Value,
+    json, Event, Join, LateJoin, Limits, Object, Party, PartyError, PartyOptions, PlayerId, Role,
+    Source, Value,
 };
 
 // ---------------------------------------------------------------------------
@@ -142,6 +142,12 @@ fn host_step(party: &mut Party, step: &str) {
             party.player_state(&who).unwrap().set(json(data));
         }
         "lock" => party.lock(),
+        "late-join" => party.set_late_join(LateJoin::parse(rest).expect("a mode")),
+        "in-progress" => party.set_in_progress(rest == "true"),
+        "activate" => {
+            let who = id(rest);
+            party.activate(&who);
+        }
         "unlock" => party.unlock(),
         "kick" => {
             let who = id(rest);
@@ -306,6 +312,9 @@ fn options(o: Option<&str>) -> PartyOptions {
     };
     if let Some(n) = o.get("maxPlayers").and_then(Value::as_u64) {
         opts = opts.max_players(n as usize);
+    }
+    if let Some(m) = o.get("lateJoin").and_then(Value::as_str) {
+        opts = opts.late_join(LateJoin::parse(m).expect("a mode"));
     }
     if let Some(l) = o.get("limits") {
         let mut limits = Limits::default();

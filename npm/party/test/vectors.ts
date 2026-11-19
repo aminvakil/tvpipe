@@ -23,7 +23,8 @@
  *   - `host VERB …` runs the host: `room.set JSON`, `room.replace JSON`,
  *     `screen.set JSON`, `me ID JSON` (a player's own state, merged),
  *     `lock`, `unlock`, `kick ID`, `close`, `send ID TYPE JSON`,
- *     `broadcast TYPE JSON`.
+ *     `broadcast TYPE JSON`, `late-join MODE` (`closed`, `wait`,
+ *     `open`), `in-progress true|false`, `activate ID`.
  *   Strings `"$NAME"` in JSON are variables: `ROOM`, `JOIN`, `SCREEN`,
  *   `WATCH` are the party's; others are bound by the first expected
  *   message that has them (resume tokens: `R1`, `R2`, …); `"$_"` matches
@@ -42,7 +43,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { cleanText, MAX_NAME, nameKey } from "../src/names.ts";
-import { PartyError, type Party, type Player } from "../src/party.ts";
+import { PartyError, type LateJoin, type Party, type Player } from "../src/party.ts";
 import { PartyServer } from "../src/server.ts";
 import { diff, isObject, type Json, type JsonObject } from "../src/sync.ts";
 
@@ -376,6 +377,47 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    name: "late join closed: refused while a game is in progress, resumes still work",
+    options: { lateJoin: "closed" },
+    steps: [
+      "c1 open",
+      `c1 > ${hello("Ann")}`,
+      "c2 open",
+      `c2 > {"t":"hello","v":1,"room":"$ROOM","role":"screen","key":"$SCREEN"}`,
+      "host in-progress true",
+      "c3 open",
+      `c3 > ${hello("Bob")}`,
+      "c1 close",
+      "c4 open",
+      `c4 > {"t":"hello","v":1,"room":"$ROOM","role":"player","resume":"$R1"}`,
+      "host in-progress false",
+      "c5 open",
+      `c5 > ${hello("Bob")}`,
+    ],
+  },
+  {
+    name: "late join wait and open: newcomers wait until the game activates them",
+    steps: [
+      "c1 open",
+      `c1 > {"t":"hello","v":1,"room":"$ROOM","role":"screen","key":"$SCREEN"}`,
+      "c2 open",
+      `c2 > ${hello("Ann")}`,
+      "host in-progress true",
+      "c3 open",
+      `c3 > ${hello("Bob")}`,
+      "host late-join open",
+      "c4 open",
+      `c4 > ${hello("Cy")}`,
+      "host activate p2",
+      "host activate p1",
+      "c4 close",
+      "c5 open",
+      `c5 > {"t":"hello","v":1,"room":"$ROOM","role":"player","resume":"$R3"}`,
+      "host in-progress false",
+      "host activate p3",
+    ],
+  },
+  {
     name: "leave: the VIP passes to the next connected player",
     steps: [
       "c1 open",
@@ -618,6 +660,7 @@ function partyOptions(o: JsonObject | undefined): Record<string, unknown> {
   if (!o) return out;
   if (typeof o["maxPlayers"] === "number") out["maxPlayers"] = o["maxPlayers"];
   if (isObject(o["limits"])) out["limits"] = o["limits"];
+  if (typeof o["lateJoin"] === "string") out["lateJoin"] = o["lateJoin"];
   return out;
 }
 
@@ -758,6 +801,15 @@ function hostStep(party: Party, verb: string, rest: string): void {
     }
     case "lock":
       return party.lock();
+    case "late-join":
+      party.lateJoin = rest as LateJoin;
+      return;
+    case "in-progress":
+      party.inProgress = rest === "true";
+      return;
+    case "activate":
+      party.activate(player(rest));
+      return;
     case "unlock":
       return party.unlock();
     case "kick":

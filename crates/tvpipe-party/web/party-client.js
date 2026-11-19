@@ -33,6 +33,7 @@ const FINAL = new Set([
   "room-closed",
   "full",
   "locked",
+  "in-progress",
   "protocol",
   "left",
   "rate-limited",

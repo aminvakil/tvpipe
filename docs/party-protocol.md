@@ -25,7 +25,7 @@ and `docs/multiscreen-design.md` §2.4–2.5 (the WebRTC fast path).
 | Role | Joins with | Sees (`view`) | May send |
 |---|---|---|---|
 | `player` | the join key and a name, or a resume token | `roster`, `room` (shared by players), `me` (own) | actions, input |
-| `screen` | the screen key | `roster`, `screen`, `join` (`code`, `url`, `qr`, `mode`) | actions |
+| `screen` | the screen key | `roster`, `screen`, `join` (`code`, `url`, `qr`, `mode`, `lateJoin`, `inProgress`) | actions |
 | `watch` | the watch key | like `screen` | nothing (actions are refused `read-only`) |
 
 Links: join `ORIGIN/?r=CODE#k=JOINKEY` (in the QR code), screen
@@ -80,6 +80,7 @@ WebRTC (players only). Hosts ignore capabilities they do not know.
 | `room-closed` | 4011 | no |
 | `slow` | 4013 | yes |
 | `full`, `locked` | 4029 | no |
+| `in-progress` (a new name while a game is on and `lateJoin` is `closed`) | 4030 | no |
 | (`left`, after `leave`) | 1000 | no |
 
 On anything else (network loss, 1001, 1006, 1012) the client reconnects
@@ -91,7 +92,8 @@ player, the full view and `lastAct`.
 
 The host never tells a client what happened; it keeps what the client
 shows. A player's view is `{roster, room, me}`, a screen's `{roster,
-screen, join}`; `roster` is `[{id, name, vip, connected}]` in join order.
+screen, join}`; `roster` is `[{id, name, vip, connected, waiting?}]` in
+join order (`waiting: true` only for a waiting player, see §5.1).
 
 - After changes the host sends each client one `state` with the
   difference against what that client last got: `set` is merged into the
@@ -105,6 +107,28 @@ screen, join}`; `roster` is `[{id, name, vip, connected}]` in join order.
 - A client that does not read (more than 64 KiB queued) gets no diffs
   until it drains, then one diff against what it has (latest wins);
   past 256 KiB of anything else it gets `bye slow`.
+
+### 5.1 Joining mid-game
+
+The game tells the host whether a game is in progress
+(`party.inProgress` / `set_in_progress`) and who may join meanwhile
+(`lateJoin`: `closed`, `wait`, `open`; an option and a setter, default
+`wait`). Screens see both in `join` (`lateJoin`, `inProgress`), so the
+TV can say "join anytime" under the QR code.
+
+- In the lobby (no game in progress) every new name joins as before.
+- During a game, with `closed`, a new name gets `bye in-progress`
+  (4030, the message "A game is in progress"); resume tokens keep
+  working (a player who was in the room comes back as always).
+- With `wait` or `open` the newcomer joins the roster as a waiting
+  player (`waiting: true` in the roster, `player.waiting` /
+  `Player::waiting`). The host does nothing else with it: the game
+  deals them in when it wants (`party.activate(player)` /
+  `Party::activate`: the flag goes, the `active` event /
+  `Event::Active`). The two modes differ only in the game's rules
+  (drawbluff: `wait` at the next round, `open` at the next drawing).
+- Ending a game (`inProgress` false) changes nobody's flag: the game
+  activates its waiting players itself.
 
 ## 6. Actions: exactly once
 

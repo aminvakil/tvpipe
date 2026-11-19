@@ -48,6 +48,7 @@ pub(crate) enum Bye {
     Slow,
     Full,
     Locked,
+    InProgress,
 }
 
 impl Bye {
@@ -66,6 +67,7 @@ impl Bye {
             Bye::Slow => "slow",
             Bye::Full => "full",
             Bye::Locked => "locked",
+            Bye::InProgress => "in-progress",
         }
     }
 
@@ -83,8 +85,20 @@ impl Bye {
             Bye::RoomClosed => 4011,
             Bye::Slow => 4013,
             Bye::Full | Bye::Locked => 4029,
+            Bye::InProgress => 4030,
         }
     }
+}
+
+/// The join info with `lateJoin` and `inProgress`.
+fn join_value(join: &Value, late_join: LateJoin, in_progress: bool) -> Value {
+    let mut o = match join {
+        Value::Object(o) => o.clone(),
+        _ => Object::new(),
+    };
+    o.insert("lateJoin", late_join.as_str());
+    o.insert("inProgress", in_progress);
+    Value::Object(o)
 }
 
 fn bye(conn: &Conn, why: Bye, message: Option<&str>) {
@@ -314,12 +328,54 @@ pub struct Stats {
     pub flush_time: Duration,
 }
 
+/// Who may join while a game is in progress
+/// ([`Party::set_in_progress`](crate::Party::set_in_progress)).
+///
+/// The two that let newcomers in differ only in what the game does with
+/// them: the platform treats them alike (waiting players,
+/// [`Player::waiting`]) and shows the setting to screens
+/// (`view.join.lateJoin`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LateJoin {
+    /// New names are refused (`bye in-progress`, 4030); resumes still work.
+    Closed,
+    /// New names join as waiting players; the game deals them in later
+    /// (drawbluff: at the next round).
+    #[default]
+    Wait,
+    /// Like `Wait` for the platform; the game deals them in as soon as it
+    /// can (drawbluff: at the next drawing).
+    Open,
+}
+
+impl LateJoin {
+    /// `closed`, `wait`, `open`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LateJoin::Closed => "closed",
+            LateJoin::Wait => "wait",
+            LateJoin::Open => "open",
+        }
+    }
+
+    /// From `closed`, `wait`, `open`.
+    pub fn parse(s: &str) -> Option<LateJoin> {
+        match s {
+            "closed" => Some(LateJoin::Closed),
+            "wait" => Some(LateJoin::Wait),
+            "open" => Some(LateJoin::Open),
+            _ => None,
+        }
+    }
+}
+
 /// A player: a person with a phone, across reconnects.
 #[derive(Debug)]
 pub struct Player {
     id: PlayerId,
     name: String,
     vip: bool,
+    waiting: bool,
     /// What only this player sees (`view.me`).
     pub state: State,
     resume: String,
@@ -351,12 +407,22 @@ impl Player {
         self.client.is_some()
     }
 
+    /// Joined while a game was in progress and not dealt in yet: the game
+    /// decides when ([`Party::activate`](crate::Party::activate)). In the
+    /// roster as `waiting: true`.
+    pub fn waiting(&self) -> bool {
+        self.waiting
+    }
+
     fn roster_entry(&self) -> Value {
         let mut o = Object::new();
         o.insert("id", self.id.as_str());
         o.insert("name", self.name.as_str());
         o.insert("vip", self.vip);
         o.insert("connected", self.connected());
+        if self.waiting {
+            o.insert("waiting", true);
+        }
         Value::Object(o)
     }
 }
@@ -450,6 +516,8 @@ pub enum Event {
     },
     /// The VIP changed.
     Vip(Option<PlayerId>),
+    /// A waiting player was dealt in ([`Party::activate`](crate::Party::activate)).
+    Active(PlayerId),
     /// A screen connected or left.
     Screen {
         /// Its id (`s1`, …).
@@ -644,6 +712,8 @@ pub(crate) struct Core {
     clients: HashMap<ConnId, Client>,
     pending: HashMap<ConnId, Conn>,
     locked: bool,
+    late_join: LateJoin,
+    in_progress: bool,
     closed: bool,
     seq: u64,
     screen_seq: u64,
@@ -663,6 +733,7 @@ pub(crate) struct CoreOptions {
     pub max_players: usize,
     pub limits: Limits,
     pub moderate: Option<Moderate>,
+    pub late_join: LateJoin,
 }
 
 impl Core {
@@ -685,7 +756,7 @@ impl Core {
             max_players: options.max_players,
             limits: options.limits,
             moderate: options.moderate,
-            join_snap: (1, Arc::new(join.clone())),
+            join_snap: (1, Arc::new(join_value(&join, options.late_join, false))),
             join,
             join_dirty: true,
             roster_dirty: false,
@@ -695,6 +766,8 @@ impl Core {
             clients: HashMap::new(),
             pending: HashMap::new(),
             locked: false,
+            late_join: options.late_join,
+            in_progress: false,
             closed: false,
             seq: 0,
             screen_seq: 0,
@@ -710,9 +783,52 @@ impl Core {
     }
 
     pub fn set_join(&mut self, join: Value) {
-        self.join_snap = (self.join_snap.0 + 1, Arc::new(join.clone()));
         self.join = join;
+        self.join_changed();
+    }
+
+    /// The join section: the join info, the late-join setting, whether a
+    /// game is on.
+    fn join_changed(&mut self) {
+        let value = join_value(&self.join, self.late_join, self.in_progress);
+        self.join_snap = (self.join_snap.0 + 1, Arc::new(value));
         self.join_dirty = true;
+    }
+
+    pub fn late_join(&self) -> LateJoin {
+        self.late_join
+    }
+
+    pub fn set_late_join(&mut self, mode: LateJoin) {
+        if mode != self.late_join {
+            self.late_join = mode;
+            self.join_changed();
+        }
+    }
+
+    pub fn in_progress(&self) -> bool {
+        self.in_progress
+    }
+
+    pub fn set_in_progress(&mut self, on: bool) {
+        if on != self.in_progress {
+            self.in_progress = on;
+            self.join_changed();
+        }
+    }
+
+    /// Deals a waiting player in; false if they were not waiting.
+    pub fn activate(&mut self, id: &PlayerId) -> bool {
+        let Some(p) = self.players.iter_mut().find(|p| &p.id == id) else {
+            return false;
+        };
+        if !p.waiting {
+            return false;
+        }
+        p.waiting = false;
+        self.events.push_back(Event::Active(id.clone()));
+        self.roster_dirty = true;
+        true
     }
 
     /// What the views cost so far.
@@ -796,7 +912,7 @@ impl Core {
         let mut o = Object::new();
         o.insert("roster", self.roster());
         o.insert("screen", Value::Object(self.screen.value.clone()));
-        o.insert("join", self.join.clone());
+        o.insert("join", (*self.join_snap.1).clone());
         o
     }
 
@@ -1044,6 +1160,9 @@ impl Core {
         if self.locked {
             return bye(&conn, Bye::Locked, None);
         }
+        if self.in_progress && self.late_join == LateJoin::Closed {
+            return bye(&conn, Bye::InProgress, Some("A game is in progress"));
+        }
         if self.players.len() >= self.max_players {
             return bye(&conn, Bye::Full, None);
         }
@@ -1071,6 +1190,7 @@ impl Core {
             id: id.clone(),
             name: name.clone(),
             vip,
+            waiting: self.in_progress,
             state: State::default(),
             resume: token(),
             last_act: 0,

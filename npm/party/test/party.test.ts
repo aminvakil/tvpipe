@@ -212,6 +212,39 @@ test("lock and maxPlayers refuse new players, resumes still work", async () => {
   }
 });
 
+test("late join: closed refuses new names in a game, wait/open let them wait until activated", async () => {
+  const s = await setup({ party: { lateJoin: "closed" } });
+  try {
+    const a = s.phone();
+    await a.join("Ann");
+    s.party.inProgress = true;
+    await assert.rejects(s.phone().join("Bob"), (e: PartyActionError) => e.code === "in-progress");
+    assert.equal(s.party.players.length, 1);
+    a._drop();
+    await until(() => a.status === "open" && s.party.players[0]!.connected, 3000);
+    assert.equal(s.party.players[0]!.waiting, false);
+    s.party.lateJoin = "open";
+    const active: string[] = [];
+    s.party.on("active", (p) => active.push(p.name));
+    const b = s.phone();
+    await b.join("Bob");
+    const bob = s.party.players[1]!;
+    assert.equal(bob.waiting, true);
+    await until(() => a.view["roster"]?.[1]?.waiting === true);
+    assert.equal(s.party.activate(s.party.players[0]!), false);
+    assert.equal(s.party.activate(bob), true);
+    assert.equal(s.party.activate(bob), false);
+    assert.deepEqual(active, ["Bob"]);
+    await until(() => a.view["roster"]?.[1] && !("waiting" in a.view["roster"][1]));
+    assert.throws(() => (s.party.lateJoin = "maybe" as never), TypeError);
+    s.party.inProgress = false;
+    await s.phone().join("Cy");
+    assert.equal(s.party.players[2]!.waiting, false);
+  } finally {
+    await s.close();
+  }
+});
+
 test("screens get the screen view with the join info; watchers cannot act", async () => {
   const s = await setup();
   try {

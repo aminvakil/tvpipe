@@ -56,6 +56,12 @@ party.input({ x: 0.3, y: -1 });                // continuous input, latest wins
   (`Join::Local`). `join_url()` and `join_qr()` for the TV.
 - **Players**: names (cleaned, unique), the VIP, phones that drop out and
   come back as the same player, `lock()`, `kick()`, a `moderate` hook.
+  Joining mid-game: `set_in_progress(true)` while a game is on, and
+  `LateJoin` (`PartyOptions::late_join`, `set_late_join`): `Closed`
+  refuses new names (`bye in-progress`, 4030; resumes still work),
+  `Wait` (the default) and `Open` let them in as waiting players
+  (`Player::waiting`) until the game calls `activate()`
+  (`Event::Active`); screens see `join.lateJoin` and `join.inProgress`.
 - **Views, not events**: the game sets `room()` (every player),
   `player_state(id)` (one player) and `screen()` (the TV); each phone
   gets a diff of what changed. `screen_watch()` hands the TV's view to a

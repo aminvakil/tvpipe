@@ -83,6 +83,7 @@ the tunnel and makes the QR code. Options: `phone`, `screen` (directories),
 | `party.send(player, type, data)`, `party.broadcast(type, data, role)` | Transient messages (`msg` events on phones); lost while a phone is away, so anything that matters goes into a view. |
 | `party.players`, `party.connectedPlayers`, `party.vip`, `party.player(id)` | Players in join order; `player.id`, `name`, `vip`, `connected`, `data` (yours). |
 | `party.lock()`, `unlock()`, `kick(player)`, `close()` | No new players (resumes still work), remove one, end the party. |
+| `party.inProgress`, `party.lateJoin`, `party.activate(player)` | Joining mid-game: while `inProgress` is true, new names are refused (`lateJoin` `"closed"`, `bye in-progress`, 4030; resumes still work) or join as waiting players (`"wait"`, the default, or `"open"`: `player.waiting`, `waiting: true` in the roster) until the game activates them (the `active` event). Screens see `join.lateJoin` and `join.inProgress`. Option `lateJoin`. |
 | `party.moderate(text, kind, player)` | Your `moderate` hook for any text the game shows (`false`: refused). |
 | `party.now()` | The server clock (ms); deadlines in views use it, phones are synced to it. |
 | `party.stats` | What the views cost so far: `flushes`, `states` (messages), `stateBytes`, `flushMs`. A flush diffs only the sections that changed (`roster`, `room`/`screen`, `me`/`join`), each shared section once for every client on the same version. |
@@ -91,7 +92,7 @@ the tunnel and makes the QR code. Options: `phone`, `screen` (directories),
 | `party.toTv({ to, mode: "web" })` | The screen page in tvpipe's browser (`share URL`). |
 | `party.toTv({ to, mode: "video", canvas, render, fps, audio })` | `render(ctx, view, t)` at the frame rate into a canvas (e.g. `@napi-rs/canvas`), streamed with `stream()`. |
 | `party.shutdown()` | TV sessions, the party, the server and the tunnel. |
-| events | `join`, `reconnect`, `away`, `leave`, `vip`, `screen`, `screen-view` |
+| events | `join`, `reconnect`, `away`, `leave`, `vip`, `active`, `screen`, `screen-view` |
 | `drawQr(ctx, qr, x, y, size)`, `qrToRgba(qr, scale)` | The QR code for a canvas or raw frames. |
 
 Lower level: `new PartyServer({ phone, screen, port })`, `listen()`,

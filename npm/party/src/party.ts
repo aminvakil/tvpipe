@@ -35,8 +35,20 @@ export const BYE = {
   slow: 4013,
   full: 4029,
   locked: 4029,
+  "in-progress": 4030,
 } as const;
 export type ByeReason = keyof typeof BYE;
+
+/**
+ * Who may join while a game is in progress ({@link Party.inProgress}):
+ * `closed` refuses new names (`bye in-progress`; resumes still work),
+ * `wait` and `open` let them in as waiting players ({@link Player.waiting})
+ * whom the game activates when it deals them in ({@link Party.activate}).
+ * The two differ only in what the game does: the platform treats them
+ * alike and shows the setting to screens (`view.join.lateJoin`).
+ */
+export type LateJoin = "closed" | "wait" | "open";
+export const LATE_JOIN: readonly LateJoin[] = ["closed", "wait", "open"];
 
 /** An error for the phone: `act()` there rejects with this code and message. */
 export class PartyError extends Error {
@@ -104,6 +116,7 @@ export class Player {
   readonly id: string;
   name: string;
   vip = false;
+  /** @internal */ waitingFlag = false;
   /** What only this player sees (`view.me` on the phone). */
   readonly state: StateBox;
   /** The game's own data about the player (not sent anywhere). */
@@ -127,8 +140,18 @@ export class Player {
     return this.client !== undefined;
   }
 
+  /**
+   * Joined while a game was in progress and not dealt in yet: the game
+   * decides when ({@link Party.activate}). In the roster as `waiting: true`.
+   */
+  get waiting(): boolean {
+    return this.waitingFlag;
+  }
+
   toJSON(): JsonObject {
-    return { id: this.id, name: this.name, vip: this.vip, connected: this.connected };
+    const o: JsonObject = { id: this.id, name: this.name, vip: this.vip, connected: this.connected };
+    if (this.waitingFlag) o["waiting"] = true;
+    return o;
   }
 }
 
@@ -236,6 +259,8 @@ export interface PartyOptions {
   log?: Logger | undefined;
   /** Late submissions accepted after a `collect` deadline, ms (default 500). */
   grace?: number | undefined;
+  /** Who may join while a game is in progress (default `wait`; {@link LateJoin}). */
+  lateJoin?: LateJoin | undefined;
 }
 
 export interface PartyEvents {
@@ -249,6 +274,8 @@ export interface PartyEvents {
   leave: [player: Player, reason: string];
   /** The VIP changed. */
   vip: [player: Player | undefined];
+  /** A waiting player was dealt in ({@link Party.activate}). */
+  active: [player: Player];
   /** A screen connected or left. */
   screen: [screen: Screen, connected: boolean];
   /** The screen view changed (after the tick's changes). */
@@ -313,6 +340,8 @@ export class Party extends EventEmitter<PartyEvents> {
   #clients = new Set<Client>();
   #handlers = new Map<string, ActionHandler>();
   #locked = false;
+  #lateJoin: LateJoin;
+  #inProgress = false;
   #closed = false;
   #seq = 0;
   #screenSeq = 0;
@@ -334,6 +363,8 @@ export class Party extends EventEmitter<PartyEvents> {
     this.#moderate = options.moderate;
     this.#limits = { rate: 20, burst: 50, screens: 16, ...options.limits };
     this.#log = options.log ?? (() => {});
+    this.#lateJoin = options.lateJoin ?? "wait";
+    if (!LATE_JOIN.includes(this.#lateJoin)) throw new TypeError(`lateJoin: ${String(options.lateJoin)}`);
     this.room = new StateBox(() => this.#changed());
     this.screen = new StateBox(() => this.#changed());
     this.#join = { code: this.code, url: "", qr: null };
@@ -373,7 +404,52 @@ export class Party extends EventEmitter<PartyEvents> {
 
   set joinInfo(info: JoinInfo) {
     this.#join = info;
-    this.#joinSection = { version: this.#joinSection.version + 1, value: toJson(info) };
+    this.#joinChanged();
+  }
+
+  /** Who may join while a game is in progress (screens see it as `join.lateJoin`). */
+  get lateJoin(): LateJoin {
+    return this.#lateJoin;
+  }
+
+  set lateJoin(mode: LateJoin) {
+    if (!LATE_JOIN.includes(mode)) throw new TypeError(`lateJoin: ${String(mode)}`);
+    if (mode === this.#lateJoin) return;
+    this.#lateJoin = mode;
+    this.#joinChanged();
+  }
+
+  /**
+   * Whether a game is in progress (the game says so): new names then
+   * join as waiting players, or are refused with `lateJoin` `closed`.
+   * Screens see it as `join.inProgress`.
+   */
+  get inProgress(): boolean {
+    return this.#inProgress;
+  }
+
+  set inProgress(on: boolean) {
+    if (on === this.#inProgress) return;
+    this.#inProgress = on;
+    this.#joinChanged();
+  }
+
+  /** Deals a waiting player in (`waiting` off, the `active` event); false if they were not waiting. */
+  activate(p: Player): boolean {
+    if (!p.waitingFlag || !this.#players.includes(p)) return false;
+    p.waitingFlag = false;
+    this.emit("active", p);
+    this.#changed();
+    return true;
+  }
+
+  /** The join section: the join info, the late-join setting, whether a game is on. */
+  #joinValue(): Json {
+    return toJson({ ...this.#join, lateJoin: this.#lateJoin, inProgress: this.#inProgress });
+  }
+
+  #joinChanged(): void {
+    this.#joinSection = { version: this.#joinSection.version + 1, value: this.#joinValue() };
     this.#changed();
   }
 
@@ -391,7 +467,7 @@ export class Party extends EventEmitter<PartyEvents> {
     this.#screenView ??= {
       roster: this.#roster(),
       screen: this.screen.peek(),
-      join: toJson(this.#join),
+      join: this.#joinValue(),
     };
     return this.#screenView;
   }
@@ -568,6 +644,7 @@ export class Party extends EventEmitter<PartyEvents> {
     }
     if (hello.name === undefined || hello.name === null) return bye(ws, "no-player");
     if (this.#locked) return bye(ws, "locked");
+    if (this.#inProgress && this.#lateJoin === "closed") return bye(ws, "in-progress", "A game is in progress");
     if (this.#players.length >= this.maxPlayers) return bye(ws, "full");
     let name = cleanText(hello.name, MAX_NAME);
     if (!name) return bye(ws, "name-invalid", "Pick a name");
@@ -578,6 +655,7 @@ export class Party extends EventEmitter<PartyEvents> {
     const key = nameKey(name);
     if (this.#players.some((p) => nameKey(p.name) === key)) return bye(ws, "name-taken", "Someone has that name");
     const p = new Player(`p${++this.#seq}`, name, () => this.#changed());
+    p.waitingFlag = this.#inProgress;
     const c = new Client(ws, "player", p.id, address, this.#limits.rate, this.#limits.burst);
     c.player = p;
     p.client = c;
@@ -622,7 +700,7 @@ export class Party extends EventEmitter<PartyEvents> {
         { key: "me", id: `me:${p.id}`, version: p.state.version, value: p.state.snapshot() },
       ];
     }
-    if (this.#joinSection.version === 0) this.#joinSection = { version: 1, value: toJson(this.#join) };
+    if (this.#joinSection.version === 0) this.#joinSection = { version: 1, value: this.#joinValue() };
     return [
       roster,
       { key: "screen", id: "screen", version: this.screen.version, value: this.screen.snapshot() },

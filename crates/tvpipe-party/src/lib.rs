@@ -66,8 +66,8 @@ pub use assets::{Asset, Assets};
 pub use collect::Collect;
 pub use names::{clean_text, fold, name_key, MAX_NAME};
 pub use party::{
-    Action, Event, Limits, Moderate, Moderation, PartyError, Player, PlayerId, Role, ScreenWatch,
-    Source, State, Stats, PROTOCOL,
+    Action, Event, LateJoin, Limits, Moderate, Moderation, PartyError, Player, PlayerId, Role,
+    ScreenWatch, Source, State, Stats, PROTOCOL,
 };
 pub use server::DEFAULT_CSP;
 #[cfg(feature = "deser")]
@@ -143,6 +143,7 @@ pub struct PartyOptions {
     max_message: usize,
     joins_per_minute: usize,
     moderate: Option<Moderate>,
+    late_join: LateJoin,
     #[cfg(feature = "webrtc")]
     fast: FastOptions,
 }
@@ -181,6 +182,7 @@ impl PartyOptions {
             max_message: 256 * 1024,
             joins_per_minute: 20,
             moderate: None,
+            late_join: LateJoin::Wait,
             #[cfg(feature = "webrtc")]
             fast: FastOptions {
                 on: true,
@@ -211,6 +213,13 @@ impl PartyOptions {
     /// Players at most (default 8).
     pub fn max_players(mut self, n: usize) -> Self {
         self.max_players = n;
+        self
+    }
+
+    /// Who may join while a game is in progress (default
+    /// [`LateJoin::Wait`]).
+    pub fn late_join(mut self, mode: LateJoin) -> Self {
+        self.late_join = mode;
         self
     }
 
@@ -391,6 +400,7 @@ impl Party {
                 max_players: options.max_players,
                 limits: options.limits,
                 moderate: options.moderate,
+                late_join: options.late_join,
             },
             joins,
         );
@@ -683,6 +693,35 @@ impl Party {
     /// Whether new players are refused.
     pub fn locked(&self) -> bool {
         self.core.locked()
+    }
+
+    /// Who may join while a game is in progress (screens see it as
+    /// `join.lateJoin`).
+    pub fn late_join(&self) -> LateJoin {
+        self.core.late_join()
+    }
+
+    /// Changes who may join while a game is in progress.
+    pub fn set_late_join(&mut self, mode: LateJoin) {
+        self.core.set_late_join(mode);
+    }
+
+    /// Whether a game is in progress (the game says so): new names then
+    /// join as waiting players ([`Player::waiting`]), or are refused with
+    /// [`LateJoin::Closed`]. Screens see it as `join.inProgress`.
+    pub fn in_progress(&self) -> bool {
+        self.core.in_progress()
+    }
+
+    /// Says whether a game is in progress.
+    pub fn set_in_progress(&mut self, on: bool) {
+        self.core.set_in_progress(on);
+    }
+
+    /// Deals a waiting player in (`waiting` off, [`Event::Active`]);
+    /// false if they were not waiting.
+    pub fn activate(&mut self, id: &PlayerId) -> bool {
+        self.core.activate(id)
     }
 
     /// Removes a player for good, telling their phone why.

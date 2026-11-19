@@ -18,6 +18,8 @@ export {
   type ByeReason,
   type CollectOptions,
   type JoinInfo,
+  type LateJoin,
+  LATE_JOIN,
   type Logger,
   type LogLevel,
   type PartyEvents,
