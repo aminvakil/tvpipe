@@ -23,7 +23,19 @@ enum Top {
     Tunnel,
     Qr,
     Playshare,
+    Bundle,
     DebugPipeline,
+}
+
+#[derive(Copy, Clone)]
+enum BundleArg {
+    Path,
+    Out,
+    Check,
+    Smoke,
+    Strict,
+    Init,
+    Browser,
 }
 
 #[derive(Copy, Clone)]
@@ -179,6 +191,7 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::Tunnel, &TUNNEL),
         Cmd::new(Top::Qr, &QR),
         Cmd::new(Top::Playshare, &PLAYSHARE),
+        Cmd::new(Top::Bundle, &BUNDLE),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -259,6 +272,42 @@ static PLAYSHARE: Cli<PlayshareArg> = Cli::new("playshare")
     .after_help(
         "Closing the window (or Ctrl-C) ends the game: the TVs stop, phones are told. \
          docs/playshare-design.md",
+    );
+
+static BUNDLE: Cli<BundleArg> = Cli::new("bundle")
+    .about("Check a web game for playshare and pack it into a zip")
+    .usage("DIR [-o FILE] [--smoke] | --check PATH [--smoke] | --init DIR")
+    .opts(&[
+        Opt::new(BundleArg::Out)
+            .short('o')
+            .long("output")
+            .value("FILE")
+            .value_hint(ValueHint::FilePath)
+            .help("The zip to write (default: NAME.zip here, NAME from tvpipe.json)"),
+        Opt::new(BundleArg::Check)
+            .long("check")
+            .help("Only check (a folder or a .zip); write nothing"),
+        Opt::new(BundleArg::Smoke)
+            .long("smoke")
+            .help("Also run the game once without TVs: its pages in a headless browser, a fake phone joins"),
+        Opt::new(BundleArg::Strict)
+            .long("strict")
+            .help("Warnings fail too (for CI)"),
+        Opt::new(BundleArg::Init)
+            .long("init")
+            .help("Make a starter game in DIR (a new or empty folder)"),
+        Opt::new(BundleArg::Browser)
+            .long("browser")
+            .value("PATH")
+            .value_hint(ValueHint::ExecutablePath)
+            .help("The Chromium-based browser for --smoke (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
+    ])
+    .args(&[Pos::new(BundleArg::Path, "PATH").help("The game: a folder with tvpipe.json, or a .zip to check")])
+    .after_help(
+        "Checks what playshare needs: tvpipe.json, the pages and every file they load (HTML, CSS, \
+         JS imports), names that break in a zip or on other systems, the @tvpipe/party library and \
+         version, files from the internet. The zip is the same for the same files (sorted, fixed \
+         times). Exits 1 on errors. docs/games.md",
     );
 
 static QR: Cli<QrArg> = Cli::new("qr")
@@ -742,6 +791,7 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
             }
             Top::Qr => return Ok((g, parse_qr(p.subcommand(&QR))?)),
             Top::Playshare => return Ok((g, parse_playshare(p.subcommand(&PLAYSHARE))?)),
+            Top::Bundle => return Ok((g, parse_bundle(p.subcommand(&BUNDLE))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -867,6 +917,33 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
     };
     o.path = path.into();
     Ok(Command::Playshare(o))
+}
+
+fn parse_bundle(mut p: Parser<BundleArg>) -> Result<Command, Error> {
+    let mut o = tvpipe::__cli::playshare::BundleOptions::default();
+    let mut path = None;
+    while let Some(arg) = p.param()? {
+        match arg {
+            BundleArg::Path => path = Some(p.value::<String>()?),
+            BundleArg::Out => o.out = Some(p.value::<String>()?.into()),
+            BundleArg::Check => o.check = true,
+            BundleArg::Smoke => o.smoke = true,
+            BundleArg::Strict => o.strict = true,
+            BundleArg::Init => o.init = true,
+            BundleArg::Browser => o.browser = Some(p.value::<String>()?.into()),
+        }
+    }
+    let Some(path) = path else {
+        return Err(p.error("bundle needs the PATH of a game (a folder, or a .zip with --check)"));
+    };
+    if o.init && (o.check || o.smoke || o.out.is_some()) {
+        return Err(p.error("--init makes a game: no --check, --smoke or -o with it"));
+    }
+    if o.check && o.out.is_some() {
+        return Err(p.error("--check writes nothing: no -o with it"));
+    }
+    o.path = path.into();
+    Ok(Command::Bundle(o))
 }
 
 fn parse_qr(mut p: Parser<QrArg>) -> Result<Command, Error> {
@@ -1323,6 +1400,30 @@ mod tests {
         };
         assert_eq!(format, QrFormat::Terminal);
         assert!(parse_from(&["qr"]).is_err());
+    }
+
+    #[test]
+    fn bundle_options() {
+        let Ok((_, Command::Bundle(o))) =
+            parse_from(&["bundle", "games/x", "-o", "x.zip", "--smoke"])
+        else {
+            panic!("bundle");
+        };
+        assert_eq!(o.path.to_str(), Some("games/x"));
+        assert_eq!(o.out.as_deref().and_then(|p| p.to_str()), Some("x.zip"));
+        assert!(o.smoke && !o.check && !o.init && !o.strict);
+        let Ok((_, Command::Bundle(o))) = parse_from(&["bundle", "--check", "--strict", "g.zip"])
+        else {
+            panic!("bundle --check");
+        };
+        assert!(o.check && o.strict);
+        for bad in [
+            &["bundle"][..],
+            &["bundle", "--init", "--smoke", "x"],
+            &["bundle", "--check", "-o", "y.zip", "x"],
+        ] {
+            assert!(parse_from(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

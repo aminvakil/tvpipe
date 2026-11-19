@@ -1,0 +1,12 @@
+{
+  "name": "{{name}}",
+  "title": "{{title}}",
+  "tvpipe": "{{tvpipe}}",
+  "pages": {
+    "host": "host/index.html",
+    "tv": "tv/index.html",
+    "phone": "phone/index.html"
+  },
+  "players": { "min": 1, "max": 16 },
+  "tv": { "width": 1280, "height": 720 }
+}

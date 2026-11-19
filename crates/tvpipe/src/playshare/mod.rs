@@ -12,12 +12,18 @@
 //! - [`backend`]: discovery, pairing and casting (fakes in tests).
 //! - [`window`]: the app window.
 //! - [`web`]: the library and the launcher, embedded.
+//! - [`check`], [`scan`], [`smoke`], [`tool`]: `tvpipe bundle` (checks,
+//!   packing, a run in a headless browser, the starter template).
 
 pub mod backend;
 pub mod bundle;
+pub mod check;
 pub mod conn;
 pub mod hub;
+pub mod scan;
 pub mod server;
+pub mod smoke;
+pub mod tool;
 pub mod web;
 pub mod window;
 

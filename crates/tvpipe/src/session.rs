@@ -80,7 +80,9 @@ pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
         | Command::Tunnel { .. }
         | Command::Qr { .. } => Err(Error::usage(format!("{} is not a session", cmd_name))),
         #[cfg(feature = "playshare")]
-        Command::Playshare(_) => Err(Error::usage(format!("{} is not a session", cmd_name))),
+        Command::Playshare(_) | Command::Bundle(_) => {
+            Err(Error::usage(format!("{} is not a session", cmd_name)))
+        }
         Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
         #[cfg(feature = "headless")]
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),

@@ -1,0 +1,11 @@
+/* Shared by the three pages. */
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #14161f; color: #f2f2f5; }
+body { margin: 0; }
+main { padding: 24px; }
+h1 { margin: 0 0 16px; }
+button { font: inherit; font-weight: 600; padding: 12px 20px; border: 0; border-radius: 10px; background: #ffb800; color: #14161f; }
+button:disabled { opacity: 0.4; }
+input { font: inherit; padding: 12px; border-radius: 10px; border: 1px solid #555; background: #222533; color: inherit; }
+ul { padding-left: 1.2em; }
+.muted { opacity: 0.6; }
+.qr svg { width: 100%; height: auto; display: block; border-radius: 8px; }

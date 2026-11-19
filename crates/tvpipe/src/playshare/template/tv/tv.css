@@ -1,0 +1,4 @@
+main { height: 720px; box-sizing: border-box; padding: 48px; font-size: 32px; }
+h1 { font-size: 72px; }
+aside { float: right; width: 240px; text-align: center; }
+#buzzed li:first-child { color: #ffb800; font-size: 64px; }

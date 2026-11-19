@@ -283,6 +283,9 @@ pub enum Command {
     /// `playshare PATH`: a web game (docs/playshare-design.md).
     #[cfg(feature = "playshare")]
     Playshare(crate::playshare::Options),
+    /// `bundle PATH`: check and pack a game (docs/games.md).
+    #[cfg(feature = "playshare")]
+    Bundle(crate::playshare::tool::BundleOptions),
 }
 
 /// How `qr` prints the code.
@@ -312,6 +315,8 @@ impl Command {
             Command::Qr { .. } => "qr",
             #[cfg(feature = "playshare")]
             Command::Playshare(_) => "playshare",
+            #[cfg(feature = "playshare")]
+            Command::Bundle(_) => "bundle",
         }
     }
 }

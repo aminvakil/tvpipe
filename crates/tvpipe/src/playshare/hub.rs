@@ -664,6 +664,11 @@ impl Hub {
         }
     }
 
+    /// Whether a host page attached the relay (`tvpipe bundle --smoke`).
+    pub fn host_attached(&self) -> bool {
+        self.lock().host.is_some()
+    }
+
     pub fn info(&self) -> Value {
         let (phone, mode) = self.phone_base();
         let p = self.ports();

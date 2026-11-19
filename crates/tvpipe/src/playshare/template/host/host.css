@@ -1,0 +1,4 @@
+.columns { display: grid; grid-template-columns: 220px 1fr 1fr; gap: 24px; }
+.preview { aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #000; }
+.preview iframe { width: 1280px; height: 720px; border: 0; transform-origin: 0 0; }
+#error { color: #ff6b6b; }

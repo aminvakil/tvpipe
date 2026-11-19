@@ -124,6 +124,7 @@ pub mod __cli {
     pub use crate::net::tunnel::{start as start_tunnel, Tunnel};
     #[cfg(feature = "playshare")]
     pub mod playshare {
+        pub use crate::playshare::tool::{run as bundle, BundleOptions};
         pub use crate::playshare::{run, Options, TunnelChoice, WindowMode};
     }
     pub use crate::session::{run, GameIo};
