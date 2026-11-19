@@ -189,11 +189,11 @@ computed once at start.
   `key = value` format), replayed by the Rust tests and by
   `npm/party/test/` reading `../../crates/tvpipe-party/tests/vectors/`:
   - `diff.txt`: view before, view after → the `state` message, and the
-    client's merge result (both servers must produce identical diffs;
-    key order is part of it);
+    client's merge result (both servers must produce the same diffs;
+    objects compare without key order);
   - `names.txt`: raw name → cleaned name or refusal, and the uniqueness
     key (§1.6);
-  - `sessions/*.txt`: transcripts of client ⇄ server messages for join,
+  - `sessions.txt`: transcripts of client ⇄ server messages for join,
     resume, VIP hand-over, lock, kick, replayed acts, `resync`,
     rate-limit and protocol errors (keys and times scrubbed). Each server
     is driven by a scripted fake client and must produce the transcript.

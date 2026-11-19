@@ -1,0 +1,25 @@
+[package]
+name = "tvpipe-party"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Party games on tvpipe: phones join with a QR code, the host keeps rooms, players and views in sync over WebSockets"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["party-game", "websocket", "airplay", "chromecast", "gamedev"]
+categories = ["game-development", "network-programming"]
+include = ["/Cargo.toml", "/README.md", "/src/", "/web/", "/tests/"]
+
+[features]
+default = ["tunnel"]
+# Public links for phones (Cloudflare quick tunnels, OpenTunnel).
+tunnel = ["tvpipe/tunnel"]
+
+[dependencies]
+# The exact version: tvpipe-party uses tvpipe's hidden `__web` module
+# (docs/multiscreen-design.md §1.1).
+tvpipe = { path = "../tvpipe", version = "=0.2.0", default-features = false, features = ["player"] }
+ring = "0.17"

@@ -1,0 +1,178 @@
+# Player names: `input` (from the phone), `clean` (the name, "" when refused), `key` (uniqueness).
+# Generated from @tvpipe/party (the reference): `node test/vectors.ts --bless` in npm/party.
+# Format: npm/party/test/vectors.ts.
+
+name = plain
+input = "Ann"
+clean = "Ann"
+key = "ann"
+
+name = trimmed
+input = "  Ann  "
+clean = "Ann"
+key = "ann"
+
+name = whitespace collapsed
+input = "  a\tb\n\nc  "
+clean = "a b c"
+key = "abc"
+
+name = bidi override and zero width
+input = "x\u202ey\u200bz\u0007"
+clean = "xyz"
+key = "xyz"
+
+name = bidi isolates, BOM, separators
+input = "\u2066a\u2069b\ufeffc\u2028d\u2029"
+clean = "ab c d"
+key = "abcd"
+
+name = C1 controls and private use
+input = "a\u0085b\u009fc\ue000d"
+clean = "abcd"
+key = "abcd"
+
+name = ZWNJ removed, ZWJ kept
+input = "a\u200cb\u200dc"
+clean = "ab\u200dc"
+key = "ab\u200dc"
+
+name = empty
+input = ""
+clean = ""
+key = ""
+
+name = only spaces
+input = "   "
+clean = ""
+key = ""
+
+name = only invisible
+input = "\u200b\u202e"
+clean = ""
+key = ""
+
+name = too long: 16 characters
+input = "abcdefghijklmnopqrstuvwxyz"
+clean = "abcdefghijklmnop"
+key = "abcdefghijklmnop"
+
+name = exactly 16
+input = "abcdefghijklmnop"
+clean = "abcdefghijklmnop"
+key = "abcdefghijklmnop"
+
+name = truncated then trimmed
+input = "abcdefghijklmno pqr"
+clean = "abcdefghijklmno"
+key = "abcdefghijklmno"
+
+name = accents (NFC input)
+input = "Zo\u00eb M\u00fcller"
+clean = "Zo\u00eb M\u00fcller"
+key = "zoemuller"
+
+name = combining mark (not NFC)
+input = "Zoe\u0308"
+clean = "Zo\u00eb"
+key = "zoe"
+
+name = uppercase accents
+input = "\u00c9LODIE"
+clean = "\u00c9LODIE"
+key = "elodie"
+
+name = Latin Extended-A
+input = "\u0141ukasz \u0160imon"
+clean = "\u0141ukasz \u0160imon"
+key = "\u0142ukaszsimon"
+
+name = German sharp s
+input = "Stra\u00dfe"
+clean = "Stra\u00dfe"
+key = "stra\u00dfe"
+
+name = emoji
+input = "Ann \ud83c\udf55"
+clean = "Ann \ud83c\udf55"
+key = "ann\ud83c\udf55"
+
+name = emoji ZWJ family counts as one
+input = "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66abcdefghijklmnopq"
+clean = "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66abcdefghijklmno"
+key = "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66abcdefghijklmno"
+
+name = emoji skin tone counts as one
+input = "\ud83d\udc4d\ud83c\udffdabcdefghijklmnopq"
+clean = "\ud83d\udc4d\ud83c\udffdabcdefghijklmno"
+key = "\ud83d\udc4d\ud83c\udffdabcdefghijklmno"
+
+name = flags count as one each
+input = "\ud83c\udde6\ud83c\uddf9\ud83c\udde9\ud83c\uddeaabcdefghijklmnopq"
+clean = "\ud83c\udde6\ud83c\uddf9\ud83c\udde9\ud83c\uddeaabcdefghijklmn"
+key = "\ud83c\udde6\ud83c\uddf9\ud83c\udde9\ud83c\uddeaabcdefghijklmn"
+
+name = combining marks count with their base
+input = "e\u0301e\u0301e\u0301abcdefghijklmnopq"
+clean = "\u00e9\u00e9\u00e9abcdefghijklm"
+key = "eeeabcdefghijklm"
+
+name = Cyrillic
+input = "\u041c\u0430\u0448\u0430"
+clean = "\u041c\u0430\u0448\u0430"
+key = "\u043c\u0430\u0448\u0430"
+
+name = Greek with tonos
+input = "\u0386\u03bd\u03bd\u03b1"
+clean = "\u0386\u03bd\u03bd\u03b1"
+key = "\u03b1\u03bd\u03bd\u03b1"
+
+name = CJK
+input = "\u5c0f\u660e"
+clean = "\u5c0f\u660e"
+key = "\u5c0f\u660e"
+
+name = Hangul
+input = "\ud55c\uae00"
+clean = "\ud55c\uae00"
+key = "\u1112\u1161\u11ab\u1100\u1173\u11af"
+
+name = Arabic
+input = "\u0639\u0644\u064a"
+clean = "\u0639\u0644\u064a"
+key = "\u0639\u0644\u064a"
+
+name = fullwidth (compatibility)
+input = "\uff21\uff4e\uff4e"
+clean = "\uff21\uff4e\uff4e"
+key = "ann"
+
+name = ligature (compatibility)
+input = "\ufb01sh"
+clean = "\ufb01sh"
+key = "fish"
+
+name = superscript (compatibility)
+input = "x\u00b2"
+clean = "x\u00b2"
+key = "x2"
+
+name = non-breaking space
+input = "a\u00a0b"
+clean = "a b"
+key = "ab"
+
+name = ideographic space
+input = "a\u3000b"
+clean = "a b"
+key = "ab"
+
+name = dotless i and dotted I
+input = "\u0131 \u0130"
+clean = "\u0131 \u0130"
+key = "\u0131i"
+
+name = digits and punctuation
+input = "R2-D2!"
+clean = "R2-D2!"
+key = "r2-d2!"

@@ -37,7 +37,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && tsc -p tsconfig.client.json",
-    "test": "node --test \"test/*.test.ts\""
+    "test": "node --test \"test/*.test.ts\"",
+    "vectors": "node test/vectors.ts --bless"
   },
   "peerDependencies": {
     "@tvpipe/sdk": "0.2.0"

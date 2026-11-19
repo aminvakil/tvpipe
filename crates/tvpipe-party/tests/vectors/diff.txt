@@ -1,0 +1,258 @@
+# State diffs: the `set`/`del` of a `state` message from view `a` to view `b`.
+# Generated from @tvpipe/party (the reference): `node test/vectors.ts --bless` in npm/party.
+# Format: npm/party/test/vectors.ts.
+
+name = equal
+a = {"x":1,"o":{"a":[1,2]}}
+b = {"x":1,"o":{"a":[1,2]}}
+diff = none
+
+name = set, nested merge, delete, arrays and null replace
+a = {"x":1,"o":{"a":1,"b":{"c":2}},"arr":[1,2],"gone":true,"n":3}
+b = {"x":1,"o":{"a":2,"b":{"c":2}},"arr":[1,2,3],"n":null,"added":{"k":"v"}}
+diff = {"set":{"o":{"a":2},"arr":[1,2,3],"n":null,"added":{"k":"v"}},"del":[["gone"]]}
+
+name = object replaces a scalar and back
+a = {"o":{"y":1},"x":5}
+b = {"o":5,"x":{"y":1}}
+diff = {"set":{"o":5,"x":{"y":1}}}
+
+name = nested delete
+a = {"o":{"a":1,"b":{"c":1,"d":2}}}
+b = {"o":{"a":1,"b":{"c":1}}}
+diff = {"del":[["o","b","d"]]}
+
+name = emptied object
+a = {"o":{"a":1}}
+b = {"o":{}}
+diff = {"del":[["o","a"]]}
+
+name = from empty
+a = {}
+b = {"roster":[{"id":"p1","name":"Ann","vip":true,"connected":true}],"room":{},"me":{}}
+diff = {"set":{"roster":[{"id":"p1","name":"Ann","vip":true,"connected":true}],"room":{},"me":{}}}
+
+name = to empty
+a = {"x":1,"y":{"z":2}}
+b = {}
+diff = {"del":[["x"],["y"]]}
+
+name = numbers
+a = {"i":1,"f":1.5,"neg":-3,"big":1700000000000}
+b = {"i":2,"f":1.25,"neg":-3,"big":1700000000001}
+diff = {"set":{"i":2,"f":1.25,"big":1700000000001}}
+
+name = strings with escapes
+a = {"s":"a\"b"}
+b = {"s":"line\nnext \u00e9 \ud83d\ude00 \u0001"}
+diff = {"set":{"s":"line\nnext \u00e9 \ud83d\ude00 \u0001"}}
+
+name = same array
+a = {"a":[{"x":1}]}
+b = {"a":[{"x":1}]}
+diff = none
+
+name = array element change replaces the array
+a = {"a":[{"x":1},2]}
+b = {"a":[{"x":2},2]}
+diff = {"set":{"a":[{"x":2},2]}}
+
+name = random 0
+a = {}
+b = {"z":{},"w":0,"x":{"z":{"y":"a","z":{"x":"a"}},"y":"a"}}
+diff = {"set":{"z":{},"w":0,"x":{"z":{"y":"a","z":{"x":"a"}},"y":"a"}}}
+
+name = random 1
+a = {}
+b = {"w":null,"z":{"z":1}}
+diff = {"set":{"w":null,"z":{"z":1}}}
+
+name = random 2
+a = {"z":0,"w":[]}
+b = {"z":{},"y":true}
+diff = {"set":{"z":{},"y":true},"del":[["w"]]}
+
+name = random 3
+a = {"z":{"y":[{"y":"a"},false]},"x":null}
+b = {"w":{}}
+diff = {"set":{"w":{}},"del":[["z"],["x"]]}
+
+name = random 4
+a = {"w":1,"y":false}
+b = {}
+diff = {"del":[["w"],["y"]]}
+
+name = random 5
+a = {"z":0}
+b = {"y":{"w":false,"z":{"w":null,"z":"\u00e9"}}}
+diff = {"set":{"y":{"w":false,"z":{"w":null,"z":"\u00e9"}}},"del":[["z"]]}
+
+name = random 6
+a = {"x":{},"w":{"x":{},"w":[]}}
+b = {"y":{}}
+diff = {"set":{"y":{}},"del":[["x"],["w"]]}
+
+name = random 7
+a = {"z":2,"x":[true,false]}
+b = {"x":{}}
+diff = {"set":{"x":{}},"del":[["z"]]}
+
+name = random 8
+a = {"x":{"z":"b"},"y":[0]}
+b = {"y":{},"w":true}
+diff = {"set":{"y":{},"w":true},"del":[["x"]]}
+
+name = random 9
+a = {"x":0,"z":false,"w":"a"}
+b = {"y":null,"z":{"y":"\u00e9"},"w":[]}
+diff = {"set":{"y":null,"z":{"y":"\u00e9"},"w":[]},"del":[["x"]]}
+
+name = random 10
+a = {"z":{"z":false,"x":null},"w":{"x":4,"w":{"w":null}}}
+b = {"x":"\u00e9","y":[{"y":3,"w":0},{"z":{}}],"w":"b"}
+diff = {"set":{"x":"\u00e9","y":[{"y":3,"w":0},{"z":{}}],"w":"b"},"del":[["z"]]}
+
+name = random 11
+a = {"x":2}
+b = {}
+diff = {"del":[["x"]]}
+
+name = random 12
+a = {"x":{"x":2}}
+b = {"w":3}
+diff = {"set":{"w":3},"del":[["x"]]}
+
+name = random 13
+a = {}
+b = {"y":"a"}
+diff = {"set":{"y":"a"}}
+
+name = random 14
+a = {}
+b = {"w":{"w":null,"z":{"x":{"x":true,"y":false}},"x":3},"y":2}
+diff = {"set":{"w":{"w":null,"z":{"x":{"x":true,"y":false}},"x":3},"y":2}}
+
+name = random 15
+a = {"x":[{"x":null,"w":{}},1],"w":null,"y":4}
+b = {"y":0}
+diff = {"set":{"y":0},"del":[["x"],["w"]]}
+
+name = random 16
+a = {"z":"\u00e9","y":true}
+b = {}
+diff = {"del":[["z"],["y"]]}
+
+name = random 17
+a = {"w":"b","x":[]}
+b = {}
+diff = {"del":[["w"],["x"]]}
+
+name = random 18
+a = {"z":{}}
+b = {"y":true,"z":"","x":true}
+diff = {"set":{"y":true,"z":"","x":true}}
+
+name = random 19
+a = {"x":{"x":"b"},"z":true}
+b = {"y":[]}
+diff = {"set":{"y":[]},"del":[["x"],["z"]]}
+
+name = random 20
+a = {}
+b = {}
+diff = none
+
+name = random 21
+a = {"z":null,"w":true}
+b = {}
+diff = {"del":[["z"],["w"]]}
+
+name = random 22
+a = {"z":null,"w":3}
+b = {"z":{"z":true}}
+diff = {"set":{"z":{"z":true}},"del":[["w"]]}
+
+name = random 23
+a = {"x":true}
+b = {}
+diff = {"del":[["x"]]}
+
+name = random 24
+a = {"x":"a"}
+b = {"w":1,"z":null}
+diff = {"set":{"w":1,"z":null},"del":[["x"]]}
+
+name = random 25
+a = {}
+b = {}
+diff = none
+
+name = random 26
+a = {"w":{"w":null,"x":{}},"y":[{"z":3},[]]}
+b = {"x":"a","z":null,"w":["a",{"x":0}]}
+diff = {"set":{"x":"a","z":null,"w":["a",{"x":0}]},"del":[["y"]]}
+
+name = random 27
+a = {}
+b = {"x":[{"w":{"y":""},"y":true},false],"y":null}
+diff = {"set":{"x":[{"w":{"y":""},"y":true},false],"y":null}}
+
+name = random 28
+a = {"x":4}
+b = {}
+diff = {"del":[["x"]]}
+
+name = random 29
+a = {"w":null}
+b = {"z":3,"y":"a"}
+diff = {"set":{"z":3,"y":"a"},"del":[["w"]]}
+
+name = random 30
+a = {"y":{"x":{"x":[]}},"w":null}
+b = {"x":false,"z":true}
+diff = {"set":{"x":false,"z":true},"del":[["y"],["w"]]}
+
+name = random 31
+a = {"w":[]}
+b = {"w":[]}
+diff = none
+
+name = random 32
+a = {}
+b = {}
+diff = none
+
+name = random 33
+a = {}
+b = {"y":[null,{"z":"b","x":[],"y":2}]}
+diff = {"set":{"y":[null,{"z":"b","x":[],"y":2}]}}
+
+name = random 34
+a = {}
+b = {"w":null,"y":{"z":[null,["\u00e9",0]],"x":3},"z":false}
+diff = {"set":{"w":null,"y":{"z":[null,["\u00e9",0]],"x":3},"z":false}}
+
+name = random 35
+a = {}
+b = {"x":"b","y":0}
+diff = {"set":{"x":"b","y":0}}
+
+name = random 36
+a = {"x":null,"z":null}
+b = {"x":null,"y":""}
+diff = {"set":{"y":""},"del":[["z"]]}
+
+name = random 37
+a = {}
+b = {"y":{"x":{"w":"\u00e9","y":""}},"w":null}
+diff = {"set":{"y":{"x":{"w":"\u00e9","y":""}},"w":null}}
+
+name = random 38
+a = {}
+b = {"w":false}
+diff = {"set":{"w":false}}
+
+name = random 39
+a = {}
+b = {}
+diff = none
