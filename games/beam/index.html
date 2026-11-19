@@ -5,15 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>beam</title>
 <style>
-  :root { color-scheme: dark; font: 14px/1.4 system-ui, sans-serif; }
-  body { margin: 0; background: #12121a; color: #eee; display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
-  aside { padding: 16px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #333; overflow: auto; }
-  main { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  label { display: flex; justify-content: space-between; gap: 8px; }
-  select, button { font: inherit; }
-  canvas { width: 100%; max-width: 960px; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
-  pre { margin: 0; font: 12px ui-monospace, monospace; white-space: pre-wrap; color: #aab; }
-  h1 { font-size: 18px; margin: 0; }
+  /* tvpipe's look (site/static/style.css, crates/tvpipe/src/browser/share.html):
+     its tokens, light or dark with the system; the fonts by name. */
+  :root {
+    color-scheme: light;
+    --bg: #FFFFFF; --ink: #172B46; --ink-2: rgba(23, 43, 70, .7); --ink-3: rgba(23, 43, 70, .48);
+    --rule: rgba(23, 43, 70, .12); --panel: #F5F6F8; --accent: #E8743B; --bad: #C0392B;
+    --btn-bg: #172B46; --btn-ink: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0D1828; --ink: #E8ECF2; --ink-2: rgba(232, 236, 242, .72); --ink-3: rgba(232, 236, 242, .46);
+      --rule: rgba(232, 236, 242, .11); --panel: #13223A; --bad: #FF7A6B;
+      --btn-bg: #E8743B; --btn-ink: #0D1828;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); color: var(--ink); }
+  body { margin: 0; font: 400 14px/1.55 "IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+         display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+  aside { padding: 24px; display: flex; flex-direction: column; gap: 12px; border-right: 1px solid var(--rule); overflow: auto; }
+  main { padding: 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  h1 { font: 400 20px/1.3 "Michroma", "IBM Plex Sans", sans-serif; letter-spacing: -.01em; margin: 0; }
+  p { margin: 0; color: var(--ink-2); }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+          font: 400 9.5px/1.5 "Michroma", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  select { font: 14px "IBM Plex Sans", system-ui, sans-serif; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--rule); border-radius: 4px; padding: 4px 8px; text-transform: none; letter-spacing: 0; }
+  button { font: 500 14px "IBM Plex Sans", system-ui, sans-serif; border-radius: 4px; padding: 9px 16px; cursor: pointer;
+           border: 1px solid var(--rule); background: none; color: var(--ink); }
+  button#start { background: var(--btn-bg); color: var(--btn-ink); border-color: var(--btn-bg); }
+  button:disabled { opacity: .45; cursor: default; }
+  canvas { width: 100%; max-width: 960px; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; }
+  pre { margin: 0; font: 12px/1.5 "IBM Plex Mono", ui-monospace, monospace; white-space: pre-wrap; color: var(--ink-2);
+        background: var(--panel); border-radius: 4px; padding: 10px 12px; }
+  pre:empty { display: none; }
 </style>
 <script type="module" src="host.js"></script>
 </head>
