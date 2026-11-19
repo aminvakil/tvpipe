@@ -5,7 +5,9 @@
  * deals a prompt again: with a fresh deck per game (as before) and with
  * the room's deck (`PromptDeck`).
  *
- *   node scripts/prompts.ts [--lang de] [--file PATH] [--games 5] [--players 8] [--rounds 2] [--runs 200] [--near]
+ *   node scripts/prompts.ts [--lang de] [--file PATH] [--games 5] [--players 8] [--rounds 2] [--runs 200] [--spread N] [--near]
+ *
+ * `--spread 3`: the fresh decks spread as before (no structure twice among 3).
  */
 
 import { readFileSync } from "node:fs";
@@ -22,6 +24,7 @@ const { values: args } = parseArgs({
     players: { type: "string", default: "8" },
     rounds: { type: "string", default: "2" },
     runs: { type: "string", default: "200" },
+    spread: { type: "string" },
     near: { type: "boolean", default: false },
   },
 });
@@ -62,10 +65,11 @@ if (args.near) for (const [a, b] of near) console.log(`  ${a} ~ ${b}`);
 const s = { games: Number(args.games), players: Number(args.players), rounds: Number(args.rounds) };
 const runs = Number(args.runs);
 for (const fresh of [true, false]) {
-  const r = repeats(prompts, s, fresh, runs);
+  const r = repeats(prompts, s, fresh, runs, args.spread ? Number(args.spread) : undefined);
   const n = s.games * s.players * s.rounds;
   console.log(
     `${fresh ? "a fresh deck per game" : "the room's deck     "}: ${s.games} games × ${s.players} players × ${s.rounds} rounds = ${n} prompts; ` +
-      `repeats ${r.mean.toFixed(1)} on average (${((100 * r.mean) / n).toFixed(1)} %), sessions with a repeat ${(100 * r.sessions).toFixed(0)} %`,
+      `repeats ${r.mean.toFixed(1)} on average (${((100 * r.mean) / n).toFixed(1)} %), sessions with a repeat ${(100 * r.sessions).toFixed(0)} %, ` +
+      `rounds as mixed as can be ${(100 * r.mixed).toFixed(0)} %`,
   );
 }

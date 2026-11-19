@@ -45,9 +45,9 @@ for (const lang of LANGS) {
     }
   });
 
-  test(`prompts (${lang}): a room plays 5 games of 8 players, 2 rounds, without a repeat`, () => {
+  test(`prompts (${lang}): a room plays 5 games of 8 players, 2 rounds, without a repeat, 8 structures a round`, () => {
     const s = { games: 5, players: 8, rounds: 2 };
-    assert.deepEqual(repeats(prompts, s, false, 20), { mean: 0, sessions: 0 });
+    assert.deepEqual(repeats(prompts, s, false, 20), { mean: 0, sessions: 0, mixed: 1 });
     // A fresh deck per game (as before) would repeat some.
     assert.ok(repeats(prompts, s, true, 20).mean > 0);
   });

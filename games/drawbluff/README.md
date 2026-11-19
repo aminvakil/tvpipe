@@ -22,6 +22,13 @@ anytime" on the TV) or not at all (`closed`); every phone shows its role and
 its rank ("#12 of 50"). The design and the numbers:
 [`docs/drawbluff-scale.md`](../../docs/drawbluff-scale.md).
 
+It speaks English and German: the room's language is a setting on the
+host page (the default: the host browser's language), and every phone,
+the TV and the host page follow it, with prompts written for each
+language (665 in 17 structures in English, 698 in 18 in German). A room
+deals no prompt twice until it dealt them all, game after game, and a
+round of up to 8 players gets 8 kinds of prompt.
+
 It is a web app for [`tvpipe playshare`](../../docs/playshare-design.md):
 tvpipe serves it, the game runs in its host page (a window on the
 computer), the TV page is cast to AirPlay and Chromecast receivers, and
@@ -31,10 +38,11 @@ phones join with the QR code.
 |---|---|---|
 | `tvpipe.json` | the manifest | pages, 3–50 players, the TV's size; `root: dist` |
 | `game/` | the rules (`rules.ts`), the game (`game.ts`), bots (`bots.ts`) | TypeScript on `@tvpipe/party`, tested in Node |
-| `host/` | the host page | the party, the TV, the players, bots, settings, a preview of the TV |
-| `screen/` | the TV page | the screen view (`{ roster, screen, join }`) |
-| `phone/` | the phone page | drawing, lies, votes |
-| `data/prompts.txt` | the prompts | fetched by the host page |
+| `host/` | the host page | the party, the TV, the players, bots, settings (the language), a preview of the TV; `strings.ts` |
+| `screen/` | the TV page | the screen view (`{ roster, screen, join }`); `strings.js` |
+| `phone/` | the phone page | drawing, lies, votes; `strings.js`, `i18n.js` (languages, `Intl`) |
+| `data/prompts.txt`, `data/prompts.de.txt` | the prompts, English and German | fetched by the host page |
+| `scripts/prompts.ts` | numbers about a prompts file | structures, words, near duplicates, repeats per session |
 
 ## Running it
 
@@ -64,14 +72,20 @@ second browser, but the window must stay visible (docs/playshare-design.md
 
 `npm test`: the rules and scoring (the rule vectors in
 `test/vectors/rules.txt`, written by `node test/vectors.ts --bless`),
+the prompt files' lints in both languages (display form, length,
+duplicates, structures) and the room's deck (no repeats),
 whole games with 3, 8 and 50 bots on `@tvpipe/party`'s relay in memory
 (a player who drops mid-game and comes back, one who leaves, too few
-players, late joiners in every mode, the VIP removing a player).
+players, late joiners in every mode, the VIP removing a player, three
+games in one room without a repeated prompt, a whole game in German).
 `npm run build && node test/live/playshare.ts [--zip] [--bots N]
-[--rounds N] [--tunnel=PROVIDER]` runs the real thing: `tvpipe
+[--rounds N] [--lang de] [--tunnel=PROVIDER]` runs the real thing: `tvpipe
 playshare` on the bundle (or the zip), a headless Chrome as the window
 (the launcher, the host page), as a phone (it joins, draws with touch
 events, lies and votes) and as the TV (the `browser` receiver's player
 page: the TV page went through tvpipe's own headless Chrome and the
 stream), bots through the phones' listener, and screenshots of the
-launcher, the host window, the TV and the phone per phase.
+launcher, the host window, the TV and the phone (also at 320 px wide)
+per phase, each checked for text out of its box and, with `--lang de`
+(a German room and phone, shots in `/tmp/drawbluff-de`), for English
+left on the screen.

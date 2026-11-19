@@ -405,8 +405,8 @@ export function spread<T>(items: readonly T[], tag: (item: T) => string, window 
  * order (a round's prompts, one per player in join order, mix the
  * structures).
  */
-export function deck(prompts: readonly Prompt[], rng: () => number): Prompt[] {
-  return spread(shuffle(prompts, rng), (p) => p.tag).reverse();
+export function deck(prompts: readonly Prompt[], rng: () => number, window = SPREAD): Prompt[] {
+  return spread(shuffle(prompts, rng), (p) => p.tag, window).reverse();
 }
 
 /** Prompts a room's deck keeps undealt when it deals: the decoys come from them. */

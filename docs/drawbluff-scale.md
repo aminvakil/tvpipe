@@ -163,13 +163,18 @@ Nothing about how a title looks may give the truth away (the prompt
 list is written carefully, lies are typed fast on a phone). The host
 keeps what was typed and shows every title, the truth included, in one
 display form (`displayTitle` / `display_title`, rule vectors `title …
-display`): curly and other quotes and apostrophes become `'` and `"`,
-spacing collapses, everything is lowercase, trailing `.` `!` `?` `…` and
+display`): curly and other quotes and apostrophes become `'` and `"`
+(German „…“ too), commas go but in numbers (a German relative clause
+takes one: „Der Bär, der tanzt“ → `der bär der tanzt`), spacing
+collapses, everything is lowercase, trailing `.` `!` `?` `…` and
 surrounding quotes go (`"A Cat!"` → `a cat`); emoji are already gone
-(`cleanTitle`). `titleKey` works on that form, so `a cat` = `A Cat.`.
-The prompts (`data/prompts.txt`) are already in it: lowercase letters,
-spaces and apostrophes, at most 40 characters (both test suites check
-it). The phone's lie input takes at most 40 characters too (`LIE_SOFT`,
+(`cleanTitle`). `titleKey` works on that form, so `a cat` = `A Cat.`;
+per language (`titleKey(text, lang)`): English drops a leading
+a/an/the, German der/die/das/ein/eine/…, and folds `ä ö ü` to `ae oe
+ue` (`baer` = `Bär`), `ß` is `ss` everywhere. The prompts
+(`data/prompts.txt`, `data/prompts.de.txt`) are already in it:
+lowercase letters (with `ä ö ü ß` in German), spaces and apostrophes,
+NFC, at most 40 characters (`test/prompts.test.ts` checks it). The phone's lie input takes at most 40 characters too (`LIE_SOFT`,
 the longest prompt; the host still accepts up to 48), with
 `autocapitalize="none"` and autocorrect left on.
 
@@ -177,50 +182,140 @@ the longest prompt; the host still accepts up to 48), with
 
 The first prompts were all one shape ("a nervous cactus": an adjective
 and a thing, or a thing in a place): quick to draw, quick to guess, and
-the lies all sounded alike. `data/prompts.txt` now has 407 prompts in
-ten structures, so a round mixes kinds of drawing and kinds of lie:
+the lies all sounded alike. Then `data/prompts.txt` had 407 prompts in
+ten structures; now 665 in 17, and German has its own 698 in 18
+(`data/prompts.de.txt`, below), so a round mixes kinds of drawing and
+kinds of lie:
 
-| Tag | Structure | Example | Prompts |
-|---|---|---|---|
-| `odd` | odd combinations | a lonely lighthouse at a party | 46 |
-| `idiom` | idioms taken literally | raining cats and dogs | 50 |
-| `feeling` | abstract ideas and feelings | the fear of mondays | 42 |
-| `moment` | the moment when … | the moment the ice cream falls | 38 |
-| `secret` | the secret lives of things | what the fridge does at night | 39 |
-| `invented` | invented jobs, sports, holidays | a puddle inspector | 40 |
-| `contra` | misleading or contradictory pairs | a shy fireworks show | 42 |
-| `view` | an unusual point of view | the world seen by an ant | 36 |
-| `drama` | tiny dramas | the last cookie standoff | 38 |
-| `title` | famous-sounding invented titles | the phantom of the bakery | 36 |
+| Tag | Structure | Example | Prompts (en) | (de) |
+|---|---|---|---|---|
+| `odd` | odd combinations | a lonely lighthouse at a party | 46 | 47 |
+| `idiom` | idioms taken literally | raining cats and dogs | 50 | 61 |
+| `wort` | German compounds taken literally | ein glückspilz | – | 46 |
+| `feeling` | abstract ideas and feelings | the fear of mondays | 42 | 39 |
+| `moment` | the moment when … | the moment the ice cream falls | 38 | 38 |
+| `secret` | the secret lives of things | what the fridge does at night | 43 | 34 |
+| `invented` | invented jobs, sports, holidays | a puddle inspector | 40 | 37 |
+| `contra` | misleading or contradictory pairs | a shy fireworks show | 42 | 42 |
+| `view` | an unusual point of view | the world seen by an ant | 42 | 35 |
+| `drama` | tiny dramas | the last cookie standoff | 43 | 38 |
+| `title` | famous-sounding invented titles | the phantom of the bakery | 43 | 39 |
+| `animal` | animals with human problems | a cat filing its taxes | 38 | 38 |
+| `food` | food with a life of its own | soup that fights back | 35 | 36 |
+| `place` | places that should not exist | a school for baby dragons | 33 | 34 |
+| `gadget` | inventions nobody needs | a hat that waters your plants | 33 | 34 |
+| `power` | useless superpowers | the power to sneeze glitter | 33 | 32 |
+| `then` | history mixed up | a caveman with a selfie stick | 32 | 33 |
+| `scene` | everyday scenes gone wrong | grandpa's first video call | 32 | 35 |
 
-51 of the 144 old prompts stayed, sorted into the structures; the
-plain ones went. All are written for drawbluff, drawable, family
-friendly and in the display form.
+All are written for drawbluff, drawable, family friendly and in the
+display form.
 
 - **Format**: `[tag]` lines start a structure, then one prompt per
-  line (`parsePrompts` / `parse_prompts`; blank lines and `#` comments
-  skipped; prompts before any tag have the tag "").
+  line (`parsePrompts`; blank lines and `#` comments skipped; prompts
+  before any tag have the tag "").
 - **Length**: 40 characters at most (was 32): "the moment …" and the
   points of view need it (the longest: "the moment the referee blows the
   whistle"). The lie input follows (`LIE_SOFT` 40), so a long truth is
   no tell. Checked at 40 in every layout: the phone's prompt and input
   wrap; the TV's options, the reveal's lines and the gallery's captions
   shrink the font to fit (down to 70 %) before they would shorten with
-  … (video screens: `shrink`; screens-50.json has 40-character options,
-  answers and captions); the 50-player reveal now puts the title on its
-  own line and the tag in front of who fell for it.
-- **Mixing** (`deck`, rule vectors `prompts`, `spread`, `deck` — one of
-  them on the real file in both hosts — and `decoys`): a game's deck is
-  the prompts shuffled with the game's seeded rng, then spread: each
-  next prompt is the first one left whose structure is not among the
-  last two (`SPREAD` 3: no structure twice among three in a row), else
-  not the last one, else the first one left. Players get consecutive
-  prompts, so every round mixes the structures; the spotlights are
-  spread the same way after the rotation picked them, so the TV never
-  shows two "the moment …" in a row while it can avoid it.
+  …; the 50-player reveal puts the title on its own line and the tag in
+  front of who fell for it. German words are long ("regenbogenreparaturdienst", the longest "pfützenspringmeisterschaft", 26; the lint
+  allows no longer word): the pages set `lang` and `hyphens: auto`, so
+  they break with a hyphen where German allows.
+- **Mixing** (`deck`, rule vectors `prompts`, `spread`, `deck`, one of
+  them on the real file, and `decoys`): a deck is the prompts shuffled
+  with the game's seeded rng, then spread: each next prompt is the first
+  one left whose structure is not among the last seven (`SPREAD` 8, was
+  3: no structure twice among eight in a row), else not among the last
+  six, …, else the first one left. Players get consecutive prompts, so a
+  round of up to 8 players draws 8 kinds of prompt; the spotlights are
+  spread the same way after the rotation picked them.
+- **No repeats in a room** (`PromptDeck`): the deck is the room's, not
+  the game's: the host keeps one per language from game to game and
+  deals no prompt twice until it dealt them all. When fewer than a
+  round's prompts and a reserve (`DECK_RESERVE` 16, the decoys) are
+  left, a new deck of the other prompts goes under the rest. A decoy
+  shown on the TV is taken out of the pass too (it would be a tell as a
+  prompt later).
 - **Decoys** (too few lies for a drawing) come from the drawing's own
-  structure first (`decoyOrder` / `decoy_order`): a "moment" truth
-  gets "moment" decoys, which look like it, and are better bluffs.
+  structure first (`decoyOrder`): a "moment" truth gets "moment"
+  decoys, which look like it, and are better bluffs.
+
+### Variety: before and after
+
+`node scripts/prompts.ts [--lang de] [--file F] [--players N] [--rounds
+N] [--games N] [--spread N] [--near]` measures a prompts file; the
+lints in `test/prompts.test.ts` hold for both languages (display form,
+NFC, ≤ 40 characters, no word over 26, no two alike by `titleKey`, no
+near duplicates, at least 600 prompts, at least 15 structures of 30 or
+more, none over a tenth, no repeat in 5 games of 8 players).
+
+| | before (en) | after (en) | German |
+|---|---|---|---|
+| prompts / structures | 407 / 10 | 665 / 17 | 698 / 18 |
+| smallest structure | 36 | 32 | 32 |
+| distinct words (of all) | 839 (1937) | 1315 (3351) | 1338 (2906) |
+| distinct content words (no articles, prepositions) | 808 | 1282 | 1280 |
+| content words used once | 625 | 921 | 1087 |
+| most used words | moment 38, view 19, day 13, secret 9 | moment 38, day 13, view 12, lost 10 | moment 9, macht 8, hund 7, katze 7 |
+| near duplicates (two content words in common) | 19 | 0 | 0 |
+
+The near duplicates were pairs like "a ghost at a job interview" / "a
+dinosaur at a job interview", "the moment the soap slips" / "the
+moment the penguin slips", "the national day of naps" / "the national
+leftovers day"; one of each was rewritten, and seven "…'s view of …"
+points of view got other shapes.
+
+A session in one room, 100 simulated sessions each: prompts dealt again
+(that were dealt earlier in the session), and rounds as mixed as they
+can be (no structure twice with up to 17 players). Before: a fresh deck
+per game, spread over 3; after: the room's deck, spread over 8.
+
+| session | before (407, fresh deck) | after, en (665, room's deck) | after, de (698) |
+|---|---|---|---|
+| 5 games × 4 players × 2 rounds | 1.4 repeats (3.5 %), 75 % of sessions; 68 % mixed rounds | 0 repeats; 100 % mixed | 0; 100 % |
+| 5 games × 8 players × 2 rounds | 6.0 repeats (7.5 %), every session; 2 % mixed | 0; 100 % | 0; 100 % |
+| 10 games × 8 players × 3 rounds | 54.8 repeats (22.8 %) | 0; 100 % | 0; 100 % |
+| 5 games × 20 players × 2 rounds | 35.1 (17.6 %) | 0 | 0 |
+| 3 games × 50 players × 2 rounds | 67.8 (22.6 %) | 0 | 0 |
+
+(The new files alone, still with a fresh deck per game, would repeat
+3.6 prompts in the 5 × 8 × 2 session; the room's deck makes it 0 until
+a room dealt all 665: about 41 games of 8 players and 2 rounds.)
+
+### Languages
+
+A room has one language, English or German (`LANGS`): a setting on
+the host page (Language; the default is the host browser's language,
+German for `de…`, and its last choice), changeable in the lobby and on
+the podium, not during a game (`configure({ lang })`, `bad-lang`
+without prompts). The game sends it in every view, `room.lang` to the
+phones and `screen.lang` to the TV, so every screen follows it; the
+prompts, the decoys and the bots' lies are in it, and titles compare
+the German way (`titleKey(…, "de")`). Each page has its strings
+(`phone/strings.js`, `screen/strings.js`, `host/strings.ts`; numbers,
+plurals and lists with `Intl`: "1.000 Punkte", "Ada, Bo und Cy"). A
+phone may switch for itself (a button in the header, in the lobby and
+on the podium, kept on the phone); before it joined it speaks the
+browser's language. German is written for German speakers, not
+translated: "du", „…“ quotes, "Platz 3 von 8", "Bester Bluff",
+"Adlerauge", and prompts of its own (idioms like "tomaten auf den
+augen", compounds taken literally like "ein glückspilz", "ein ritter
+beim tüv", "die bahn hat wieder verspätung").
+
+The live check plays it: `node test/live/playshare.ts --lang de` sets
+the host page to German, joins a German phone (`de-DE`) and checks every
+shot for layout problems (the phone at 390 and 320 px wide, the TV page
+at 1280×720: text out of its box, boxes off the screen) and for English
+left on the screen. Run against a real `tvpipe playshare
+games/drawbluff`: 4 players (`--bots 3`), 9 (`--bots 8`, the gallery and
+6 options) and 50 (`--bots 49`), one round each, no bot errors, no
+layout problems, nothing English; screenshots in `/tmp/drawbluff-de`
+and `/tmp/drawbluff-de-50`. Fixed on the way: the phone's header rank
+("Platz 1 von 4") was cut at 320 px (now "1. von 4"), and the drawing
+tools' "löschen" broke into "lö-schen".
 
 ## 7. Scoring: per exposure
 

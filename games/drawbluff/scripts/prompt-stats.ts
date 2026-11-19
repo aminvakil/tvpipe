@@ -3,7 +3,7 @@
  * `scripts/prompts.ts` and the prompt lints (test/prompts.test.ts).
  */
 
-import { deck, PromptDeck, seeded, type Lang, type Prompt } from "../game/rules.ts";
+import { deck, PromptDeck, seeded, SPREAD, type Lang, type Prompt } from "../game/rules.ts";
 
 /** Words that say little about a prompt (articles, prepositions, …). */
 export const STOP: Record<Lang, ReadonlySet<string>> = {
@@ -12,7 +12,7 @@ export const STOP: Record<Lang, ReadonlySet<string>> = {
     (
       "der die das den dem des ein eine einen einem einer eines im in am an auf aus bei mit nach von vom zum zur und oder für über unter vor hinter " +
       "dein deine sein seine ihr ihre mein meine wenn was wie wer ist sich es er sie nicht kein keine beim ins aufs vorm fürs unterm durch dir man " +
-      "haben machen werden will kann nur aber als zu"
+      "haben machen werden will kann nur aber als zu um"
     ).split(" "),
   ),
 };
@@ -53,21 +53,29 @@ export interface Session {
 /**
  * Prompts dealt again within one room's session of `games` games, on
  * average over `runs` seeded sessions, and the share of sessions with
- * any: with a fresh {@link deck} per game (`fresh`, how drawbluff dealt
- * before) or the room's {@link PromptDeck}.
+ * any, and the share of rounds as mixed as can be (`mixed`: no structure
+ * more often than players / structures, rounded up; with up to 17
+ * players: every prompt of another structure): with a fresh {@link deck}
+ * per game spread over `window` (`fresh`, how drawbluff dealt before,
+ * with a window of 3) or the room's {@link PromptDeck}.
  */
-export function repeats(prompts: readonly Prompt[], s: Session, fresh: boolean, runs: number): { mean: number; sessions: number } {
+export function repeats(prompts: readonly Prompt[], s: Session, fresh: boolean, runs: number, window = SPREAD): { mean: number; sessions: number; mixed: number } {
+  const most = Math.ceil(s.players / perStructure(prompts).size);
   let total = 0;
   let hit = 0;
+  let hands = 0;
+  let twice = 0;
   for (let seed = 1; seed <= runs; seed++) {
     const rng = seeded(seed);
     const dealt = new Set<string>();
     const room = new PromptDeck(prompts, rng);
     let n = 0;
     for (let g = 0; g < s.games; g++) {
-      const d = fresh ? deck(prompts, rng) : [];
+      const d = fresh ? deck(prompts, rng, window) : [];
       for (let r = 0; r < s.rounds; r++) {
         const hand = fresh ? d.splice(-s.players).reverse() : room.deal(s.players);
+        hands++;
+        if (Math.max(...perStructure(hand).values()) > most) twice++;
         for (const p of hand) {
           if (dealt.has(p.text)) n++;
           dealt.add(p.text);
@@ -77,5 +85,5 @@ export function repeats(prompts: readonly Prompt[], s: Session, fresh: boolean, 
     total += n;
     if (n > 0) hit++;
   }
-  return { mean: total / runs, sessions: hit / runs };
+  return { mean: total / runs, sessions: hit / runs, mixed: 1 - twice / hands };
 }
