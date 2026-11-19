@@ -64,6 +64,14 @@ fn manifest_fields_and_errors() {
             "players.min",
         ),
         (
+            r#"{"name":"g","tvpipe":"99.0","pages":{"host":"h","tv":"t","phone":"p"}}"#,
+            "needs tvpipe 99.0 or newer",
+        ),
+        (
+            r#"{"name":"g","tvpipe":2,"pages":{"host":"h","tv":"t","phone":"p"}}"#,
+            "\"tvpipe\" must be a version",
+        ),
+        (
             r#"{"name":"g","pages":{"host":"h","tv":"t","phone":"p"},"players":{"max":5000}}"#,
             "players.max",
         ),

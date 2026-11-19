@@ -101,6 +101,13 @@ impl Manifest {
                 "\"name\" must be 1-40 of a-z, 0-9 and -, not {name:?}"
             )));
         }
+        // The tvpipe (and @tvpipe/party) the game is made for.
+        if let Some(t) = v.get("tvpipe").filter(|t| !t.is_null()) {
+            let t = t
+                .as_str()
+                .ok_or_else(|| field("\"tvpipe\" must be a version like \"0.2\""))?;
+            super::check::version_compatible(t, env!("CARGO_PKG_VERSION")).map_err(field)?;
+        }
         let title = match v.get("title") {
             None | Some(Value::Null) => name.to_owned(),
             Some(t) => t

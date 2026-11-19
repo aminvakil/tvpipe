@@ -32,6 +32,7 @@ has the same modules with types, for type checking and for tests in Node
 ```json
 {
   "name": "quiz",
+  "tvpipe": "0.2",
   "pages": { "host": "host.html", "tv": "tv.html", "phone": "phone.html" },
   "players": { "min": 2, "max": 12 }
 }
