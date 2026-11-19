@@ -355,7 +355,9 @@ pub fn select<'a>(devices: &'a [Device], query: &str) -> Result<&'a Device> {
     };
     match candidates.as_slice() {
         [one] => Ok(one),
-        [] => Err(Error::not_found(format!("no receiver named {query:?}"))),
+        [] => Err(Error::not_found(format!("no receiver named {query:?}"))
+            .with_code("no-receiver")
+            .with_device(query)),
         many => Err(Error::usage(format!(
             "{query:?} matches several receivers: {}",
             many.iter()
@@ -480,9 +482,12 @@ pub(crate) mod tests {
         let err = select(&devs, "b").unwrap_err();
         assert_eq!(err.kind(), crate::error::ErrorKind::Usage);
         assert!(err.to_string().contains("\"Balcony\""), "{err}");
+        let err = select(&devs, "nope").unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::NotFound);
+        // The machine interface's code (docs/machine.md) and the name.
         assert_eq!(
-            select(&devs, "nope").unwrap_err().kind(),
-            crate::error::ErrorKind::NotFound
+            (err.code(), err.device()),
+            (Some("no-receiver"), Some("nope"))
         );
         assert_eq!(
             select(&devs, "10.0.0.1").unwrap_err().kind(),

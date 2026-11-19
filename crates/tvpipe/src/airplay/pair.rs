@@ -100,8 +100,11 @@ pub fn resolve(target: &str) -> Result<Target> {
     if let Some(addr) = parse_addr(target) {
         return Ok(Target { addr, device: None });
     }
-    let device = discover::resolve(target, DISCOVER_TIMEOUT, &[])?
-        .ok_or_else(|| Error::not_found(format!("no receiver named {target:?}")))?;
+    let device = discover::resolve(target, DISCOVER_TIMEOUT, &[])?.ok_or_else(|| {
+        Error::not_found(format!("no receiver named {target:?}"))
+            .with_code("no-receiver")
+            .with_device(target)
+    })?;
     let ep = device
         .airplay
         .as_ref()
