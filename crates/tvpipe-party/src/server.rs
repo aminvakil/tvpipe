@@ -2,11 +2,13 @@
 //! `/screen/`, the browser client at `/party/client.js`, and the
 //! WebSocket at `/party/ws` (docs/party-design.md §4, §6).
 //!
-//! It binds loopback (a tunnel reaches it from there), so only these
-//! `Host`s are served: `127.0.0.1:PORT`, `localhost:PORT`, `[::1]:PORT`
-//! and the tunnel's name (421 otherwise: DNS rebinding). WebSockets need
-//! a matching `Origin` (403: cross-site hijacking; clients without one
-//! still need a key).
+//! Two listeners share one handler. The loopback one (a tunnel reaches it
+//! from there) serves only these `Host`s: `127.0.0.1:PORT`,
+//! `localhost:PORT`, `[::1]:PORT` and the tunnel's name. The LAN one (LAN
+//! mode, docs/multiscreen-design.md §3.2) serves exactly `IP:PORT`. Any
+//! other `Host` gets 421 (DNS rebinding). WebSockets need a matching
+//! `Origin` (403: cross-site hijacking; clients without one still need a
+//! key).
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -30,6 +32,8 @@ pub(crate) type Visitor = Box<dyn Fn(SocketAddr) -> Option<String> + Send + Sync
 
 pub(crate) struct Shared {
     pub port: OnceLock<u16>,
+    /// The LAN listener's address (LAN mode).
+    pub lan: OnceLock<SocketAddr>,
     /// Public host names (a tunnel's), lowercase.
     pub hosts: RwLock<Vec<String>>,
     pub visitor: RwLock<Option<Visitor>>,
@@ -44,10 +48,20 @@ pub(crate) struct Shared {
     pub max_message: usize,
 }
 
+/// Which socket a request came in on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Listener {
+    /// 127.0.0.1: this computer and the tunnel.
+    Loopback,
+    /// The LAN address.
+    Lan,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Via {
     Local,
     Public,
+    Lan,
 }
 
 impl Shared {
@@ -55,8 +69,12 @@ impl Shared {
         self.port.get().copied().unwrap_or(0)
     }
 
-    fn via(&self, req: &Request) -> Option<Via> {
+    fn via(&self, req: &Request, listener: Listener) -> Option<Via> {
         let host = req.headers.get("host")?.trim().to_ascii_lowercase();
+        if listener == Listener::Lan {
+            let lan = self.lan.get()?;
+            return (host == lan.to_string()).then_some(Via::Lan);
+        }
         let port = self.port();
         if [
             format!("127.0.0.1:{port}"),
@@ -72,12 +90,18 @@ impl Shared {
         hosts.iter().any(|h| h == bare).then_some(Via::Public)
     }
 
-    fn origin_ok(&self, req: &Request) -> bool {
+    fn origin_ok(&self, req: &Request, via: Via) -> bool {
         // Not a browser: it still needs a key.
         let Some(origin) = req.headers.get("origin") else {
             return true;
         };
         let o = origin.trim().to_ascii_lowercase();
+        if via == Via::Lan {
+            return self
+                .lan
+                .get()
+                .is_some_and(|lan| o == format!("http://{lan}"));
+        }
         let port = self.port();
         if [
             format!("http://127.0.0.1:{port}"),
@@ -129,12 +153,12 @@ fn redirect(location: String) -> Response {
     r
 }
 
-pub(crate) fn handler(shared: Arc<Shared>) -> Handler {
-    Arc::new(move |req: &Request| request(&shared, req))
+pub(crate) fn handler(shared: Arc<Shared>, listener: Listener) -> Handler {
+    Arc::new(move |req: &Request| request(&shared, req, listener))
 }
 
-fn request(shared: &Arc<Shared>, req: &Request) -> Reply {
-    let Some(via) = shared.via(req) else {
+fn request(shared: &Arc<Shared>, req: &Request, listener: Listener) -> Reply {
+    let Some(via) = shared.via(req, listener) else {
         return Reply::Response(plain(421, "Misdirected Request"));
     };
     let (path, query) = match req.target.split_once('?') {
@@ -220,7 +244,7 @@ fn upgrade(shared: &Arc<Shared>, req: &Request, via: Via, path: &str) -> Reply {
     if path != "/party/ws" {
         return refuse(plain(404, "Not Found"));
     }
-    if !shared.origin_ok(req) {
+    if !shared.origin_ok(req, via) {
         let origin = req.headers.get("origin").unwrap_or("");
         tvpipe::log::write(
             tvpipe::log::Level::Warn,

@@ -4,7 +4,7 @@
  * in a headless Chrome, joins both, arms three rounds from the VIP and
  * buzzes, and checks the terminal reports a winner each time.
  *
- *   node scripts/live/party-buzzer.ts [local|auto|cloudflare|opentunnel] [--shots DIR]
+ *   node scripts/live/party-buzzer.ts [local|lan|auto|cloudflare|opentunnel] [--shots DIR]
  *
  * Needs Chrome (CHROME=… to pick one).
  */
@@ -70,6 +70,10 @@ try {
     tabs.push(tab);
   }
   const [ann, bob] = tabs as [Tab, Tab];
+  // LAN links are plain HTTP: the page must work without a secure context.
+  const secure = await ann.eval<boolean>("window.isSecureContext");
+  if (secure !== url.startsWith("https:") && !url.startsWith("http://127.0.0.1:")) throw new Error(`isSecureContext ${secure} on ${url}`);
+  console.log(`secure context: ${secure}`);
   await ann.until(`!document.getElementById("start").hidden`);
   if (!(await bob.eval(`document.getElementById("start").hidden`))) throw new Error("Bob sees the VIP's start button");
   if (shots) await ann.screenshot(`${shots}/buzzer-lobby.png`);

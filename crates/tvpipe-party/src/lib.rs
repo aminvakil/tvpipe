@@ -46,12 +46,12 @@ mod testutil;
 mod typed;
 mod value;
 
-use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use tvpipe::__web::httpd;
+use tvpipe::__web::{httpd, iface};
 use tvpipe::{QrCode, Tunnel, TunnelProvider};
 
 pub use assets::{Asset, Assets};
@@ -67,7 +67,7 @@ pub use value::{Number, Object, Value};
 
 use limits::WindowCounter;
 use party::{Core, CoreOptions, Inbox};
-use server::Shared;
+use server::{Listener, Shared};
 
 /// The browser client (`/party/client.js`), shared with `@tvpipe/party`.
 pub const CLIENT_JS: &str = include_str!("../web/party-client.js");
@@ -76,14 +76,46 @@ pub const CLIENT_JS: &str = include_str!("../web/party-client.js");
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Join {
-    /// A public link: Cloudflare, else OpenTunnel (the default).
+    /// A public link (Cloudflare, else OpenTunnel), or the LAN link when
+    /// no tunnel comes up in time (offline): the default.
     #[default]
     Auto,
     /// A public link through this provider.
     Tunnel(TunnelProvider),
+    /// The local network only: `http://IP:PORT` on this address (`None`:
+    /// the default route's). Plain HTTP: not a secure context, and anyone
+    /// who can read the Wi-Fi can join (docs/multiscreen-design.md §3.2).
+    Lan(Option<IpAddr>),
     /// This computer only (`http://127.0.0.1:PORT`): development, tests.
     Local,
 }
+
+/// How phones reached the party in the end (the TV says so).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Link {
+    /// A public HTTPS link through a tunnel.
+    Tunnel,
+    /// `http://IP:PORT` on the local network: phones must be on the same
+    /// Wi-Fi.
+    Lan,
+    /// This computer only.
+    Local,
+}
+
+impl Link {
+    /// `tunnel`, `lan` or `local` (the `mode` of the screens' `join`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Link::Tunnel => "tunnel",
+            Link::Lan => "lan",
+            Link::Local => "local",
+        }
+    }
+}
+
+/// The LAN port tried first.
+pub const LAN_PORT: u16 = 7420;
 
 /// How a [`Party`] starts.
 pub struct PartyOptions {
@@ -94,6 +126,9 @@ pub struct PartyOptions {
     limits: Limits,
     code: Option<String>,
     port: u16,
+    lan_port: u16,
+    tunnel_timeout: Duration,
+    secure: bool,
     csp: Option<String>,
     max_sockets: usize,
     max_message: usize,
@@ -118,6 +153,9 @@ impl PartyOptions {
             limits: Limits::default(),
             code: None,
             port: 0,
+            lan_port: LAN_PORT,
+            tunnel_timeout: Duration::from_secs(10),
+            secure: false,
             csp: Some(DEFAULT_CSP.to_owned()),
             max_sockets: 64,
             max_message: 256 * 1024,
@@ -168,6 +206,28 @@ impl PartyOptions {
         self
     }
 
+    /// The LAN port (default [`LAN_PORT`], the next free one if taken; 0:
+    /// any).
+    pub fn lan_port(mut self, port: u16) -> Self {
+        self.lan_port = port;
+        self
+    }
+
+    /// How long [`Join::Auto`] waits for a tunnel before it falls back to
+    /// the LAN link (default 10 s).
+    pub fn tunnel_timeout(mut self, timeout: Duration) -> Self {
+        self.tunnel_timeout = timeout;
+        self
+    }
+
+    /// The phone pages need a secure context (camera, motion sensors,
+    /// wake lock, `crypto.subtle`): plain-HTTP LAN links are refused, so
+    /// [`Join::Lan`] fails to start and [`Join::Auto`] does not fall back.
+    pub fn require_secure_context(mut self) -> Self {
+        self.secure = true;
+        self
+    }
+
     /// The Content-Security-Policy of HTML pages (`None`: none).
     pub fn csp(mut self, csp: Option<&str>) -> Self {
         self.csp = csp.map(str::to_owned);
@@ -208,9 +268,12 @@ pub struct Party {
     // The HTTP handler's state (public hosts, limits).
     _shared: Arc<Shared>,
     server: httpd::Server,
+    lan_server: Option<httpd::Server>,
     tunnel: Option<Tunnel>,
     local: String,
+    /// The tunnel's or the LAN's origin.
     public: Option<String>,
+    link: Link,
     qr: Option<QrCode>,
 }
 
@@ -235,6 +298,7 @@ impl Party {
         )));
         let shared = Arc::new(Shared {
             port: OnceLock::new(),
+            lan: OnceLock::new(),
             hosts: RwLock::new(Vec::new()),
             visitor: RwLock::new(None),
             joins: joins.clone(),
@@ -252,9 +316,14 @@ impl Party {
             max_connections: options.max_sockets + 32,
             ..httpd::Config::default()
         };
+        if options.secure && matches!(options.join, Join::Lan(_)) {
+            return Err(tvpipe::Error::usage(
+                "party: the phone pages need a secure context (HTTPS); a LAN link is plain HTTP",
+            ));
+        }
         let server = httpd::Server::bind_with(
             SocketAddr::from((Ipv4Addr::LOCALHOST, options.port)),
-            server::handler(shared.clone()),
+            server::handler(shared.clone(), Listener::Loopback),
             config,
         )?;
         let port = server.local_addr().port();
@@ -268,27 +337,57 @@ impl Party {
             },
             joins,
         );
-        let tunnel = match options.join {
-            Join::Local => None,
-            Join::Tunnel(p) => Some(Tunnel::start(port, p)?),
-            Join::Auto => Some(Tunnel::start_auto(port, &|| false)?),
+        let (tunnel, lan) = match options.join {
+            Join::Local => (None, None),
+            Join::Tunnel(p) => (Some(Tunnel::start(port, p)?), None),
+            Join::Lan(ip) => (None, Some(ip)),
+            Join::Auto => match auto_tunnel(port, options.tunnel_timeout) {
+                Ok(t) => (Some(t), None),
+                Err(e) if options.secure => return Err(e),
+                Err(e) => {
+                    tvpipe::log::write(
+                        tvpipe::log::Level::Warn,
+                        "tvpipe_party",
+                        format_args!("party: no tunnel ({}); phones join on the LAN", e.message()),
+                    );
+                    (None, Some(None))
+                }
+            },
         };
-        let public = tunnel.as_ref().map(|t| format!("https://{}", t.host()));
-        if let Some(t) = &tunnel {
-            shared
-                .hosts
-                .write()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(t.host().to_ascii_lowercase());
-        }
+        let lan_server = match lan {
+            Some(ip) => {
+                let ip = match ip {
+                    Some(ip) => ip,
+                    None => IpAddr::V4(iface::default_ipv4()?),
+                };
+                let s = bind_lan(ip, options.lan_port, &shared, config)?;
+                let _ = shared.lan.set(s.local_addr());
+                Some(s)
+            }
+            None => None,
+        };
+        let (public, link) = match (&tunnel, &lan_server) {
+            (Some(t), _) => {
+                shared
+                    .hosts
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(t.host().to_ascii_lowercase());
+                (Some(format!("https://{}", t.host())), Link::Tunnel)
+            }
+            (None, Some(s)) => (Some(format!("http://{}", s.local_addr())), Link::Lan),
+            (None, None) => (None, Link::Local),
+        };
         let mut party = Party {
             core,
             inbox,
             _shared: shared,
             server,
+            lan_server,
             tunnel,
             local: format!("http://127.0.0.1:{port}"),
             public,
+            link,
             qr: None,
         };
         let url = party.join_url();
@@ -301,7 +400,8 @@ impl Party {
         let join = Value::object()
             .with("code", party.core.code.as_str())
             .with("url", url)
-            .with("qr", qr);
+            .with("qr", qr)
+            .with("mode", link.as_str());
         party.core.set_join(join);
         party.core.flush();
         Ok(party)
@@ -318,7 +418,8 @@ impl Party {
     }
 
     /// The join link for the QR code and the TV:
-    /// `https://HOST/?r=CODE#k=KEY` (or the local one without a tunnel).
+    /// `https://HOST/?r=CODE#k=KEY` through a tunnel,
+    /// `http://IP:PORT/?r=CODE#k=KEY` on the LAN, or the local one.
     pub fn join_url(&self) -> String {
         let base = self.public.as_deref().unwrap_or(&self.local);
         format!("{base}/?r={}#k={}", self.core.code, self.core.join_key)
@@ -341,7 +442,8 @@ impl Party {
         )
     }
 
-    /// The public read-only screen (`None` without a tunnel).
+    /// The read-only screen for other devices, through the tunnel or on
+    /// the LAN (`None` for a local party).
     pub fn watch_url(&self) -> Option<String> {
         self.public.as_ref().map(|p| {
             format!(
@@ -354,6 +456,16 @@ impl Party {
     /// The QR code of [`join_url`](Party::join_url).
     pub fn join_qr(&self) -> Option<&QrCode> {
         self.qr.as_ref()
+    }
+
+    /// How phones reach the party.
+    pub fn link(&self) -> Link {
+        self.link
+    }
+
+    /// The LAN listener's address (LAN mode).
+    pub fn lan_addr(&self) -> Option<SocketAddr> {
+        self.lan_server.as_ref().map(httpd::Server::local_addr)
     }
 
     /// The tunnel, if there is one.
@@ -506,10 +618,65 @@ impl Party {
     }
 }
 
+/// A tunnel ([`Tunnel::start_auto`]) within `timeout`; a slow attempt
+/// is told to stop and left to finish on its own thread.
+fn auto_tunnel(port: u16, timeout: Duration) -> tvpipe::Result<Tunnel> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+    let s = stop.clone();
+    std::thread::Builder::new()
+        .name("party-tunnel".into())
+        .spawn(move || {
+            let _ = tx.send(Tunnel::start_auto(port, &|| s.load(Ordering::SeqCst)));
+        })
+        .map_err(|e| tvpipe::Error::io("party: tunnel thread", e))?;
+    match rx.recv_timeout(timeout) {
+        Ok(r) => r,
+        Err(_) => {
+            stop.store(true, Ordering::SeqCst);
+            Err(tvpipe::Error::timeout(format!(
+                "no tunnel within {} s",
+                timeout.as_secs()
+            )))
+        }
+    }
+}
+
+/// The LAN listener: `port`, else the next free of the following 20
+/// (0: any).
+fn bind_lan(
+    ip: IpAddr,
+    port: u16,
+    shared: &Arc<Shared>,
+    config: httpd::Config,
+) -> tvpipe::Result<httpd::Server> {
+    let config = httpd::Config {
+        lan: true,
+        ..config
+    };
+    let ports: Vec<u16> = if port == 0 {
+        vec![0]
+    } else {
+        (port..=port.saturating_add(20)).collect()
+    };
+    let mut last = None;
+    for p in ports {
+        let handler = server::handler(shared.clone(), Listener::Lan);
+        match httpd::Server::bind_with(SocketAddr::new(ip, p), handler, config) {
+            Ok(s) => return Ok(s),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| tvpipe::Error::usage("party: no LAN port")))
+}
+
 impl Drop for Party {
     fn drop(&mut self) {
         self.core.close();
         self.server.shutdown();
+        if let Some(s) = &mut self.lan_server {
+            s.shutdown();
+        }
     }
 }
 

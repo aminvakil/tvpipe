@@ -93,7 +93,7 @@ export async function createParty(options: CreatePartyOptions = {}): Promise<Hos
       log("warn", `no QR code: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  party.joinInfo = { code: party.code, url: links.join, qr };
+  party.joinInfo = { code: party.code, url: links.join, qr, mode: tunnel ? "tunnel" : "local" };
   let shut: Promise<void> | undefined;
   const hosted = Object.assign(party, {
     server,

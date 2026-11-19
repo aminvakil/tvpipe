@@ -3,7 +3,8 @@
 //! races to press the button. The fastest player is printed here.
 //!
 //! ```text
-//! cargo run -p tvpipe-party --example buzzer            # a public link (tunnel)
+//! cargo run -p tvpipe-party --example buzzer            # a public link, else the LAN
+//! cargo run -p tvpipe-party --example buzzer -- lan     # http://IP:7420, same Wi-Fi
 //! cargo run -p tvpipe-party --example buzzer -- local   # this computer only
 //! cargo run -p tvpipe-party --example buzzer -- opentunnel
 //! ```
@@ -16,7 +17,8 @@ use std::hash::BuildHasher;
 use std::time::{Duration, Instant};
 
 use tvpipe_party::{
-    assets, json, Action, Assets, Event, Join, Party, PartyError, PartyOptions, PlayerId, Value,
+    assets, json, Action, Assets, Event, Join, Link, Party, PartyError, PartyOptions, PlayerId,
+    Value,
 };
 
 static PHONE: Assets = assets!("examples/buzzer", ["index.html", "buzzer.js"]);
@@ -42,10 +44,11 @@ fn main() {
     let join = match std::env::args().nth(1).as_deref() {
         None | Some("auto") => Join::Auto,
         Some("local") => Join::Local,
+        Some("lan") => Join::Lan(None),
         Some(other) => match tvpipe::TunnelProvider::parse(other) {
             Some(p) => Join::Tunnel(p),
             None => {
-                eprintln!("usage: buzzer [auto|local|cloudflare|opentunnel]");
+                eprintln!("usage: buzzer [auto|lan|local|cloudflare|opentunnel]");
                 std::process::exit(2);
             }
         },
@@ -59,6 +62,9 @@ fn main() {
     };
     if let Some(qr) = party.join_qr() {
         print_qr(qr);
+    }
+    if party.link() == Link::Lan {
+        println!("phones must be on the same Wi-Fi as this computer");
     }
     println!("join: {}", party.join_url());
     println!("local: {}", party.local_join_url());

@@ -179,6 +179,8 @@ export interface JoinInfo {
   url: string;
   /** The QR code of `url`: `size` modules per side, `rows` of "0"/"1". */
   qr: { size: number; rows: string[] } | null;
+  /** How phones reach the party: a tunnel, the LAN (Rust hosts), this computer. */
+  mode?: "tunnel" | "lan" | "local";
 }
 
 export interface PartyLimits {

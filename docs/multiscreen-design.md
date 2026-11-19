@@ -442,6 +442,33 @@ and ACME on a service we would have to run). The hybrid mode (§3.1)
 gives HTTPS plus LAN latency whenever there is internet; question 6 in §9
 asks whether a hosted name service is ever wanted.
 
+### 3.3 As built (plan step 4)
+
+- `Join::Lan(Option<IpAddr>)` (`None`: the default route's address,
+  `iface::default_ipv4`), `PartyOptions::lan_port` (default `LAN_PORT`
+  = 7420, else the next free of the following 20; 0: any). The LAN
+  listener is a **second** `httpd` server next to the loopback one, so
+  the local links (`screen_url`, `local_join_url`) keep working in every
+  mode; each listener has its own Host rule (loopback: the loopback
+  names and the tunnel's name; LAN: exactly `IP:PORT`) and Origin rule
+  (LAN: exactly `http://IP:PORT`). `tests/lan.rs` checks both against
+  a LAN listener bound to 127.0.0.1 (no network, no firewall prompt).
+- `Join::Auto` runs `Tunnel::start_auto` on its own thread and waits
+  `PartyOptions::tunnel_timeout` (default 10 s); then the attempt is told
+  to stop and the LAN link is used, with a warning in the log.
+- `PartyOptions::require_secure_context()`: `Join::Lan` fails at start,
+  `Join::Auto` returns the tunnel's error instead of falling back.
+- `Party::link()` (`Link::{Tunnel, Lan, Local}`) and `Party::lan_addr()`;
+  the screens' `join` gains `mode` (`tunnel`, `lan`, `local`; the Node
+  host sets `tunnel` or `local`), for the TV's "same Wi-Fi" line.
+- Checked live (`scripts/live/party-buzzer.ts lan`): headless Chrome as
+  two phones on `http://192.168.…:7420`, `isSecureContext` false, the
+  shared client and the example's page work (localStorage resume, acks).
+- Not measured yet: LAN RTT from a real phone, what iOS Safari and
+  Android Chrome show for plain HTTP on a private address (HTTPS-First),
+  the Windows firewall prompt. They need devices; the loopback numbers on
+  one machine say nothing.
+
 ## 4. The reference game: drawbluff in Rust
 
 One binary, `drawbluff`, same rules, prompts and phone UI as the Node
