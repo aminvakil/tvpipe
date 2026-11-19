@@ -7,6 +7,23 @@
 
 // Much of the internal API is only used by some features or the tests.
 #![allow(dead_code)]
+// Builds without some features leave imports and parameters unused; the
+// build with every feature is linted strictly.
+#![cfg_attr(
+    not(all(
+        feature = "airplay",
+        feature = "cast",
+        feature = "aac",
+        feature = "player",
+        feature = "share",
+        feature = "headless",
+        feature = "tunnel",
+        feature = "files",
+        feature = "ffmpeg",
+        feature = "h264"
+    )),
+    allow(unused)
+)]
 
 #[macro_use]
 pub mod log;
@@ -31,6 +48,7 @@ mod util;
 /// of the public API: it changes with the CLI.
 #[doc(hidden)]
 pub mod __cli {
+    #[cfg(feature = "airplay")]
     pub use crate::airplay::pair::pair;
     pub use crate::ctx::Ctx;
     pub use crate::session::{run, GameIo};

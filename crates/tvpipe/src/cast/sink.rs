@@ -57,8 +57,9 @@ use crate::types::{
     AudioCodec, AudioFamily, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus, TrackKind,
     VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
 };
-use crate::util::ratio::Ratio;
 use crate::util::time::{rescale, NtpTime};
+
+pub use super::options::{AacFraming, CastOptions};
 
 /// Pacing granularity.
 pub const BURST_INTERVAL: Duration = Duration::from_millis(10);
@@ -69,67 +70,6 @@ pub const MAX_LATENESS: Duration = Duration::from_millis(100);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(20);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(5);
-/// Default [`CastOptions::feedback_timeout`]: receivers answer every
-/// frame with RTCP within a round trip, so this much silence while media
-/// goes out means the receiver is gone (it changed its address, left the
-/// network), not a Wi-Fi hiccup.
-pub const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How to connect and what to offer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CastOptions {
-    /// Target playout delay (`--latency`).
-    pub latency_ms: u32,
-    pub max_width: u32,
-    pub max_height: u32,
-    pub max_fps: Ratio,
-    pub max_bitrate_kbps: u32,
-    /// Offer audio: [`CastOptions::audio_codecs`] at
-    /// [`CastOptions::audio_sample_rate`] / [`CastOptions::audio_channels`].
-    pub audio: bool,
-    /// Audio codecs to offer, preferred first (Opus or AAC-LC). Default:
-    /// Opus, then AAC. Offer only AAC when that is all the input has
-    /// (passthrough of an AAC file, `aacenc`); receivers tend to pick Opus.
-    pub audio_codecs: Vec<AudioCodec>,
-    /// How AAC access units go on the wire.
-    pub aac_framing: AacFraming,
-    pub audio_sample_rate: u32,
-    pub audio_channels: u8,
-    /// Payload types 127/96 like Chrome (some Android TV receivers).
-    pub android_rtp_hack: bool,
-    /// Pacing rate; default `max(24 Mibit/s, 3 × video bitrate)`.
-    pub burst_bitrate: Option<u32>,
-    pub connect_timeout: Duration,
-    /// Send media to this address instead of the receiver's ANSWERed
-    /// port (a relay, e.g. the lossy one in the receiver loop test).
-    pub media_relay: Option<SocketAddr>,
-    /// No RTCP for this long while RTP goes out: the receiver is lost
-    /// (`push` fails with [`ErrorKind::Timeout`]).
-    pub feedback_timeout: Duration,
-}
-
-impl Default for CastOptions {
-    fn default() -> CastOptions {
-        CastOptions {
-            latency_ms: 200,
-            max_width: 1920,
-            max_height: 1080,
-            max_fps: Ratio::new(60, 1),
-            max_bitrate_kbps: 10_000,
-            audio: true,
-            audio_codecs: vec![AudioCodec::Opus, AudioCodec::AacLc],
-            aac_framing: AacFraming::Adts,
-            audio_sample_rate: 48_000,
-            audio_channels: 2,
-            android_rtp_hack: false,
-            burst_bitrate: None,
-            connect_timeout: Duration::from_secs(5),
-            media_relay: None,
-            feedback_timeout: FEEDBACK_TIMEOUT,
-        }
-    }
-}
-
 impl CastOptions {
     fn offer_options(&self) -> OfferOptions {
         let mut resolutions = vec![(self.max_width, self.max_height)];
@@ -386,16 +326,6 @@ struct Media {
     aac: Option<(AacFraming, Adts)>,
 }
 
-/// AAC framing inside Cast frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AacFraming {
-    /// ADTS-framed units (Chromium; openscreen's receiver needs them).
-    #[default]
-    Adts,
-    /// Raw access units, ADTS headers stripped.
-    Raw,
-}
-
 /// The fixed part of an ADTS header (ISO/IEC 13818-7 §6.2): profile
 /// (object type - 1), sampling frequency index, channel configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,7 +341,7 @@ impl Adts {
         const RATES: [u32; 13] = [
             96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
         ];
-        let (aot, rate, channels) = match crate::media::passthrough::parse_asc(&info.config) {
+        let (aot, rate, channels) = match crate::media::formats::parse_asc(&info.config) {
             Ok((aot, rate, ch, _)) => (aot, rate, ch),
             Err(_) if info.config.is_empty() => (2, info.sample_rate, info.channels),
             Err(e) => return Err(e),
@@ -1119,6 +1049,7 @@ fn rtcp_loop(state: &(Mutex<MediaState>, Condvar), sock: &UdpSocket) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::ratio::Ratio;
 
     #[test]
     fn sink_is_send() {

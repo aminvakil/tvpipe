@@ -33,10 +33,9 @@ use crate::media::h264enc;
 use crate::media::input::{
     AudioOut, EncodedState, Input, Stop, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
 };
-use crate::media::rawin;
 use crate::media::slrw::{self, Kind, Packet, SlrwReader};
-use crate::media::source::StreamInfo;
 use crate::opts::{RawAudioSpec, RawVideoSpec, Size};
+use crate::types::StreamInfo;
 use crate::types::{AudioFamily, EncodedFrame};
 use crate::util::ratio::Ratio;
 
@@ -236,7 +235,7 @@ impl BuiltinInput {
         let spec_out = RawVideoSpec {
             size: out.size,
             fps: out.fps,
-            pix_fmt: rawin::ENCODED_PIX_FMT.into(),
+            pix_fmt: crate::media::slrw::ENCODED_PIX_FMT.into(),
         };
         let mut st = EncodedState::new(spec_out, opts.audio.clone(), &opts.audio_families, None)?;
         st.set_origin(0);
@@ -430,7 +429,7 @@ fn read_loop(
                 let _ = events.send(Err(invalid(format!(
                     "slrw: {k:?} record (encoded H.264) in raw mode; \
                      use --raw-video WxH@FPS:{}",
-                    rawin::ENCODED_PIX_FMT
+                    crate::media::slrw::ENCODED_PIX_FMT
                 ))));
                 break;
             }
@@ -564,8 +563,7 @@ impl Input for BuiltinInput {
 pub fn pattern_audio(sample_rate: u32) -> RawAudioSpec {
     RawAudioSpec {
         sample_rate,
-        channels: 2,
-        sample_fmt: "s16le".into(),
+        ..RawAudioSpec::session_pcm(false)
     }
 }
 

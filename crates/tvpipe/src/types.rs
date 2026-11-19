@@ -245,3 +245,19 @@ impl Capabilities {
         self.audio_formats.contains(fmt)
     }
 }
+
+/// What an input yields: the video and the audio track of each family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamInfo {
+    pub video: VideoInfo,
+    pub audio: Vec<(AudioFamily, AudioInfo)>,
+}
+
+impl StreamInfo {
+    pub fn audio_for(&self, family: AudioFamily) -> Option<&AudioInfo> {
+        self.audio
+            .iter()
+            .find(|(f, _)| *f == family)
+            .map(|(_, a)| a)
+    }
+}

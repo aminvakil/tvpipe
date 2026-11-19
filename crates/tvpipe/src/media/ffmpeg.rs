@@ -233,13 +233,7 @@ pub enum Output<'a> {
     Copy,
 }
 
-/// What one output track carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TrackSpec {
-    pub kind: TrackKind,
-    /// Samples per frame the plan asked for (0 for video).
-    pub frame_samples: u32,
-}
+pub use crate::media::source::TrackSpec;
 
 /// A built command line and how its Matroska tracks map to our tracks.
 #[derive(Debug, Clone, PartialEq, Eq)]

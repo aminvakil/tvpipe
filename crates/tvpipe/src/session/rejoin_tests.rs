@@ -20,7 +20,7 @@ use super::rejoin::{Backoff, Rejoin};
 use super::tests::{fake_airplay, never, opts};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
-use crate::airplay::session::MirrorOptions;
+use crate::airplay::MirrorOptions;
 use crate::cast::fake_receiver::FakeReceiver;
 use crate::media::clock::SessionClock;
 use crate::types::{AudioInfo, EncodedFrame, SinkStatus, VideoInfo, VIDEO_CLOCK_RATE};

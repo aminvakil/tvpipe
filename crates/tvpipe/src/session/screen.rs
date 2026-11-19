@@ -13,6 +13,7 @@ use std::any::Any;
 use super::*;
 use crate::browser::launch;
 use crate::browser::screen::{ScreenBrowser, ScreenOptions as BrowserScreen};
+#[cfg(feature = "ffmpeg")]
 use crate::media::screencap;
 use crate::opts::{ScreenEngine, ScreenOptions, ScreenTarget};
 
@@ -66,9 +67,8 @@ pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
         Ok(Box::new(b))
     };
     let rejoin = Rejoin::system(opts.share.reconnect, ctx);
-    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-        connect_one(t, o, m, ctx)
-    };
+    let connect =
+        |t: &Target, o: &CastOptions, m: &crate::airplay::MirrorOptions| connect_one(t, o, m, ctx);
     share_rejoin(
         opts.share,
         &connect,
@@ -115,7 +115,14 @@ pub(super) fn screen_with(
     )
 }
 
+/// Without ffmpeg there is only the browser engine.
+#[cfg(not(feature = "ffmpeg"))]
+fn screen_ffmpeg(_opts: ScreenOptions, _ctx: &Ctx) -> Result<()> {
+    Err(Error::feature("ffmpeg", "screen capture without a browser"))
+}
+
 /// The ffmpeg engine: `play` with this OS's capture arguments.
+#[cfg(feature = "ffmpeg")]
 fn screen_ffmpeg(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
     let fps = opts.share.fps.unwrap_or(SHARE_FPS);
     let var = |k: &str| std::env::var(k).ok();

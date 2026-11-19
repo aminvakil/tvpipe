@@ -160,6 +160,15 @@ impl Error {
         Error::new(ErrorKind::Unsupported, msg)
     }
 
+    /// `what` needs a crate feature this build does not have (code
+    /// `feature-disabled`).
+    pub fn feature(feature: &str, what: &str) -> Error {
+        Error::unsupported(format!(
+            "{what} needs tvpipe's `{feature}` feature, which this build does not have"
+        ))
+        .with_code("feature-disabled")
+    }
+
     pub fn timeout(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Timeout, msg)
     }

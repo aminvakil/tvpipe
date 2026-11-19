@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 
 use super::tests::{connect_test, never, SharedTally, Tallied};
 use super::*;
-use crate::airplay::session::MirrorOptions;
+use crate::airplay::MirrorOptions;
 use crate::browser::share::tests::{spawn_page, PageScript, PageSeen};
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
 

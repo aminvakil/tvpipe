@@ -36,7 +36,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{address_target, parse_target, resolve_target, Target};
-use crate::airplay::session::MirrorOptions;
+use crate::airplay::MirrorOptions;
 use crate::cast::CastOptions;
 use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};

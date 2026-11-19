@@ -19,15 +19,26 @@
 //!   install paths (the one place with `cfg(target_os)` in this module,
 //!   like a config path).
 
+#[cfg(feature = "player")]
 pub mod access;
+#[cfg(feature = "headless")]
 pub mod bidi;
+#[cfg(feature = "headless")]
 pub mod cdp;
+#[cfg(feature = "player")]
 pub mod fonts;
+#[cfg(feature = "headless")]
 pub mod headless;
+#[cfg(feature = "headless")]
 pub mod launch;
 pub mod layout;
+#[cfg(feature = "player")]
 pub mod platform;
+#[cfg(feature = "player")]
 pub mod player;
+pub mod player_options;
 pub mod protocol;
+#[cfg(feature = "headless")]
 pub mod screen;
+#[cfg(feature = "share")]
 pub mod share;

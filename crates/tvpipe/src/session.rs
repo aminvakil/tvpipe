@@ -34,8 +34,11 @@ use std::process::{Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::browser::layout;
-use crate::browser::player::{BrowserSink, PlayerOptions};
+#[cfg(feature = "player")]
+use crate::browser::player::BrowserSink;
+use crate::browser::player_options::PlayerOptions;
 use crate::browser::protocol::{CaptureInfo, PageConfig, SharePlan};
+#[cfg(feature = "share")]
 use crate::browser::share::{ShareInputOptions, ShareServer};
 use crate::cast::{self, CastOptions};
 use crate::ctx::Ctx;
@@ -44,13 +47,20 @@ use crate::events::{
     self, AudioStarted, CaptureEvent, ConnectedEvent, EndInfo, Event, Events, ReceiverEnd,
     ReceiverEndInfo, ReceiverState, ReceiverStats, SharePageEvent, Started, Stats, VideoStarted,
 };
-use crate::media::builtin::{self, BuiltinInput, BuiltinOptions, VideoOut};
+#[cfg(feature = "h264")]
+use crate::media::builtin::{BuiltinInput, BuiltinOptions, VideoOut};
 use crate::media::fanout::{Fanout, FanoutConfig, SinkEnd};
+#[cfg(feature = "ffmpeg")]
 use crate::media::ffmpeg::{self, Source};
-use crate::media::input::{
-    self, EncodedOptions, FfmpegInput, Input, PassthroughInput, SlrwEncodedInput,
-};
-use crate::media::{passthrough, rawin};
+#[cfg(feature = "ffmpeg")]
+use crate::media::input::FfmpegInput;
+#[cfg(feature = "files")]
+use crate::media::input::PassthroughInput;
+use crate::media::input::{self, EncodedOptions, Input, SlrwEncodedInput};
+#[cfg(feature = "files")]
+use crate::media::passthrough;
+#[cfg(feature = "ffmpeg")]
+use crate::media::rawin;
 use crate::opts::{
     BrowserOptions, Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size,
     BROWSER_TARGET,
@@ -69,12 +79,27 @@ pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
             interfaces,
         } => crate::net::discover::run(timeout, json, &interfaces, ctx),
         Command::Pair { .. } => Err(Error::usage("pair is not a session")),
+        #[cfg(feature = "airplay")]
         Command::Unpair { target } => crate::airplay::pair::unpair(&target, ctx),
+        #[cfg(not(feature = "airplay"))]
+        Command::Unpair { .. } => Err(Error::feature("airplay", "unpair")),
         Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
+        #[cfg(feature = "headless")]
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),
+        #[cfg(not(feature = "headless"))]
+        Command::Share(opts) if opts.page.is_some() => Err(Error::feature("headless", "share URL")),
+        #[cfg(feature = "share")]
         Command::Share(opts) => share(opts, ctx, &*io.approve),
+        #[cfg(not(feature = "share"))]
+        Command::Share(_) => Err(Error::feature("share", "share")),
+        #[cfg(feature = "headless")]
         Command::Screen(opts) => screen::screen(opts, ctx),
+        #[cfg(not(feature = "headless"))]
+        Command::Screen(_) => Err(Error::feature("headless", "screen")),
+        #[cfg(feature = "ffmpeg")]
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
+        #[cfg(not(feature = "ffmpeg"))]
+        Command::DebugPipeline(_) => Err(Error::feature("ffmpeg", "debug-pipeline")),
     }
 }
 
@@ -305,6 +330,21 @@ fn parse_ffprobe(text: &str) -> InputInfo {
     info
 }
 
+/// What ffprobe says about a file or URL, if there is an ffmpeg.
+fn probe_with_ffmpeg(tools: &mut Tools<'_>, url: &OsString) -> InputInfo {
+    match tools.get() {
+        #[cfg(feature = "ffmpeg")]
+        Ok((bin, _)) => probe_input(bin, url),
+        #[cfg(not(feature = "ffmpeg"))]
+        Ok((_, never)) => match *never {},
+        Err(e) => {
+            debug!("not probing the input: {e}");
+            InputInfo::default()
+        }
+    }
+}
+
+#[cfg(feature = "ffmpeg")]
 /// Runs ffprobe on a file or URL. Any failure means "unknown".
 fn probe_input(ffmpeg: &Path, url: &OsString) -> InputInfo {
     let Some(ffprobe) = ffmpeg::locate_sibling(ffmpeg, "ffprobe") else {
@@ -473,7 +513,7 @@ fn audio_plan(family: AudioFamily, f: AudioFormat) -> Option<AudioPlan> {
             codec: AudioCodec::PcmS16le,
             sample_rate: f.sample_rate,
             channels: f.channels,
-            frame_samples: crate::airplay::audio::ALAC_FRAME_SAMPLES,
+            frame_samples: crate::airplay::ALAC_FRAME_SAMPLES,
             bitrate_kbps: None,
         });
     }
@@ -578,17 +618,23 @@ fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> R
 // The session
 
 /// Connects one target (the tests substitute fakes).
-type Connector<'a> = &'a (dyn Fn(&Target, &CastOptions, &crate::airplay::session::MirrorOptions) -> Result<Box<dyn Sink>>
+type Connector<'a> = &'a (dyn Fn(&Target, &CastOptions, &crate::airplay::MirrorOptions) -> Result<Box<dyn Sink>>
          + Sync);
 
 fn connect_one(
     t: &Target,
     opts: &CastOptions,
-    mirror: &crate::airplay::session::MirrorOptions,
+    mirror: &crate::airplay::MirrorOptions,
     ctx: &Ctx,
 ) -> Result<Box<dyn Sink>> {
     match t {
+        #[cfg(feature = "cast")]
         Target::Cast { addr, name } => Ok(Box::new(cast::connect(*addr, name, opts)?)),
+        #[cfg(not(feature = "cast"))]
+        Target::Cast { name, .. } => Err(Error::feature("cast", name)),
+        #[cfg(not(feature = "airplay"))]
+        Target::AirPlay { name, .. } => Err(Error::feature("airplay", name)),
+        #[cfg(feature = "airplay")]
         Target::AirPlay { addr, device, .. } => {
             let target = crate::airplay::pair::Target {
                 addr: *addr,
@@ -600,7 +646,10 @@ fn connect_one(
                 &ctx.storage,
             )?))
         }
+        #[cfg(feature = "player")]
         Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, ctx)?)),
+        #[cfg(not(feature = "player"))]
+        Target::Browser(o) => Err(Error::feature("player", &o.name)),
     }
 }
 
@@ -625,7 +674,7 @@ fn configure_browsers(
     }
     // One URL across runs (docs/player-protocol.md); a
     // config directory we cannot write only costs that.
-    let token = match crate::browser::player::persistent_token(storage, opts.new_token) {
+    let token = match crate::browser::player_options::persistent_token(storage, opts.new_token) {
         Ok(t) => Some(t),
         Err(e) => {
             warn!("browser: cannot keep the page's token ({e}); the URL is new this time");
@@ -717,7 +766,7 @@ fn connect_all(
     targets: &[Target],
     connect: Connector<'_>,
     opts: &CastOptions,
-    mirror: &crate::airplay::session::MirrorOptions,
+    mirror: &crate::airplay::MirrorOptions,
     rejoin: Option<&Rejoin>,
     events: &Events,
 ) -> Result<Vec<Box<dyn Sink>>> {
@@ -791,11 +840,17 @@ enum EndReason {
     ReceiversGone,
 }
 
+#[cfg(feature = "ffmpeg")]
+type FfProbe = ffmpeg::Probe;
+/// Without the `ffmpeg` feature there is no ffmpeg to find.
+#[cfg(not(feature = "ffmpeg"))]
+enum FfProbe {}
+
 /// ffmpeg, located and probed on first use: passthrough, encoded SLRW and
 /// the built-in test pattern never need it.
 struct Tools<'a> {
     explicit: Option<&'a Path>,
-    found: Option<(std::path::PathBuf, ffmpeg::Probe)>,
+    found: Option<(std::path::PathBuf, FfProbe)>,
 }
 
 impl<'a> Tools<'a> {
@@ -806,7 +861,10 @@ impl<'a> Tools<'a> {
         }
     }
 
-    fn get(&mut self) -> Result<(&Path, &ffmpeg::Probe)> {
+    fn get(&mut self) -> Result<(&Path, &FfProbe)> {
+        #[cfg(not(feature = "ffmpeg"))]
+        return Err(Error::feature("ffmpeg", "this input"));
+        #[cfg(feature = "ffmpeg")]
         if self.found.is_none() {
             let bin = ffmpeg::locate(self.explicit)?;
             let probe = ffmpeg::Probe::run(&bin)?;
@@ -819,6 +877,7 @@ impl<'a> Tools<'a> {
     }
 }
 
+#[cfg(feature = "files")]
 /// What a probed file says, in the form `desired` takes.
 fn file_input_info(fi: &passthrough::FileInfo) -> InputInfo {
     InputInfo {
@@ -833,6 +892,7 @@ fn file_input_info(fi: &passthrough::FileInfo) -> InputInfo {
 
 /// Where the frames come from, decided once the receivers are known.
 enum Route {
+    #[cfg(feature = "files")]
     Passthrough(std::path::PathBuf, passthrough::PassPlan),
     Encoded,
     /// Raw SLRW or the test pattern through `media::h264enc`.
@@ -867,12 +927,15 @@ fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Resu
         Encoder::Auto if pattern => true,
         _ => false,
     };
+    if builtin && !cfg!(feature = "h264") {
+        return Err(Error::feature("h264", "the built-in H.264 encoder"));
+    }
     if builtin && raw {
         let v = opts
             .raw_video
             .as_ref()
             .ok_or_else(|| Error::usage("raw input (-) needs --raw-video WxH@FPS:PIXFMT"))?;
-        if !builtin::supported_pix_fmt(&v.pix_fmt) {
+        if crate::media::convert::PixelFormat::from_name(&v.pix_fmt).is_none() {
             return Err(Error::unsupported(format!(
                 "the built-in encoder cannot read {:?} frames (rgba, bgra, rgb0, bgr0, rgb24, \
                  bgr24, nv12, yuv420p) and ffmpeg is {}",
@@ -915,9 +978,8 @@ fn play(opts: PlayOptions, ctx: &Ctx) -> Result<()> {
 
 fn play_io(opts: PlayOptions, io: GameIo, ctx: &Ctx) -> Result<()> {
     let rejoin = Rejoin::system(opts.reconnect, ctx);
-    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-        connect_one(t, o, m, ctx)
-    };
+    let connect =
+        |t: &Target, o: &CastOptions, m: &crate::airplay::MirrorOptions| connect_one(t, o, m, ctx);
     play_rejoin(opts, io, &connect, ctx, Some(&rejoin))
 }
 
@@ -954,25 +1016,28 @@ fn play_rejoin(
     let encoded = opts
         .raw_video
         .as_ref()
-        .is_some_and(|v| v.pix_fmt == rawin::ENCODED_PIX_FMT);
+        .is_some_and(|v| v.pix_fmt == crate::media::slrw::ENCODED_PIX_FMT);
     if encoded && opts.input != InputSpec::Stdin {
         return Err(Error::usage(
             "--raw-video ...:h264 reads SLRW from stdin (-)",
         ));
     }
     let builtin = use_builtin(&opts, encoded, &mut tools)?;
+    #[cfg(feature = "files")]
     let candidate = input::passthrough_candidate(&opts);
+    #[cfg(feature = "files")]
     let probed = candidate.as_deref().map(passthrough::probe);
+    #[cfg(feature = "files")]
+    let file_info = match &probed {
+        Some(Ok(fi)) => Some(file_input_info(fi)),
+        _ => None,
+    };
+    #[cfg(not(feature = "files"))]
+    let file_info: Option<InputInfo> = None;
     let input = match &opts.input {
-        InputSpec::Path(p) => match &probed {
-            Some(Ok(fi)) => file_input_info(fi),
-            _ => match tools.get() {
-                Ok((bin, _)) => probe_input(bin, p),
-                Err(e) => {
-                    debug!("not probing the input: {e}");
-                    InputInfo::default()
-                }
-            },
+        InputSpec::Path(p) => match file_info {
+            Some(i) => i,
+            None => probe_with_ffmpeg(&mut tools, p),
         },
         InputSpec::TestPattern => InputInfo {
             has_audio: Some(true),
@@ -999,10 +1064,12 @@ fn play_rejoin(
     // that may pass keeps its bitrate and its AAC; an encoding game's PCM
     // becomes AAC for Cast.
     let mut cast_opts = cast_options(&d, audio);
+    #[cfg(feature = "files")]
     let check = passthrough::CheckOptions {
         audio,
         ..Default::default()
     };
+    #[cfg(feature = "files")]
     if let Some(Ok(fi)) = &probed {
         if input::encode_forced_by(&opts).is_none() && passthrough::file_ok(fi, check) {
             if let Some(k) = fi.peak_video_kbps.or(fi.video_kbps) {
@@ -1022,9 +1089,9 @@ fn play_rejoin(
     }
     let mut targets = resolve_all(&opts.to, rejoin, &ctx.events)?;
     // The built-in test pattern's beep: 44.1 kHz when AirPlay listens.
-    let pattern_rate =
-        builtin::pattern_sample_rate(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
-    let pattern_audio = builtin::pattern_audio(pattern_rate);
+    let pattern_audio =
+        RawAudioSpec::session_pcm(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
+    let pattern_rate = pattern_audio.sample_rate;
     let game_audio = match &opts.input {
         InputSpec::TestPattern if builtin => Some(&pattern_audio),
         InputSpec::Stdin if encoded || builtin => opts.raw_audio.as_ref(),
@@ -1048,7 +1115,7 @@ fn play_rejoin(
         &ctx.storage,
     );
     d.latency_ms = budget.session_ms;
-    let mirror = crate::airplay::session::MirrorOptions {
+    let mirror = crate::airplay::MirrorOptions {
         latency_ms: budget.airplay_ms,
         audio,
         ..Default::default()
@@ -1063,6 +1130,13 @@ fn play_rejoin(
     let caps: Vec<&Capabilities> = sinks.iter().map(|s| s.capabilities()).collect();
     let named: Vec<(&str, &Capabilities)> =
         sinks.iter().map(|s| (s.name(), s.capabilities())).collect();
+    #[cfg(not(feature = "files"))]
+    let route = match () {
+        _ if encoded => Route::Encoded,
+        _ if builtin => Route::Builtin,
+        _ => Route::Ffmpeg,
+    };
+    #[cfg(feature = "files")]
     let route = match (&candidate, &probed) {
         _ if encoded => Route::Encoded,
         _ if builtin => Route::Builtin,
@@ -1090,12 +1164,14 @@ fn play_rejoin(
         _ => Route::Ffmpeg,
     };
     let route_name = match &route {
+        #[cfg(feature = "files")]
         Route::Passthrough(..) => events::Route::Passthrough,
         Route::Encoded => events::Route::Encoded,
         Route::Builtin => events::Route::Builtin,
         Route::Ffmpeg => events::Route::Ffmpeg,
     };
     let opened: Result<(Box<dyn Input>, u32)> = (|| match route {
+        #[cfg(feature = "files")]
         Route::Passthrough(path, plan) => {
             let realtime = opts.realtime.unwrap_or(true);
             let i = PassthroughInput::open(&path, &plan, realtime, opts.looped, stop.clone())?;
@@ -1132,6 +1208,9 @@ fn play_rejoin(
             )?;
             Ok((Box::new(i) as Box<dyn Input>, latency(&d, &caps)))
         }
+        #[cfg(not(feature = "h264"))]
+        Route::Builtin => Err(Error::feature("h264", "the built-in H.264 encoder")),
+        #[cfg(feature = "h264")]
         Route::Builtin => {
             // Audio is planned like the encoded-SLRW path's, below.
             let plan = plan(&d, Encoder::Builtin, &caps, false)?;
@@ -1179,6 +1258,9 @@ fn play_rejoin(
             };
             Ok((Box::new(i) as Box<dyn Input>, plan.latency_ms))
         }
+        #[cfg(not(feature = "ffmpeg"))]
+        Route::Ffmpeg => Err(Error::feature("ffmpeg", "this input")),
+        #[cfg(feature = "ffmpeg")]
         Route::Ffmpeg => {
             let plan = plan(&d, opts.encoder, &caps, audio)?;
             info!(
@@ -1227,16 +1309,20 @@ fn play_rejoin(
 // ---------------------------------------------------------------------------
 // Share a browser tab
 
+#[cfg(feature = "share")]
 /// `share`'s frame rate without `--fps`.
 const SHARE_FPS: Ratio = Ratio::integer(30);
+#[cfg(feature = "share")]
 /// The most `share` offers Cast without `--size`/`--fps`; the ANSWER may
 /// allow less.
 const SHARE_OFFER_SIZE: Size = Size {
     width: 1920,
     height: 1080,
 };
+#[cfg(feature = "share")]
 const SHARE_OFFER_FPS: Ratio = Ratio::integer(60);
 
+#[cfg(feature = "share")]
 /// What `share` offers Cast: upper bounds, not the stream's size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ShareOffer {
@@ -1245,6 +1331,7 @@ struct ShareOffer {
     bitrate_kbps: u32,
 }
 
+#[cfg(feature = "share")]
 impl ShareOffer {
     fn new(opts: &ShareOptions) -> ShareOffer {
         let size = opts.size.unwrap_or(SHARE_OFFER_SIZE);
@@ -1259,6 +1346,7 @@ impl ShareOffer {
     }
 }
 
+#[cfg(feature = "share")]
 /// "1920x1080@60, 12000 kbit/s": the tightest limits of all receivers.
 fn receiver_limits(caps: &[&Capabilities]) -> String {
     let w = caps.iter().map(|c| c.max_width).min().unwrap_or(0);
@@ -1276,11 +1364,11 @@ fn receiver_limits(caps: &[&Capabilities]) -> String {
     )
 }
 
+#[cfg(feature = "share")]
 fn share(opts: ShareOptions, ctx: &Ctx, ask: &RemoteApprover) -> Result<()> {
     let rejoin = Rejoin::system(opts.reconnect, ctx);
-    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-        connect_one(t, o, m, ctx)
-    };
+    let connect =
+        |t: &Target, o: &CastOptions, m: &crate::airplay::MirrorOptions| connect_one(t, o, m, ctx);
     let yes = opts.yes;
     share_rejoin(
         opts,
@@ -1293,6 +1381,7 @@ fn share(opts: ShareOptions, ctx: &Ctx, ask: &RemoteApprover) -> Result<()> {
     )
 }
 
+#[cfg(feature = "share")]
 /// `capture`: what the page shares.
 fn capture_event(cap: &crate::browser::protocol::CaptureInfo, events: &Events) {
     events.emit(Event::Capture(CaptureEvent {
@@ -1304,6 +1393,7 @@ fn capture_event(cap: &crate::browser::protocol::CaptureInfo, events: &Events) {
     }));
 }
 
+#[cfg(feature = "share")]
 /// What feeds a share: the user's page (`share`) or tvpipe's browser
 /// capturing the screen (`screen`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1312,11 +1402,13 @@ enum ShareKind {
     Screen,
 }
 
+#[cfg(feature = "share")]
 /// Starts the page source once the share server listens; the guard
 /// stops it when dropped (a fake page in the tests, tvpipe's browser
 /// for `screen`).
 type ShareSource<'a> = &'a dyn Fn(&ShareServer) -> Result<Box<dyn std::any::Any>>;
 
+#[cfg(feature = "share")]
 /// Decides whether a capture from over the tunnel may reach the
 /// receivers; the second argument says the question is moot (the page
 /// left, or tvpipe stops).
@@ -1328,6 +1420,7 @@ pub type Approver<'a> = &'a dyn Fn(&CaptureInfo, &dyn Fn() -> bool) -> bool;
 /// terminal.
 pub type RemoteApprover = dyn Fn(&str, &dyn Fn() -> bool) -> bool + Send + Sync;
 
+#[cfg(feature = "share")]
 /// Text from a remote page for the terminal: no control characters (no
 /// escape sequences), at most `max` characters.
 fn printable(s: &str, max: usize) -> String {
@@ -1342,6 +1435,7 @@ fn printable(s: &str, max: usize) -> String {
     out
 }
 
+#[cfg(feature = "share")]
 /// The address of `ipv4:port`, `[ipv6]:port` or a bare address.
 fn peer_host(peer: &str) -> &str {
     if let Some(v6) = peer.strip_prefix('[') {
@@ -1353,6 +1447,7 @@ fn peer_host(peer: &str) -> &str {
     }
 }
 
+#[cfg(feature = "share")]
 /// "203.0.113.9 (Chrome 157 on macOS) wants to share a window 1280x720".
 fn describe_remote(cap: &CaptureInfo) -> String {
     let remote = cap.remote.as_ref();
@@ -1382,6 +1477,7 @@ fn describe_remote(cap: &CaptureInfo) -> String {
     printable(&text, 300)
 }
 
+#[cfg(feature = "share")]
 /// `share` with the connector and stop request given, and a hook that
 /// sees the server once it listens (the tests start a fake page there).
 ///
@@ -1410,6 +1506,7 @@ fn share_with(
     )
 }
 
+#[cfg(feature = "share")]
 /// `share_with` with the reconnect hooks and the source.
 fn share_rejoin(
     opts: ShareOptions,
@@ -1465,13 +1562,8 @@ fn share_rejoin(
         resolve_all(&opts.to, rejoin, &ctx.events).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
     // One PCM stream for both families: 44.1 kHz when AirPlay listens.
-    let pcm = RawAudioSpec {
-        sample_rate: builtin::pattern_sample_rate(
-            targets.iter().any(|t| matches!(t, Target::AirPlay { .. })),
-        ),
-        channels: 2,
-        sample_fmt: "s16le".into(),
-    };
+    let pcm =
+        RawAudioSpec::session_pcm(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
     let fps = opts.fps.unwrap_or(SHARE_FPS);
     server.configure(&PageConfig {
         fps: fps.as_f64(),
@@ -1556,7 +1648,7 @@ fn share_rejoin(
         audio,
         &ctx.storage,
     );
-    let mirror = crate::airplay::session::MirrorOptions {
+    let mirror = crate::airplay::MirrorOptions {
         latency_ms: budget.airplay_ms,
         audio,
         ..Default::default()
@@ -1678,6 +1770,7 @@ fn share_rejoin(
     }
 }
 
+#[cfg(feature = "share")]
 /// The Cast offer of a page-encoded stream (`share`, `share URL`): the
 /// upper bounds of `offer`, AAC from the page's PCM.
 fn share_cast_options(
@@ -1699,6 +1792,7 @@ fn share_cast_options(
     cast_opts
 }
 
+#[cfg(feature = "share")]
 /// The stream's shape (the receivers' screens, which stretch what they
 /// get; a warning when they differ; `None` when no receiver has a screen
 /// shape, only browser players) and the tightest size limit.
@@ -1727,6 +1821,7 @@ fn screen_shape(caps: &[&Capabilities]) -> (Option<(u32, u32)>, (u32, u32)) {
     (aspect, max)
 }
 
+#[cfg(feature = "share")]
 /// The `--to browser` player's options of `share` (`--open` opens it
 /// too).
 fn player_options(opts: &ShareOptions) -> BrowserOptions {
@@ -1736,6 +1831,7 @@ fn player_options(opts: &ShareOptions) -> BrowserOptions {
     }
 }
 
+#[cfg(feature = "share")]
 /// "screen 16:9", or "any shape" without screens.
 fn screen_label(screen: Option<(u32, u32)>) -> String {
     match screen {
@@ -1744,6 +1840,7 @@ fn screen_label(screen: Option<(u32, u32)>) -> String {
     }
 }
 
+#[cfg(feature = "share")]
 /// The encode plan of a page-encoded stream: without `--bitrate`, the
 /// default for the planned size (not the offer's).
 fn share_plan(d: &Desired, caps: &[&Capabilities], bitrate_given: bool) -> Result<EncodePlan> {
@@ -1859,9 +1956,11 @@ fn latency(d: &Desired, caps: &[&Capabilities]) -> u32 {
         .fold(d.latency_ms, u32::max)
 }
 
+#[cfg(feature = "ffmpeg")]
 /// Raw SLRW for ffmpeg: the bound listeners and the game's stream.
 type RawFeed = (rawin::RawInput, Box<dyn std::io::Read + Send>);
 
+#[cfg(feature = "ffmpeg")]
 /// The ffmpeg input for `opts`.
 fn ffmpeg_source(
     opts: &PlayOptions,
@@ -2041,7 +2140,7 @@ const STATS_INTERVAL: Duration = Duration::from_secs(1);
 /// The `started` event.
 fn started_event(
     route: events::Route,
-    info: &crate::media::source::StreamInfo,
+    info: &crate::types::StreamInfo,
     latency_ms: u32,
 ) -> Started {
     let v = &info.video;
@@ -2136,36 +2235,119 @@ fn end_event(
     }
 }
 
+#[cfg(feature = "headless")]
 mod browse;
 mod rejoin;
+#[cfg(feature = "headless")]
 mod screen;
 
 use rejoin::Rejoin;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod browse_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod multi_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod rejoin_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod share_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod screen_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod browser_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod player_tests;
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "airplay",
+    feature = "cast",
+    feature = "player",
+    feature = "h264",
+    feature = "share",
+    feature = "headless",
+    feature = "files",
+    feature = "ffmpeg"
+))]
 mod tests {
     use super::*;
+    use crate::media::builtin;
 
     #[test]
     fn remote_shares_are_described() {
@@ -2778,7 +2960,7 @@ mod tests {
         tally: &SharedTally,
         t: &Target,
         cast_opts: &CastOptions,
-        mirror: &crate::airplay::session::MirrorOptions,
+        mirror: &crate::airplay::MirrorOptions,
     ) -> Result<Box<dyn Sink>> {
         let sink: Box<dyn Sink> = match t {
             Target::Browser(_) => connect_test(t, cast_opts, mirror)?,
@@ -2795,7 +2977,7 @@ mod tests {
     pub(super) fn fake_airplay(
         fake: &crate::airplay::fake_mirror::FakeMirror,
         name: &str,
-        mirror: &crate::airplay::session::MirrorOptions,
+        mirror: &crate::airplay::MirrorOptions,
     ) -> Result<Box<dyn Sink>> {
         let (addr, secret) = (fake.addr, fake.secret.clone());
         Ok(Box::new(crate::airplay::sink::connect_with(
@@ -2823,7 +3005,7 @@ mod tests {
     pub(super) fn connect_test(
         t: &Target,
         c: &CastOptions,
-        m: &crate::airplay::session::MirrorOptions,
+        m: &crate::airplay::MirrorOptions,
     ) -> Result<Box<dyn Sink>> {
         connect_one(t, c, m, &Ctx::new())
     }
@@ -2957,7 +3139,7 @@ mod tests {
         use crate::cast::fake_receiver::{FakeReceiver, Options};
         let rx = FakeReceiver::spawn(Options::default());
         let tally = SharedTally::default();
-        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::MirrorOptions| {
             fake_connector(None, None, &tally, t, c, m)
         };
         play_with(
@@ -3002,7 +3184,7 @@ mod tests {
         use crate::cast::fake_receiver::{FakeReceiver, Options};
         let rx = FakeReceiver::spawn(Options::default());
         let tally = SharedTally::default();
-        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::MirrorOptions| {
             fake_connector(None, Some(20), &tally, t, c, m)
         };
         let o = PlayOptions {
@@ -3041,7 +3223,7 @@ mod tests {
         // Raw SLRW, --encoder auto with a bogus ffmpeg.
         let fake = FakeMirror::start(Behaviour::default());
         let tally = SharedTally::default();
-        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::MirrorOptions| {
             fake_connector(Some(&fake), None, &tally, t, c, m)
         };
         let to = format!("airplay:{}", fake.addr);
@@ -3081,7 +3263,7 @@ mod tests {
         // The test pattern, built in because ffmpeg is missing.
         let fake = FakeMirror::start(Behaviour::default());
         let tally = SharedTally::default();
-        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
+        let connect = |t: &Target, c: &CastOptions, m: &crate::airplay::MirrorOptions| {
             fake_connector(Some(&fake), Some(15), &tally, t, c, m)
         };
         let o = PlayOptions {

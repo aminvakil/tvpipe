@@ -35,10 +35,7 @@ const ACCEPT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Drift between pts and arrival that is worth a log line.
 const DRIFT_LOG: Duration = Duration::from_millis(100);
 
-/// The `--raw-video` pixel format that selects encoded H.264 input
-/// (docs/slrw.md); handled by `media::input`, not
-/// here.
-pub const ENCODED_PIX_FMT: &str = "h264";
+pub use crate::media::slrw::ENCODED_PIX_FMT;
 
 /// Bytes per video frame for common raw pixel formats; `None` if unknown
 /// (then sizes are not checked).

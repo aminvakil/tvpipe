@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use crate::error::{Error, Result};
 use crate::events::{Events, ReceiverState};
 use crate::media::clock::{MediaClock, SessionClock, Tolerance};
-use crate::media::source::StreamInfo;
+use crate::types::StreamInfo;
 use crate::types::{AudioFamily, EncodedFrame, Sink, SinkStatus, TrackKind, VIDEO_CLOCK_RATE};
 use crate::util::stop::Stop;
 

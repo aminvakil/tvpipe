@@ -35,14 +35,13 @@ use crate::media::h264;
 use crate::media::input::{
     AudioOut, EncodedState, Input, Stop, KEYFRAME_REQUEST_INTERVAL, STOP_POLL,
 };
-use crate::media::rawin;
 use crate::media::slrw::{self, Kind, Packet};
-use crate::media::source::StreamInfo;
 use crate::net::http::Request;
 use crate::net::httpd::{self, Reply};
 use crate::net::tunnel::{self, Tunnel};
 use crate::net::websocket::{self, close_code, Message, Role, Sender};
 use crate::opts::{RawAudioSpec, RawVideoSpec};
+use crate::types::StreamInfo;
 use crate::types::{AudioFamily, EncodedFrame};
 
 pub const PAGE_HTML: &str = include_str!("share.html");
@@ -571,7 +570,7 @@ impl ShareServer {
                 height: plan.height,
             },
             fps: opts.fps,
-            pix_fmt: rawin::ENCODED_PIX_FMT.into(),
+            pix_fmt: crate::media::slrw::ENCODED_PIX_FMT.into(),
         };
         let st = match EncodedState::new(video, opts.audio, &opts.audio_families, None) {
             Ok(st) => st,

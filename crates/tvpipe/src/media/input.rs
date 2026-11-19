@@ -34,13 +34,18 @@ use std::time::{Duration, Instant};
 use crate::error::{Error, Result};
 use crate::log::Level;
 use crate::media::clock::MediaClock;
+#[cfg(feature = "ffmpeg")]
 use crate::media::ffmpeg::{self, Output, Process, Source};
 use crate::media::h264::{self, AvcConfig};
+#[cfg(feature = "files")]
 use crate::media::passthrough::{self, CheckOptions, FileInfo, FileSource, PassPlan};
-use crate::media::rawin::{self, Forwarder, RawInput};
+#[cfg(feature = "ffmpeg")]
+use crate::media::rawin::{Forwarder, RawInput};
 use crate::media::slrw::{self, Kind, Packet, SlrwReader};
-use crate::media::source::{MediaReader, StreamInfo};
+#[cfg(feature = "ffmpeg")]
+use crate::media::source::MediaReader;
 use crate::opts::{PlayOptions, RawAudioSpec, RawVideoSpec};
+use crate::types::StreamInfo;
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioInfo, Capabilities, EncodePlan, EncodedFrame,
     Encoder, TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
@@ -106,6 +111,7 @@ pub fn encode_forced_by(opts: &PlayOptions) -> Option<&'static str> {
     }
 }
 
+#[cfg(feature = "files")]
 /// What to do with a file input.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FileDecision {
@@ -119,6 +125,7 @@ pub enum FileDecision {
     },
 }
 
+#[cfg(feature = "files")]
 /// Decides how to send a file once every sink is connected. `probed` is
 /// [`passthrough::probe`]'s result (run before connecting, so its size and
 /// bitrate can shape the receivers' negotiation).
@@ -167,6 +174,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+#[cfg(feature = "ffmpeg")]
 /// Kills ffmpeg a grace period after a stop request so the demuxer's
 /// read ends.
 struct Watcher {
@@ -174,6 +182,7 @@ struct Watcher {
     thread: Option<JoinHandle<()>>,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Watcher {
     fn start(proc: Arc<Mutex<Process>>, stop: Stop) -> Result<Watcher> {
         let done = Arc::new(AtomicBool::new(false));
@@ -201,6 +210,7 @@ impl Watcher {
     }
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Drop for Watcher {
     fn drop(&mut self) {
         self.done.store(true, Ordering::Release);
@@ -210,6 +220,7 @@ impl Drop for Watcher {
     }
 }
 
+#[cfg(feature = "ffmpeg")]
 /// ffmpeg → Matroska → [`MediaReader`].
 pub struct FfmpegInput {
     proc: Arc<Mutex<Process>>,
@@ -221,6 +232,7 @@ pub struct FfmpegInput {
     stop: Stop,
 }
 
+#[cfg(feature = "ffmpeg")]
 impl FfmpegInput {
     /// Starts ffmpeg on `source` with `plan`. For SLRW raw input pass the
     /// bound [`RawInput`] (whose [`RawInput::source`] is `source`) and the
@@ -263,6 +275,7 @@ impl FfmpegInput {
     }
 }
 
+#[cfg(feature = "ffmpeg")]
 impl Input for FfmpegInput {
     fn info(&self) -> &StreamInfo {
         &self.info
@@ -311,6 +324,7 @@ impl Input for FfmpegInput {
 // ---------------------------------------------------------------------------
 // Passthrough
 
+#[cfg(feature = "files")]
 /// Sleeps until `due`, in slices, returning `false` on a stop request.
 fn sleep_until(due: Instant, stop: &Stop) -> bool {
     loop {
@@ -325,6 +339,7 @@ fn sleep_until(due: Instant, stop: &Stop) -> bool {
     }
 }
 
+#[cfg(feature = "files")]
 /// A compatible file sent unchanged (see [`passthrough::check`]).
 pub struct PassthroughInput {
     src: FileSource,
@@ -346,6 +361,7 @@ pub struct PassthroughInput {
     stop: Stop,
 }
 
+#[cfg(feature = "files")]
 /// The timestamp B-frames carry in the reordering experiment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReorderStamp {
@@ -356,9 +372,11 @@ pub enum ReorderStamp {
     Dts,
 }
 
+#[cfg(feature = "files")]
 /// Environment variable for the B-frame experiment: `dts` or `pts`.
 pub const REORDER_EXPERIMENT_ENV: &str = "TVPIPE_EXPERIMENT_BFRAMES";
 
+#[cfg(feature = "files")]
 /// `$TVPIPE_EXPERIMENT_BFRAMES`: pass files with B-frames through
 /// anyway (decode order, stamped as said), to try receivers
 /// (docs/measurements.md). Unset: B-frames go through ffmpeg.
@@ -373,6 +391,7 @@ pub fn reorder_experiment() -> Option<ReorderStamp> {
     }
 }
 
+#[cfg(feature = "files")]
 /// Cuts PCM packets into fixed frames, keeping their sample timeline.
 struct PcmFramer {
     bytes_per_sample: usize,
@@ -381,6 +400,7 @@ struct PcmFramer {
     pts: u64,
 }
 
+#[cfg(feature = "files")]
 impl PcmFramer {
     /// Adds a packet at `pts`; returns the complete frames. A gap (a
     /// loop, a cut) flushes the partial frame first.
@@ -410,6 +430,7 @@ impl PcmFramer {
     }
 }
 
+#[cfg(feature = "files")]
 impl PassthroughInput {
     /// Opens `path` for sending as checked: `plan` from
     /// [`passthrough::check`]. `realtime` paces frames at their pts (like
@@ -522,11 +543,13 @@ impl PassthroughInput {
     }
 }
 
+#[cfg(feature = "files")]
 fn shift(pts: u64, rate: u32, offset_ns: u128) -> u64 {
     let add = offset_ns * rate as u128 / 1_000_000_000;
     pts.saturating_add(add.min(u64::MAX as u128) as u64)
 }
 
+#[cfg(feature = "files")]
 impl Input for PassthroughInput {
     fn info(&self) -> &StreamInfo {
         &self.info
@@ -699,7 +722,10 @@ pub fn encoded_audio_families(
             ),
         };
         let ok = a.sample_fmt == "s16le"
-            && fmt.is_some_and(|f| of.iter().all(|(_, c)| passthrough::sink_takes(c, &f)));
+            && fmt.is_some_and(|f| {
+                of.iter()
+                    .all(|(_, c)| crate::media::formats::sink_takes(c, &f))
+            });
         if ok {
             out.push((family, how));
         } else {
@@ -976,7 +1002,7 @@ impl SlrwEncodedInput {
         opts: EncodedOptions,
         stop: Stop,
     ) -> Result<Self> {
-        if opts.video.pix_fmt != rawin::ENCODED_PIX_FMT {
+        if opts.video.pix_fmt != crate::media::slrw::ENCODED_PIX_FMT {
             return Err(Error::usage(
                 "encoded SLRW input needs --raw-video WxH@FPS:h264",
             ));
@@ -1206,7 +1232,7 @@ impl EncodedState {
                 return Err(Error::malformed(format!(
                     "slrw: raw video record in encoded mode (--raw-video ...:{}); \
                      use a pixel format for raw frames",
-                    rawin::ENCODED_PIX_FMT
+                    crate::media::slrw::ENCODED_PIX_FMT
                 )))
             }
             Kind::Control => {
@@ -1400,6 +1426,7 @@ impl Input for SlrwEncodedInput {
     }
 }
 
+#[cfg(feature = "files")]
 /// The paths a file input could be passed through from (`play FILE`).
 pub fn passthrough_candidate(opts: &PlayOptions) -> Option<PathBuf> {
     match &opts.input {
@@ -1411,7 +1438,7 @@ pub fn passthrough_candidate(opts: &PlayOptions) -> Option<PathBuf> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ffmpeg", feature = "cast"))]
 pub(crate) mod tests {
     use super::*;
     use crate::media::passthrough::tests::{caps, fixture};
@@ -1757,7 +1784,7 @@ pub(crate) mod tests {
         let c = info.audio_for(AudioFamily::Cast).unwrap();
         assert_eq!((c.codec, c.frame_samples), (AudioCodec::AacLc, 1024));
         assert_eq!(
-            passthrough::parse_asc(&c.config).unwrap(),
+            crate::media::formats::parse_asc(&c.config).unwrap(),
             (2, 44_100, 2, 1024)
         );
         let frames = drain(&mut input);
@@ -1972,7 +1999,7 @@ pub(crate) mod tests {
 /// - `TVPIPE_PT_AUDIO=1`: also send the file's audio (AAC-LC for the
 ///   generated files) if the receiver chose a matching codec;
 ///   `TVPIPE_PT_ADTS=1` wraps AAC access units in ADTS headers.
-#[cfg(test)]
+#[cfg(all(test, feature = "ffmpeg", feature = "cast"))]
 mod experiments {
     use super::*;
     use crate::cast::{connect, CastOptions};
@@ -1981,7 +2008,7 @@ mod experiments {
 
     /// A 7-byte ADTS header (ISO/IEC 13818-7 §6.2, MPEG-4 ID, no CRC).
     fn adts(asc: &[u8], au: &[u8]) -> Vec<u8> {
-        let (aot, _, ch, _) = passthrough::parse_asc(asc).unwrap();
+        let (aot, _, ch, _) = crate::media::formats::parse_asc(asc).unwrap();
         let idx = ((asc[0] & 0x07) << 1) | (asc[1] >> 7);
         let len = au.len() + 7;
         let mut h = vec![

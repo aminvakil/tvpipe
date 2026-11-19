@@ -64,9 +64,8 @@ pub(super) fn browse(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
         Ok(Box::new(h))
     };
     let rejoin = Rejoin::system(opts.reconnect, ctx);
-    let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
-        connect_one(t, o, m, ctx)
-    };
+    let connect =
+        |t: &Target, o: &CastOptions, m: &crate::airplay::MirrorOptions| connect_one(t, o, m, ctx);
     browse_rejoin(&opts, &connect, ctx, &launcher, Some(&rejoin))
 }
 
@@ -99,13 +98,8 @@ fn browse_rejoin(
     let mut targets =
         resolve_all(&opts.to, rejoin, &ctx.events).map_err(|e| fail(&mut server, e))?;
     let names: Vec<String> = targets.iter().map(|t| target_name(t).to_owned()).collect();
-    let pcm = RawAudioSpec {
-        sample_rate: builtin::pattern_sample_rate(
-            targets.iter().any(|t| matches!(t, Target::AirPlay { .. })),
-        ),
-        channels: 2,
-        sample_fmt: "s16le".into(),
-    };
+    let pcm =
+        RawAudioSpec::session_pcm(targets.iter().any(|t| matches!(t, Target::AirPlay { .. })));
     let audio = !opts.no_audio;
     let fps = opts.fps.unwrap_or(BROWSE_FPS);
     server.configure(&PageConfig {
@@ -138,7 +132,7 @@ fn browse_rejoin(
         audio,
         &ctx.storage,
     );
-    let mirror = crate::airplay::session::MirrorOptions {
+    let mirror = crate::airplay::MirrorOptions {
         latency_ms: budget.airplay_ms,
         audio,
         ..Default::default()

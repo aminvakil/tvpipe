@@ -10,22 +10,36 @@
 //! - [`retransmit`]: per-stream frame history, ACK/NACK, kickstart, limits.
 //! - [`sink`]: [`StreamingSink`] (the `types::Sink`) and [`connect`].
 //! - `annexb`: AVCC → Annex B for H.264 frames.
+//!
+//! Without the `cast` feature only [`CastOptions`] is compiled.
 
+#[cfg(feature = "cast")]
 mod annexb;
+#[cfg(feature = "cast")]
 pub mod channel;
+#[cfg(feature = "cast")]
 pub mod messages;
+mod options;
+#[cfg(feature = "cast")]
 pub mod retransmit;
+#[cfg(feature = "cast")]
 pub mod rtcp;
+#[cfg(feature = "cast")]
 pub mod rtp;
+#[cfg(feature = "cast")]
 pub mod sink;
+#[cfg(feature = "cast")]
 pub mod streaming;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cast"))]
 pub(crate) mod fake_receiver;
-#[cfg(test)]
+#[cfg(all(test, feature = "cast"))]
 mod receiver_loop;
-#[cfg(test)]
+#[cfg(all(test, feature = "cast"))]
 mod testing;
 
-#[allow(unused_imports)] // wired into session.rs by the lead
-pub use sink::{connect, connect_device, AacFraming, CastOptions, StreamingSink};
+#[allow(unused_imports)]
+pub use options::{AacFraming, CastOptions};
+#[cfg(feature = "cast")]
+#[allow(unused_imports)]
+pub use sink::{connect, connect_device, StreamingSink};

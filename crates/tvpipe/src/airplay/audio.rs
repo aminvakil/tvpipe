@@ -15,8 +15,7 @@ use crate::crypto::modes::cbc_encrypt;
 use crate::crypto::ring::{nonce_counter, ChaCha20Poly1305, CHACHA_KEY_LEN};
 use crate::error::{Error, Result};
 
-/// Samples per ALAC frame on the wire.
-pub const ALAC_FRAME_SAMPLES: u32 = 352;
+pub use super::options::ALAC_FRAME_SAMPLES;
 pub const SAMPLE_RATE: u32 = 44_100;
 pub const PT_AUDIO: u8 = 96;
 pub const PT_REDUNDANT: u8 = 97;

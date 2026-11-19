@@ -11,7 +11,7 @@ use super::tests::{
 };
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
-use crate::airplay::session::MirrorOptions;
+use crate::airplay::MirrorOptions;
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
 use crate::types::{AudioInfo, EncodedFrame, SinkStatus, VideoInfo, VIDEO_CLOCK_RATE};
 use crate::util::time::NtpTime;

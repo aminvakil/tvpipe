@@ -1,0 +1,40 @@
+//! What a mirroring connection is set up with ([`MirrorOptions`]): always
+//! compiled, so sessions can plan for AirPlay receivers without the
+//! `airplay` feature.
+
+use std::time::Duration;
+
+/// Options for a mirroring session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorOptions {
+    /// `--latency`: explicit leads (else the normal profile, §2.7).
+    pub latency_ms: Option<u32>,
+    /// Whether the encode will carry audio for this receiver.
+    pub audio: bool,
+    /// Our name in SETUP.
+    pub name: String,
+    /// Allow PTP (else always NTP).
+    pub ptp: bool,
+    /// No answer to `POST /feedback` (sent every 2 s) for this long: the
+    /// receiver is lost (`push` fails with a timeout).
+    pub feedback_timeout: Duration,
+}
+
+/// Default [`MirrorOptions::feedback_timeout`]: three missed `/feedback`
+/// rounds.
+pub const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(7);
+
+impl Default for MirrorOptions {
+    fn default() -> MirrorOptions {
+        MirrorOptions {
+            latency_ms: None,
+            audio: true,
+            name: "tvpipe".into(),
+            ptp: true,
+            feedback_timeout: FEEDBACK_TIMEOUT,
+        }
+    }
+}
+
+/// Samples per ALAC frame on the wire.
+pub const ALAC_FRAME_SAMPLES: u32 = 352;

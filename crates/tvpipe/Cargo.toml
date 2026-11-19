@@ -10,13 +10,33 @@ description = "Stream video and audio to AirPlay and Google Cast receivers and b
 license = "Apache-2.0"
 
 [features]
-default = ["fairplay"]
+default = ["airplay", "cast", "player", "h264"]
+# AirPlay mirroring: mDNS AirPlay records, pairing, mirroring, ALAC audio.
+airplay = []
 # FairPlay SAP for AirPlay (the LGPL-3.0-or-later tvpipe-fairplay crate).
 # Without it, AirPlay runs the HAP profile without FairPlay; receivers that
 # need it fail with `fairplay-required`.
-fairplay = ["dep:tvpipe-fairplay"]
+fairplay = ["airplay", "dep:tvpipe-fairplay"]
+# Google Cast: control over TLS, Cast Streaming, the AAC encoder.
+cast = ["dep:rustls", "aac"]
+# The built-in AAC-LC encoder.
+aac = []
+# The `browser` receiver: a player page on 127.0.0.1.
+player = []
+# `share`: the capture page.
+share = ["player"]
+# `share URL` and `screen`: a browser of tvpipe's own over DevTools/BiDi.
+headless = ["share"]
+# Public links for the pages (Cloudflare quick tunnels, OpenTunnel).
+tunnel = ["dep:rustls", "player"]
+# Passthrough of MP4/MOV/Matroska files without ffmpeg.
+files = []
+# Files, URLs and capture through an ffmpeg subprocess.
+ffmpeg = ["files"]
+# The built-in H.264 encoder (raw frames, the test pattern).
+h264 = []
 
 [dependencies]
 ring = "0.17"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 tvpipe-fairplay = { path = "../tvpipe-fairplay", version = "0.1.2", optional = true }

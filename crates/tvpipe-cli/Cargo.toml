@@ -17,4 +17,16 @@ path = "src/main.rs"
 
 [dependencies]
 argument = "0.1"
-tvpipe = { path = "../tvpipe", version = "0.1.2", features = ["fairplay"] }
+tvpipe = { path = "../tvpipe", version = "0.1.2", features = [
+    "airplay",
+    "fairplay",
+    "cast",
+    "aac",
+    "player",
+    "share",
+    "headless",
+    "tunnel",
+    "files",
+    "ffmpeg",
+    "h264",
+] }

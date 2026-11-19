@@ -15,29 +15,21 @@ use std::io::Read;
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::media::ffmpeg::TrackSpec;
 use crate::media::h264;
 use crate::media::mkv::{Demuxer, Track, TrackType};
+pub use crate::types::StreamInfo;
 use crate::types::{
     AudioCodec, AudioFamily, AudioInfo, EncodedFrame, TrackKind, VideoCodec, VideoInfo,
     VIDEO_CLOCK_RATE,
 };
 use crate::util::ratio::Ratio;
 
-/// Stream info once ffmpeg's header has been read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamInfo {
-    pub video: VideoInfo,
-    pub audio: Vec<(AudioFamily, AudioInfo)>,
-}
-
-impl StreamInfo {
-    pub fn audio_for(&self, family: AudioFamily) -> Option<&AudioInfo> {
-        self.audio
-            .iter()
-            .find(|(f, _)| *f == family)
-            .map(|(_, a)| a)
-    }
+/// What one Matroska track carries (ffmpeg's output tracks, by plan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackSpec {
+    pub kind: TrackKind,
+    /// Samples per frame the plan asked for (0 for video).
+    pub frame_samples: u32,
 }
 
 /// A demuxed frame plus its container-level details (for debugging).

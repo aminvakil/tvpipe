@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use super::tests::{connect_test, fake_airplay, SharedTally, Tallied};
 use super::*;
 use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
-use crate::airplay::session::MirrorOptions;
+use crate::airplay::MirrorOptions;
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
 use crate::codec::json::Value;
 use crate::net::http::{Conn, Request, Version};

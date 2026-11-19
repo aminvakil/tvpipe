@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::tests::{opts, SharedTally, Tallied};
 use super::*;
-use crate::airplay::session::MirrorOptions;
+use crate::airplay::MirrorOptions;
 use crate::browser::protocol;
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
 use crate::codec::json::Value;

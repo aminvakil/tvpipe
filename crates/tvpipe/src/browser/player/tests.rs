@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::browser::player_options::{persistent_token, valid_token};
 use crate::browser::protocol;
 use crate::media::clock::MediaClock;
 use crate::net::websocket::{self, Message};
@@ -175,7 +176,7 @@ fn config_message_fields() {
 
 #[test]
 fn audio_plans_with_airplay_receivers() {
-    use crate::media::passthrough::sink_takes;
+    use crate::media::formats::sink_takes;
     let caps = capabilities(&PlayerOptions::default());
     assert_eq!(caps.audio_family, AudioFamily::AirPlay);
     // What the AirPlay family plans as PCM, at the TV's rate or ours.
@@ -559,7 +560,7 @@ fn annexb_when_the_input_has_no_avcc() {
 fn the_token_is_kept_and_rotated() {
     let dir = crate::airplay::credentials::tests::temp_dir("player-token");
     let path = dir.join("player-token");
-    let storage = Storage::dir(&dir);
+    let storage = crate::storage::Storage::dir(&dir);
     let token_in = |_: &std::path::PathBuf, rotate| persistent_token(&storage, rotate);
     let t1 = token_in(&path, false).unwrap();
     assert!(valid_token(&t1), "{t1}");

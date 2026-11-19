@@ -28,6 +28,11 @@
 
 use std::io::{self, Read, Write};
 
+/// The `--raw-video` pixel format that selects encoded H.264 input
+/// (docs/slrw.md); handled by `media::input`, not
+/// here.
+pub const ENCODED_PIX_FMT: &str = "h264";
+
 pub const MAGIC: &[u8; 4] = b"SLRW";
 /// Largest payload accepted (an 8K RGBA frame is 133 MB).
 pub const MAX_PAYLOAD: u32 = 256 << 20;

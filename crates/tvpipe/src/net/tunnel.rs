@@ -61,6 +61,7 @@ impl Provider {
 
 /// Starts a tunnel to `127.0.0.1:port`; returns once its URL works.
 /// `stop` aborts a slow first setup (Ctrl-C).
+#[cfg(feature = "tunnel")]
 pub fn start(port: u16, provider: Provider, stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
     Ok(match provider {
         Provider::Cloudflare => Box::new(crate::net::cftunnel::Tunnel::start(port, stop)?),
@@ -68,6 +69,16 @@ pub fn start(port: u16, provider: Provider, stop: &dyn Fn() -> bool) -> Result<B
     })
 }
 
+/// Without the `tunnel` feature there are no public links.
+#[cfg(not(feature = "tunnel"))]
+pub fn start(_port: u16, provider: Provider, _stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
+    Err(crate::error::Error::unsupported(format!(
+        "{}: public links need tvpipe's `tunnel` feature",
+        provider.name()
+    )))
+}
+
+#[cfg(feature = "tunnel")]
 impl Tunnel for crate::net::opentunnel::OpenTunnel {
     fn host(&self) -> &str {
         crate::net::opentunnel::OpenTunnel::host(self)

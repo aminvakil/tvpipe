@@ -86,6 +86,19 @@ pub struct RawAudioSpec {
     pub sample_fmt: String,
 }
 
+impl RawAudioSpec {
+    /// Stereo s16le PCM at a rate every receiver takes: 44.1 kHz when an
+    /// AirPlay receiver listens, else 48 kHz (the test pattern's beep, a
+    /// share's sound).
+    pub fn session_pcm(airplay: bool) -> RawAudioSpec {
+        RawAudioSpec {
+            sample_rate: if airplay { 44_100 } else { 48_000 },
+            channels: 2,
+            sample_fmt: "s16le".into(),
+        }
+    }
+}
+
 impl FromStr for RawAudioSpec {
     type Err = &'static str;
 
