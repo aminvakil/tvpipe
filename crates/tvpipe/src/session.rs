@@ -571,6 +571,21 @@ fn plan(d: &Desired, encoder: Encoder, caps: &[&Capabilities], audio: bool) -> R
         .map(|c| c.max_fps)
         .filter(|f| f.num > 0 && f.den > 0)
         .fold(d.fps, ratio_min);
+    // A Cast receiver's maxPixelsPerSecond: a smaller picture, the same
+    // frame rate.
+    let rate = caps.iter().filter_map(|c| c.max_pixels_per_second).min();
+    let fitted = fit_pixel_rate(size, fps, rate);
+    if fitted != size {
+        info!(
+            "plan: {}x{}@{fps} is more than a receiver decodes ({} pixels/s): {}x{}",
+            size.width,
+            size.height,
+            rate.unwrap_or(0),
+            fitted.width,
+            fitted.height
+        );
+    }
+    let size = fitted;
     let mut bitrate = d.bitrate_kbps;
     for c in caps {
         if let Some(b) = c.max_bitrate_kbps.filter(|&b| b > 0) {
@@ -1878,26 +1893,8 @@ fn screen_label(screen: Option<(u32, u32)>) -> String {
 /// The encode plan of a page-encoded stream: without `--bitrate`, the
 /// default for the planned size (not the offer's).
 fn share_plan(d: &Desired, caps: &[&Capabilities], bitrate_given: bool) -> Result<EncodePlan> {
+    // plan() already fits the receivers' pixel rate.
     plan(d, Encoder::Auto, caps, false).map(|mut p| {
-        let rate = caps.iter().filter_map(|c| c.max_pixels_per_second).min();
-        let size = Size {
-            width: p.video.width,
-            height: p.video.height,
-        };
-        let fitted = fit_pixel_rate(size, p.video.fps, rate);
-        if fitted != size {
-            info!(
-                "plan: {}x{}@{} is more than a receiver decodes ({} pixels/s): {}x{}",
-                size.width,
-                size.height,
-                p.video.fps,
-                rate.unwrap_or(0),
-                fitted.width,
-                fitted.height
-            );
-            p.video.width = fitted.width;
-            p.video.height = fitted.height;
-        }
         if !bitrate_given {
             let size = Size {
                 width: p.video.width,
@@ -1909,10 +1906,9 @@ fn share_plan(d: &Desired, caps: &[&Capabilities], bitrate_given: bool) -> Resul
     })
 }
 
-#[cfg(feature = "share")]
 /// `size` at `fps` made small enough (same shape, even sides) that its
 /// pixel rate is at most `max` (a Cast receiver's `maxPixelsPerSecond`).
-/// The frame rate stays: a page-encoded stream lowers its size instead.
+/// The frame rate stays: the encoder lowers the size instead.
 fn fit_pixel_rate(size: Size, fps: Ratio, max: Option<u64>) -> Size {
     let Some(max) = max.filter(|&m| m > 0) else {
         return size;
@@ -2579,7 +2575,6 @@ mod tests {
         assert_eq!(fit(0, 0, 1920, 1080), s(2, 2));
     }
 
-    #[cfg(feature = "share")]
     #[test]
     fn pixel_rate_lowers_the_size() {
         let s = |w, h| Size {
@@ -2691,6 +2686,24 @@ mod tests {
         let p = plan(&d, Encoder::Auto, &[&a, &b], true).unwrap();
         assert_eq!((p.video.width, p.video.height), (1280, 720));
         assert_eq!(p.video.fps, Ratio::integer(30));
+        // A pixel rate (Cast's maxPixelsPerSecond) for every encoded
+        // stream (play too): 1080p60 into 1080p30's rate keeps 60 fps and
+        // gets smaller.
+        let mut r = caps(1920, 1080, 60, 10_000);
+        r.max_pixels_per_second = Some(1920 * 1080 * 30);
+        let q = plan(&d, Encoder::Auto, &[&r], false).unwrap();
+        assert_eq!(q.video.fps, Ratio::integer(60));
+        assert!(
+            q.video.width < 1920 && q.video.width % 2 == 0,
+            "{}",
+            q.video.width
+        );
+        assert!(
+            q.video.width as u64 * q.video.height as u64 * 60 <= 1920 * 1080 * 30,
+            "{}x{}",
+            q.video.width,
+            q.video.height
+        );
         assert_eq!(p.video.gop, 30);
         assert_eq!(p.video.bitrate_kbps, 4000);
         assert_eq!(p.latency_ms, 250);

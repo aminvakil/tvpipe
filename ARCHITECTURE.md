@@ -106,7 +106,9 @@ of these:
 - H.264,
 - no B-frames,
 - a keyframe at least every 4 s,
-- a size the receivers accept, and
+- a size, frame rate and pixel rate the receivers accept (a Cast
+  receiver's `maxPixelsPerSecond`; an encoded stream keeps its frame rate
+  and gets smaller instead), and
 - compatible audio.
 
 B-frames are refused because Cast's in-flight window breaks on frames that

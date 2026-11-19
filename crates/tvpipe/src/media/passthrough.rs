@@ -862,6 +862,15 @@ fn sink_reasons(
         if c.max_fps.num > 0 && v.fps.as_f64() > c.max_fps.as_f64() * FPS_TOLERANCE {
             reasons.push(format!("{} fps is more than {name}'s {}", v.fps, c.max_fps));
         }
+        if let Some(max) = c.max_pixels_per_second.filter(|&m| m > 0) {
+            let rate = v.width as f64 * v.height as f64 * v.fps.as_f64();
+            if rate > max as f64 * FPS_TOLERANCE {
+                reasons.push(format!(
+                    "{}x{} at {} fps is more than {name} decodes ({max} pixels/s)",
+                    v.width, v.height, v.fps
+                ));
+            }
+        }
         if let (Some(max), Some(have)) = (c.max_bitrate_kbps.filter(|&m| m > 0), info.video_kbps) {
             if have > max {
                 reasons.push(format!(
@@ -1103,6 +1112,18 @@ pub(crate) mod tests {
         assert!(e.reasons[0].contains("160x120 is larger than tiny's 128x1080"));
         assert!(e.reasons[1].contains("30 fps is more than tiny's 25"));
         assert!(e.reasons[2].contains("kbit/s, more than tiny's 20"));
+        // A pixel rate (Cast's maxPixelsPerSecond): 160x120 at 30 fps is
+        // 576000 pixels/s.
+        let mut slow = cast_aac.clone();
+        slow.max_pixels_per_second = Some(500_000);
+        let e = ok("bf0.mp4", &[("slow", &slow)]).unwrap_err();
+        assert_eq!(e.reasons.len(), 1, "{e}");
+        assert!(
+            e.reasons[0].contains("160x120 at 30 fps is more than slow decodes"),
+            "{e}"
+        );
+        slow.max_pixels_per_second = Some(576_000);
+        assert!(ok("bf0.mp4", &[("slow", &slow)]).is_ok());
     }
 
     #[test]
