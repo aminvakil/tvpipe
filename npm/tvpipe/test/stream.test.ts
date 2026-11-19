@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 
 import { stream, TvpipeError, type CanvasLike, type StreamOptions, type StreamSession } from "../src/index.ts";
-import { fixtures, opts, sleep, until, Viewer } from "./helpers.ts";
+import { fixtures, opts, sleep, until, Viewer, within } from "./helpers.ts";
 
 /** A stream that is killed when the test ends, also when it failed. */
 async function started(t: TestContext, options: Omit<StreamOptions, "binary" | "configDir">): Promise<StreamSession> {
-  const s = await stream({ ...opts(), ...options });
+  const s = await within(stream({ ...opts(t), ...options }), 30000, "stream to start");
   t.after(() => s.kill());
   return s;
 }
@@ -53,7 +53,7 @@ test("raw RGBA and PCM reach a viewer; end() plays out the tail", async (t) => {
   await until("video at the viewer", () => viewer.count(3) > 5);
   assert.ok(viewer.count(2) > 0, "audio at the viewer");
   assert.equal(s.info?.route, "builtin");
-  const end = await s.end();
+  const end = await within(s.end(), 20000, "end");
   assert.equal(end.reason, "eof");
   assert.equal(s.dropped.video, 0);
   viewer.close();
@@ -70,7 +70,7 @@ test("a live producer that outpaces tvpipe drops frames instead of queueing them
   assert.equal(s.dropped.video, 30 - accepted);
   await s.drain();
   assert.equal(s.writeVideo(frame), true);
-  await s.stop();
+  await within(s.stop(), 20000, "stop");
   // After the end nothing is written.
   assert.equal(s.writeVideo(frame), false);
 });
@@ -92,7 +92,7 @@ test("a canvas, drawn at the frame rate", async (t) => {
   assert.equal(times.length, n, "stopped");
   assert.ok(times.every((t, i) => i === 0 || t > times[i - 1]!));
   assert.throws(() => s.writeCanvas(fakeCanvas(32, 32)), /32x32/);
-  await s.stop();
+  await within(s.stop(), 20000, "stop");
   viewer.close();
 });
 
@@ -134,7 +134,7 @@ test("encoded H.264 with keyframe requests", async (t) => {
   assert.equal(s.info?.route, "encoded");
   assert.ok(keyframes >= 1, "a keyframe request when the input opened");
   assert.throws(() => s.writeVideo(new Uint8Array(64 * 48 * 4)), /H\.264/);
-  const end = await s.end();
+  const end = await within(s.end(), 20000, "end");
   assert.equal(end.reason, "eof");
   viewer.close();
 });
@@ -155,6 +155,6 @@ test("WebCodecs chunks", async (t) => {
     await sleep(33);
   }
   await until("video at the viewer", () => viewer.count(3) > 10);
-  await s.stop();
+  await within(s.stop(), 20000, "stop");
   viewer.close();
 });

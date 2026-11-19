@@ -37,7 +37,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
-    "test": "node --test --test-concurrency=1 \"test/*.test.ts\"",
+    "test": "node --test --test-concurrency=1 --test-timeout=60000 \"test/*.test.ts\"",
     "example": "node examples/canvas-tone.ts"
   },
   "devDependencies": {

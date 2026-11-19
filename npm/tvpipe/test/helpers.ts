@@ -6,7 +6,10 @@
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+
+import type { LogEvent } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repo = resolve(here, "..", "..", "..");
@@ -27,9 +30,59 @@ export function configDir(): string {
   return mkdtempSync(join(tmpdir(), "tvpipe-sdk-test-"));
 }
 
-/** Options every test passes: the real binary, a scratch config directory. */
-export function opts(): { binary: string; configDir: string } {
-  return { binary: realBinary(), configDir: configDir() };
+/** tvpipe's recent debug log across the tests of this file, for timeouts. */
+const recent: string[] = [];
+const t0 = performance.now();
+
+function note(line: string): void {
+  recent.push(`${((performance.now() - t0) / 1000).toFixed(2)} ${line}`);
+  if (recent.length > 400) recent.shift();
+}
+
+/** The last lines of tvpipe's log (every process the tests started). */
+export function recentLog(lines = 60): string {
+  return recent.length ? recent.slice(-lines).join("\n") : "(nothing logged)";
+}
+
+export interface TestOptions {
+  binary: string;
+  configDir: string;
+  verbose: true;
+  logs: (e: LogEvent) => void;
+  signal: AbortSignal;
+}
+
+/**
+ * Options every test passes: the real binary, a scratch config directory,
+ * tvpipe's debug log kept for timeouts, and a signal that stops whatever
+ * the test started (also a start that never finished) when it ends.
+ */
+export function opts(t: TestContext): TestOptions {
+  const ac = new AbortController();
+  t.after(() => ac.abort());
+  return {
+    binary: realBinary(),
+    configDir: configDir(),
+    verbose: true,
+    logs: (e) => note(`${e.level} ${e.module}: ${e.message}`),
+    signal: ac.signal,
+  };
+}
+
+/** `p`, or an error with tvpipe's recent log after `ms`. */
+export async function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what}: nothing after ${ms} ms; tvpipe's recent log:\n${recentLog()}`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface ViewerRecord {
@@ -43,6 +96,7 @@ export class Viewer {
   readonly texts: Record<string, unknown>[] = [];
   readonly records: ViewerRecord[] = [];
   #ws: WebSocket;
+  /** Resolves once the socket is open (an error after 10 s). */
   readonly opened: Promise<void>;
 
   constructor(playerUrl: string) {
@@ -50,10 +104,14 @@ export class Viewer {
     const ws = new WebSocket(`ws://${u.host}/ws?t=${u.searchParams.get("t")}`);
     ws.binaryType = "arraybuffer";
     this.#ws = ws;
-    this.opened = new Promise((resolve, reject) => {
-      ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("viewer socket failed")), { once: true });
-    });
+    this.opened = within(
+      new Promise((resolve, reject) => {
+        ws.addEventListener("open", () => resolve(), { once: true });
+        ws.addEventListener("error", () => reject(new Error("viewer socket failed")), { once: true });
+      }),
+      10000,
+      "the viewer's socket to open",
+    );
     ws.addEventListener("message", (ev: MessageEvent) => {
       if (typeof ev.data === "string") {
         this.texts.push(JSON.parse(ev.data) as Record<string, unknown>);
@@ -82,7 +140,7 @@ export class Viewer {
 export async function until(what: string, f: () => boolean, timeoutMs = 20000): Promise<void> {
   const end = Date.now() + timeoutMs;
   while (!f()) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}; tvpipe's recent log:\n${recentLog()}`);
     await sleep(20);
   }
 }
