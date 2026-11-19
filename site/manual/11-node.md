@@ -1,27 +1,27 @@
 ---
 title: From Node.js
-summary: Stream from your own program with the tvpipe npm package.
+summary: Stream from your own program with the @tvpipe/sdk npm package.
 group: Use
 spec:
-  Package: `tvpipe` (npm)
+  Package: `@tvpipe/sdk` (npm)
   Node: 22 or newer
   Example: `npm/tvpipe/examples/canvas-tone.ts`
 ---
 
-The `tvpipe` npm package controls tvpipe from Node. It plays files, URLs, the test pattern and web pages, and streams frames and sound that your program makes: a canvas, raw pixels, or H.264 from WebCodecs.
+The `@tvpipe/sdk` npm package controls tvpipe from Node. It plays files, URLs, the test pattern and web pages, and streams frames and sound that your program makes: a canvas, raw pixels, or H.264 from WebCodecs.
 
 ```sh
-$ npm install tvpipe
+$ npm install @tvpipe/sdk
 ```
 
 :::aside The binary
-npm installs it for your platform as `@tvpipe/<os>-<cpu>`. Set `TVPIPE_BINARY` to use another one.
+npm installs it for your platform as `@tvpipe/<os>-<cpu>`. Set `TVPIPE_BINARY` to use another one. `npx -p @tvpipe/sdk tvpipe` runs the command line tool.
 :::
 
 ## Play something
 
 ```js
-import { play, testPattern, share } from "tvpipe";
+import { play, testPattern, share } from "@tvpipe/sdk";
 
 const session = await play("movie.mp4", { to: "Living Room" });
 await session.done;
@@ -39,7 +39,7 @@ Frames from code use tvpipe's own H.264 encoder, which also makes keyframes on d
 :::
 
 ```js
-import { stream } from "tvpipe";
+import { stream } from "@tvpipe/sdk";
 
 const s = await stream({
   to: "Living Room",
@@ -60,12 +60,14 @@ await session.stop();
 ```
 
 - **Stopping.** `stop()`, an `AbortSignal` or `await using` stops the session. Every receiver gets the same clean teardown as with Ctrl-C.
-- **When your program dies.** if it exits or crashes, tvpipe notices and stops by itself.
-- **Errors.** every error is a `TvpipeError` with a readable message and a stable `code`, such as `pairing-required` or `ffmpeg-missing`.
+- **When your program dies.** If it exits or crashes, tvpipe notices and stops by itself.
+- **Errors.** Every error is a `TvpipeError` with a readable message and a stable `code`, such as `pairing-required` or `ffmpeg-missing`.
 
 ## Pairing
 
 ```js
+import { pair } from "@tvpipe/sdk";
+
 await pair("Living Room", { onPin: ({ name }) => askUser(`PIN on ${name}?`) });
 ```
 
