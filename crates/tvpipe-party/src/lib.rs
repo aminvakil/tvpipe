@@ -33,6 +33,7 @@
 //! ```
 
 mod assets;
+mod collect;
 mod conn;
 mod limits;
 mod names;
@@ -52,6 +53,7 @@ use tvpipe::__web::httpd;
 use tvpipe::{QrCode, Tunnel, TunnelProvider};
 
 pub use assets::{Asset, Assets};
+pub use collect::Collect;
 pub use party::{
     Action, Event, Limits, Moderate, Moderation, PartyError, Player, PlayerId, Role, ScreenWatch,
     Source, State, PROTOCOL,
