@@ -148,7 +148,6 @@ pub fn run(opts: &Options, stop: Stop, storage: Storage) -> Result<()> {
     };
     if mode == WindowMode::None {
         println!("{url}");
-        info!("playshare: open {url}");
     }
     let why = loop {
         if stop.wait(TICK) {

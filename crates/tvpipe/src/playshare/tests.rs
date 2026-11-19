@@ -1047,3 +1047,113 @@ fn buckets_and_windows() {
     assert!(w.hit("b", t0));
     assert!(w.hit("a", t0 + Duration::from_secs(61)));
 }
+
+// ---------------------------------------------------------------------
+// With a real browser (opt-in):
+// TVPIPE_TEST_CHROME=/path/to/chrome cargo test --release chrome_playshare -- --ignored --nocapture
+
+/// The window (headless here) shows the launcher, which connects; a cast
+/// of the bundle's TV page goes through a real headless Chrome to the
+/// fake Cast receiver; closing the window's page is noticed; the end
+/// stops the cast.
+#[test]
+#[ignore]
+fn chrome_playshare_window_and_cast() {
+    let Ok(bin) = std::env::var("TVPIPE_TEST_CHROME") else {
+        eprintln!("TVPIPE_TEST_CHROME not set");
+        return;
+    };
+    crate::util::timer::raise_resolution();
+    let rx = crate::cast::fake_receiver::FakeReceiver::spawn(Default::default());
+    let bundle = Bundle::open(&fixture("game")).unwrap();
+    let stop = Stop::new();
+    let opts = Options {
+        tunnel: TunnelChoice::Off,
+        ..Options::default()
+    };
+    let backend = backend::Real {
+        storage: crate::storage::Storage::memory(),
+        browser: Some(bin.clone().into()),
+    };
+    let running = Running::start(bundle, Box::new(backend), &opts, stop.clone()).unwrap();
+    let hub = running.hub.clone();
+    let (mut window, mode) = window::Window::open(
+        WindowMode::Headless,
+        &running.start_url(),
+        Some(&bin.into()),
+    )
+    .unwrap();
+    assert_eq!(mode, WindowMode::Headless);
+    // The launcher's script connects to the API.
+    let until = Instant::now() + Duration::from_secs(20);
+    while hub.apis_gone_for().is_none() && hub.lock().apis.is_empty() {
+        assert!(Instant::now() < until, "the launcher never connected");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!window.closed());
+    // Cast the TV page to the fake receiver.
+    let mut w = api_of(&hub);
+    let r = call(
+        &mut w,
+        "cast.start",
+        Value::object()
+            .with("page", "/tv.html")
+            .with("to", vec![format!("cast:{}", rx.addr)]),
+    );
+    assert_eq!(r.get("ok").and_then(Value::as_bool), Some(true), "{r}");
+    let until = Instant::now() + Duration::from_secs(30);
+    let frames = || {
+        rx.state
+            .lock()
+            .unwrap()
+            .streams
+            .iter()
+            .map(|s| s.frames.len())
+            .sum::<usize>()
+    };
+    while frames() < 30 {
+        assert!(Instant::now() < until, "no frames from the cast");
+        hub.tick();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    hub.tick();
+    eprintln!("cast: {} frames at the fake receiver", frames());
+    // Closing the window's only page.
+    let cdp = window.browser().unwrap().cdp();
+    let targets = cdp
+        .call(None, "Target.getTargets", Value::object())
+        .unwrap();
+    let page = targets
+        .get("targetInfos")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|t| t.get("type").and_then(Value::as_str) == Some("page"))
+        .and_then(|t| t.get("targetId").and_then(Value::as_str))
+        .unwrap()
+        .to_owned();
+    cdp.call(
+        None,
+        "Target.closeTarget",
+        Value::object().with("targetId", page),
+    )
+    .unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while !window.closed() {
+        assert!(Instant::now() < until, "the closed window was not noticed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(w);
+    running.end();
+    window.close();
+    assert!(rx.state.lock().unwrap().stopped, "the receiver got STOP");
+}
+
+fn api_of(hub: &Arc<Hub>) -> Ws {
+    ws(
+        hub.ports.get().unwrap().local,
+        &format!("/_tvpipe/api?t={}", hub.token),
+        &[],
+    )
+    .unwrap()
+}

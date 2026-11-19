@@ -85,16 +85,16 @@ struct Client {
     out: Out,
 }
 
-struct Api {
+pub(super) struct Api {
     out: Out,
     watching: bool,
 }
 
-struct St {
+pub(super) struct St {
     next_conn: u32,
     next_api: u64,
     clients: HashMap<u32, Client>,
-    apis: HashMap<u64, Api>,
+    pub(super) apis: HashMap<u64, Api>,
     host: Option<u64>,
     selection: Vec<String>,
     upgrades: WindowCounter,
@@ -201,7 +201,7 @@ impl Hub {
         })
     }
 
-    fn lock(&self) -> MutexGuard<'_, St> {
+    pub(super) fn lock(&self) -> MutexGuard<'_, St> {
         self.st.lock().unwrap_or_else(|e| e.into_inner())
     }
 
