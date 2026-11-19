@@ -58,8 +58,13 @@ export class Tab {
   }
 
   async screenshot(path: string): Promise<void> {
+    writeFileSync(path, await this.capture());
+  }
+
+  /** A screenshot (PNG) in memory. */
+  async capture(): Promise<Buffer> {
     const r = await this.send("Page.captureScreenshot", { format: "png" });
-    writeFileSync(path, Buffer.from(r.data, "base64"));
+    return Buffer.from(r.data, "base64");
   }
 
   /** A pointer drag through the points (CSS px of the viewport). */

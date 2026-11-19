@@ -266,3 +266,32 @@ would need a protocol change (not done).
 Whole games with 50 fake phones over real WebSockets (`test/game.test.ts`,
 `tests/game.rs`): every vote checked for phones without a task, more
 than 6 options, options out of the TV's order, missing liars.
+
+Live check (`node test/live/play.ts --bots 49 [--video] [--host rust]
+[--rounds 2]`): 50 players, one phone in headless Chrome (it joins
+first, is the VIP, draws with touch events, lies and votes when its
+task asks) and 49 Node bots, the TV through tvpipe's browser player,
+on loopback; all four variants (Node and Rust host, web and video
+screen). A round took 166 s on the Node host (the script's timings:
+draw 20 s, lie 15 s, vote 12 s) and 143 s on the Rust one (`--fast`),
+two rounds 274 s: draw, a gallery of 44 drawings on 6 pages while the
+first 7 liars write, then 6 spotlights (43 voters, at most 6 options per
+phone, the next 7 liars writing during each vote), scores, final. No
+bot errors; the web screen's page never showed `null`/`undefined`/`NaN`
+and nothing below the bottom (the script checks both at every
+screenshot). Found and fixed on the way:
+
+- the web screen showed "null" under the progress bar (draw, vote) once
+  the list was too long for name chips (`replaceChildren(null)`);
+- the video screens (both hosts) overlapped the lines of a reveal with 7
+  or 8 answers (rows of a fixed layout squeezed): from 7 answers a
+  compact row (title and tag on one line, who below), drawn from
+  `screens-50.json`'s new `reveal-50-full` (7 lies and the truth);
+- the web screen's reveal with 6 or more answers ran off the bottom, the
+  truth out of sight: the same compact row (`.reveal.many`);
+- the first drawing's liars, who write during the gallery, were told "you
+  sit this vote out"; now "It's the first on the TV after the gallery".
+
+The phone lied 0–1 times a round (42 lie slots a round for 50 players), voted
+in every spotlight it did not lie about and always showed its role and
+rank.

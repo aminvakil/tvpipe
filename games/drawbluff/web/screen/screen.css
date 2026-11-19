@@ -63,6 +63,13 @@ h2 { font-size: 2.4vh; text-transform: uppercase; letter-spacing: .1em; opacity:
 .reveal .who { font-size: 2.3vh; font-weight: 400; color: #4a4a55; }
 .reveal .tag { font-family: "Michroma", sans-serif; font-size: 2vh; color: var(--hot); }
 .reveal .truth .tag { color: #1d1d1f; }
+/* Six answers and more (up to seven liars at 50 players): the title and its tag on one line, who below. */
+.reveal.many .options { gap: 1.1vh; }
+.reveal.many .option { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1.6vw; row-gap: .3vh; padding: 1vh 1.6vw; font-size: 2.8vh; }
+.reveal.many .option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reveal.many .option > span:nth-child(2) { grid-row: 1; grid-column: 1; }
+.reveal.many .tag { grid-row: 1; grid-column: 2; align-self: center; font-size: 1.6vh; max-width: 22vw; }
+.reveal.many .who { grid-column: 1 / -1; font-size: 1.9vh; }
 .board { display: flex; flex-direction: column; gap: 1.4vh; width: 60vw; flex: none; }
 .board-row { display: flex; gap: 3vw; align-items: flex-start; justify-content: center; width: 100%; }
 .highlights { display: flex; flex-direction: column; gap: 2vh; width: 24vw; text-align: left; }

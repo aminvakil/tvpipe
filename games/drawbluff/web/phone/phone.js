@@ -528,17 +528,14 @@ function lie(me) {
     err,
   );
   const role = `You're a liar for ${me.artist?.name ?? "this"}'s drawing${me.liars > 1 ? ` (one of ${me.liars})` : ""}.`;
-  show(
-    h(
-      "section",
-      { class: "card" },
-      h("h2", {}, "Fake a title"),
-      h("p", { class: "role" }, role),
-      me.early ? h("p", { class: "muted" }, "It's next on the TV: you sit this vote out.") : null,
-      mini(drawing),
-      form,
-    ),
-  );
+  // Early: the first drawing's liars write during the gallery, the next
+  // drawing's during the current vote (which they sit out).
+  const hint = h("p", { class: "muted" });
+  show(h("section", { class: "card" }, h("h2", {}, "Fake a title"), h("p", { class: "role" }, role), me.early ? hint : null, mini(drawing), form));
+  refresh = () => {
+    const phase = client.view.room?.phase;
+    hint.textContent = phase === "draw" || phase === "gallery" ? "It's the first on the TV after the gallery." : "It's next on the TV: you sit this vote out.";
+  };
 }
 
 /**

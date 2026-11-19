@@ -85,6 +85,7 @@ the tunnel and makes the QR code. Options: `phone`, `screen` (directories),
 | `party.lock()`, `unlock()`, `kick(player)`, `close()` | No new players (resumes still work), remove one, end the party. |
 | `party.moderate(text, kind, player)` | Your `moderate` hook for any text the game shows (`false`: refused). |
 | `party.now()` | The server clock (ms); deadlines in views use it, phones are synced to it. |
+| `party.stats` | What the views cost so far: `flushes`, `states` (messages), `stateBytes`, `flushMs`. A flush diffs only the sections that changed (`roster`, `room`/`screen`, `me`/`join`), each shared section once for every client on the same version. |
 | `party.screenView()` | `{ roster, screen, join }`: what a video renderer draws. |
 | `party.links` | `join` (public), `localJoin`, `screen` (local, with the screen key), `watch` (public, read-only screen). |
 | `party.toTv({ to, mode: "web" })` | The screen page in tvpipe's browser (`share URL`). |
@@ -116,7 +117,8 @@ tunnel's (421 otherwise); WebSockets need a matching `Origin` (403
 otherwise); joining needs the join key from the QR code's link (in the
 fragment, so it is in no request line or log), screens their own keys.
 Per socket: 20 messages/s (burst 50), 256 KiB per message, `hello` within
-5 s; failed joins are throttled per address; at most 64 sockets. Names are
+5 s; failed joins are throttled per address; at most `socketsFor(maxPlayers)`
+sockets (2 per player + 16, at least 64). Names are
 normalised (NFC, invisible and control characters removed, 16 characters)
 and unique; render everything players send as text. HTML pages get a
 strict Content-Security-Policy (`csp` to change it).

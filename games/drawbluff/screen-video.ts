@@ -400,10 +400,23 @@ function reveal(f: Frame, view: Record<string, any>, t: number): void {
     const y = 11 * vh + i * (ih + 1.4 * vh);
     round(f, x, y, width, ih, 1.6 * vh, it.truth ? C.accent : C.paper);
     const tag = it.truth ? `THE TRUTH by ${s.artist?.name ?? "?"}` : it.decoy ? "A LIE" : `A LIE by ${it.authors.join(" & ")}`;
-    text(f, tag, x + 1.6 * vw, y + 1.2 * vh, { font: DISPLAY, size: 1.9 * vh, color: it.truth ? C.dark : C.hot, max: width - 3.2 * vw });
-    text(f, it.text, x + 1.6 * vw, y + 4 * vh, { size: Math.min(3.4 * vh, ih * 0.3), weight: 600, color: C.dark, max: width - 3.2 * vw });
+    const color = it.truth ? C.dark : C.hot;
+    const inner = width - 3.2 * vw;
     const who = revealLine(it, s.artist?.name);
-    text(f, who, x + 1.6 * vw, y + ih - 3.6 * vh, { size: 2.2 * vh, color: C.grey, max: width - 3.2 * vw });
+    if (ih < 11 * vh) {
+      // Many answers (up to 7 liars at 50 players): the title and its tag on one line, who below.
+      const mid = y + 0.34 * ih;
+      const tagOpts: TextOpts = { font: DISPLAY, size: Math.min(1.6 * vh, 0.22 * ih), color, base: "middle", align: "right", max: inner * 0.45 };
+      setFont(f, tagOpts);
+      const tw = Math.min(f.ctx.measureText(tag).width, inner * 0.45);
+      text(f, tag, x + width - 1.6 * vw, mid, tagOpts);
+      text(f, it.text, x + 1.6 * vw, mid, { size: Math.min(2.8 * vh, 0.36 * ih), weight: 600, color: C.dark, base: "middle", max: inner - tw - 1.6 * vw });
+      text(f, who, x + 1.6 * vw, y + 0.74 * ih, { size: Math.min(1.9 * vh, 0.25 * ih), color: C.grey, base: "middle", max: inner });
+      return;
+    }
+    text(f, tag, x + 1.6 * vw, y + 1.2 * vh, { font: DISPLAY, size: 1.9 * vh, color, max: inner });
+    text(f, it.text, x + 1.6 * vw, y + 4 * vh, { size: Math.min(3.4 * vh, ih * 0.3), weight: 600, color: C.dark, max: inner });
+    text(f, who, x + 1.6 * vw, y + ih - 3.6 * vh, { size: 2.2 * vh, color: C.grey, max: inner });
   });
   void t;
 }

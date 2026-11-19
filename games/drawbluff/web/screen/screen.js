@@ -195,11 +195,9 @@ function chips(view, list = "waiting", verb = "done") {
     const left = waiting.filter((id) => !done.has(id));
     const bar = h("div", { class: "bar" }, h("i", { style: `width:${Math.round((100 * n) / waiting.length)}%` }));
     box.className = "chips progress";
-    box.replaceChildren(
-      h("div", { class: "count" }, `${n} of ${waiting.length} ${verb}`),
-      bar,
-      left.length > 0 && left.length <= 6 ? h("div", { class: "left" }, `Waiting for ${left.map(name).join(", ")}`) : null,
-    );
+    // Not null in replaceChildren: it would show as "null".
+    box.replaceChildren(h("div", { class: "count" }, `${n} of ${waiting.length} ${verb}`), bar);
+    if (left.length > 0 && left.length <= 6) box.append(h("div", { class: "left" }, `Waiting for ${left.map(name).join(", ")}`));
   };
   update();
   return { box, update };
@@ -331,7 +329,7 @@ function reveal(view) {
       h("span", { class: "who" }, who),
     );
   });
-  stage.replaceChildren(canvas(s.drawing), h("div", { class: "col grow reveal" }, h("h2", {}, "The answers"), h("div", { class: "options" }, ...items)));
+  stage.replaceChildren(canvas(s.drawing), h("div", { class: `col grow reveal${items.length > 5 ? " many" : ""}` }, h("h2", {}, "The answers"), h("div", { class: "options" }, ...items)));
   refresh = () => {
     const step = client.view.screen?.step ?? 0;
     items.forEach((el, i) => el.classList.toggle("hidden", i >= step));

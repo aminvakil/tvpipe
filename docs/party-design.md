@@ -260,8 +260,9 @@ shows*. Each client has one **view**: `{ roster, room | screen, me }`.
 - **VIP**: the first player; passes to the next connected one when the
   VIP leaves. The VIP starts the game ("everybody's in").
 - `party.lock()` (the game started): new names are refused (`bye
-  locked`), resumes still work. `maxPlayers` (drawbluff: 8) and
-  `minPlayers` (3) are the game's.
+  locked`), resumes still work. `maxPlayers` (drawbluff: 50) and
+  `minPlayers` (3) are the game's. drawbluff no longer locks: a name
+  that joins mid-game plays from the next round.
 - **Clock**: `ping`/`pong` on connect (five) and every 10 s; the client
   keeps the offset of the shortest round trip (as the player page does)
   and exposes `client.now()`. Deadlines in views are server times, so a
@@ -438,7 +439,10 @@ await party.toTv({ to: "Living Room", mode: "video", canvas,
 ## 10. drawbluff (the demo game)
 
 Rules (Drawful's shape, our own prompts and names): 3–8 players, two
-rounds (round 2 scores double).
+rounds (round 2 scores double). This section is the classic game as
+first built; it now takes 3–50 players in one mode (spotlights and a
+gallery, rotating liars, pipelined lies, sampled options, points per
+exposure), described in [`drawbluff-scale.md`](drawbluff-scale.md).
 
 1. **Lobby**: QR and players on the TV; the VIP starts.
 2. **Draw**: everyone gets their own prompt ("a nervous cactus") and
@@ -587,6 +591,8 @@ Live checks (`games/drawbluff/test/live/play.ts`): a whole game with two
 bots and a phone in headless Chrome (joining, drawing with touch events,
 a lie, a vote), the TV in tvpipe's browser player, for the web screen and
 the video screen, locally and with the phone on the public Cloudflare
-link; screenshots of the TV and the phone in every phase matched. Not yet
+link; screenshots of the TV and the phone in every phase matched. With
+`--bots 49` the same check plays a full room of 50 on both hosts and
+both screens (results in [`drawbluff-scale.md`](drawbluff-scale.md) §11). Not yet
 checked: a real TV (Apple TV, Chromecast) and a real phone scanning the
 QR code from a TV.

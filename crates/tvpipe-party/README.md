@@ -63,7 +63,12 @@ party.input({ x: 0.3, y: -1 });                // continuous input, latest wins
 - **Actions** with acks, exactly once across reconnects; `Collect` waits
   for one answer per player or a deadline.
 - **Limits**: keys in the link's fragment, Host and Origin checks, rate
-  and size limits per socket, join throttling per address.
+  and size limits per socket, join throttling per address; sockets per
+  server follow `max_players` (`sockets_for`: 2 per player + 16, at least
+  64).
+- **At 50 phones**: a flush diffs only the view sections that changed,
+  each shared section once for all phones on the same version;
+  `Party::stats()` counts flushes, `state` messages, bytes and time.
 
 ## Features
 

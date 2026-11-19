@@ -780,6 +780,23 @@ impl Screen {
             };
             let max = width - 3.2 * vw;
             let tag_color = if truth { DARK } else { HOT };
+            let text = it["text"].as_str().unwrap_or_default();
+            let who = reveal_line(it, artist);
+            if ih < 11.0 * vh {
+                // Many answers (up to 7 liars at 50 players): the title and
+                // its tag on one line, who below.
+                let mid = y + 0.34 * ih;
+                let o = t(Face::Display, (1.6 * vh).min(0.22 * ih)).color(tag_color);
+                let tw = self.measure(&tag, o).min(max * 0.45);
+                let (tx, o) = (x + width - 1.6 * vw, o.middle().right().max(max * 0.45));
+                self.text(f, &tag, tx, mid, o);
+                let o = t(Face::Semi, (2.8 * vh).min(0.36 * ih));
+                let o = o.color(DARK).middle().max(max - tw - 1.6 * vw);
+                self.text(f, text, x + 1.6 * vw, mid, o);
+                let o = t(Face::Sans, (1.9 * vh).min(0.25 * ih)).color(GREY);
+                self.text(f, &who, x + 1.6 * vw, y + 0.74 * ih, o.middle().max(max));
+                continue;
+            }
             self.text(
                 f,
                 &tag,
@@ -788,7 +805,6 @@ impl Screen {
                 t(Face::Display, 1.9 * vh).color(tag_color).max(max),
             );
             let size = (3.4 * vh).min(ih * 0.3);
-            let text = it["text"].as_str().unwrap_or_default();
             self.text(
                 f,
                 text,
@@ -796,7 +812,6 @@ impl Screen {
                 y + 4.0 * vh,
                 t(Face::Semi, size).color(DARK).max(max),
             );
-            let who = reveal_line(it, artist);
             self.text(
                 f,
                 &who,

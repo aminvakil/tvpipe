@@ -1,11 +1,12 @@
 /**
- * A live check of drawbluff (not part of `npm test`): the game with two
- * bots and one phone in a real (headless) Chrome, the main screen through
- * tvpipe to its browser player, screenshots of the TV and the phone in
- * every phase.
+ * A live check of drawbluff (not part of `npm test`): the game with bots
+ * (two by default, up to 49) and one phone in a real (headless) Chrome,
+ * the main screen through tvpipe to its browser player, screenshots of
+ * the TV and the phone in every phase (`tv-*.png`, `phone-*.png`), and of
+ * the phone alone when it gets a lie or a vote (`phone-*-task.png`).
  *
- *   node test/live/play.ts [--video] [--tunnel=cloudflare|opentunnel] [--out DIR]
- *   node test/live/play.ts --host rust [--video]
+ *   node test/live/play.ts [--video] [--bots N] [--tunnel=cloudflare|opentunnel] [--out DIR]
+ *   node test/live/play.ts --host rust [--video] [--bots N]
  *
  * Needs Chrome, and tvpipe built (target/release or TVPIPE_BINARY). With
  * `--host rust` the game is the Rust binary (`cargo build --release -p
@@ -15,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -33,6 +34,8 @@ const { values: args } = parseArgs({
     tunnel: { type: "string" },
     out: { type: "string", default: "/tmp/drawbluff-live" },
     host: { type: "string", default: "node" },
+    bots: { type: "string", default: "2" },
+    rounds: { type: "string", default: "1" },
   },
 });
 
@@ -43,6 +46,8 @@ interface Host {
   joinKey: string;
   ws: string;
   playerUrl: string;
+  /** The screen's page itself (the TV gets it through tvpipe). */
+  screenUrl: string;
   phase(): string;
   /** Changes with every new phase (and drawing). */
   key(): string;
@@ -70,10 +75,11 @@ async function nodeHost(): Promise<Host> {
     phone: new URL("web/phone/", here),
     screen: new URL("web/screen/", here),
     tunnel: (args.tunnel as TunnelChoice | undefined) ?? false,
+    maxPlayers: 50,
     logLevel: "info",
   });
   const game = new Drawbluff(party, {
-    rounds: 1,
+    rounds: Number(args.rounds),
     timings: { draw: 20_000, lie: 15_000, vote: 12_000, revealStep: 1800, revealEnd: 2500, scores: 4000 },
   });
   game.open();
@@ -95,8 +101,12 @@ async function nodeHost(): Promise<Host> {
     joinKey: party.joinKey,
     ws: party.links.localJoin.replace(/^http/, "ws").replace(/\/\?.*$/, "/party/ws"),
     playerUrl: (tv.session as { playerUrl?: string }).playerUrl!,
+    screenUrl: party.links.screen,
     phase: () => game.phase,
-    key: () => `${game.phase}:${JSON.stringify(party.screen.peek()["artist"] ?? "")}`,
+    key: () => {
+      const s = party.screen.peek();
+      return `${game.phase}:${JSON.stringify([s["round"], s["spot"], s["page"]])}`;
+    },
     ended: () => new Promise<void>((r) => (game.phase === "final" ? r() : game.once("end", () => r()))),
     stop: async () => {
       game.close();
@@ -111,7 +121,7 @@ async function rustHost(): Promise<Host> {
   if (!existsSync(exe)) throw new Error(`build it first: cargo build --release -p drawbluff (${exe})`);
   const join = args.tunnel ? [`--tunnel=${args.tunnel}`] : ["--local"];
   const screen = args.video ? [] : ["--web-screen"];
-  const proc = spawn(exe, ["--to", "browser", ...join, ...screen, "--rounds", "1", "--fast", "-v"], { stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(exe, ["--to", "browser", ...join, ...screen, "--rounds", args.rounds, "--fast", "-v"], { stdio: ["ignore", "pipe", "pipe"] });
   let phase = "lobby";
   let n = 0;
   let end: () => void = () => {};
@@ -126,11 +136,11 @@ async function rustHost(): Promise<Host> {
     if (line.includes("game over:")) end();
   });
   createInterface({ input: proc.stderr! }).on("line", (line) => {
-    const m = /^drawbluff: (lobby|draw|lie|vote|reveal|scores|final)$/.exec(line);
+    const m = /^drawbluff: (lobby|draw|gallery|lie|vote|reveal|scores|final)$/.exec(line);
     if (m) {
       phase = m[1]!;
       n++;
-    } else if (line.trim()) log(`rust: ${line}`);
+    } else if (line.trim() && !line.startsWith("drawbluff: + ")) log(`rust: ${line}`);
   });
   proc.on("exit", (code) => {
     log(`rust host exited (${code})`);
@@ -146,6 +156,7 @@ async function rustHost(): Promise<Host> {
     joinKey: new URLSearchParams(u.hash.slice(1)).get("k")!,
     ws: local,
     playerUrl: links["the TV's page"]!,
+    screenUrl: links["the screen"]!,
     phase: () => phase,
     key: () => `${phase}:${n}`,
     ended: () => ended,
@@ -161,12 +172,27 @@ log(`TV (${args.video ? "video" : "web"}, ${args.host} host) in the player: ${ho
 
 const browser = await Browser.launch();
 const tvTab = await browser.open(host.playerUrl, { width: 1280, height: 720 });
+// The TV gets pixels; the web screen's page itself, to read its text.
+const screenTab = args.video ? undefined : await browser.open(host.screenUrl, { width: 1280, height: 720 });
+// The phone last: the tab in front (background tabs get no animation frames).
 const phone = await browser.open(host.join, { width: 390, height: 844, mobile: true });
 const shots: string[] = [];
+const leaks: string[] = [];
 const shot = async (name: string) => {
   // The TV is ~0.1-0.4 s behind: let it catch up.
   await new Promise((r) => setTimeout(r, 1200));
   await tvTab.screenshot(`${out}/tv-${name}.png`);
+  // The web screen's page: no leaked placeholders.
+  // And nothing below the bottom (hidden reveal lines are laid out too).
+  const leak = await screenTab
+    ?.eval<string>(
+      `(() => { const m = /\\b(null|undefined|NaN)\\b/.exec(document.body.innerText); if (m) return m[0]; const below = [...document.querySelectorAll(".option, .cell, .player, .chips")].find((e) => e.getBoundingClientRect().bottom > innerHeight + 1); return below ? "overflow: " + below.textContent.slice(0, 40) : ""; })()`,
+    )
+    .catch(() => "");
+  if (leak) {
+    leaks.push(`${name}: ${leak}`);
+    log(`the screen page shows "${leak}" (${name})`);
+  }
   await phone.screenshot(`${out}/phone-${name}.png`);
   shots.push(name);
   log(`screenshots: ${name}`);
@@ -177,31 +203,66 @@ try {
   await phone.until(`!!document.getElementById("name")`);
   await phone.eval(`document.getElementById("name").value = "Phil"; document.querySelector("#join-form button").click(); true`);
   await phone.until(`document.querySelector("h1")?.textContent === "You're in!"`);
-  const bs = await bots(2, { url: host.ws, room: host.room, key: host.joinKey, names: ["Ada", "Bea"], think: () => 1500 + Math.random() * 2500 });
+  const nBots = Number(args.bots);
+  const bs = await bots(nBots, {
+    url: host.ws,
+    room: host.room,
+    key: host.joinKey,
+    names: nBots <= 2 ? ["Ada", "Bea"] : undefined,
+    think: () => 1500 + Math.random() * 2500,
+  });
+  log(`${bs.length} bots joined`);
   await shot("lobby");
   // Phil is the VIP (joined first): start.
   await phone.until(`!document.querySelector("button.primary")?.disabled`);
   await phone.eval(`document.querySelector("button.primary").click(); true`);
 
-  // Draw.
-  await phone.until(`!!document.querySelector("canvas.pad")`);
-  const box = await phone.eval<{ x: number; y: number; w: number }>(
-    `(() => { const r = document.querySelector("canvas.pad").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width }; })()`,
-  );
-  const pt = (u: number, v: number): [number, number] => [box.x + u * box.w, box.y + v * box.w];
-  const circle = Array.from({ length: 30 }, (_, i) => pt(0.5 + 0.3 * Math.cos((i / 29) * 2 * Math.PI), 0.5 + 0.3 * Math.sin((i / 29) * 2 * Math.PI)));
-  await phone.drag(circle);
-  await phone.eval(`document.querySelectorAll(".palette button")[2].click(); true`);
-  await phone.drag([pt(0.38, 0.4), pt(0.4, 0.42)]);
-  await phone.drag([pt(0.6, 0.4), pt(0.62, 0.42)]);
-  await phone.eval(`document.querySelectorAll(".palette button")[6].click(); true`);
-  await phone.drag(Array.from({ length: 12 }, (_, i) => pt(0.35 + (0.3 * i) / 11, 0.6 + 0.08 * Math.sin((i / 11) * Math.PI))));
-  await shot("draw");
-  await phone.eval(`[...document.querySelectorAll("button")].find((b) => b.textContent === "Done!").click(); true`);
+  // Draw (every round), then Done.
+  const drawOnPhone = async (name: string) => {
+    await phone.until(`!!document.querySelector("canvas.pad")`, 30_000);
+    const box = await phone.eval<{ x: number; y: number; w: number }>(
+      `(() => { const r = document.querySelector("canvas.pad").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width }; })()`,
+    );
+    const pt = (u: number, v: number): [number, number] => [box.x + u * box.w, box.y + v * box.w];
+    const circle = Array.from({ length: 30 }, (_, i) => pt(0.5 + 0.3 * Math.cos((i / 29) * 2 * Math.PI), 0.5 + 0.3 * Math.sin((i / 29) * 2 * Math.PI)));
+    await phone.drag(circle);
+    await phone.eval(`document.querySelectorAll(".palette button")[2].click(); true`);
+    await phone.drag([pt(0.38, 0.4), pt(0.4, 0.42)]);
+    await phone.drag([pt(0.6, 0.4), pt(0.62, 0.42)]);
+    await phone.eval(`document.querySelectorAll(".palette button")[6].click(); true`);
+    await phone.drag(Array.from({ length: 12 }, (_, i) => pt(0.35 + (0.3 * i) / 11, 0.6 + 0.08 * Math.sin((i / 11) * Math.PI))));
+    await shot(name);
+    await phone.eval(`[...document.querySelectorAll("button")].find((b) => b.textContent === "Done!").click(); true`);
+  };
 
-  // Per drawing: lie (or watch), vote, reveal.
+  // Per phase on the TV (gallery pages, lie, vote, reveal per drawing): a
+  // pair of screenshots. The phone follows its own task (the next drawing's
+  // liars write during the current vote): it lies or votes when it is asked.
   const seen = new Set<string>();
-  while (host.phase() !== "scores" && host.phase() !== "final") {
+  const tasks = new Set<string>();
+  let n = 0;
+  const lies = ["a suspicious muffin", "grandma's secret weapon", "the last banana", "a moody cloud"];
+  const drivePhone = async () => {
+    const t = await phone
+      .eval<{ lie: boolean; vote: number; key: string }>(
+        `(() => { const i = document.querySelector("form input"); const o = document.querySelectorAll(".options button:not(.chosen)"); const c = document.querySelector(".options .chosen"); return { lie: !!i, vote: c ? 0 : o.length, key: document.querySelector("main")?.innerText.slice(0, 200) ?? "" }; })()`,
+      )
+      .catch(() => ({ lie: false, vote: 0, key: "" }));
+    if (t.lie && !tasks.has(`lie:${t.key}`)) {
+      tasks.add(`lie:${t.key}`);
+      await phone.screenshot(`${out}/phone-${String(++n).padStart(2, "0")}-lie-task.png`);
+      const lie = lies[tasks.size % lies.length]!;
+      await phone.eval(`(() => { const i = document.querySelector("form input"); i.value = ${JSON.stringify(lie)}; i.form.requestSubmit(); return true; })()`);
+      log(`phone: lied "${lie}"`);
+    } else if (t.vote > 0 && !tasks.has(`vote:${t.key}`)) {
+      tasks.add(`vote:${t.key}`);
+      await phone.screenshot(`${out}/phone-${String(++n).padStart(2, "0")}-vote-task.png`);
+      await phone.eval(`(() => { const o = document.querySelectorAll(".options button"); o[Math.floor(Math.random() * o.length)].click(); return true; })()`);
+      log(`phone: voted (${t.vote} options)`);
+    }
+  };
+  while (host.phase() !== "final") {
+    await drivePhone();
     const phase = host.phase();
     const key = host.key();
     if (seen.has(key)) {
@@ -209,33 +270,35 @@ try {
       continue;
     }
     seen.add(key);
-    const n = seen.size;
-    if (phase === "lie") {
-      const lying = await phone.eval<boolean>(`!!document.querySelector("form input")`).catch(() => false);
-      if (lying) {
-        await phone.eval(
-          `(() => { const i = document.querySelector("form input"); i.value = "a suspicious muffin"; i.form.requestSubmit(); return true; })()`,
-        );
-      }
-      await shot(`${n}-lie`);
-    } else if (phase === "vote") {
-      await new Promise((r) => setTimeout(r, 500));
-      const voting = await phone.eval<boolean>(`!!document.querySelector(".options button")`);
-      if (voting) await phone.eval(`document.querySelector(".options button").click(); true`);
-      await shot(`${n}-vote`);
+    const at = String(++n).padStart(2, "0");
+    if (phase === "draw") await drawOnPhone(`${at}-draw`);
+    else if (phase === "gallery") await shot(`${at}-gallery`);
+    else if (phase === "lie") await shot(`${at}-lie`);
+    else if (phase === "vote") {
+      await new Promise((r) => setTimeout(r, 300));
+      await drivePhone();
+      await shot(`${at}-vote`);
     } else if (phase === "reveal") {
       await new Promise((r) => setTimeout(r, 4000));
-      await shot(`${n}-reveal`);
+      await shot(`${at}-reveal`);
+      // And the TV just before the next phase: the truth.
+      let last: Buffer | undefined;
+      while (host.key() === key) {
+        last = await tvTab.capture();
+        await drivePhone();
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      if (last) writeFileSync(`${out}/tv-${at}-reveal-end.png`, last);
+    } else if (phase === "scores") {
+      await new Promise((r) => setTimeout(r, 800));
+      await shot(`${at}-scores`);
     }
-    await new Promise((r) => setTimeout(r, 200));
   }
-  await new Promise((r) => setTimeout(r, 800));
-  await shot("scores");
   await host.ended();
   await shot("final");
   for (const b of bs) b.close();
   const errors = bs.flatMap((b) => b.errors);
-  log(`done: ${shots.length} screenshot pairs in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}`);
+  log(`done: ${shots.length} screenshot pairs in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}${screenTab ? `; on the screen page: ${leaks.length ? leaks.join(", ") : "no null/undefined/NaN, no overflow"}` : ""}`);
 } finally {
   browser.close();
   await host.stop();

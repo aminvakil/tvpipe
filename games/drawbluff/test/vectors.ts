@@ -346,6 +346,23 @@ export function bigScreens(): Record<string, unknown> {
       },
     ],
     [
+      // Seven liars and the truth: the most a drawing gets.
+      "reveal-50-full",
+      {
+        phase: "reveal", round: 1, spot: 1, spots: 6, drawing, artist, prompt: "a haunted toaster", step: 8,
+        items: [
+          item("o2", "a sad potato", 1, 30),
+          item("o4", "my uncle on monday", 2, 31, { authors: ["Maximiliane-Josephine", "Quinn2"] }),
+          item("o5", "a very tired frog", 3, 31, { same: true, authors: ["Bea", "Lou"] }),
+          item("o6", "abstract art", 4, 29, { decoy: true, authors: [] }),
+          item("o7", "a sneaky pancake", 6, 29),
+          item("o8", "a convincing lie that is rather long indeed", 9, 30),
+          item("o3", "the cat's revenge", 14, 31),
+          { id: "o1", text: "a haunted toaster", truth: true, decoy: false, authors: [], voters: names(6), count: 11, seen: 43, points: 2000, artistPoints: 2 * share(11, 1000, 43), same: false },
+        ],
+      },
+    ],
+    [
       "scores-50",
       {
         phase: "scores", round: 1, rounds: 2, scores: lines, total: 50, last: false,

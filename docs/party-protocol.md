@@ -201,7 +201,7 @@ candidates show players the host's LAN address.
 | `hello` within | 5 s |
 | messages per socket | 20/s, 50 at once (`bye rate-limited`) |
 | message size | 256 KiB for `act`, 16 KiB for the rest, 4 KiB for `in` (dropped) |
-| sockets per server | 64; screens and watchers per room 16 |
+| sockets per server | 2 per player + 16, at least 64 (`socketsFor(maxPlayers)` / `sockets_for`; 64 up to 24 players, 116 at 50); screens and watchers per room 16 |
 | failed `hello`s per address | 20 a minute |
 | pending actions per client | 32 |
 | liveness | WebSocket pings every 15 s, closed after 45 s without a pong |
