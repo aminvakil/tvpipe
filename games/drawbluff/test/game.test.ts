@@ -15,18 +15,18 @@ import { bots } from "../game/bots.ts";
 import { Drawbluff } from "../game/game.ts";
 import { seeded } from "../game/rules.ts";
 
-const fast = { draw: 1500, lie: 1200, vote: 1200, revealStep: 20, revealEnd: 20, scores: 20 };
+const fast = { draw: 1500, lie: 1200, vote: 1200, revealStep: 20, revealEnd: 20, scores: 20, gallery: 20 };
 
-async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number } = {}) {
-  const server = new PartyServer({ log: () => {} });
+async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number } = {}) {
+  const server = new PartyServer({ log: () => {}, maxSockets: 128 });
   await server.listen();
-  const party = server.createParty({ grace: 100 });
+  const party = server.createParty({ grace: 100, maxPlayers: Math.max(8, n) });
   const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7) });
   g.open();
   const url = `ws://127.0.0.1:${server.port}/party/ws`;
   const phases: string[] = [];
   g.on("phase", (p) => phases.push(p));
-  const players = await bots(n, { url, room: party.code, key: party.joinKey, rng: seeded(n), think: () => 5 });
+  const players = await bots(n, { url, room: party.code, key: party.joinKey, rng: seeded(n), think: () => opts.think ?? 5 });
   if (opts.silent !== undefined) {
     // One player who never answers: their client stays connected.
     players[opts.silent]!.client.on("view", () => {});
@@ -74,7 +74,7 @@ test("8 players, one round, everyone lies for me", async () => {
   }
 });
 
-test("too few players, non-VIP start, join while running", async () => {
+test("too few players, non-VIP start, a late joiner plays from the next round", async () => {
   const { server, party, g, players } = await game(2);
   try {
     await assert.rejects(players[0]!.client.act("start"), (e: { code: string }) => e.code === "too-few");
@@ -83,11 +83,13 @@ test("too few players, non-VIP start, join while running", async () => {
     await assert.rejects(players[1]!.client.act("start"), (e: { code: string }) => e.code === "not-vip");
     const end = new Promise((r) => g.once("end", r));
     await players[0]!.client.act("start");
-    await assert.rejects(
-      bots(1, { url: `ws://127.0.0.1:${server.port}/party/ws`, room: party.code, key: party.joinKey, names: ["Late"] }),
-      (e: { code: string }) => e.code === "locked",
-    );
-    await end;
+    await until(() => g.phase === "lie" || g.phase === "vote");
+    const late = await bots(1, { url: `ws://127.0.0.1:${server.port}/party/ws`, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 });
+    players.push(...late);
+    await until(() => late[0]!.client.view["me"]?.task === "wait");
+    await until(() => late[0]!.client.view["me"]?.task === "draw", 15_000);
+    const table = (await end) as { name: string }[];
+    assert.deepEqual(table.map((l) => l.name).sort(), ["Ada", "Bea", "Late", "Zed"]);
   } finally {
     for (const b of players) b.close();
     await server.close();
@@ -122,6 +124,55 @@ test("VIP removes a player in the lobby", async () => {
     await players[0]!.client.act("kick", { id: players[2]!.client.you!.id });
     assert.equal(party.players.length, 2);
     await assert.rejects(players[1]!.client.act("kick", { id: players[0]!.client.you!.id }), (e: { code: string }) => e.code === "not-vip");
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
+test("50 players: spotlights, rotating liars, pipelined lies, sampled options, every phone busy", async () => {
+  const { server, party, g, players } = await game(50, { rounds: 2, think: 150 });
+  try {
+    const phases: string[] = [];
+    const problems: string[] = [];
+    const byId = new Map(players.map((b) => [b.client.you!.id, b]));
+    g.on("phase", (p) => {
+      phases.push(p);
+      if (p !== "vote") return;
+      // Checked once the vote's views are out.
+      setTimeout(() => {
+        const s = party.screen.peek() as Record<string, any>;
+        if (s["phase"] !== "vote") return problems.push("the vote was over too soon to check");
+        const voters = new Set<string>(s["waiting"]);
+        let liars = 0;
+        for (const [id, b] of byId) {
+          const me = b.client.view["me"] ?? {};
+          if (me.task === "vote") {
+            if (!voters.has(id)) problems.push(`${id} votes but is not waited for`);
+            const opts = me.options as { id: string }[];
+            if (opts.length > 6) problems.push(`${id} has ${opts.length} options`);
+            const tv = (s["options"] as { id: string }[]).map((o) => o.id);
+            const order = opts.map((o) => tv.indexOf(o.id));
+            if (order.some((x, i) => x < 0 || (i > 0 && x < order[i - 1]!))) problems.push(`${id}: options not in the TV's order`);
+          } else if (me.task === "lie") liars++;
+          else if (me.task !== "artist") problems.push(`${id} has nothing to do: ${me.task}`);
+        }
+        if (s["spot"] < s["spots"] && liars === 0) problems.push(`no liars writing during vote ${s["spot"]}`);
+      }, 60);
+    });
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    const table = (await end) as { name: string; score: number }[];
+    assert.equal(table.length, 50);
+    assert.deepEqual(problems.slice(0, 5), []);
+    assert.equal(phases.filter((p) => p === "reveal").length, 12, "6 spotlights a round");
+    assert.equal(phases.filter((p) => p === "gallery").length, 2);
+    assert.ok(table[0]!.score < 40_000, `points scaled: ${table[0]!.score}`);
+    const screen = party.screen.peek() as Record<string, any>;
+    assert.equal(screen["total"], 50);
+    assert.equal(screen["scores"].length, 8);
+    assert.ok(players.every((b) => b.client.view["me"].of === 50));
+    assert.deepEqual(new Set(players.flatMap((b) => b.errors)), new Set());
   } finally {
     for (const b of players) b.close();
     await server.close();

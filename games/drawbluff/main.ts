@@ -21,7 +21,7 @@ import { parseArgs } from "node:util";
 import { createParty, type TunnelChoice } from "@tvpipe/party";
 
 import { bots } from "./game/bots.ts";
-import { Drawbluff } from "./game/game.ts";
+import { Drawbluff, FAST_TIMINGS } from "./game/game.ts";
 import { loadCanvas, renderScreen } from "./screen-video.ts";
 
 const { values: args } = parseArgs({
@@ -67,13 +67,13 @@ const party = await createParty({
   phone: new URL("web/phone/", here),
   screen: new URL("web/screen/", here),
   tunnel,
-  maxPlayers: 8,
+  maxPlayers: 50,
   logLevel: args.verbose ? "info" : "warn",
 });
 
 const game = new Drawbluff(party, {
   rounds: Number(args.rounds),
-  timings: args.fast ? { draw: 25_000, lie: 20_000, vote: 15_000, revealStep: 1500, revealEnd: 2500, scores: 4000 } : undefined,
+  timings: args.fast ? FAST_TIMINGS : undefined,
 });
 game.open();
 game.on("phase", (p) => args.verbose && console.error(`drawbluff: ${p}`));

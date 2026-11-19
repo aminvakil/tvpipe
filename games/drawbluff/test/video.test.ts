@@ -3,7 +3,11 @@ import { test } from "node:test";
 
 import { doodle } from "../game/bots.ts";
 import { seeded } from "../game/rules.ts";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join as joinPath } from "node:path";
+
 import { loadCanvas, renderScreen } from "../screen-video.ts";
+import { SCREENS } from "./vectors.ts";
 
 let canvasMod: Awaited<ReturnType<typeof loadCanvas>> | undefined;
 try {
@@ -80,4 +84,19 @@ test("the lobby's QR code: dark finder, light quiet zone", { skip: !canvasMod &&
   assert.ok(at(2, 2) < 100, "finder is dark");
   assert.ok(at(12, 12) > 700, "centre is light");
   assert.ok(at(22, 22) > 700, "no finder bottom right");
+});
+
+test("the video screen with 50 players (test/vectors/screens-50.json)", { skip: !canvasMod && "@napi-rs/canvas is not installed" }, async () => {
+  const big = JSON.parse(readFileSync(SCREENS, "utf8")) as { roster: unknown[]; join: unknown; now: number; views: [string, Record<string, unknown>][] };
+  const canvas = canvasMod!.createCanvas(1280, 720);
+  const ctx = canvas.getContext("2d");
+  const out = process.env["DRAWBLUFF_SCREEN_OUT"];
+  for (const [name, screen] of big.views) {
+    renderScreen(ctx, { roster: big.roster, screen, join: big.join }, 1234, big.now);
+    const px = ctx.getImageData(0, 0, 1280, 720).data;
+    let bright = 0;
+    for (let i = 0; i < px.length; i += 4 * 97) if (px[i]! > 200 && px[i + 1]! > 200) bright++;
+    assert.ok(bright > 50, `${name}: ${bright}`);
+    if (out) writeFileSync(joinPath(out, `node-${name}.png`), await canvas.encode("png"));
+  }
 });

@@ -78,3 +78,4 @@ canvas.mini { width: 60%; aspect-ratio: 1; display: block; margin: 0 auto .8rem;
 .tools button.chosen { background: rgba(255,214,10,.3); outline: none; }
 .score { font-family: "Michroma", sans-serif; font-size: 2rem; color: var(--accent); margin: .2rem 0; }
 .muted { opacity: .7; }
+.role { font-weight: 600; color: var(--accent); margin: 0 0 .6rem; line-height: 1.35; }

@@ -84,6 +84,9 @@ export function renderScreen(ctx: Ctx, view: Record<string, any>, t: number, now
     case "draw":
       draw(f, view);
       break;
+    case "gallery":
+      gallery(f, view);
+      break;
     case "lie":
     case "vote":
       guess(f, view);
@@ -98,7 +101,12 @@ export function renderScreen(ctx: Ctx, view: Record<string, any>, t: number, now
     default:
       text(f, "drawbluff", w / 2, h / 2, { font: LOGO, size: 8 * f.vh, color: C.accent, align: "center", base: "middle" });
   }
-  if (s.phase && s.phase !== "lobby" && view["join"]?.qr) corner(f, view);
+  if (cornerShown(s.phase) && view["join"]?.qr) corner(f, view);
+}
+
+/** The corner's QR code (join or rejoin): not in the lobby, nor where the options fill the right side. */
+export function cornerShown(phase: unknown): boolean {
+  return typeof phase === "string" && phase !== "lobby" && phase !== "vote" && phase !== "reveal";
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +193,22 @@ function lobby(f: Frame, view: Record<string, any>, t: number): void {
   text(f, "Players", x0, 6 * vh, { font: DISPLAY, size: 4.2 * vh });
   const max = s.maxPlayers ?? 8;
   const min = s.minPlayers ?? 3;
-  for (let i = 0; i < max; i++) {
+  if (roster.length > 8) {
+    // A denser grid, up to 50 names.
+    const cols = roster.length > 24 ? 5 : 3;
+    const gap = 0.8 * vw;
+    const cw = (46 * vw - (cols - 1) * gap) / cols;
+    const rows = Math.ceil(roster.length / cols);
+    const ch = Math.min(8.6 * vh, (64 * vh - (rows - 1) * 0.8 * vh) / rows);
+    const size = Math.min(3.4 * vh, ch * 0.55, cols === 5 ? 2.6 * vh : 3 * vh);
+    roster.forEach((r, i) => {
+      const x = x0 + (i % cols) * (cw + gap);
+      const y = 16 * vh + Math.floor(i / cols) * (ch + 0.8 * vh);
+      round(f, x, y, cw, ch, 1 * vh, r.connected ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)");
+      text(f, `${r.vip ? "★ " : ""}${r.name}`, x + 0.8 * vw, y + ch / 2, { size, weight: 600, base: "middle", max: cw - 1.6 * vw, color: r.connected ? C.ink : "rgba(255,253,246,0.45)" });
+    });
+  }
+  for (let i = 0; i < Math.min(max, 8) && roster.length <= 8; i++) {
     const x = x0 + (i % 2) * (colW + 1.6 * vw);
     const y = 16 * vh + Math.floor(i / 2) * 10.5 * vh;
     const r = roster[i];
@@ -200,15 +223,41 @@ function lobby(f: Frame, view: Record<string, any>, t: number): void {
   const ready = roster.filter((r) => r.connected).length;
   const vip = roster.find((r) => r.vip)?.name ?? "The VIP";
   const hint = ready < min ? `${min - ready} more player${min - ready === 1 ? "" : "s"} needed.` : `${vip} starts the game on their phone.`;
-  para(f, hint, x0, 61 * vh, 46 * vw, { size: 3 * vh });
+  para(f, hint, x0, roster.length > 8 ? 84 * vh : 61 * vh, 46 * vw, { size: 3 * vh });
 }
 
-function chips(f: Frame, view: Record<string, any>, x: number, y: number, width: number, align: "left" | "center" = "left"): void {
+/** Chips up to this many players waited for; more: a count, a bar and the last few names. */
+const CHIPS = 12;
+
+function chips(
+  f: Frame,
+  view: Record<string, any>,
+  x: number,
+  y: number,
+  width: number,
+  align: "left" | "center" = "left",
+  list = "waiting",
+  verb = "done",
+): void {
   const s = view["screen"] ?? {};
   const roster: any[] = view["roster"] ?? [];
   const done = new Set<string>(s.done ?? []);
   const { vh, vw } = f;
-  const items = (s.waiting ?? []).map((id: string) => {
+  const waiting: string[] = s[list] ?? [];
+  if (waiting.length > CHIPS) {
+    const n = waiting.filter((id) => done.has(id)).length;
+    const left = waiting.filter((id) => !done.has(id)).map((id) => roster.find((r) => r.id === id)?.name ?? "?");
+    const bw = Math.min(width, 50 * vw);
+    const bx = align === "center" ? x + (width - bw) / 2 : x;
+    text(f, `${n} of ${waiting.length} ${verb}`, align === "center" ? x + width / 2 : x, y, { font: DISPLAY, size: 3 * vh, align: align === "center" ? "center" : "left" });
+    round(f, bx, y + 5 * vh, bw, 1.6 * vh, 0.8 * vh, "rgba(255,255,255,0.12)");
+    if (n > 0) round(f, bx, y + 5 * vh, (bw * n) / waiting.length, 1.6 * vh, 0.8 * vh, C.ok);
+    if (left.length > 0 && left.length <= 6) {
+      text(f, `Waiting for ${left.join(", ")}`, align === "center" ? x + width / 2 : x, y + 8.4 * vh, { size: 2.3 * vh, align: align === "center" ? "center" : "left", max: width, color: "rgba(255,253,246,0.85)" });
+    }
+    return;
+  }
+  const items = waiting.map((id: string) => {
     const name = roster.find((r) => r.id === id)?.name ?? "?";
     return { label: `${done.has(id) ? "✓ " : ""}${name}`, done: done.has(id) };
   });
@@ -276,19 +325,55 @@ function drawingBox(f: Frame, drawing: unknown): number {
   return 4 * vw + size + 4 * vw;
 }
 
+/** The gallery: the round's drawings that do not get the stage, 4×2 a page. */
+function gallery(f: Frame, view: Record<string, any>): void {
+  const s = view["screen"];
+  const { vh, vw } = f;
+  const pages = s.pages > 1 ? ` · ${s.page} OF ${s.pages}` : "";
+  text(f, `ROUND ${s.round} · THE GALLERY${pages}`, 4 * vw, 5 * vh, { size: 2.4 * vh, weight: 600, color: "rgba(255,253,246,0.7)" });
+  const items: any[] = s.items ?? [];
+  const cw = (92 * vw - 3 * 2 * vw) / 4;
+  const size = Math.min(cw, 29 * vh);
+  items.slice(0, 8).forEach((it, i) => {
+    const cx = 4 * vw + (i % 4) * (cw + 2 * vw) + cw / 2;
+    const y = 10 * vh + Math.floor(i / 4) * (size + 9 * vh);
+    round(f, cx - size / 2, y, size, size, 1.4 * vh, C.paper);
+    f.ctx.save();
+    f.ctx.beginPath();
+    f.ctx.roundRect(cx - size / 2, y, size, size, 1.4 * vh);
+    f.ctx.clip();
+    drawDrawing(f.ctx, it.drawing, cx - size / 2, y, size);
+    f.ctx.restore();
+    text(f, it.prompt ?? "", cx, y + size + 1 * vh, { size: 2.2 * vh, weight: 600, color: C.accent, align: "center", max: cw });
+    text(f, `by ${it.name ?? "?"}`, cx, y + size + 4 * vh, { size: 2 * vh, align: "center", max: cw, color: "rgba(255,253,246,0.8)" });
+  });
+  const liars = (s.liars ?? []).length;
+  if (liars > 0) text(f, meanwhile(s), 4 * vw, 86 * vh, { size: 2.6 * vh, max: 70 * vw });
+}
+
+/** The gallery's line about the first drawing's liars. */
+export function meanwhile(s: any): string {
+  const liars = (s.liars ?? []).length;
+  const done = (s.done ?? []).length;
+  return `Meanwhile ${liars === 1 ? "1 liar is" : `${liars} liars are`} writing for ${s.artist?.name ?? "the first"}'s drawing · ${done} done`;
+}
+
 function guess(f: Frame, view: Record<string, any>): void {
   const s = view["screen"];
   const { w, vh, vw } = f;
   const x = drawingBox(f, s.drawing);
   const width = w - x - 4 * vw;
+  const spot = s.spots > 1 ? ` · DRAWING ${s.spot} OF ${s.spots}` : "";
   if (s.phase === "lie") {
-    text(f, `${(s.artist?.name ?? "Someone").toUpperCase()} DREW THIS`, x, 6 * vh, { size: 2.4 * vh, weight: 600, color: "rgba(255,253,246,0.7)", max: width });
-    const used = para(f, "What is it called? Write a fake title on your phone.", x, 11 * vh, width, { font: DISPLAY, size: 4.2 * vh, lineHeight: 1.35 });
+    const liars = (s.waiting ?? []).length;
+    text(f, `${(s.artist?.name ?? "Someone").toUpperCase()} DREW THIS${spot}`, x, 6 * vh, { size: 2.4 * vh, weight: 600, color: "rgba(255,253,246,0.7)", max: width });
+    const what = liars === 1 ? "What is it called? The liar is writing a fake title." : `What is it called? ${liars} liars are writing fake titles.`;
+    const used = para(f, what, x, 11 * vh, width, { font: DISPLAY, size: 4.2 * vh, lineHeight: 1.35 });
     timer(f, s.deadline, x + 6.5 * vh, 11 * vh + used + 9 * vh);
     chips(f, view, x, 11 * vh + used + 19 * vh, width);
     return;
   }
-  text(f, "WHICH ONE IS THE REAL TITLE?", x, 6 * vh, { size: 2.4 * vh, weight: 600, color: "rgba(255,253,246,0.7)" });
+  text(f, `WHICH ONE IS THE REAL TITLE?${spot}`, x, 6 * vh, { size: 2.4 * vh, weight: 600, color: "rgba(255,253,246,0.7)", max: width });
   const opts: { text: string }[] = s.options ?? [];
   const oh = Math.min(9 * vh, (60 * vh) / Math.max(1, opts.length));
   opts.forEach((o, i) => {
@@ -298,7 +383,8 @@ function guess(f: Frame, view: Record<string, any>): void {
   });
   const y = 11 * vh + opts.length * (oh + 1.4 * vh) + 7 * vh;
   timer(f, s.deadline, x + 6.5 * vh, Math.min(y, 87 * vh));
-  chips(f, view, x + 15 * vh, Math.min(y, 87 * vh) - 2.2 * vh, width - 15 * vh);
+  chips(f, view, x + 15 * vh, Math.min(y, 87 * vh) - 2.2 * vh, width - 15 * vh, "left", "waiting", "voted");
+  if (s.writing > 0) text(f, `Meanwhile ${s.writing} liars write for the next drawing.`, x, 95 * vh, { size: 2.2 * vh, max: width - 18 * vw, color: "rgba(255,253,246,0.8)", base: "alphabetic" });
 }
 
 function reveal(f: Frame, view: Record<string, any>, t: number): void {
@@ -316,25 +402,44 @@ function reveal(f: Frame, view: Record<string, any>, t: number): void {
     const tag = it.truth ? `THE TRUTH by ${s.artist?.name ?? "?"}` : it.decoy ? "A LIE" : `A LIE by ${it.authors.join(" & ")}`;
     text(f, tag, x + 1.6 * vw, y + 1.2 * vh, { font: DISPLAY, size: 1.9 * vh, color: it.truth ? C.dark : C.hot, max: width - 3.2 * vw });
     text(f, it.text, x + 1.6 * vw, y + 4 * vh, { size: Math.min(3.4 * vh, ih * 0.3), weight: 600, color: C.dark, max: width - 3.2 * vw });
-    const who = it.truth
-      ? it.voters.length
-        ? `found by ${it.voters.join(", ")} · +${it.points} each, ${s.artist?.name} +${it.artistPoints}`
-        : "nobody found it"
-      : `${it.voters.join(", ")} fell for it${it.decoy ? " (our lie)" : ` · +${it.points}`}`;
+    const who = revealLine(it, s.artist?.name);
     text(f, who, x + 1.6 * vw, y + ih - 3.6 * vh, { size: 2.2 * vh, color: C.grey, max: width - 3.2 * vw });
   });
   void t;
+}
+
+/** A reveal line's last row: who fell for it (names while they fit, else how many of those who saw it). */
+export function revealLine(it: any, artist: string | undefined): string {
+  const count: number = it.count ?? it.voters.length;
+  const fits = count <= it.voters.length;
+  const names = fits ? it.voters.join(", ") : `${count} of ${it.seen}`;
+  if (it.truth) return count ? `found by ${names} · +${it.points} each, ${artist ?? "?"} +${it.artistPoints}` : "nobody found it";
+  return `${fits ? `${names} fell for it` : `fooled ${names}`}${it.decoy ? " (our lie)" : ` · +${it.points}${it.same ? " (same idea!)" : ""}`}`;
 }
 
 function board(f: Frame, view: Record<string, any>): void {
   const s = view["screen"];
   const { w, vh, vw } = f;
   const final = s.phase === "final";
-  const scores: any[] = s.scores ?? [];
+  const all: any[] = s.scores ?? [];
+  // All players up to 8, else the top 5 (each phone shows its own rank).
+  const total: number = s.total ?? all.length;
+  const scores = total > 8 ? all.slice(0, 5) : all;
+  const highlights: any[] = s.highlights ?? [];
   const title = final ? `${scores[0]?.name ?? "Nobody"} wins!` : s.last ? "Final scores" : `Scores after round ${s.round}`;
   text(f, title, w / 2, 8 * vh, { font: DISPLAY, size: 6 * vh, align: "center", max: 90 * vw });
-  const lw = 70 * vw;
-  const x = (w - lw) / 2;
+  const lw = highlights.length ? 60 * vw : 70 * vw;
+  const x = highlights.length ? 4 * vw : (w - lw) / 2;
+  highlights.forEach((hl, i) => {
+    const hx = x + lw + 3 * vw;
+    const hy = 20 * vh + i * 15 * vh;
+    const hw = w - hx - 4 * vw;
+    round(f, hx, hy, hw, 13 * vh, 1.6 * vh, "rgba(255,255,255,0.1)");
+    text(f, hl.kind === "liar" ? "BEST LIAR" : "SHARPEST EYE", hx + 1.6 * vw, hy + 1.6 * vh, { font: DISPLAY, size: 1.9 * vh, color: C.accent });
+    text(f, hl.name, hx + 1.6 * vw, hy + 4.6 * vh, { size: 3.4 * vh, weight: 600, max: hw - 3.2 * vw });
+    text(f, hl.kind === "liar" ? `fooled ${hl.count}` : `found ${hl.count} of ${hl.of}`, hx + 1.6 * vw, hy + 9 * vh, { size: 2.4 * vh, max: hw - 3.2 * vw });
+  });
+  if (total > scores.length) text(f, `${total} players · your rank is on your phone`, w / 2, 84 * vh, { size: 2.6 * vh, align: "center" });
   const lh = Math.min(8.4 * vh, (66 * vh) / Math.max(1, scores.length));
   scores.forEach((l, i) => {
     const y = 20 * vh + i * (lh + 1.2 * vh);
@@ -343,7 +448,7 @@ function board(f: Frame, view: Record<string, any>): void {
     const color = first ? C.dark : C.ink;
     const mid = y + lh / 2;
     text(f, `${i + 1}.`, x + 2 * vw, mid, { font: DISPLAY, size: 3 * vh, color, base: "middle" });
-    text(f, l.name, x + 7 * vw, mid, { size: 3.6 * vh, weight: 600, color, base: "middle", max: 36 * vw });
+    text(f, l.name, x + 7 * vw, mid, { size: 3.6 * vh, weight: 600, color, base: "middle", max: lw - 30 * vw });
     if (!final && l.delta) text(f, `+${l.delta}`, x + lw - 14 * vw, mid, { size: 2.6 * vh, color: first ? C.dark : C.ok, base: "middle", align: "right" });
     text(f, String(l.score), x + lw - 2 * vw, mid, { font: DISPLAY, size: 3.4 * vh, color, base: "middle", align: "right" });
   });
@@ -358,5 +463,5 @@ function corner(f: Frame, view: Record<string, any>): void {
   const y = h - 3 * vh - size - 2 * vh;
   round(f, x, y, bw, size + 2 * vh, 1.4 * vh, "rgba(0,0,0,0.35)");
   drawQr(f.ctx, view["join"].qr, x + vh, y + vh, size, { quiet: 2 });
-  para(f, "Lost your phone's page? Scan to rejoin.", x + size + 2 * vh, y + 2 * vh, bw - size - 3 * vh, { size: 1.8 * vh, lineHeight: 1.25, color: "rgba(255,253,246,0.85)" });
+  para(f, "Scan to join (from the next round) or to rejoin.", x + size + 2 * vh, y + 2 * vh, bw - size - 3 * vh, { size: 1.8 * vh, lineHeight: 1.25, color: "rgba(255,253,246,0.85)" });
 }

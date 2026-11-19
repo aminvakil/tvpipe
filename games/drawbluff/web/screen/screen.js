@@ -84,9 +84,9 @@ client.on("status", (s) => {
 /** @param {Record<string, any>} view */
 function render(view) {
   const s = view.screen ?? {};
-  const key = `${s.phase}:${s.round ?? ""}:${s.deadline ?? ""}:${s.artist?.id ?? ""}`;
+  const key = `${s.phase}:${s.round ?? ""}:${s.deadline ?? ""}:${s.artist?.id ?? ""}:${s.page ?? ""}`;
   if (s.phase !== lastPhase) {
-    if (s.phase === "draw" || s.phase === "lie" || s.phase === "vote") beep([523, 659, 784]);
+    if (s.phase === "draw" || s.phase === "lie" || s.phase === "vote" || s.phase === "gallery") beep([523, 659, 784]);
     if (s.phase === "final") beep([523, 659, 784, 1047], 0.18);
     lastPhase = s.phase;
     lastStep = 0;
@@ -97,11 +97,12 @@ function render(view) {
     build(view);
   }
   refresh?.();
-  corner.hidden = s.phase === "lobby" || !view.join?.qr;
+  // Not in the lobby (the big code), nor where the options fill the right side.
+  corner.hidden = s.phase === "lobby" || s.phase === "vote" || s.phase === "reveal" || !s.phase || !view.join?.qr;
   if (!corner.hidden && !corner.dataset.url) {
     corner.dataset.url = view.join.url;
     /** @type {HTMLElement} */ (document.getElementById("corner-qr")).innerHTML = qrSvg(view.join.qr, { quiet: 2 });
-    /** @type {HTMLElement} */ (document.getElementById("corner-text")).textContent = "Lost your phone's page? Scan to rejoin.";
+    /** @type {HTMLElement} */ (document.getElementById("corner-text")).textContent = "Scan to join (from the next round) or to rejoin.";
   }
 }
 
@@ -114,6 +115,8 @@ function build(view) {
       return lobby(view);
     case "draw":
       return draw(view);
+    case "gallery":
+      return gallery(view);
     case "lie":
     case "vote":
       return guess(view);
@@ -151,7 +154,9 @@ function lobby(view) {
     const cards = roster.map((/** @type {any} */ r) =>
       h("div", { class: `player${r.connected ? "" : " away"}` }, h("span", { class: "n" }, r.name), r.vip ? h("span", { class: "star" }, "★ VIP") : null),
     );
-    for (let i = roster.length; i < max; i++) cards.push(h("div", { class: "player empty" }, i < min ? "waiting…" : "room for one more"));
+    // Empty seats up to 8; past 8 players a denser grid (up to 50 names).
+    for (let i = roster.length; i < Math.min(max, 8); i++) cards.push(h("div", { class: "player empty" }, i < min ? "waiting…" : "room for one more"));
+    players.className = `players${roster.length > 24 ? " many" : roster.length > 8 ? " more" : ""}`;
     players.replaceChildren(...cards);
     const ready = roster.filter((/** @type {any} */ r) => r.connected).length;
     hint.textContent =
@@ -164,21 +169,36 @@ function lobby(view) {
 }
 let lobbyCount = 0;
 
+/** Chips up to this many players waited for; more: a count, a bar and the last few names. */
+const CHIPS = 12;
+
 /**
- * Who has answered: a chip per player waited for.
+ * Who has answered: a chip per player waited for, or the count.
  * @param {Record<string, any>} view
+ * @param {string} [list] the screen field with the ids waited for
+ * @param {string} [verb] what they do ("done", "voted")
  */
-function chips(view) {
+function chips(view, list = "waiting", verb = "done") {
   const box = h("div", { class: "chips" });
   const update = () => {
     const s = client.view.screen ?? {};
     const roster = client.view.roster ?? [];
     const done = new Set(s.done ?? []);
+    const waiting = /** @type {string[]} */ (s[list] ?? []);
+    const name = (/** @type {string} */ id) => roster.find((/** @type {any} */ x) => x.id === id)?.name ?? "?";
+    if (waiting.length <= CHIPS) {
+      box.className = "chips";
+      box.replaceChildren(...waiting.map((id) => h("span", { class: `chip${done.has(id) ? " done" : ""}` }, `${done.has(id) ? "✓ " : ""}${name(id)}`)));
+      return;
+    }
+    const n = waiting.filter((id) => done.has(id)).length;
+    const left = waiting.filter((id) => !done.has(id));
+    const bar = h("div", { class: "bar" }, h("i", { style: `width:${Math.round((100 * n) / waiting.length)}%` }));
+    box.className = "chips progress";
     box.replaceChildren(
-      ...(s.waiting ?? []).map((/** @type {string} */ id) => {
-        const r = roster.find((/** @type {any} */ x) => x.id === id);
-        return h("span", { class: `chip${done.has(id) ? " done" : ""}` }, `${done.has(id) ? "✓ " : ""}${r?.name ?? "?"}`);
-      }),
+      h("div", { class: "count" }, `${n} of ${waiting.length} ${verb}`),
+      bar,
+      left.length > 0 && left.length <= 6 ? h("div", { class: "left" }, `Waiting for ${left.map(name).join(", ")}`) : null,
     );
   };
   update();
@@ -220,9 +240,12 @@ function draw(view) {
   refresh = c.update;
 }
 
-/** @param {any} drawing */
-function canvas(drawing) {
-  const el = /** @type {HTMLCanvasElement} */ (h("canvas", { class: "drawing" }));
+/**
+ * @param {any} drawing
+ * @param {string} [cls]
+ */
+function canvas(drawing, cls = "drawing") {
+  const el = /** @type {HTMLCanvasElement} */ (h("canvas", { class: cls }));
   requestAnimationFrame(() => {
     const r = el.getBoundingClientRect();
     el.width = Math.round(r.width);
@@ -232,27 +255,56 @@ function canvas(drawing) {
   return el;
 }
 
+/**
+ * The gallery: the round's drawings that do not get the stage.
+ * @param {Record<string, any>} view
+ */
+function gallery(view) {
+  const s = view.screen;
+  const line = h("span", {});
+  const cells = (s.items ?? []).map((/** @type {any} */ it) =>
+    h("div", { class: "cell" }, canvas(it.drawing, "thumb"), h("div", { class: "cap" }, h("b", {}, it.prompt), h("span", {}, `by ${it.name}`))),
+  );
+  const liars = (s.liars ?? []).length;
+  stage.replaceChildren(
+    h(
+      "div",
+      { class: "col grow" },
+      h("h2", {}, `Round ${s.round} · the gallery${s.pages > 1 ? ` · ${s.page} of ${s.pages}` : ""}`),
+      h("div", { class: "gallery" }, ...cells),
+      liars > 0 ? h("div", { class: "meanwhile" }, line) : null,
+    ),
+  );
+  refresh = () => {
+    const v = client.view.screen ?? {};
+    line.textContent = `Meanwhile ${liars === 1 ? "1 liar is" : `${liars} liars are`} writing for ${v.artist?.name ?? "the first"}'s drawing · ${(v.done ?? []).length} done`;
+  };
+}
+
 /** @param {Record<string, any>} view */
 function guess(view) {
   const s = view.screen;
   const t = timer();
-  const c = chips(view);
+  const spot = s.spots > 1 ? ` · drawing ${s.spot} of ${s.spots}` : "";
+  const liars = (s.waiting ?? []).length;
+  const c = s.phase === "lie" ? chips(view) : chips(view, "waiting", "voted");
   const right =
     s.phase === "lie"
       ? h(
           "div",
           { class: "col grow" },
-          h("h2", {}, `${s.artist?.name ?? "Someone"} drew this`),
-          h("h1", {}, "What is it called? Write a fake title on your phone."),
+          h("h2", {}, `${s.artist?.name ?? "Someone"} drew this${spot}`),
+          h("h1", {}, liars === 1 ? "What is it called? The liar is writing a fake title." : `What is it called? ${liars} liars are writing fake titles.`),
           t.el,
           c.box,
         )
       : h(
           "div",
           { class: "col grow" },
-          h("h2", {}, "Which one is the real title?"),
+          h("h2", {}, `Which one is the real title?${spot}`),
           h("div", { class: "options" }, ...(s.options ?? []).map((/** @type {any} */ o) => h("div", { class: "option" }, o.text))),
           h("div", { style: "display:flex;gap:2vw;align-items:center;margin-top:3vh" }, t.el, c.box),
+          s.writing > 0 ? h("p", { class: "hint small" }, `Meanwhile ${s.writing} liars write for the next drawing.`) : null,
         );
   stage.replaceChildren(canvas(s.drawing), right);
   ticker = t.update;
@@ -263,11 +315,14 @@ function guess(view) {
 function reveal(view) {
   const s = view.screen;
   const items = (s.items ?? []).map((/** @type {any} */ it) => {
+    const count = it.count ?? it.voters.length;
+    // Names while they fit, else how many of those who could.
+    const names = count <= it.voters.length ? it.voters.join(", ") : `${count} of ${it.seen}`;
     const who = it.truth
-      ? it.voters.length
-        ? `found by ${it.voters.join(", ")} · +${it.points} each, ${s.artist?.name} +${it.artistPoints}`
+      ? count
+        ? `found by ${names} · +${it.points} each, ${s.artist?.name} +${it.artistPoints}`
         : "nobody found it"
-      : `${it.voters.join(", ")} fell for it${it.decoy ? " (our lie)" : ` · ${it.authors.join(" & ")} +${it.points}`}`;
+      : `${count <= it.voters.length ? `${names} fell for it` : `fooled ${names}`}${it.decoy ? " (our lie)" : ` · ${it.authors.join(" & ")} +${it.points}${it.same ? " (same idea!)" : ""}`}`;
     return h(
       "div",
       { class: `option hidden${it.truth ? " truth" : ""}` },
@@ -293,7 +348,10 @@ function reveal(view) {
 function board(view) {
   const s = view.screen;
   const final = s.phase === "final";
-  const lines = (s.scores ?? []).map((/** @type {any} */ l, i) =>
+  // All players up to 8, else the top 5 (each phone shows its own rank).
+  const total = s.total ?? (s.scores ?? []).length;
+  const top = total > 8 ? (s.scores ?? []).slice(0, 5) : (s.scores ?? []);
+  const lines = top.map((/** @type {any} */ l, /** @type {number} */ i) =>
     h(
       "div",
       { class: `line${i === 0 ? " first" : ""}` },
@@ -304,12 +362,22 @@ function board(view) {
     ),
   );
   const title = final ? `${s.scores?.[0]?.name ?? "Nobody"} wins!` : s.last ? "Final scores" : `Scores after round ${s.round}`;
+  const highlights = (s.highlights ?? []).map((/** @type {any} */ x) =>
+    h(
+      "div",
+      { class: "highlight" },
+      h("span", { class: "tag" }, x.kind === "liar" ? "Best liar" : "Sharpest eye"),
+      h("span", { class: "n" }, x.name),
+      h("span", {}, x.kind === "liar" ? `fooled ${x.count}` : `found ${x.count} of ${x.of}`),
+    ),
+  );
   stage.replaceChildren(
     h(
       "div",
       { class: "col grow center" },
       h("div", { class: "big-title" }, title),
-      h("div", { class: "board" }, ...lines),
+      h("div", { class: "board-row" }, h("div", { class: "board" }, ...lines), highlights.length ? h("div", { class: "highlights" }, ...highlights) : null),
+      total > top.length ? h("p", { class: "hint" }, `${total} players · your rank is on your phone`) : null,
       final ? h("p", { class: "hint" }, "The VIP can start another game on their phone.") : null,
     ),
   );

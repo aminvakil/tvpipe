@@ -7,10 +7,16 @@ import { PartyError } from "@tvpipe/party";
 import {
   buildOptions,
   cleanTitle,
+  deal,
   optionsFor,
+  PHONE_LIES,
+  pickLiars,
+  plan,
   revealOrder,
+  rotate,
   score,
   seeded,
+  share,
   shuffle,
   titleKey,
   validateDrawing,
@@ -51,15 +57,37 @@ test("the shared rule vectors (test/vectors/rules.txt)", () => {
         }
         break;
       }
+      case "plan":
+        for (const [n, spotlights, liars, pipelined] of json("table") as [number, number, number, boolean][]) {
+          assert.deepEqual(plan(n), { spotlights, liars, pipelined }, `${at}: ${n}`);
+        }
+        break;
+      case "share":
+        for (const [n, base, seen, want] of json("cases") as number[][]) assert.equal(share(n!, base!, seen!), want, at);
+        break;
+      case "liars": {
+        const lied = new Map(Object.entries(json("lied") as Record<string, number>));
+        const first = json("first") as string | null;
+        assert.deepEqual(pickLiars(json("pool"), lied, Number(get(b, "n")), seeded(Number(get(b, "seed"))), first ?? undefined), json("liars"), at);
+        break;
+      }
+      case "rotate": {
+        const keys = json("keys") as Record<string, number>;
+        assert.deepEqual(rotate(json("pool"), (id) => keys[id]!, Number(get(b, "n")), seeded(Number(get(b, "seed")))), json("picked"), at);
+        break;
+      }
       case "turn": {
         const lies = new Map(json("lies") as [string, string][]);
         const options = buildOptions(json("truth"), lies, json("spares"), seeded(Number(get(b, "seed"))), Number(get(b, "min")));
         assert.deepEqual(options, json("options"), at);
-        const shown = json("shown") as Record<string, string[]>;
-        for (const [p, ids] of Object.entries(shown)) assert.deepEqual(optionsFor(p, options).map((o) => o.id), ids, at);
-        const scoring = score(json("artist"), options, new Map(json("votes") as [string, string][]), Number(get(b, "round")));
+        const own = json("own") as Record<string, string[]>;
+        for (const [p, ids] of Object.entries(own)) assert.deepEqual(optionsFor(p, options).map((o) => o.id), ids, at);
+        const shown = deal(options, json("voting"), PHONE_LIES, seeded(Number(get(b, "dealSeed"))));
+        assert.deepEqual(Object.fromEntries(shown), json("shown"), at);
+        const scoring = score(json("artist"), options, shown, new Map(json("votes") as [string, string][]), Number(get(b, "round")));
         assert.deepEqual(Object.fromEntries(scoring.points), json("points"), at);
         assert.deepEqual(Object.fromEntries(scoring.voters), json("voters"), at);
+        assert.deepEqual(Object.fromEntries(scoring.seen), json("seen"), at);
         assert.deepEqual(revealOrder(options as Option[], scoring.voters).map((o) => o.id), json("reveal"), at);
         break;
       }
@@ -67,5 +95,5 @@ test("the shared rule vectors (test/vectors/rules.txt)", () => {
         assert.fail(`${at}: unknown test ${kind}`);
     }
   }
-  for (const kind of ["rng", "shuffle", "title", "drawing", "turn"]) assert.ok((seen.get(kind) ?? 0) > 0, kind);
+  for (const kind of ["rng", "shuffle", "title", "drawing", "plan", "share", "liars", "rotate", "turn"]) assert.ok((seen.get(kind) ?? 0) > 0, kind);
 });

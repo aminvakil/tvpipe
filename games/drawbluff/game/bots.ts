@@ -114,7 +114,8 @@ export class Bot {
     const me = view["me"] ?? {};
     const room = view["room"] ?? {};
     const c = this.client;
-    const turn = `${room.round}:${room.deadline ?? ""}:${room.artist?.id ?? ""}`;
+    // `me.key` names the drawing a lie or vote is for (`round.spot`).
+    const turn = `${room.round}:${me.key ?? me.deadline ?? ""}`;
     switch (me.task) {
       case "lobby":
       case "final": {
@@ -130,7 +131,9 @@ export class Bot {
         return;
       case "lie":
         if (!me.done) {
-          const lie = this.#o.autoLie ? { auto: true } : { text: `${LIES[Math.floor(this.#rng() * LIES.length)]} ${this.name}` };
+          const base = LIES[Math.floor(this.#rng() * LIES.length)]!;
+          // Now and then the same idea as another bot (merged lies).
+          const lie = this.#o.autoLie ? { auto: true } : { text: this.#rng() < 0.3 ? base : `${base} ${this.name}` };
           this.#once(`lie:${turn}`, () => c.act("lie", lie));
         }
         return;

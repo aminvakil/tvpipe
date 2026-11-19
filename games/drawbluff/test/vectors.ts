@@ -16,11 +16,18 @@
  *   times, `pad = N` appends N `1`s to its first stroke), then `output`
  *   (the normalised drawing; `input` when that is the input) or `error`
  *   (the code).
+ * - `plan`: `table`, `[n, spotlights, liars, pipelined]` for n = 0…60.
+ * - `share`: `cases`, `[n, base, seen, share(n, base, seen)]`.
+ * - `liars`: `pool`, `lied` (`{id: lies so far}`), `n`, `seed`, `first`
+ *   (or `null`), then `liars` (`pickLiars(…, seeded(seed), first)`).
+ * - `rotate`: `pool`, `keys` (`{id: key}`), `n`, `seed`, then `picked`.
  * - `turn`: one drawing's turn as a seeded game plays it: `artist`,
  *   `truth`, `lies` (`[author, text]` in arrival order), `spares`,
- *   `seed`, `min`, `round`, `votes` (`[voter, option id]`), then
- *   `options` (`buildOptions(…, seeded(seed), min)`), `shown` (per voter:
- *   the ids `optionsFor` gives), `points`, `voters` (`score`), `reveal`
+ *   `seed`, `min`, `round`, `voting` (who votes), `dealSeed`, `votes`
+ *   (`[voter, option id]`), then `options` (`buildOptions(…,
+ *   seeded(seed), min)`), `own` (per player: the ids `optionsFor`
+ *   gives), `shown` (`deal(options, voting, PHONE_LIES,
+ *   seeded(dealSeed))`), `points`, `voters`, `seen` (`score`), `reveal`
  *   (the ids in `revealOrder`).
  */
 
@@ -29,20 +36,29 @@ import { fileURLToPath } from "node:url";
 
 import { PartyError } from "@tvpipe/party";
 
+import { doodle } from "../game/bots.ts";
 import { PROMPTS } from "../game/prompts.ts";
 import {
   buildOptions,
   cleanTitle,
+  deal,
   optionsFor,
+  PHONE_LIES,
+  pickLiars,
+  plan,
   revealOrder,
+  rotate,
   score,
   seeded,
+  share,
   shuffle,
   titleKey,
   validateDrawing,
 } from "../game/rules.ts";
 
 export const RULES = fileURLToPath(new URL("./vectors/rules.txt", import.meta.url));
+/** Screen views of a 50-player game, drawn by both video screens' tests. */
+export const SCREENS = fileURLToPath(new URL("./vectors/screens-50.json", import.meta.url));
 
 export type Block = { line: number; entries: [string, string][] };
 
@@ -173,13 +189,15 @@ const LIES = [
 function turn(seed: number): Entries {
   const r = seeded(seed * 7919 + 1);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]!;
-  const n = 3 + Math.floor(r() * 6);
+  // 3–8 players (today's game), then up to 50.
+  const n = seed <= 24 ? 3 + Math.floor(r() * 6) : 9 + Math.floor(r() * 42);
   const players = Array.from({ length: n }, (_, i) => `p${i + 1}`);
   const artist = pick(players);
   const others = players.filter((p) => p !== artist);
+  const liars = pickLiars(others, new Map(), plan(n).liars, r);
   const truth = pick(PROMPTS);
   const lies: [string, string][] = [];
-  for (const p of others) {
+  for (const p of liars) {
     const x = r();
     if (x < 0.15) continue; // no lie in time
     if (x < 0.25) lies.push([p, truth.toUpperCase() + "!"]); // the truth (refused when typed; never shown)
@@ -187,16 +205,19 @@ function turn(seed: number): Entries {
     else lies.push([p, pick(LIES)]);
   }
   const spares = shuffle(PROMPTS, r).slice(0, 6);
-  const min = Math.min(4, others.length + 1);
+  const min = Math.min(4, liars.length + 1);
   const options = buildOptions(truth, new Map(lies), spares, seeded(seed), min);
+  const voting = r() < 0.2 ? players : others;
+  const dealSeed = seed + 1000;
+  const shown = deal(options, voting, PHONE_LIES, seeded(dealSeed));
   const ids = [...options.map((o) => o.id), "nope"];
   const votes: [string, string][] = [];
-  for (const p of r() < 0.2 ? players : others) {
+  for (const p of voting) {
     if (r() < 0.1) continue;
-    votes.push([p, r() < 0.7 ? pick(optionsFor(p, options)).id : pick(ids)]);
+    votes.push([p, r() < 0.8 ? pick(shown.get(p)!) : pick(ids)]);
   }
   const round = 1 + Math.floor(r() * 2);
-  const scoring = score(artist, options, new Map(votes), round);
+  const scoring = score(artist, options, shown, new Map(votes), round);
   return [
     ["test", "turn"],
     ["artist", JSON.stringify(artist)],
@@ -206,13 +227,116 @@ function turn(seed: number): Entries {
     ["seed", String(seed)],
     ["min", String(min)],
     ["round", String(round)],
+    ["voting", JSON.stringify(voting)],
+    ["dealSeed", String(dealSeed)],
     ["votes", JSON.stringify(votes)],
     ["options", JSON.stringify(options)],
-    ["shown", JSON.stringify(Object.fromEntries(players.map((p) => [p, optionsFor(p, options).map((o) => o.id)])))],
+    ["own", JSON.stringify(Object.fromEntries(players.map((p) => [p, optionsFor(p, options).map((o) => o.id)])))],
+    ["shown", JSON.stringify(Object.fromEntries(shown))],
     ["points", JSON.stringify(Object.fromEntries(scoring.points))],
     ["voters", JSON.stringify(Object.fromEntries(scoring.voters))],
+    ["seen", JSON.stringify(Object.fromEntries(scoring.seen))],
     ["reveal", JSON.stringify(revealOrder(options, scoring.voters).map((o) => o.id))],
   ];
+}
+
+function liarsBlock(seed: number): Entries {
+  const r = seeded(seed * 31 + 5);
+  const n = 2 + Math.floor(r() * 49);
+  const pool = Array.from({ length: n }, (_, i) => `p${i + 1}`);
+  const lied = new Map(pool.filter(() => r() < 0.6).map((p) => [p, Math.floor(r() * 3)]));
+  const want = Math.floor(r() * 9);
+  const first = r() < 0.5 ? pick(r, pool) : r() < 0.5 ? "nobody" : null;
+  const liars = pickLiars(pool, lied, want, seeded(seed), first ?? undefined);
+  return [
+    ["test", "liars"],
+    ["pool", JSON.stringify(pool)],
+    ["lied", JSON.stringify(Object.fromEntries(lied))],
+    ["n", String(want)],
+    ["seed", String(seed)],
+    ["first", JSON.stringify(first)],
+    ["liars", JSON.stringify(liars)],
+  ];
+}
+
+function rotateBlock(seed: number): Entries {
+  const r = seeded(seed * 17 + 3);
+  const n = 1 + Math.floor(r() * 50);
+  const pool = Array.from({ length: n }, (_, i) => `p${i + 1}`);
+  const keys = new Map(pool.map((p) => [p, Math.floor(r() * 4)]));
+  const want = Math.floor(r() * (n + 2));
+  const picked = rotate(pool, (id) => keys.get(id)!, want, seeded(seed));
+  return [
+    ["test", "rotate"],
+    ["pool", JSON.stringify(pool)],
+    ["keys", JSON.stringify(Object.fromEntries(keys))],
+    ["n", String(want)],
+    ["seed", String(seed)],
+    ["picked", JSON.stringify(picked)],
+  ];
+}
+
+function pick<T>(r: () => number, xs: readonly T[]): T {
+  return xs[Math.floor(r() * xs.length)]!;
+}
+
+const NAMES = ["Ada", "Bea", "Cy", "Dot", "Eli", "Fay", "Gus", "Hal", "Ivy", "Jo", "Kai", "Lou", "Max", "Nell", "Oz", "Pia", "Quinn"];
+
+/** A 50-player game's screen views (`{roster, join, now, views: [[name, screen]]}`). */
+export function bigScreens(): Record<string, unknown> {
+  const r = seeded(50);
+  const roster = Array.from({ length: 50 }, (_, i) => ({
+    id: `p${i + 1}`,
+    name: i === 7 ? "Maximiliane-Josephine" : `${NAMES[i % NAMES.length]}${i >= NAMES.length ? Math.floor(i / NAMES.length) + 1 : ""}`,
+    vip: i === 0,
+    connected: i % 13 !== 5,
+  }));
+  const ids = roster.map((p) => p.id);
+  const now = 1_000_000;
+  const rows = Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => ((x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13) ? "1" : "0")).join(""));
+  const join = { code: "BCDF", url: "https://words-words-words-words.trycloudflare.com/?r=BCDF#k=abcdefghijklmnopqrstuv", qr: { size: 21, rows } };
+  const drawing = doodle(seeded(9));
+  const artist = { id: "p4", name: roster[3]!.name };
+  const liars = ["p4", "p9", "p17", "p23", "p30", "p41", "p48"];
+  const voters = ids.filter((id) => id !== "p4" && !liars.includes(id));
+  const gallery = Array.from({ length: 8 }, (_, i) => ({ id: ids[10 + i]!, name: roster[10 + i]!.name, prompt: PROMPTS[i * 7]!, drawing: doodle(seeded(100 + i)) }));
+  const options = ["a haunted toaster", "a sad potato", "the cat's revenge", "my uncle on monday", "a very tired frog", "abstract art", "a sneaky pancake", "a convincing lie that is rather long indeed"].map((text, i) => ({ id: `o${i + 1}`, text }));
+  const names = (n: number) => voters.slice(0, n).map((id) => roster.find((p) => p.id === id)!.name);
+  const item = (id: string, text: string, n: number, seen: number, o: Record<string, unknown> = {}) => ({
+    id, text, truth: false, decoy: false, authors: [roster[(n * 7) % 50]!.name], voters: names(Math.min(n, 6)), count: n, seen,
+    points: share(n, 500, seen), artistPoints: 0, same: false, ...o,
+  });
+  const lines = roster.slice(0, 8).map((p, i) => ({ id: p.id, name: p.name, score: 9000 - i * 650, delta: 1200 - i * 100 }));
+  const views: [string, Record<string, unknown>][] = [
+    ["lobby-50", { phase: "lobby", minPlayers: 3, maxPlayers: 50 }],
+    ["draw-50", { phase: "draw", round: 1, rounds: 2, deadline: now + 42_000, waiting: ids, done: ids.filter((_, i) => i % 9 !== 2) }],
+    ["gallery-50", { phase: "gallery", round: 1, rounds: 2, page: 2, pages: 6, count: 44, items: gallery, liars, done: liars.slice(0, 3), artist }],
+    ["lie-50", { phase: "lie", round: 1, spot: 2, spots: 6, deadline: now + 4000, drawing, artist, waiting: liars, done: liars.slice(0, 5) }],
+    ["vote-50", { phase: "vote", round: 1, spot: 2, spots: 6, deadline: now + 14_000, drawing, artist, options, waiting: voters, done: voters.filter((_, i) => i % 4 !== 0), writing: 7 }],
+    [
+      "reveal-50",
+      {
+        phase: "reveal", round: 2, spot: 3, spots: 6, drawing, artist, prompt: "a haunted toaster", step: 5,
+        items: [
+          item("o2", "a sad potato", 2, 30),
+          item("o5", "a very tired frog", 4, 31, { same: true, authors: ["Bea", "Lou"] }),
+          item("o7", "a sneaky pancake", 9, 29),
+          item("o3", "the cat's revenge", 14, 31),
+          { id: "o1", text: "a haunted toaster", truth: true, decoy: false, authors: [], voters: names(6), count: 14, seen: 43, points: 2000, artistPoints: 2 * share(14, 1000, 43), same: false },
+        ],
+      },
+    ],
+    [
+      "scores-50",
+      {
+        phase: "scores", round: 1, rounds: 2, scores: lines, total: 50, last: false,
+        highlights: [{ kind: "liar", id: "p9", name: roster[8]!.name, count: 23 }, { kind: "eye", id: "p12", name: roster[11]!.name, count: 5, of: 6 }],
+      },
+    ],
+    ["final-50", { phase: "final", scores: lines.map((l) => ({ ...l, delta: 0 })), total: 50 }],
+  ];
+  void r;
+  return { roster, join, now, views };
 }
 
 function bless(): void {
@@ -246,9 +370,23 @@ function bless(): void {
     }
     out.push(block([["test", "drawing"], ...d, result]));
   }
-  for (let seed = 1; seed <= 40; seed++) out.push(block(turn(seed)));
+  const table = Array.from({ length: 61 }, (_, n) => {
+    const p = plan(n);
+    return [n, p.spotlights, p.liars, p.pipelined];
+  });
+  out.push(block([["test", "plan"], ["table", JSON.stringify(table)]]));
+  const cases: number[][] = [];
+  for (const [n, base, seen] of [[0, 500, 0], [3, 500, 7], [7, 1000, 7], [1, 500, 8], [14, 500, 30], [20, 1000, 43], [1, 1000, 49], [5, 500, 14], [1, 500, 28], [3, 1000, 42]] as const) {
+    cases.push([n, base, seen, share(n, base, seen)]);
+  }
+  out.push(block([["test", "share"], ["cases", JSON.stringify(cases)]]));
+  for (let seed = 1; seed <= 12; seed++) out.push(block(liarsBlock(seed)));
+  for (let seed = 1; seed <= 8; seed++) out.push(block(rotateBlock(seed)));
+  for (let seed = 1; seed <= 48; seed++) out.push(block(turn(seed)));
   writeFileSync(RULES, out.join("\n\n") + "\n");
   console.log(`wrote ${RULES}`);
+  writeFileSync(SCREENS, JSON.stringify(bigScreens()) + "\n");
+  console.log(`wrote ${SCREENS}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

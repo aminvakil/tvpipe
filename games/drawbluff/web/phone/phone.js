@@ -141,8 +141,9 @@ function render(view) {
   const room = view.room ?? {};
   const roster = view.roster ?? [];
   const mine = roster.find((/** @type {any} */ r) => r.id === client.you?.id);
-  who.textContent = mine ? `${mine.vip ? "★ " : ""}${mine.name}` : "";
-  const key = `${me.task}:${room.round ?? ""}:${room.deadline ?? ""}:${room.artist?.id ?? ""}:${me.done ? 1 : 0}`;
+  const rank = typeof me.rank === "number" && typeof me.of === "number" && me.of > 0 && me.task !== "lobby" ? ` · #${me.rank} of ${me.of}` : "";
+  who.textContent = mine ? `${mine.vip ? "★ " : ""}${mine.name}${rank}` : "";
+  const key = screenKey(me, room);
   if (key !== shown) {
     shown = key;
     refresh = null;
@@ -150,6 +151,26 @@ function render(view) {
     build(view);
   }
   refresh?.();
+}
+
+/**
+ * What is on screen: a lie or a vote stays while the room moves on (the
+ * next drawing's liars write during the current vote and reveal).
+ * @param {any} me
+ * @param {any} room
+ */
+function screenKey(me, room) {
+  const done = me.done ? 1 : 0;
+  switch (me.task) {
+    case "lie":
+    case "vote":
+    case "artist":
+      return `${me.task}:${me.key ?? ""}:${done}`;
+    case "draw":
+      return `draw:${room.round ?? ""}:${me.deadline ?? ""}:${done}`;
+    default:
+      return `${me.task}:${room.round ?? ""}:${room.spot ?? ""}:${room.phase ?? ""}:${me.note ?? ""}`;
+  }
 }
 
 /** @param {Record<string, any>} view */
@@ -161,14 +182,18 @@ function build(view) {
       return lobby(view);
     case "draw":
       return me.done ? waiting("Nice! Waiting for the others to finish…") : draw(me.prompt);
+    case "wait":
+      return waiting("You're in! You join the game at the next round. Watch the TV meanwhile.");
     case "artist":
       return waiting("That's your drawing! Watch the others try to name it.");
     case "lie":
-      return me.done ? waiting(`Your lie: “${me.lie ?? ""}”. Waiting for the others…`) : lie(room.drawing);
+      return me.done
+        ? waiting(`Your lie: “${me.lie ?? ""}”. ${me.early ? "That drawing is next on the TV." : "Waiting for the other liars…"}`)
+        : lie(me);
     case "vote":
       return me.done ? waiting("Vote counted. Look at the TV!") : vote(me.options ?? [], room.drawing);
     case "watch":
-      return scoreCard("Look at the TV!", me);
+      return watch(me, room);
     case "scores":
       return scoreCard(`Round ${room.round} done`, me);
     case "final":
@@ -186,17 +211,56 @@ function waiting(text) {
 /**
  * @param {string} title
  * @param {any} me
+ * @param {...(Node | string | null | undefined | false)} extra
  */
-function scoreCard(title, me) {
+function scoreCard(title, me, ...extra) {
   show(
     h(
       "section",
       { class: "card" },
       h("h1", {}, title),
+      ...extra,
       h("p", { class: "score" }, String(me.score ?? 0)),
-      h("p", { class: "muted" }, `points · #${me.rank ?? "?"}`),
+      h("p", { class: "muted" }, `points · #${me.rank ?? "?"}${me.of ? ` of ${me.of}` : ""}`),
     ),
   );
+}
+
+/** @param {string[]} names */
+function list(names) {
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+}
+
+/**
+ * Between tasks: what the TV shows, what happened to you.
+ * @param {any} me
+ * @param {any} room
+ */
+function watch(me, room) {
+  if (me.note === "gallery") {
+    return scoreCard("Look at the TV: the gallery!", me, h("p", { class: "big" }, me.mine ? `Your drawing is on page ${me.mine}.` : "The other drawings of this round."));
+  }
+  if (me.note === "rest") {
+    return scoreCard(
+      `${me.artist?.name ?? "Someone"}'s drawing`,
+      me,
+      h("p", { class: "big" }, "You're not lying on this one. The liars are writing; you vote next."),
+    );
+  }
+  const r = me.result;
+  if (me.note === "reveal" && r) {
+    const lines = [];
+    if (r.kind === "artist") lines.push(`${r.count} of ${r.seen} found your drawing.`);
+    if (r.kind === "found") lines.push("You found the real title!");
+    if (r.kind === "fooled") lines.push(r.by?.length ? `You fell for ${list(r.by)}'s lie.` : "You fell for our lie.");
+    if (r.lie !== undefined) lines.push(`Your lie “${r.lie}” fooled ${r.fooledCount === 1 ? "1 player" : `${r.fooledCount} players`}.`);
+    return scoreCard(
+      r.points > 0 ? `+${r.points}` : "Look at the TV!",
+      me,
+      ...lines.map((l) => h("p", { class: "big" }, l)),
+    );
+  }
+  return scoreCard("Look at the TV!", me);
 }
 
 /** @param {Record<string, any>} view */
@@ -434,8 +498,9 @@ function mini(drawing) {
   return c;
 }
 
-/** @param {any} drawing */
-function lie(drawing) {
+/** @param {any} me */
+function lie(me) {
+  const drawing = me.drawing ?? client.view.room?.drawing;
   const input = /** @type {HTMLInputElement} */ (h("input", { maxlength: 40, placeholder: "a convincing title", enterkeyhint: "send", autocapitalize: "off" }));
   const err = h("p", { class: "error" });
   const send = async (/** @type {any} */ data) => {
@@ -456,7 +521,18 @@ function lie(drawing) {
     h("div", { class: "row" }, h("button", { type: "button", onclick: () => send({ auto: true }) }, "Lie for me"), h("button", { type: "submit", class: "primary", style: "margin-top:0" }, "Send")),
     err,
   );
-  show(h("section", { class: "card" }, h("h2", {}, "Fake a title"), mini(drawing), form));
+  const role = `You're a liar for ${me.artist?.name ?? "this"}'s drawing${me.liars > 1 ? ` (one of ${me.liars})` : ""}.`;
+  show(
+    h(
+      "section",
+      { class: "card" },
+      h("h2", {}, "Fake a title"),
+      h("p", { class: "role" }, role),
+      me.early ? h("p", { class: "muted" }, "It's next on the TV: you sit this vote out.") : null,
+      mini(drawing),
+      form,
+    ),
+  );
 }
 
 /**
@@ -488,7 +564,7 @@ function vote(options, drawing) {
 // The clock
 
 setInterval(() => {
-  const deadline = client.view.room?.deadline;
+  const deadline = client.view.me?.deadline ?? client.view.room?.deadline;
   const task = client.view.me?.task;
   const active = typeof deadline === "number" && ["draw", "lie", "vote"].includes(task) && !client.view.me?.done;
   timer.hidden = !active;

@@ -116,39 +116,155 @@ export function shuffle<T>(items: readonly T[], rng: () => number): T[] {
   return a;
 }
 
-/** Points for one drawing: voter id → option id. */
+/** Points for one drawing. */
 export interface Scoring {
-  /** Points per player id. */
+  /** Points per player id, in the order they were first given. */
   points: Map<string, number>;
   /** Per option: who picked it. */
   voters: Map<string, string[]>;
+  /** Per option: its exposure, how many counted voters were shown it. */
+  seen: Map<string, number>;
 }
 
 export const POINTS = {
   /** A voter who found the truth. */
   guess: 1000,
-  /** The artist, per voter who found the truth. */
+  /** The artist, per voter who found the truth (scaled, see `share`). */
   artist: 1000,
-  /** A liar, per voter who fell for the lie. */
+  /** A liar, per voter who fell for the lie (scaled, see `share`). */
   fooled: 500,
+  /** Each author of a lie several liars wrote ("same idea"). */
+  same: 100,
 } as const;
 
-export function score(artist: string, options: readonly Option[], votes: ReadonlyMap<string, string>, round: number): Scoring {
+/** Voters beyond which points per voter are scaled down (today's most: 8 players). */
+export const REF_VOTERS = 7;
+
+/**
+ * `n` voters' worth of `base` points out of `seen` who could have: `n ·
+ * base` up to {@link REF_VOTERS}, else `n · base · 7 / seen`, rounded
+ * half up (integers, the same in Rust).
+ */
+export function share(n: number, base: number, seen: number): number {
+  if (seen <= REF_VOTERS) return n * base;
+  return Math.floor((2 * n * base * REF_VOTERS + seen) / (2 * seen));
+}
+
+/**
+ * Scores one drawing. `shown` is what each voter's phone offered (option
+ * ids); `votes` are voter → option id. Votes of the artist, for one's own
+ * lie, or for an option the voter was not shown count for nothing (and
+ * the voter not as exposure). Round r counts r times.
+ */
+export function score(
+  artist: string,
+  options: readonly Option[],
+  shown: ReadonlyMap<string, readonly string[]>,
+  votes: ReadonlyMap<string, string>,
+  round: number,
+): Scoring {
   const points = new Map<string, number>();
   const voters = new Map<string, string[]>(options.map((o) => [o.id, []]));
+  const seen = new Map<string, number>(options.map((o) => [o.id, 0]));
   const add = (id: string, n: number) => points.set(id, (points.get(id) ?? 0) + n * round);
+  const counted: [string, Option][] = [];
   for (const [voter, optionId] of votes) {
+    const mine = shown.get(voter);
     const o = options.find((x) => x.id === optionId);
-    if (!o || voter === artist || o.authors.includes(voter)) continue;
+    if (!o || !mine || !mine.includes(o.id) || voter === artist || o.authors.includes(voter)) continue;
+    counted.push([voter, o]);
     voters.get(o.id)!.push(voter);
-    if (o.truth) {
-      add(voter, POINTS.guess);
-      add(artist, POINTS.artist);
-    } else {
-      for (const a of o.authors) add(a, POINTS.fooled);
-    }
+    for (const id of mine) if (seen.has(id)) seen.set(id, seen.get(id)! + 1);
   }
-  return { points, voters };
+  for (const [voter, o] of counted) if (o.truth) add(voter, POINTS.guess);
+  for (const o of options) {
+    const n = voters.get(o.id)!.length;
+    if (o.truth) {
+      if (n > 0) add(artist, share(n, POINTS.artist, seen.get(o.id)!));
+      continue;
+    }
+    if (n > 0) for (const a of o.authors) add(a, share(n, POINTS.fooled, seen.get(o.id)!));
+    if (o.authors.length > 1) for (const a of o.authors) add(a, POINTS.same);
+  }
+  return { points, voters, seen };
+}
+
+// ---------------------------------------------------------------------------
+// Scale: spotlights, liars, samples (docs/drawbluff-scale.md)
+
+/** Spotlight drawings per round (all of them with fewer players). */
+export const SPOTLIGHTS = 6;
+/** Liars per drawing at most (8 options on the TV, as with 8 players). */
+export const MAX_LIARS = 7;
+/** Lies a phone shows at most (with the truth: 6 buttons). */
+export const PHONE_LIES = 5;
+/** From this many players the next drawing's liars write during the current vote. */
+export const PIPELINE_FROM = 13;
+
+/** How a round goes with `n` players. */
+export interface Plan {
+  /** Drawings that get lies, votes and a reveal on the TV. */
+  spotlights: number;
+  /** Liars per drawing. */
+  liars: number;
+  /** Whether the next drawing's liars write during the current vote. */
+  pipelined: boolean;
+}
+
+export function plan(n: number): Plan {
+  const spotlights = Math.max(0, Math.min(n, SPOTLIGHTS));
+  if (n >= PIPELINE_FROM) return { spotlights, liars: Math.min(MAX_LIARS, Math.floor((n - 1) / 2)), pipelined: true };
+  return { spotlights, liars: Math.max(0, Math.min(n - 1, MAX_LIARS)), pipelined: false };
+}
+
+/**
+ * Takes `n` of `pool` by rotation: the lowest `key` first, ties at
+ * random (a shuffle, then a stable sort).
+ */
+export function rotate(pool: readonly string[], key: (id: string) => number, n: number, rng: () => number): string[] {
+  const order = shuffle(pool, rng);
+  const keys = new Map(order.map((id) => [id, key(id)]));
+  order.sort((a, b) => keys.get(a)! - keys.get(b)!);
+  return order.slice(0, Math.max(0, n));
+}
+
+/** A drawing's liars: `first` (when in the pool), then by rotation on `lied` (lies so far). */
+export function pickLiars(
+  pool: readonly string[],
+  lied: ReadonlyMap<string, number>,
+  n: number,
+  rng: () => number,
+  first?: string,
+): string[] {
+  const head = first !== undefined && n > 0 && pool.includes(first) ? [first] : [];
+  const rest = pool.filter((id) => !head.includes(id));
+  return [...head, ...rotate(rest, (id) => lied.get(id) ?? 0, n - head.length, rng)];
+}
+
+/**
+ * What each voter's phone shows: the truth and at most `max` lies (never
+ * their own), in the options' order. With more lies than that, voters
+ * are dealt in random order and each gets the lies dealt least so far
+ * (ties at random), so every lie reaches as many voters as the others ±1.
+ */
+export function deal(options: readonly Option[], voters: readonly string[], max: number, rng: () => number): Map<string, string[]> {
+  const dealt = new Map<string, number>(options.map((o) => [o.id, 0]));
+  const out = new Map<string, string[]>();
+  for (const v of shuffle(voters, rng)) {
+    let lies = options.filter((o) => !o.truth && !o.authors.includes(v));
+    if (lies.length > max) {
+      lies = shuffle(lies, rng);
+      lies.sort((a, b) => dealt.get(a.id)! - dealt.get(b.id)!);
+      lies = lies.slice(0, max);
+    }
+    const ids = new Set(lies.map((o) => o.id));
+    for (const id of ids) dealt.set(id, dealt.get(id)! + 1);
+    out.set(
+      v,
+      options.filter((o) => o.truth || ids.has(o.id)).map((o) => o.id),
+    );
+  }
+  return out;
 }
 
 /** The options a voter sees: all but the ones they wrote. */
