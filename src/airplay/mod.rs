@@ -7,6 +7,8 @@ pub mod audio;
 pub mod credentials;
 pub mod discovery;
 pub mod events;
+// Moving to its own crate (the next commit); still compiled in here.
+#[path = "../../crates/tvpipe-fairplay/src/lib.rs"]
 pub mod fairplay;
 pub mod fake_mirror;
 pub mod info;
