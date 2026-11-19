@@ -57,6 +57,9 @@ h2 { font-size: 2.4vh; text-transform: uppercase; letter-spacing: .1em; opacity:
 .big-title { font-family: "Michroma", sans-serif; font-size: 6vh; line-height: 1.3; margin: 2vh 0; }
 .options { display: flex; flex-direction: column; gap: 1.6vh; }
 .option { background: #fffdf6; color: #1d1d1f; border-radius: 1.6vh; padding: 1.8vh 1.6vw; font-size: 3.4vh; font-weight: 600; }
+/* Six to eight options (pipelined games: up to 7 liars), up to 40 characters each. */
+.options.many { gap: 1.1vh; }
+.options.many .option { padding: 1.2vh 1.6vw; font-size: 2.9vh; line-height: 1.2; }
 .reveal .option { display: flex; flex-direction: column; gap: .6vh; opacity: 1; transition: transform .3s; }
 .reveal .option.hidden { opacity: .0; transform: translateY(2vh); }
 .reveal .option.truth { background: var(--accent); }
@@ -109,9 +112,10 @@ h2 { font-size: 2.4vh; text-transform: uppercase; letter-spacing: .1em; opacity:
 .chips.progress .left { font-size: 2.3vh; opacity: .85; }
 .gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2vh 2vw; flex: 1; align-content: start; }
 .gallery .cell { display: flex; flex-direction: column; align-items: center; gap: .8vh; min-width: 0; }
-.thumb { height: 30vh; aspect-ratio: 1; border-radius: 1.4vh; background: #fffdf6; box-shadow: 0 1vh 3vh rgba(0,0,0,.3); }
+.thumb { height: 27vh; aspect-ratio: 1; border-radius: 1.4vh; background: #fffdf6; box-shadow: 0 1vh 3vh rgba(0,0,0,.3); }
 .gallery .cap { display: flex; flex-direction: column; align-items: center; font-size: 2.2vh; max-width: 100%; }
-.gallery .cap b { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+/* Up to 40 characters: two lines at most. */
+.gallery .cap b { font-weight: 600; color: var(--accent); overflow: hidden; text-align: center; font-size: 2.1vh; line-height: 1.2; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-width: 100%; }
 .gallery .cap span { opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .meanwhile { display: flex; align-items: center; gap: 2vw; font-size: 2.6vh; margin-top: 1vh; }
 .meanwhile .chips { margin-top: 0; }

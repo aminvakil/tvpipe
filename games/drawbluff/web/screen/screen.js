@@ -318,7 +318,7 @@ function guess(view) {
           "div",
           { class: "col grow" },
           h("h2", {}, `Which one is the real title?${spot}`),
-          h("div", { class: "options" }, ...(s.options ?? []).map((/** @type {any} */ o) => h("div", { class: "option" }, o.text))),
+          h("div", { class: `options${(s.options ?? []).length >= 6 ? " many" : ""}` }, ...(s.options ?? []).map((/** @type {any} */ o) => h("div", { class: "option" }, o.text))),
           h("div", { style: "display:flex;gap:2vw;align-items:center;margin-top:3vh" }, t.el, c.box),
           s.writing > 0 ? h("p", { class: "hint small" }, `Meanwhile ${s.writing} liars write for the next drawing.`) : null,
         );

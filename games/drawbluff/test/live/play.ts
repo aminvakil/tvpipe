@@ -7,6 +7,11 @@
  *
  *   node test/live/play.ts [--video] [--bots N] [--tunnel=cloudflare|opentunnel] [--out DIR]
  *   node test/live/play.ts --host rust [--video] [--bots N]
+ *   … [--late-join wait|open|closed] [--late N]
+ *
+ * `--late-join`: the phone (the VIP) taps that setting in the lobby
+ * (screenshots `lobby-MODE`); `--late N`: N more bots join during the
+ * first spotlight (the TV's "+ Anna").
  *
  * Needs Chrome, and tvpipe built (target/release or TVPIPE_BINARY). With
  * `--host rust` the game is the Rust binary (`cargo build --release -p
@@ -36,6 +41,8 @@ const { values: args } = parseArgs({
     host: { type: "string", default: "node" },
     bots: { type: "string", default: "2" },
     rounds: { type: "string", default: "1" },
+    "late-join": { type: "string" },
+    late: { type: "string", default: "0" },
   },
 });
 
@@ -213,6 +220,32 @@ try {
   });
   log(`${bs.length} bots joined`);
   await shot("lobby");
+  const mode = args["late-join"];
+  if (mode) {
+    // The VIP's latecomers setting, at the bottom of the lobby card.
+    await phone.until(`!!document.querySelector('.late button[data-mode="${mode}"]')`);
+    await phone.eval(`(() => { const b = document.querySelector('.late button[data-mode="${mode}"]'); b.click(); b.scrollIntoView({ block: "center" }); return true; })()`);
+    await phone.until(`document.querySelector('.late button[data-mode="${mode}"]').classList.contains("chosen")`);
+    await shot(`lobby-${mode}`);
+    await phone.eval(`scrollTo(0, 0); true`);
+  }
+  const late: Awaited<ReturnType<typeof bots>> = [];
+  let lateTried = false;
+  const lateJoin = async () => {
+    const n = Number(args.late);
+    if (n <= 0 || lateTried) return;
+    lateTried = true;
+    const names = ["Anna", "Ben", "Cleo", "Dev", "Eve"].slice(0, n);
+    try {
+      late.push(...(await bots(names.length, { url: host.ws, room: host.room, key: host.joinKey, names, think: () => 1500 + Math.random() * 2500 })));
+      const end = Date.now() + 3000;
+      while (late.some((b) => !b.client.view["me"]?.task) && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+      const notes = late.map((b) => `${b.name}: ${b.client.view["me"]?.task ?? "?"}/${b.client.view["me"]?.note ?? ""}`);
+      log(`late: ${notes.join(", ")}`);
+    } catch (e) {
+      log(`late: refused (${(e as { code?: string }).code ?? String(e)})`);
+    }
+  };
   // Phil is the VIP (joined first): start.
   await phone.until(`!document.querySelector("button.primary")?.disabled`);
   await phone.eval(`document.querySelector("button.primary").click(); true`);
@@ -273,8 +306,11 @@ try {
     const at = String(++n).padStart(2, "0");
     if (phase === "draw") await drawOnPhone(`${at}-draw`);
     else if (phase === "gallery") await shot(`${at}-gallery`);
-    else if (phase === "lie") await shot(`${at}-lie`);
-    else if (phase === "vote") {
+    else if (phase === "lie") {
+      await lateJoin();
+      await shot(`${at}-lie`);
+    } else if (phase === "vote") {
+      await lateJoin();
       await new Promise((r) => setTimeout(r, 300));
       await drivePhone();
       await shot(`${at}-vote`);
@@ -296,8 +332,8 @@ try {
   }
   await host.ended();
   await shot("final");
-  for (const b of bs) b.close();
-  const errors = bs.flatMap((b) => b.errors);
+  for (const b of [...bs, ...late]) b.close();
+  const errors = [...bs, ...late].flatMap((b) => b.errors);
   log(`done: ${shots.length} screenshot pairs in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}${screenTab ? `; on the screen page: ${leaks.length ? leaks.join(", ") : "no null/undefined/NaN, no overflow"}` : ""}`);
 } finally {
   browser.close();

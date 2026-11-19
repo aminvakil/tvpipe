@@ -153,7 +153,7 @@ test("late join closed: newcomers refused during the game, welcome after; the VI
     await assert.rejects(players[0]!.client.act("late-join", { mode: "maybe" }), (e: { code: string }) => e.code === "bad-mode");
     await players[0]!.client.act("late-join", { mode: "closed" });
     assert.equal(party.lateJoin, "closed");
-    assert.equal(players[1]!.client.view["room"].lateJoin, "closed");
+    await until(() => players[1]!.client.view["room"].lateJoin === "closed");
     const end = new Promise((r) => g.once("end", r));
     await players[0]!.client.act("start");
     await assert.rejects(players[0]!.client.act("late-join", { mode: "open" }), (e: { code: string }) => e.code === "running");

@@ -381,3 +381,25 @@ screenshot). Found and fixed on the way:
 The phone lied 0–1 times a round (42 lie slots a round for 50 players), voted
 in every spotlight it did not lie about and always showed its role and
 rank.
+
+Live check of joining mid-game and the new prompts (`node
+test/live/play.ts --host rust --bots 12 --rounds 2 --late-join open
+--late 2`; `--late-join MODE` has the phone, the VIP, tap that setting
+in the lobby and shoot it, `--late N` joins N more bots, Anna and Ben,
+during the first spotlight): the Rust host with the web screen, 13
+players, then 15. The lobby's three buttons on the VIP's phone, the TV
+under the QR code switching to "Join anytime, even during the game";
+Anna and Ben joined during the first vote, got "wait"/`drawing`, voted
+and lied from the next drawing on, "+ Anna · + Ben" bottom left of the
+TV for the rest of round 1 (gone in round 2); in round 2 Anna's drawing
+was the first spotlight (the priority for newcomers). The rounds mixed
+the structures ("the cherry on top", "under the weather", "the moment
+the penguin slips", "a bull in a china shop", "inside a piggy bank",
+"the fear of mondays", "a snail at a marathon" in one gallery). No bot
+errors, no `null`/`undefined`/`NaN`, nothing below the bottom, after
+two fixes: the web screen's vote with 6 to 8 options and two or three
+rows of chips ran off the bottom (`.options.many`: tighter), and the
+gallery's last caption ran under the corner QR code (thumbnails 27vh,
+captions on two lines at most for 40 characters). With `--late-join
+closed` the late bot was refused (`in-progress`) and the corner QR code
+stayed hidden.
