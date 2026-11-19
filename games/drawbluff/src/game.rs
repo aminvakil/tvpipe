@@ -42,8 +42,8 @@ use tvpipe_party::{
 };
 
 use crate::rules::{
-    build_options, clean_title, deal, pick_liars, plan, reveal_order, rotate, score, share,
-    shuffle, title_key, validate_drawing, Choice, Drawing, Plan, Rng, Scoring, PHONE_LIES,
+    build_options, clean_title, deal, display_title, pick_liars, plan, reveal_order, rotate, score,
+    share, shuffle, title_key, validate_drawing, Choice, Drawing, Plan, Rng, Scoring, PHONE_LIES,
     POINTS_ARTIST, POINTS_FOOLED, POINTS_GUESS,
 };
 
@@ -481,7 +481,7 @@ impl Drawbluff {
                 let prompt = t.spots[lies.index].prompt.clone();
                 let back = lies.collect.offer(party, a, |data, _| {
                     let text = t.lie(data, &prompt, moderated)?;
-                    let reply = json!({ "text": text.as_str() });
+                    let reply = json!({ "text": display_title(&text) });
                     Ok((text, reply))
                 });
                 if back.is_none() {
@@ -489,7 +489,7 @@ impl Drawbluff {
                         party,
                         &lies.collect,
                         on_screen,
-                        |text| json!({ "done": true, "lie": text.as_str() }),
+                        |text| json!({ "done": true, "lie": display_title(text) }),
                     );
                 }
                 t.lies = Some(lies);
@@ -692,7 +692,7 @@ impl Drawbluff {
             "done": [],
         }));
         for (p, prompt) in &prompts {
-            let state = json!({ "task": "draw", "prompt": prompt.as_str(), "deadline": deadline, "done": false });
+            let state = json!({ "task": "draw", "prompt": display_title(prompt), "deadline": deadline, "done": false });
             let state = t.with_rank(party, Some(p), state);
             set_state(party, p, state);
         }
@@ -1053,7 +1053,7 @@ impl Drawbluff {
             "spots": spots,
             "drawing": spot.drawing.to_value(),
             "artist": art,
-            "prompt": spot.prompt.as_str(),
+            "prompt": display_title(&spot.prompt),
             "items": items,
             "step": 0,
         }));
@@ -1259,7 +1259,7 @@ impl Table {
                 .take(GALLERY_PAGE)
                 .map(|e| {
                     let name = party.player(&e.artist).map_or("someone", Player::name);
-                    json!({ "id": e.artist.as_str(), "name": name, "prompt": e.prompt.as_str(), "drawing": e.drawing.to_value() })
+                    json!({ "id": e.artist.as_str(), "name": name, "prompt": display_title(&e.prompt), "drawing": e.drawing.to_value() })
                 })
                 .collect(),
         )
@@ -1372,8 +1372,9 @@ impl Table {
             }
             return Ok(pick);
         }
+        // Kept as typed; shown and compared in the display form.
         let text = lie_text(data).unwrap_or_default();
-        if text.is_empty() {
+        if display_title(&text).is_empty() {
             return Err(PartyError::new("empty", "Write a title"));
         }
         if title_key(&text) == title_key(prompt) {

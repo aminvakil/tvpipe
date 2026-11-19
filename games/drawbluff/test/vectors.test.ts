@@ -8,6 +8,7 @@ import {
   buildOptions,
   cleanTitle,
   deal,
+  displayTitle,
   optionsFor,
   PHONE_LIES,
   pickLiars,
@@ -45,6 +46,7 @@ test("the shared rule vectors (test/vectors/rules.txt)", () => {
       }
       case "title":
         assert.equal(cleanTitle(json("input")), json("clean"), at);
+        assert.equal(displayTitle(cleanTitle(json("input"))), json("display"), at);
         assert.equal(titleKey(json("input")), json("key"), at);
         break;
       case "drawing": {

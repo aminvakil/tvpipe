@@ -2,8 +2,8 @@
 //! --bless` from `game/rules.ts`, the reference) against `src/rules.rs`.
 
 use drawbluff::rules::{
-    build_options, clean_title, deal, options_for, pick_liars, plan, reveal_order, rotate, score,
-    share, shuffle, title_key, validate_drawing, Rng, PHONE_LIES,
+    build_options, clean_title, deal, display_title, options_for, pick_liars, plan, reveal_order,
+    rotate, score, share, shuffle, title_key, validate_drawing, Rng, PHONE_LIES,
 };
 use tvpipe_party::Value;
 
@@ -144,6 +144,11 @@ fn rules_vectors() {
                 assert_eq!(
                     clean_title(input),
                     b.json("clean").as_str().unwrap(),
+                    "{at}"
+                );
+                assert_eq!(
+                    display_title(&clean_title(input)),
+                    b.json("display").as_str().unwrap(),
                     "{at}"
                 );
                 assert_eq!(title_key(input), b.json("key").as_str().unwrap(), "{at}");
@@ -297,6 +302,16 @@ fn rules_vectors() {
 fn prompts_are_distinct() {
     let prompts = drawbluff::prompts();
     assert!(prompts.len() > 100);
+    for p in &prompts {
+        // Shown as they are, no longer than a lie may be typed, no tells.
+        assert_eq!(&display_title(p), p);
+        assert!(p.chars().count() <= drawbluff::rules::LIE_SOFT, "{p}");
+        assert!(
+            p.chars()
+                .all(|c| c.is_ascii_lowercase() || c == ' ' || c == '\''),
+            "{p}"
+        );
+    }
     let mut keys: Vec<String> = prompts.iter().map(|p| title_key(p)).collect();
     keys.sort();
     keys.dedup();

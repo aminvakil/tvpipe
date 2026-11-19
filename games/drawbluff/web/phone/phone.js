@@ -11,6 +11,8 @@ import { drawDrawing, drawStroke, GRID, PALETTE } from "/strokes.js";
 const MAX_STROKES = 300;
 const MAX_POINTS = 12000;
 const WIDTHS = [8, 20, 48];
+/** The longest lie the input takes (`LIE_SOFT` in game/rules.ts and src/rules.rs). */
+const LIE_SOFT = 32;
 
 const client = PartyClient.fromLocation();
 const app = /** @type {HTMLElement} */ (document.getElementById("app"));
@@ -501,7 +503,11 @@ function mini(drawing) {
 /** @param {any} me */
 function lie(me) {
   const drawing = me.drawing ?? client.view.room?.drawing;
-  const input = /** @type {HTMLInputElement} */ (h("input", { maxlength: 40, placeholder: "a convincing title", enterkeyhint: "send", autocapitalize: "off" }));
+  // As long as the prompts at most (LIE_SOFT in game/rules.ts), no capitals
+  // (titles are shown in lowercase anyway); autocorrect stays on.
+  const input = /** @type {HTMLInputElement} */ (
+    h("input", { maxlength: LIE_SOFT, placeholder: "a convincing title", enterkeyhint: "send", autocapitalize: "none", autocomplete: "off", spellcheck: "true" })
+  );
   const err = h("p", { class: "error" });
   const send = async (/** @type {any} */ data) => {
     try {

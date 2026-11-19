@@ -48,11 +48,43 @@ export function cleanTitle(text: unknown): string {
 }
 
 /**
- * How titles compare: case, accents, punctuation, spacing and a leading
- * article do not matter ("A nervous cactus!" = "nervous cactus").
+ * The longest lie a phone lets you type: about the longest prompt
+ * (`data/prompts.txt` stays within it), so a long title is no tell. The
+ * host accepts up to {@link MAX_TITLE}.
+ */
+export const LIE_SOFT = 32;
+
+/**
+ * A title as the TV and the phones show it, the truth and the lies alike,
+ * so formatting gives nothing away (the typed text is kept): quotes and
+ * apostrophes unified, spacing collapsed, lowercase, no trailing `.`, `!`,
+ * `?`, `…`, no surrounding quotes.
+ */
+export function displayTitle(text: string): string {
+  let s = text
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u0060\u00B4]/gu, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/gu, '"')
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
+  for (;;) {
+    const was = s;
+    s = s.replace(/[.!?\u2026]+$/u, "").trim();
+    if (s.startsWith('"')) s = s.slice(1);
+    if (s.endsWith('"')) s = s.slice(0, -1);
+    if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) s = s.slice(1, -1);
+    s = s.trim();
+    if (s === was) return s;
+  }
+}
+
+/**
+ * How titles compare, on their display form: case, accents, punctuation,
+ * spacing and a leading article do not matter ("A nervous cactus!" =
+ * "nervous cactus").
  */
 export function titleKey(text: string): string {
-  return text
+  return displayTitle(text)
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     .toLowerCase()
@@ -77,7 +109,7 @@ export interface Option {
 /**
  * The options for one drawing: the truth, the players' lies (equal lies
  * merged), decoys from `spares` until there are at least `min`, in a
- * shuffled order.
+ * shuffled order; texts in their display form ({@link displayTitle}).
  */
 export function buildOptions(
   truth: string,
@@ -94,15 +126,15 @@ export function buildOptions(
     if (!k || k === truthKey) continue; // refused when typed; never shown
     const o = byKey.get(k);
     if (o) o.authors.push(author);
-    else byKey.set(k, { id: `o${++n}`, text, truth: false, authors: [author], decoy: false });
+    else byKey.set(k, { id: `o${++n}`, text: displayTitle(text), truth: false, authors: [author], decoy: false });
   }
-  const options = [{ id: `o${++n}`, text: truth, truth: true, authors: [], decoy: false }, ...byKey.values()];
+  const options = [{ id: `o${++n}`, text: displayTitle(truth), truth: true, authors: [], decoy: false }, ...byKey.values()];
   for (const s of spares) {
     if (options.length >= min) break;
     const k = titleKey(s);
     if (k === truthKey || byKey.has(k)) continue;
     byKey.set(k, { id: "", text: s, truth: false, authors: [], decoy: true });
-    options.push({ id: `o${++n}`, text: s, truth: false, authors: [], decoy: true });
+    options.push({ id: `o${++n}`, text: displayTitle(s), truth: false, authors: [], decoy: true });
   }
   return shuffle(options, rng);
 }

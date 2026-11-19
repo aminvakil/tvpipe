@@ -10,8 +10,8 @@
  * - `rng`: `seed`, `values` (the first outputs of `seeded(seed)` times
  *   2^32, so integers).
  * - `shuffle`: `seed`, `n`, `order` (`shuffle([0..n), seeded(seed))`).
- * - `title`: `input` (a JSON string), `clean` (`cleanTitle`), `key`
- *   (`titleKey` of the input).
+ * - `title`: `input` (a JSON string), `clean` (`cleanTitle`), `display`
+ *   (`displayTitle` of the cleaned input), `key` (`titleKey` of the input).
  * - `drawing`: `input` (JSON; `repeat = N` repeats its first stroke N
  *   times, `pad = N` appends N `1`s to its first stroke), then `output`
  *   (the normalised drawing; `input` when that is the input) or `error`
@@ -42,6 +42,7 @@ import {
   buildOptions,
   cleanTitle,
   deal,
+  displayTitle,
   optionsFor,
   PHONE_LIES,
   pickLiars,
@@ -145,6 +146,24 @@ const TITLES = [
   "A\tB\nC",
   "\u202eevil",
   "zero\u200bwidth",
+  // The display form: nothing gives the truth away.
+  "A Cat.",
+  "a cat",
+  '"A Cat!"',
+  "Why?!?",
+  "wait…",
+  "...",
+  '""',
+  "'tis the season",
+  "the dogs'",
+  "'single quoted'",
+  "\u2018curly\u2019 and \u201Cdouble\u201D",
+  "\u00ABguillemets\u00BB",
+  "it\u2019s fine",
+  "ΣΟΦΟΣ ΟΔΟΣ",
+  "  Spaced   OUT  !! ",
+  '"half quoted',
+  "Paris!? Really.",
 ];
 
 const DRAWINGS: Entries[] = [
@@ -354,7 +373,7 @@ function bless(): void {
     out.push(block([["test", "shuffle"], ["seed", String(seed)], ["n", String(n)], ["order", JSON.stringify(order)]]));
   }
   for (const t of TITLES) {
-    out.push(block([["test", "title"], ["input", t], ["clean", JSON.stringify(cleanTitle(t))], ["key", JSON.stringify(titleKey(t))]]));
+    out.push(block([["test", "title"], ["input", t], ["clean", JSON.stringify(cleanTitle(t))], ["display", JSON.stringify(displayTitle(cleanTitle(t)))], ["key", JSON.stringify(titleKey(t))]]));
   }
   for (const d of DRAWINGS) {
     const b: Block = { line: 0, entries: d.map(([k, v]) => [k, k === "input" ? JSON.stringify(v) : String(v)]) };

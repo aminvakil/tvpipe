@@ -107,10 +107,64 @@ pub fn clean_title(text: &str) -> String {
     clean_text(text, MAX_TITLE)
 }
 
-/// How titles compare: case, accents, punctuation, spacing and a leading
-/// article do not matter ("A nervous cactus!" = "nervous cactus").
+/// The longest lie a phone lets you type: about the longest prompt
+/// (`data/prompts.txt` stays within it), so a long title is no tell. The
+/// host accepts up to [`MAX_TITLE`].
+pub const LIE_SOFT: usize = 32;
+
+/// A title as the TV and the phones show it, the truth and the lies
+/// alike, so formatting gives nothing away (the typed text is kept):
+/// quotes and apostrophes unified, spacing collapsed, lowercase, no
+/// trailing `.`, `!`, `?`, `…`, no surrounding quotes (`displayTitle` in
+/// `game/rules.ts`).
+pub fn display_title(text: &str) -> String {
+    let unified: String =
+        text.chars()
+            .map(|c| match c {
+                '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' | '`'
+                | '\u{00B4}' => '\'',
+                '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' | '\u{00AB}'
+                | '\u{00BB}' => '"',
+                c => c,
+            })
+            .collect();
+    // `\s+` → one space (JavaScript's `\s` is Unicode White_Space plus BOM).
+    let mut spaced = String::with_capacity(unified.len());
+    for c in unified.chars() {
+        if c.is_whitespace() || c == '\u{feff}' {
+            if !spaced.ends_with(' ') {
+                spaced.push(' ');
+            }
+        } else {
+            spaced.push(c);
+        }
+    }
+    let mut s = spaced.trim().to_lowercase();
+    loop {
+        let was = s.clone();
+        let t = s
+            .trim_end_matches(['.', '!', '?', '\u{2026}'])
+            .trim()
+            .to_owned();
+        let t = t.strip_prefix('"').unwrap_or(&t).to_owned();
+        let t = t.strip_suffix('"').unwrap_or(&t).to_owned();
+        let t = if t.chars().count() >= 2 && t.starts_with('\'') && t.ends_with('\'') {
+            t[1..t.len() - 1].to_owned()
+        } else {
+            t
+        };
+        s = t.trim().to_owned();
+        if s == was {
+            return s;
+        }
+    }
+}
+
+/// How titles compare, on their display form: case, accents,
+/// punctuation, spacing and a leading article do not matter ("A nervous
+/// cactus!" = "nervous cactus").
 pub fn title_key(text: &str) -> String {
-    let lower = fold(text).to_lowercase();
+    let lower = fold(&display_title(text)).to_lowercase();
     // `[^\p{L}\p{N}]+` → one space.
     let mut spaced = String::with_capacity(lower.len());
     for c in lower.chars() {
@@ -200,7 +254,7 @@ pub fn build_options(
                 keys.push((k, Some(lied.len())));
                 lied.push(Choice {
                     id: next_id(),
-                    text: text.clone(),
+                    text: display_title(text),
                     truth: false,
                     authors: vec![author.clone()],
                     decoy: false,
@@ -210,7 +264,7 @@ pub fn build_options(
     }
     let mut options = vec![Choice {
         id: next_id(),
-        text: truth.to_owned(),
+        text: display_title(truth),
         truth: true,
         authors: Vec::new(),
         decoy: false,
@@ -227,7 +281,7 @@ pub fn build_options(
         keys.push((k, None));
         options.push(Choice {
             id: next_id(),
-            text: s.clone(),
+            text: display_title(s),
             truth: false,
             authors: Vec::new(),
             decoy: true,

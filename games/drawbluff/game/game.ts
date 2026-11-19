@@ -24,6 +24,7 @@ import { PROMPTS } from "./prompts.ts";
 import {
   buildOptions,
   cleanTitle,
+  displayTitle,
   deal,
   PHONE_LIES,
   pickLiars,
@@ -273,7 +274,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const deadline = this.#deadline(this.timings.draw);
     this.#room({ phase: "draw", deadline });
     party.screen.replace({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
-    for (const [p, prompt] of prompts) p.state.replace({ task: "draw", prompt, deadline, done: false, ...this.#rank(p) });
+    for (const [p, prompt] of prompts) p.state.replace({ task: "draw", prompt: displayTitle(prompt), deadline, done: false, ...this.#rank(p) });
     for (const p of party.players) if (!prompts.has(p)) p.state.replace({ task: "wait", ...this.#rank(p) });
     const got = await party.collect<Drawing>("draw", {
       from: players,
@@ -369,18 +370,19 @@ export class Drawbluff extends EventEmitter<GameEvents> {
             this.#deck.splice(this.#deck.indexOf(pick), 1);
             return pick;
           }
+          // Kept as typed; shown and compared in the display form.
           const text = cleanTitle(typeof d === "object" && d !== null ? (d as { text?: unknown }).text : d);
-          if (!text) throw new PartyError("empty", "Write a title");
+          if (!displayTitle(text)) throw new PartyError("empty", "Write a title");
           if (titleKey(text) === titleKey(spot.prompt)) throw new PartyError("truth", "That's the real title! Write a lie instead.");
           if (!titleKey(text)) throw new PartyError("empty", "Write a title with letters");
           const ok = party.moderate(text, "lie", pl);
           if (ok === false) throw new PartyError("refused", "Try another one");
           return cleanTitle(ok);
         },
-        reply: (text) => ({ text }),
+        reply: (text) => ({ text: displayTitle(text) }),
         onAnswer: (pl, text, got) => {
           answers.set(pl, text);
-          pl.state.set({ done: true, lie: text });
+          pl.state.set({ done: true, lie: displayTitle(text) });
           if (this.#onScreen === lies) party.screen.set({ done: [...got.keys()].map((x) => x.id) });
         },
       })
@@ -399,7 +401,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     this.#onScreen = lies;
     const pages = Math.ceil(gallery.length / GALLERY_PAGE);
     const page = (n: number) =>
-      gallery.slice(n * GALLERY_PAGE, (n + 1) * GALLERY_PAGE).map((e) => ({ id: e.artist.id, name: e.artist.name, prompt: e.prompt, drawing: e.drawing }));
+      gallery.slice(n * GALLERY_PAGE, (n + 1) * GALLERY_PAGE).map((e) => ({ id: e.artist.id, name: e.artist.name, prompt: displayTitle(e.prompt), drawing: e.drawing }));
     const busy = new Set(lies?.liars ?? []);
     this.#room({ phase: "gallery", count: gallery.length });
     party.screen.replace({
@@ -566,7 +568,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     });
     const art = { id: spot.artist.id, name: spot.artist.name };
     this.#room({ phase: "reveal", spot: i + 1, spots, drawing: spot.drawing, artist: art });
-    party.screen.replace({ phase: "reveal", round, spot: i + 1, spots, drawing: spot.drawing, artist: art, prompt: spot.prompt, items, step: 0 });
+    party.screen.replace({ phase: "reveal", round, spot: i + 1, spots, drawing: spot.drawing, artist: art, prompt: displayTitle(spot.prompt), items, step: 0 });
     const writing = new Set(next && !next.finished ? next.liars.filter((p) => !next.answers.has(p)) : []);
     for (const p of party.players) {
       if (writing.has(p)) continue;

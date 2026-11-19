@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { PartyError } from "@tvpipe/party";
 
 import { PROMPTS } from "../game/prompts.ts";
-import { buildOptions, cleanTitle, deal, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
+import { buildOptions, cleanTitle, deal, displayTitle, LIE_SOFT, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
 
 test("titles compare without case, accents, punctuation and a leading article", () => {
   assert.equal(titleKey("A Nervous  Cactus!"), titleKey("nervous cactus"));
@@ -32,14 +32,14 @@ test("options: lies merged, truth-equal lies dropped, decoys fill up, shuffled",
   ]);
   const opts = buildOptions("a haunted toaster", lies, ["a sad potato", "a toaster in love", "a lonely sock"], seeded(1), 5);
   const texts = opts.map((o) => o.text).sort();
-  assert.deepEqual(texts, ["A spooky toaster", "a haunted toaster", "a lonely sock", "a sad potato", "a toaster in love"]);
-  const merged = opts.find((o) => o.text === "A spooky toaster")!;
+  assert.deepEqual(texts, ["a haunted toaster", "a lonely sock", "a sad potato", "a spooky toaster", "a toaster in love"]);
+  const merged = opts.find((o) => o.text === "a spooky toaster")!;
   assert.deepEqual(merged.authors, ["p2", "p3"]);
   assert.equal(opts.filter((o) => o.truth).length, 1);
   assert.equal(opts.filter((o) => o.decoy).length, 2);
   assert.equal(new Set(opts.map((o) => o.id)).size, opts.length);
   // A voter never sees their own lie.
-  assert.ok(!optionsFor("p3", opts).some((o) => o.text === "A spooky toaster"));
+  assert.ok(!optionsFor("p3", opts).some((o) => o.text === "a spooky toaster"));
   assert.equal(optionsFor("p9", opts).length, 5);
 });
 
@@ -127,4 +127,18 @@ test("scale: samples are fair and never show a voter's own lie", () => {
   assert.ok(Math.max(...lies) - Math.min(...lies) <= 1, JSON.stringify(lies));
   // Few lies: everybody sees all of them.
   assert.deepEqual(deal(opts.slice(0, 4), ["x"], 5, seeded(1)).get("x"), ["t", "l1", "l2", "l3"]);
+});
+
+test("titles are shown alike, so formatting gives the truth away nowhere", () => {
+  assert.equal(displayTitle('"A Cat!"'), "a cat");
+  assert.equal(displayTitle("\u2018tis   the \u201Cseason\u201D..."), "'tis the \"season");
+  assert.equal(titleKey("a cat"), titleKey("A Cat."));
+  // The prompts are already in that form, and no longer than a phone lets you type a lie.
+  for (const p of PROMPTS) {
+    assert.equal(displayTitle(p), p, p);
+    assert.ok([...p].length <= LIE_SOFT, p);
+    assert.match(p, /^[a-z' ]+$/, p);
+  }
+  const opts = buildOptions("A Haunted Toaster", new Map([["b", "A SPOOKY toaster!!"]]), [], seeded(1), 2);
+  assert.deepEqual(opts.map((o) => o.text).sort(), ["a haunted toaster", "a spooky toaster"]);
 });

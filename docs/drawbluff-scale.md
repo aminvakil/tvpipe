@@ -152,6 +152,22 @@ to the same number of voters ±1 (at N=50: each of 7 lies to ~30 of 43).
 Up to 7 players nobody is ever sampled (today's game); from 8 on
 voters are (at 8: 5 of the 6 other lies).
 
+### Titles look alike
+
+Nothing about how a title looks may give the truth away (the prompt
+list is written carefully, lies are typed fast on a phone). The host
+keeps what was typed and shows every title, the truth included, in one
+display form (`displayTitle` / `display_title`, rule vectors `title …
+display`): curly and other quotes and apostrophes become `'` and `"`,
+spacing collapses, everything is lowercase, trailing `.` `!` `?` `…` and
+surrounding quotes go (`"A Cat!"` → `a cat`); emoji are already gone
+(`cleanTitle`). `titleKey` works on that form, so `a cat` = `A Cat.`.
+The prompts (`data/prompts.txt`) are already in it: lowercase letters,
+spaces and apostrophes, at most 32 characters (three longer ones were
+shortened; both test suites check it). The phone's lie input takes at
+most 32 characters too (`LIE_SOFT`; the host still accepts up to 40),
+with `autocapitalize="none"` and autocorrect left on.
+
 ## 7. Scoring: per exposure
 
 Points as today (round r counts r times), scaled so that a big room
@@ -228,4 +244,25 @@ them yet.
 
 ## 11. Measurements
 
-(Filled in from the 50-phone tests and the live check.)
+50-phone tests (`npm/party/test/scale.test.ts`, `crates/tvpipe-party/tests/scale.rs`,
+`PARTY_SCALE_REPORT=1`; 50 players and a screen over real WebSockets on
+loopback, a ~10 KB drawing; macOS, M-series, Rust in release), host time
+per flush before → after the section-wise flush (bytes unchanged):
+
+| change | messages | bytes | Node | Rust |
+|---|---|---|---|---|
+| a phase with a drawing (room, screen, every `me`) | 51 | 498 KB | 4.0 → 0.84 ms | 2.9 → 0.45 ms |
+| an answer (one `me`, the screen's `done`) | 2 | 257 B | 3.3 → 0.10 ms | 0.91 → 0.06 ms |
+| a player leaves (the roster) | 50 | 136–139 KB | 4.3 → 0.40 ms | → 0.26 ms |
+
+So a whole vote at 50 (43 answers) costs the host ~5 ms instead of
+~150 ms (Node). What is left is bandwidth: a phase with a drawing sends
+the drawing to every phone (~10 KB each, 60 KB at the limit), and the
+roster is an array (protocol v1 replaces arrays whole), so every join,
+drop or return sends the whole roster (~2.7 KB at 50) to everybody: up
+to ~7 MB over a lobby filling up to 50. Both fit a tunnel; keyed rosters
+would need a protocol change (not done).
+
+Whole games with 50 fake phones over real WebSockets (`test/game.test.ts`,
+`tests/game.rs`): every vote checked for phones without a task, more
+than 6 options, options out of the TV's order, missing liars.
