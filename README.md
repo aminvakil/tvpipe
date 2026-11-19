@@ -122,6 +122,15 @@ views live in the browser library [`@tvpipe/party`](npm/party/README.md);
 the demo is [`games/drawbluff`](games/drawbluff/) (3–50 players). Closing
 the window ends everything. Design: [`docs/playshare-design.md`](docs/playshare-design.md).
 
+Making one: [`docs/games.md`](docs/games.md) (layout, `tvpipe.json`,
+the pages and the library, the dev loop, running and troubleshooting).
+
+```sh
+tvpipe bundle --init my-game          # a starter game
+tvpipe bundle --check my-game         # what would break, with files and lines
+tvpipe bundle my-game --smoke         # my-game.zip (deterministic), run once in a headless browser
+```
+
 ## Manual
 
 | Page | Covers |

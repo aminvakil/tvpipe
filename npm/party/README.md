@@ -21,7 +21,9 @@ This package is what runs in those pages:
 tvpipe serves the built modules at `/_tvpipe/lib/` (`index.js`,
 `client.js`, …), so pages import them without a bundler. The npm package
 has the same modules with types, for type checking and for tests in Node
-(≥ 22). No dependencies. The protocol between phones and the host:
+(≥ 22). No dependencies. Building, checking (`tvpipe bundle`) and
+running a game: [`docs/games.md`](../../docs/games.md). The protocol
+between phones and the host:
 [`docs/party-protocol.md`](../../docs/party-protocol.md). A whole game:
 [`games/drawbluff`](../../games/drawbluff).
 

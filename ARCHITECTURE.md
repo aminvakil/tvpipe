@@ -17,7 +17,9 @@ detail lives in `docs/`:
   apps (`tvpipe playshare`, the browser library `@tvpipe/party`, the demo
   game `games/drawbluff`); [`party-protocol.md`](docs/party-protocol.md):
   what phones and the host page say; [`party-design.md`](docs/party-design.md):
-  the first design (a Node host), for its reasoning and measurements.
+  the first design (a Node host), for its reasoning and measurements;
+  [`games.md`](docs/games.md): building, checking, packing and running
+  a game (`tvpipe bundle`).
 - [`screen.md`](docs/screen.md): sharing a screen or a window with
   sound (`tvpipe screen`): Chrome's capture per OS, the ffmpeg fallback,
   native APIs assessed.
@@ -235,6 +237,17 @@ naming its host, TV and phone pages. Design and protocols:
   (TEARDOWN/STOP), the browsers quit, the tunnel closes.
 - **Tunnels**: OpenTunnel first (its identity is made once and reused, so
   frequent runs create nothing), Cloudflare if it fails; `--no-tunnel`.
+- **`tvpipe bundle`** (`playshare/check.rs`, `scan.rs`, `smoke.rs`,
+  `tool.rs`; [`docs/games.md`](docs/games.md)) checks a game the way
+  playshare loads it, plus what its pages load: tolerant scanners for
+  HTML, CSS and JS module imports (`scan`) followed from the entry pages,
+  not parsers, so they never fail and report only literal URLs. It packs
+  a folder into a deterministic zip (`util::zip_write`, our own deflate
+  in `util::deflate`: hash-chain LZ77, the cheapest of stored, fixed and
+  dynamic blocks) and reads it back before writing. `--smoke` runs the
+  game with a stand-in receiver backend and a headless browser over
+  DevTools, and joins with a fake phone over the relay. `--init` writes
+  the starter game embedded from `playshare/template/`.
 
 ## Timing and Latency
 
