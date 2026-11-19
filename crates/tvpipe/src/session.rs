@@ -2,7 +2,7 @@
 //!
 //! Owner: lead.
 //!
-//! `play` / `test-pattern`:
+//! `play` / `debug pattern`:
 //!
 //! 1. Probe the input: an MP4/MOV/Matroska file with our own demuxer
 //!    (`media::passthrough::probe`), anything else with `ffprobe`: size,
@@ -80,7 +80,7 @@ pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
         | Command::Tunnel { .. }
         | Command::Qr { .. } => Err(Error::usage(format!("{} is not a session", cmd_name))),
         #[cfg(feature = "playshare")]
-        Command::Playshare(_) | Command::Bundle(_) => {
+        Command::Playshare(_) | Command::GameTool(_) => {
             Err(Error::usage(format!("{} is not a session", cmd_name)))
         }
         Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
@@ -99,7 +99,7 @@ pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
         #[cfg(feature = "ffmpeg")]
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
         #[cfg(not(feature = "ffmpeg"))]
-        Command::DebugPipeline(_) => Err(Error::feature("ffmpeg", "debug-pipeline")),
+        Command::DebugPipeline(_) => Err(Error::feature("ffmpeg", "debug pipeline")),
     }
 }
 
@@ -917,7 +917,7 @@ fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Resu
         Encoder::Builtin if raw || pattern => true,
         Encoder::Builtin => {
             return Err(Error::usage(
-                "--encoder builtin encodes raw SLRW input (-) and test-pattern; \
+                "--encoder builtin encodes raw SLRW input (-) and the test pattern; \
                  files, URLs and capture devices need ffmpeg",
             ))
         }
@@ -1875,7 +1875,7 @@ struct Budget {
     airplay_ms: Option<u32>,
     /// Browser tabs' playout delay (`--to browser`).
     browser_ms: u32,
-    /// The session's own delay, the same rule for `play`, `test-pattern`,
+    /// The session's own delay, the same rule for `play`, `debug pattern`,
     /// `preview` and `share` (with or without URL): what the plan says
     /// and how long the tail plays out at the end. `--latency`, else the
     /// browsers' when only browsers watch, else [`DEFAULT_LATENCY_MS`].

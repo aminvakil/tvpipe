@@ -1,7 +1,7 @@
 {
   "name": "@tvpipe/party",
   "version": "0.2.0",
-  "description": "Party games for tvpipe playshare: the game's host page keeps rooms, players, reconnects and views in sync with phone browsers, over tvpipe's relay; the phone/TV client and the local API client",
+  "description": "Party games for tvpipe (tvpipe game play): the game's host page keeps rooms, players, reconnects and views in sync with phone browsers, over tvpipe's relay; the phone/TV client and the local API client",
   "keywords": [
     "party-game",
     "jackbox",

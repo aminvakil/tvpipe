@@ -1,4 +1,4 @@
-//! `tvpipe debug-pipeline`: runs ffmpeg and the demuxer and prints the
+//! `tvpipe debug pipeline`: runs ffmpeg and the demuxer and prints the
 //! stream info and one line per frame.
 //!
 //! Output (stdout), one record per line, `key=value` fields:
@@ -36,7 +36,7 @@ use crate::types::{
 use crate::util::hex;
 use crate::util::ratio::Ratio;
 
-/// The plan `debug-pipeline` encodes with: one AirPlay-style PCM track
+/// The plan `debug pipeline` encodes with: one AirPlay-style PCM track
 /// (352-sample frames) and one Cast-style Opus track (10 ms).
 pub fn default_plan() -> EncodePlan {
     EncodePlan {

@@ -129,7 +129,7 @@ wire_enum!(
         Player = "player",
         /// The share page.
         Share = "share",
-        /// Any program's server on a loopback port (`tvpipe tunnel PORT`).
+        /// Any program's server on a loopback port (`tvpipe debug tunnel PORT`).
         Port = "port",
     }
 );
@@ -183,7 +183,7 @@ pub struct Hello {
     pub protocol: u32,
     /// tvpipe's version.
     pub version: String,
-    /// The command (`play` also for `preview`, `test-pattern`, …).
+    /// The command (`play` also for `preview`; `test-pattern` for `debug pattern`, …).
     pub command: String,
 }
 

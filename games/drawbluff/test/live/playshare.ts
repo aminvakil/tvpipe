@@ -1,5 +1,5 @@
 /**
- * A live check of drawbluff on `tvpipe playshare` (not part of `npm
+ * A live check of drawbluff on `tvpipe game play` (not part of `npm
  * test`): tvpipe serves the bundle (`dist/`, or `drawbluff.zip` with
  * `--zip`); a headless Chrome plays the window (the launcher, then the
  * host page), a phone (joining, drawing with touch events, lying,
@@ -60,9 +60,9 @@ mkdirSync(out, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
 
-// tvpipe playshare, the window left to us (--window none prints its URL).
+// tvpipe game play, the window left to us (--window none prints its URL).
 const tunnel = args.tunnel ? [`--tunnel=${args.tunnel}`] : ["--no-tunnel"];
-const proc = spawn(binary, ["-v", "playshare", bundle, "--window", "none", ...tunnel], { stdio: ["ignore", "pipe", "pipe"] });
+const proc = spawn(binary, ["-v", "game", "play", bundle, "--window", "none", ...tunnel], { stdio: ["ignore", "pipe", "pipe"] });
 const exited = new Promise<number | null>((r) => proc.on("exit", (c) => r(c)));
 const tvpipeLog: string[] = [];
 createInterface({ input: proc.stderr! }).on("line", (l) => {
@@ -73,7 +73,7 @@ const start = await new Promise<string>((resolve, reject) => {
   createInterface({ input: proc.stdout! }).once("line", resolve);
   exited.then(() => reject(new Error(`tvpipe exited:\n${tvpipeLog.join("\n")}`)));
 });
-log(`tvpipe playshare ${args.zip ? "drawbluff.zip" : "games/drawbluff"}: ${start.replace(/t=.*/, "t=…")}`);
+log(`tvpipe game play ${args.zip ? "drawbluff.zip" : "games/drawbluff"}: ${start.replace(/t=.*/, "t=…")}`);
 
 const browser = await Browser.launch();
 let failed = false;

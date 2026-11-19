@@ -200,17 +200,12 @@ fn stop_command_ends_the_session_cleanly() {
     let mut t = Tvpipe::spawn(
         "stop",
         &[
-            "test-pattern",
-            "--to",
-            "browser",
-            "--port",
-            "0",
-            "--size",
-            "320x240",
+            "debug", "pattern", "--to", "browser", "--port", "0", "--size", "320x240",
         ],
     );
     let hello = t.wait_for("\"hello\"");
     assert!(hello.contains("\"protocol\":1"), "{hello}");
+    // The protocol keeps the name `debug pattern` had as a top-level command.
     assert!(hello.contains("\"command\":\"test-pattern\""), "{hello}");
     let player = t.wait_for("\"player\"");
     assert!(player.contains("\"url\":\"http://127.0.0.1:"), "{player}");
@@ -226,13 +221,7 @@ fn stop_command_ends_the_session_cleanly() {
     transcript(
         "test-pattern-stopped",
         &[
-            "test-pattern",
-            "--to",
-            "browser",
-            "--port",
-            "0",
-            "--size",
-            "320x240",
+            "debug", "pattern", "--to", "browser", "--port", "0", "--size", "320x240",
         ],
         &[seen, rest.clone()].concat(),
         code,
@@ -250,13 +239,7 @@ fn stdin_eof_is_the_watchdog() {
     let mut t = Tvpipe::spawn(
         "eof",
         &[
-            "test-pattern",
-            "--to",
-            "browser",
-            "--port",
-            "0",
-            "--size",
-            "320x240",
+            "debug", "pattern", "--to", "browser", "--port", "0", "--size", "320x240",
         ],
     );
     t.wait_for("\"started\"");
@@ -274,7 +257,8 @@ fn stop_while_waiting_for_a_viewer() {
     let mut t = Tvpipe::spawn(
         "wait",
         &[
-            "test-pattern",
+            "debug",
+            "pattern",
             "--to",
             "browser",
             "--port",
@@ -370,13 +354,7 @@ fn malformed_stdin_is_an_error() {
     let mut t = Tvpipe::spawn(
         "malformed",
         &[
-            "test-pattern",
-            "--to",
-            "browser",
-            "--port",
-            "0",
-            "--size",
-            "320x240",
+            "debug", "pattern", "--to", "browser", "--port", "0", "--size", "320x240",
         ],
     );
     t.wait_for("\"started\"");
@@ -390,7 +368,7 @@ fn malformed_stdin_is_an_error() {
 #[test]
 fn qr_rows_and_svg_on_stdout() {
     let out = Command::new(env!("CARGO_BIN_EXE_tvpipe"))
-        .args(["qr", "--rows", "tvpipe"])
+        .args(["debug", "qr", "--rows", "tvpipe"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -402,18 +380,18 @@ fn qr_rows_and_svg_on_stdout() {
         .all(|r| r.len() == 21 && r.bytes().all(|b| b == b'0' || b == b'1')));
     assert!(rows[0].starts_with("1111111"));
     let out = Command::new(env!("CARGO_BIN_EXE_tvpipe"))
-        .args(["qr", "--svg", "tvpipe"])
+        .args(["debug", "qr", "--svg", "tvpipe"])
         .output()
         .unwrap();
     assert!(String::from_utf8(out.stdout).unwrap().starts_with("<svg "));
     // Too long for any QR code: an error, not a panic.
     let out = Command::new(env!("CARGO_BIN_EXE_tvpipe"))
-        .args(["qr", "--rows", &"x".repeat(3000)])
+        .args(["debug", "qr", "--rows", &"x".repeat(3000)])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     // stdout belongs to events with --machine.
-    let mut t = Tvpipe::spawn("qr", &["qr", "--rows", "tvpipe"]);
+    let mut t = Tvpipe::spawn("qr", &["debug", "qr", "--rows", "tvpipe"]);
     t.close_stdin();
     let (code, rest) = t.finish();
     assert_eq!(code, 1);

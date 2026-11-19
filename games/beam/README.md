@@ -9,7 +9,7 @@ second canvas to the same TVs) or as a page tvpipe's own browser
 captures (`tv.html`, the tab path). Plain JavaScript, no build:
 
 ```sh
-tvpipe playshare games/beam
+tvpipe game play games/beam
 ```
 
 `node games/beam/measure.ts [--secs N] [--only NAME,…] [--headed]`

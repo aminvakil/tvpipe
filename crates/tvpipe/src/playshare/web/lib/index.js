@@ -1,5 +1,5 @@
 /**
- * @tvpipe/party: party games for `tvpipe playshare`. The game's host page
+ * @tvpipe/party: party games for `tvpipe game play`. The game's host page
  * keeps the room (players, keys, views, actions) with {@link Party} and
  * talks to tvpipe with {@link Tvpipe}; phones and the TV page use
  * {@link PartyClient}. tvpipe serves these modules at `/_tvpipe/lib/`.

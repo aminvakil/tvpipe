@@ -1,5 +1,5 @@
 /**
- * The local API of `tvpipe playshare` (docs/playshare-design.md §5): the
+ * The local API of `tvpipe game play` (docs/playshare-design.md §5): the
  * launcher and the host page talk to tvpipe with it. One WebSocket
  * (`/_tvpipe/api`, the session cookie or `?t=TOKEN`): calls, events, and
  * the relay of the phones' connections once the host attaches.

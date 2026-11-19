@@ -1,6 +1,6 @@
 /**
  * Measures beam's two paths (not part of any test suite; Node for the
- * harness only): `tvpipe playshare games/beam` to the `browser` receiver,
+ * harness only): `tvpipe game play games/beam` to the `browser` receiver,
  * the player page in a second headless Chrome reading the clock row of
  * every picture it shows (glass-to-glass latency including the player's
  * playout delay, and the frames that really arrive), CPU time of tvpipe
@@ -240,7 +240,7 @@ function pct(xs: number[], p: number): number {
 }
 
 async function measure(run: Run): Promise<Record<string, unknown>> {
-  const tv = spawn(tvpipeBin, [process.env["BEAM_DEBUG"] ? "--debug" : "-v", "playshare", `${repo}games/beam`, "--window", "none", "--no-tunnel"], { stdio: ["ignore", "pipe", "pipe"] });
+  const tv = spawn(tvpipeBin, [process.env["BEAM_DEBUG"] ? "--debug" : "-v", "game", "play", `${repo}games/beam`, "--window", "none", "--no-tunnel"], { stdio: ["ignore", "pipe", "pipe"] });
   const lines: string[] = [];
   createInterface({ input: tv.stderr! }).on("line", (l) => lines.push(l));
   const start = await new Promise<string>((ok) => createInterface({ input: tv.stdout! }).once("line", ok));

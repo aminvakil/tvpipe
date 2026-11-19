@@ -1,4 +1,4 @@
-//! `tvpipe playshare`: web games served by tvpipe
+//! `tvpipe game play`: web games served by tvpipe
 //! (docs/playshare-design.md). A bundle (a folder or a zip with
 //! `tvpipe.json`) is served on two listeners; the game's host page runs
 //! in a window of tvpipe's own browser and talks to tvpipe over a local
@@ -13,7 +13,7 @@
 //! - [`backend`]: discovery, pairing, casting, surfaces (fakes in tests).
 //! - [`window`]: the app window.
 //! - [`web`]: the library and the launcher, embedded.
-//! - [`check`], [`scan`], [`smoke`], [`tool`]: `tvpipe bundle` (checks,
+//! - [`check`], [`scan`], [`smoke`], [`tool`]: `tvpipe game pack`/`check`/`new` (checks,
 //!   packing, a run in a headless browser, the starter template).
 
 pub mod backend;
@@ -63,7 +63,7 @@ pub enum TunnelChoice {
     Off,
 }
 
-/// `tvpipe playshare` (the CLI's options).
+/// `tvpipe game play` (the CLI's options).
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     /// The bundle: a folder or a `.zip`.

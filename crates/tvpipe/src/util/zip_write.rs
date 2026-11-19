@@ -1,4 +1,4 @@
-//! Writing zip archives (`tvpipe bundle`): deterministic ones. Entries
+//! Writing zip archives (`tvpipe game pack`): deterministic ones. Entries
 //! are sorted by name, every timestamp is 1980-01-01 00:00, every file
 //! is `rw-r--r--`, each entry is deflated ([`super::deflate`]) or stored
 //! when that is not smaller; no extra fields, comments or data

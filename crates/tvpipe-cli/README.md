@@ -9,7 +9,7 @@ or a game's frames on stdin.
 cargo install tvpipe-cli      # installs `tvpipe`
 tvpipe discover
 tvpipe play movie.mp4 --to "Living Room"
-tvpipe playshare ./my-game    # a party game written as a web app
+tvpipe game play ./my-game    # a party game written as a web app
 ```
 
 Release binaries and installers: <https://mitsuhiko.github.io/tvpipe/>.

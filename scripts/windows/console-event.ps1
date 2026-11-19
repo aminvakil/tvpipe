@@ -9,7 +9,7 @@
 #
 #   prlctl exec "Windows 11" --current-user powershell -NoProfile
 #     -ExecutionPolicy Bypass -File Y:\...\scripts\windows\console-event.ps1
-#     -Secs 6 -Event 0 -TvArgs "test-pattern --to cast:10.211.55.2:8011"
+#     -Secs 6 -Event 0 -TvArgs "debug pattern --to cast:10.211.55.2:8011"
 #
 # (prlctl splits arguments at spaces; wrap the call in a .cmd file when
 # -TvArgs has several words.)

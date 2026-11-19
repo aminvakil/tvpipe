@@ -29,7 +29,7 @@ language (665 in 17 structures in English, 698 in 18 in German). A room
 deals no prompt twice until it dealt them all, game after game, and a
 round of up to 8 players gets 8 kinds of prompt.
 
-It is a web app for [`tvpipe playshare`](../../docs/playshare-design.md):
+It is a web app for [`tvpipe game play`](../../docs/playshare-design.md):
 tvpipe serves it, the game runs in its host page (a window on the
 computer), the TV page is cast to AirPlay and Chromecast receivers, and
 phones join with the QR code.
@@ -50,8 +50,8 @@ phones join with the QR code.
 cargo build --release -p tvpipe-cli         # tvpipe (or a release build of it)
 (cd npm/party && npm ci && npm run build)
 cd games/drawbluff && npm install && npm run build
-../../target/release/tvpipe playshare .     # or: tvpipe playshare games/drawbluff
-npm run zip                                 # drawbluff.zip: tvpipe playshare drawbluff.zip
+../../target/release/tvpipe game play .     # or: tvpipe game play games/drawbluff
+npm run zip                                 # drawbluff.zip: tvpipe game play drawbluff.zip
 ```
 
 tvpipe opens a window with its launcher: pick the TVs (or "A browser tab
@@ -65,7 +65,7 @@ from tvpipe's own browser showing the TV page (the default), or, with
 **TV picture: drawn here** in Chrome 157+, from the TV page drawn into a
 canvas in the window (HTML-in-Canvas) and streamed as a surface: no
 second browser, but the window must stay visible (docs/playshare-design.md
-§17). Closing the window ends it all. `tvpipe playshare --help`: tunnels (`--tunnel=opentunnel`,
+§17). Closing the window ends it all. `tvpipe game play --help`: tunnels (`--tunnel=opentunnel`,
 `--no-tunnel`), the LAN (`--lan`), `--window`.
 
 ## Tests

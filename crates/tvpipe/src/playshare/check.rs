@@ -1,4 +1,4 @@
-//! `tvpipe bundle`: checks a game (a folder or a zip) the way playshare
+//! `tvpipe game check` and `game pack`: checks a game (a folder or a zip) the way playshare
 //! will load and serve it, and packs a folder into a deterministic zip
 //! (docs/games.md).
 //!
@@ -19,7 +19,7 @@
 //! - `@tvpipe/party`: host pages load the library (`/_tvpipe/lib/`),
 //!   phone and TV pages its client; copies bundled with the game.
 //!
-//! Finally the bundle is opened the way `tvpipe playshare` opens it.
+//! Finally the bundle is opened the way `tvpipe game play` opens it.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -293,7 +293,7 @@ pub fn check(path: &Path) -> Result<Checked> {
     // Last: what playshare itself says, if nothing above explains it.
     if c.errors() == 0 {
         if let Err(e) = Bundle::open(path) {
-            c.error("", format!("tvpipe playshare refuses it: {}", e.message()));
+            c.error("", format!("tvpipe game play refuses it: {}", e.message()));
         }
     }
     sort(&mut c.problems);
@@ -411,7 +411,7 @@ fn gather_folder(path: &Path, c: &mut Checked) -> Result<()> {
             c.error(
                 "",
                 format!(
-                    "no {MANIFEST} in {}: a game's folder has one at its top (tvpipe bundle --init DIR makes a starter)",
+                    "no {MANIFEST} in {}: a game's folder has one at its top (tvpipe game new DIR makes a starter)",
                     path.display()
                 ),
             );
@@ -598,7 +598,7 @@ fn gather_zip(data: &[u8], c: &mut Checked) {
             let msg = e.message().to_owned();
             c.error(
                 "",
-                format!("{msg} (tvpipe bundle DIR writes zips playshare reads)"),
+                format!("{msg} (tvpipe game pack DIR writes zips tvpipe reads)"),
             );
             return;
         }
@@ -670,12 +670,12 @@ fn gather_zip(data: &[u8], c: &mut Checked) {
                 });
                 let hint = match deeper {
                     _ if tvpipe_top.is_some() => format!(
-                        " ({}/ has it, but the archive has more at its top: {}; build the zip with tvpipe bundle DIR)",
+                        " ({}/ has it, but the archive has more at its top: {}; build the zip with tvpipe game pack DIR)",
                         tvpipe_top.unwrap_or(""),
                         tops.iter().filter(|t| Some(**t) != tvpipe_top).copied().collect::<Vec<_>>().join(", ")
                     ),
                     Some(d) => format!(
-                        " ({d} is deeper: zip the game's folder itself, or use tvpipe bundle DIR)"
+                        " ({d} is deeper: zip the game's folder itself, or use tvpipe game pack DIR)"
                     ),
                     None => String::new(),
                 };
@@ -690,7 +690,7 @@ fn gather_zip(data: &[u8], c: &mut Checked) {
     if macosx {
         c.warn(
             "__MACOSX/",
-            "Finder's resource forks: harmless, but tvpipe bundle DIR makes a clean zip",
+            "Finder's resource forks: harmless, but tvpipe game pack DIR makes a clean zip",
         );
     }
     let mtext = ok
@@ -732,7 +732,7 @@ fn gather_zip(data: &[u8], c: &mut Checked) {
     if outside > 0 {
         c.warn(
             "",
-            format!("{outside} files outside \"root\" {:?}: never served (left out of tvpipe bundle's zips)", m.root),
+            format!("{outside} files outside \"root\" {:?}: never served (left out of tvpipe game pack's zips)", m.root),
         );
     }
     if c.files.is_empty() {

@@ -26,7 +26,7 @@ function stub(devices: unknown[]) {
   return stubBinary(`
     state.calls = (state.calls || []).concat([args]);
     save();
-    const cmd = args[0];
+    const cmd = args[0] === "debug" ? "debug " + args[1] : args[0];
     if (cmd === "discover") {
       emit({ type: "devices", devices: ${JSON.stringify(devices)} });
       emit({ type: "end", reason: "done" });
@@ -44,7 +44,7 @@ function stub(devices: unknown[]) {
       emit({ type: "error", kind: "auth", message: "wrong PIN" });
       return finish(1);
     }
-    if (cmd === "play" || cmd === "test-pattern") {
+    if (cmd === "play" || cmd === "debug pattern") {
       const to = args[args.indexOf("--to") + 1];
       if (!state.paired) {
         emit({ type: "receiver", name: to, protocol: "airplay", state: "failed", error: "needs pairing", code: "pairing-required" });
@@ -165,8 +165,8 @@ test("a session pairs on demand with onPin, then starts", { skip: !unix }, async
   const end = await s.stop();
   assert.equal(end.reason, "stopped");
   assert.deepEqual(
-    calls(dir).map((c) => c[0]),
-    ["test-pattern", "pair", "test-pattern"],
+    calls(dir).map((c) => (c[0] === "debug" ? `debug ${c[1]}` : c[0])),
+    ["debug pattern", "pair", "debug pattern"],
   );
 });
 

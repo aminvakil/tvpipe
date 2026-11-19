@@ -1,4 +1,4 @@
-//! What a game's files load (`tvpipe bundle`'s checks): the references
+//! What a game's files load (`tvpipe game check`'s checks): the references
 //! in HTML (`src`, `href`, `srcset`, `poster`, inline scripts and
 //! styles, import maps), in CSS (`url()`, `@import`) and in JavaScript
 //! modules (static `import`/`export … from`, `import("…")` with a

@@ -1,4 +1,4 @@
-//! `tvpipe bundle`'s checks, one rule at a time, on games written into
+//! `tvpipe game check`'s checks, one rule at a time, on games written into
 //! scratch folders (and zips made from them).
 
 use std::path::{Path, PathBuf};
@@ -220,7 +220,7 @@ fn root_is_packed_without_the_rest() {
 #[test]
 fn manifest_rules() {
     let c = check(&game("no-manifest", &[("tvpipe.json", None)])).unwrap();
-    only(&c, Level::Error, &["no tvpipe.json", "--init"]);
+    only(&c, Level::Error, &["no tvpipe.json", "game new"]);
     let c = check(&game("bad-json", &[("tvpipe.json", Some("{"))])).unwrap();
     only(&c, Level::Error, &["tvpipe.json: not JSON"]);
     let c = check(&game(

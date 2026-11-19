@@ -1,5 +1,5 @@
 /**
- * Builds the bundle `tvpipe playshare` serves (`dist/`, the manifest's
+ * Builds the bundle `tvpipe game play` serves (`dist/`, the manifest's
  * `root`): the TypeScript (`game/`, `host/`) compiled by tsc, imports of
  * `@tvpipe/party` pointed at tvpipe's copy (`/_tvpipe/lib/`), and the
  * pages, styles, fonts and prompts copied as they are.

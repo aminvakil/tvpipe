@@ -547,7 +547,7 @@ pub struct LaunchOptions {
     pub visible: bool,
     /// `tvpipe screen`: a normal window whose page captures the desktop.
     pub screen: Option<ScreenLaunch>,
-    /// `tvpipe playshare`: an app window (no tabs, no toolbar) showing
+    /// `tvpipe game play`: an app window (no tabs, no toolbar) showing
     /// this URL, `viewport` its window size (Chromium-based only).
     pub app: Option<String>,
 }
@@ -663,7 +663,7 @@ pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
     a
 }
 
-/// The command line of `tvpipe playshare`'s window: an app window on
+/// The command line of `tvpipe game play`'s window: an app window on
 /// `url` (headless only for tests).
 fn app_args(opts: &LaunchOptions, url: &str, dir: &Path) -> Vec<OsString> {
     let mut dir_arg = OsString::from("--user-data-dir=");

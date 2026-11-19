@@ -1,6 +1,6 @@
 # @tvpipe/party
 
-Party games for [`tvpipe playshare`](../../docs/playshare-design.md): the
+Party games for [`tvpipe game play`](../../docs/playshare-design.md): the
 TV shows the game, everyone plays with the browser on their phone. A game
 is a web app (a folder or a zip with `tvpipe.json`); tvpipe serves it,
 opens its host page in a window, casts its TV page to AirPlay and
@@ -21,7 +21,7 @@ This package is what runs in those pages:
 tvpipe serves the built modules at `/_tvpipe/lib/` (`index.js`,
 `client.js`, …), so pages import them without a bundler. The npm package
 has the same modules with types, for type checking and for tests in Node
-(≥ 22). No dependencies. Building, checking (`tvpipe bundle`) and
+(≥ 22). No dependencies. Building, checking (`tvpipe game check`) and
 running a game: [`docs/games.md`](../../docs/games.md). The protocol
 between phones and the host:
 [`docs/party-protocol.md`](../../docs/party-protocol.md). A whole game:
@@ -166,7 +166,7 @@ await phone.join("Ann");
 VIP, resumes, replayed actions, `collect`, late joins, limits, busy
 phones, the protocol vectors in `test/vectors/`), and, when tvpipe is
 built (`cargo build -p tvpipe-cli` or `TVPIPE_BINARY`), the real
-`tvpipe playshare` with Node as the host page and fake phones.
+`tvpipe game play` with Node as the host page and fake phones.
 `npm run build` also copies the browser modules into the tvpipe crate
 (`npm run check` fails when they are not up to date).
 

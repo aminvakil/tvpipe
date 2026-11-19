@@ -393,7 +393,7 @@ export function play(input: Input, options: PlayOptions = {}): Promise<Session> 
 export function testPattern(options: PlayOptions = {}): Promise<Session> {
   return start(
     options,
-    (to) => ["test-pattern", ...commonArgs(to, options), ...playArgs(options)],
+    (to) => ["debug", "pattern", ...commonArgs(to, options), ...playArgs(options)],
     (proc) => new Session(proc, options),
     isStarted,
   );

@@ -164,11 +164,11 @@ const code = await qr(t.url);                    // code.size, code.rows, code.d
 await t.stop();
 ```
 
-`tunnel()` puts any server on 127.0.0.1 on a public link (`tvpipe tunnel
-PORT`). The server decides who may do what: requests arrive with `t.host`
+`tunnel()` puts any server on 127.0.0.1 on a public link (`tvpipe debug
+tunnel PORT`). The server decides who may do what: requests arrive with `t.host`
 as `Host`, WebSockets with `Origin: https://${t.host}`. `qr()` returns the
 QR code of a text as data, for a page or a frame of your own.
-Party games are web apps for `tvpipe playshare` ([`@tvpipe/party`](../party/README.md)).
+Party games are web apps for `tvpipe game play` ([`@tvpipe/party`](../party/README.md)).
 
 ## Apple TV pairing
 

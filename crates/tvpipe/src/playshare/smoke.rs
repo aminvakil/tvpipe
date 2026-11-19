@@ -1,4 +1,4 @@
-//! `tvpipe bundle --smoke`: runs a game the way `tvpipe playshare` does,
+//! `tvpipe game check --smoke`: runs a game the way `tvpipe game play` does,
 //! without TVs or a tunnel, and watches its pages in a headless browser
 //! of tvpipe's own (Chromium-based, over DevTools):
 //!

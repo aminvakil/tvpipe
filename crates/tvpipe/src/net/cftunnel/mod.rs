@@ -762,7 +762,7 @@ impl Tunnel {
 
     /// A quick tunnel with the last one's credentials when they still
     /// work, else a new one whose credentials are kept in `file` for next
-    /// time (`tvpipe playshare`, which starts often:
+    /// time (`tvpipe game play`, which starts often:
     /// docs/playshare-design.md §11). A quick tunnel outlives its
     /// connector (measured: back with the same name after 120 s,
     /// `live_quick_tunnel_reuse`); one Cloudflare deleted fails to

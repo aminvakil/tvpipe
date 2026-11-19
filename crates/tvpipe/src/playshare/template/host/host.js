@@ -11,7 +11,7 @@ try {
   tvpipe = await Tvpipe.connect(); // tvpipe's API (the window's session)
 } catch (err) {
   $("error").hidden = false;
-  $("error").textContent = `${err.message}. Start the game with tvpipe playshare.`;
+  $("error").textContent = `${err.message}. Start the game with tvpipe game play.`;
   throw err;
 }
 const party = await tvpipe.party(); // the room, its join link and QR code

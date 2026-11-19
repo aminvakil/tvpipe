@@ -176,17 +176,18 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
         }
         Command::Tunnel { port, provider } => tunnel(port, provider, &ctx),
         Command::Playshare(_) if global.machine => Err(error::Error::usage(
-            "playshare is for people: run it without --machine",
+            "game play is for people: run it without --machine",
         )),
         Command::Playshare(o) => {
             tvpipe::__cli::playshare::run(&o, ctx.stop.clone(), ctx.storage.clone())
         }
-        Command::Bundle(_) if global.machine => Err(error::Error::usage(
-            "bundle prints a report: run it without --machine",
-        )),
-        Command::Bundle(o) => tvpipe::__cli::playshare::bundle(&o, ctx.stop.clone()),
+        Command::GameTool(o) if global.machine => Err(error::Error::usage(format!(
+            "{} prints a report: run it without --machine",
+            o.action.command()
+        ))),
+        Command::GameTool(o) => tvpipe::__cli::playshare::game_tool(&o, ctx.stop.clone()),
         Command::Qr { .. } if global.machine => Err(error::Error::usage(
-            "qr writes the code to stdout: run it without --machine",
+            "debug qr writes the code to stdout: run it without --machine",
         )),
         Command::Qr { text, format } => {
             let max = match format {
@@ -195,7 +196,7 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
             };
             let Some(qr) = tvpipe::__cli::qr::encode(text.as_bytes(), max) else {
                 return Err(error::Error::usage(format!(
-                    "qr: {} bytes do not fit a QR code{}",
+                    "debug qr: {} bytes do not fit a QR code{}",
                     text.len(),
                     if format == QrFormat::Terminal {
                         " for the terminal (try --svg)"
@@ -229,7 +230,7 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
     }
 }
 
-/// `tunnel PORT`: a public link for 127.0.0.1:PORT until a stop request
+/// `debug tunnel PORT`: a public link for 127.0.0.1:PORT until a stop request
 /// (Ctrl-C, `q`, the machine interface's `stop` or stdin closing).
 fn tunnel(port: u16, provider: Provider, ctx: &tvpipe::__cli::Ctx) -> error::Result<()> {
     use std::net::{Ipv4Addr, SocketAddr, TcpStream};

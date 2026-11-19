@@ -16,25 +16,39 @@ enum Top {
     Pair,
     Unpair,
     Play,
-    TestPattern,
     Preview,
     Share,
     Screen,
-    Tunnel,
-    Qr,
-    Playshare,
-    Bundle,
-    DebugPipeline,
+    Game,
+    DebugGroup,
 }
 
+/// `tvpipe debug …`: tools for testing.
 #[derive(Copy, Clone)]
-enum BundleArg {
+enum DebugCmd {
+    Pattern,
+    Pipeline,
+    Tunnel,
+    Qr,
+}
+
+/// `tvpipe game …`: party games (docs/games.md).
+#[derive(Copy, Clone)]
+enum GameCmd {
+    Play,
+    Pack,
+    Check,
+    New,
+}
+
+/// The options of `game pack`, `game check` and `game new` (each spec
+/// declares the ones it takes).
+#[derive(Copy, Clone)]
+enum GameToolArg {
     Path,
     Out,
-    Check,
     Smoke,
     Strict,
-    Init,
     Browser,
 }
 
@@ -177,23 +191,53 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
             .help("Print protocol traces (very verbose)"),
         Opt::new(Top::Machine)
             .long("machine")
-            .help("For programs: JSON events on stdout, commands on stdin (docs/machine.md)"),
+            .help("JSON events on stdout, commands on stdin (docs/machine.md)"),
     ])
     .commands(&[
         Cmd::new(Top::Discover, &DISCOVER),
         Cmd::new(Top::Pair, &PAIR),
         Cmd::new(Top::Unpair, &UNPAIR),
         Cmd::new(Top::Play, &PLAY),
-        Cmd::new(Top::TestPattern, &TEST_PATTERN),
         Cmd::new(Top::Preview, &PREVIEW),
         Cmd::new(Top::Share, &SHARE),
         Cmd::new(Top::Screen, &SCREEN),
-        Cmd::new(Top::Tunnel, &TUNNEL),
-        Cmd::new(Top::Qr, &QR),
-        Cmd::new(Top::Playshare, &PLAYSHARE),
-        Cmd::new(Top::Bundle, &BUNDLE),
-        Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
+        Cmd::new(Top::Game, &GAME),
+        Cmd::new(Top::DebugGroup, &DEBUG),
     ]);
+
+static DEBUG: Cli<DebugCmd> = Cli::new("debug")
+    .about("Tools for testing: a test pattern, the pipeline, a tunnel, QR codes")
+    .usage("COMMAND [OPTIONS]")
+    .commands(&[
+        Cmd::new(DebugCmd::Pattern, &PATTERN),
+        Cmd::new(DebugCmd::Pipeline, &PIPELINE),
+        Cmd::new(DebugCmd::Tunnel, &TUNNEL),
+        Cmd::new(DebugCmd::Qr, &QR),
+    ]);
+
+static GAME: Cli<GameCmd> = Cli::new("game")
+    .about("Play and make party games: TV, host window, phones")
+    .usage("COMMAND [OPTIONS]")
+    .commands(&[
+        Cmd::new(GameCmd::Play, &GAME_PLAY),
+        Cmd::new(GameCmd::Pack, &GAME_PACK),
+        Cmd::new(GameCmd::Check, &GAME_CHECK),
+        Cmd::new(GameCmd::New, &GAME_NEW),
+    ])
+    .after_help("A game is a web app: a folder or a .zip with tvpipe.json. docs/games.md");
+
+/// The top-level commands that moved into a group, and where to.
+const MOVED: &[(&str, &str)] = &[
+    ("test-pattern", "tvpipe debug pattern"),
+    ("debug-pipeline", "tvpipe debug pipeline"),
+    ("tunnel", "tvpipe debug tunnel PORT"),
+    ("qr", "tvpipe debug qr TEXT"),
+    ("playshare", "tvpipe game play PATH"),
+    (
+        "bundle",
+        "tvpipe game pack DIR, game check PATH or game new DIR",
+    ),
+];
 
 static DISCOVER: Cli<DiscoverArg> = Cli::new("discover")
     .about("List AirPlay and Cast receivers on the network")
@@ -222,7 +266,7 @@ static UNPAIR: Cli<UnpairArg> = Cli::new("unpair")
     .args(&[Pos::new(UnpairArg::Target, "NAME|ADDR").help("Receiver name or address")]);
 
 static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
-    .about("Put a server on this computer (127.0.0.1:PORT) on a public https link")
+    .about("Put a server on 127.0.0.1:PORT on a public https link")
     .usage("PORT [--tunnel=PROVIDER] [--no-qr]")
     .opts(&[
         tunnel(
@@ -239,8 +283,8 @@ static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
          closing). docs/tunnels.md",
     );
 
-static PLAYSHARE: Cli<PlayshareArg> = Cli::new("playshare")
-    .about("Play a web game: its host page in a window here, its TV page on TVs, phones join with a QR code")
+static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
+    .about("Play a game: the host window here, the TV page on TVs, phones join")
     .usage("PATH [--tunnel[=PROVIDER] | --no-tunnel] [--lan[=IP]] [--window=MODE]")
     .opts(&[
         tunnel(
@@ -274,41 +318,73 @@ static PLAYSHARE: Cli<PlayshareArg> = Cli::new("playshare")
          docs/playshare-design.md",
     );
 
-static BUNDLE: Cli<BundleArg> = Cli::new("bundle")
-    .about("Check a web game for playshare and pack it into a zip")
-    .usage("DIR [-o FILE] [--smoke] | --check PATH [--smoke] | --init DIR")
+const fn game_smoke(id: GameToolArg) -> Opt<GameToolArg> {
+    Opt::new(id).long("smoke").help(
+        "Also run the game once without TVs: its pages in a headless browser, a fake phone joins",
+    )
+}
+
+const fn game_strict(id: GameToolArg) -> Opt<GameToolArg> {
+    Opt::new(id)
+        .long("strict")
+        .help("Warnings fail too (for CI)")
+}
+
+const fn game_browser(id: GameToolArg) -> Opt<GameToolArg> {
+    Opt::new(id)
+        .long("browser")
+        .value("PATH")
+        .value_hint(ValueHint::ExecutablePath)
+        .help("The Chromium-based browser for --smoke (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)")
+}
+
+const GAME_CHECKS: &str =
+    "Checks what tvpipe needs: tvpipe.json, the pages and every file they load \
+     (HTML, CSS, JS imports), names that break in a zip or on other systems, the @tvpipe/party \
+     library and version, files from the internet. Exits 1 on errors. docs/games.md";
+
+static GAME_PACK: Cli<GameToolArg> = Cli::new("pack")
+    .about("Check a game's folder and pack it into a zip")
+    .usage("DIR [-o FILE] [--smoke] [--strict]")
     .opts(&[
-        Opt::new(BundleArg::Out)
+        Opt::new(GameToolArg::Out)
             .short('o')
             .long("output")
             .value("FILE")
             .value_hint(ValueHint::FilePath)
             .help("The zip to write (default: NAME.zip here, NAME from tvpipe.json)"),
-        Opt::new(BundleArg::Check)
-            .long("check")
-            .help("Only check (a folder or a .zip); write nothing"),
-        Opt::new(BundleArg::Smoke)
-            .long("smoke")
-            .help("Also run the game once without TVs: its pages in a headless browser, a fake phone joins"),
-        Opt::new(BundleArg::Strict)
-            .long("strict")
-            .help("Warnings fail too (for CI)"),
-        Opt::new(BundleArg::Init)
-            .long("init")
-            .help("Make a starter game in DIR (a new or empty folder)"),
-        Opt::new(BundleArg::Browser)
-            .long("browser")
-            .value("PATH")
-            .value_hint(ValueHint::ExecutablePath)
-            .help("The Chromium-based browser for --smoke (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave)"),
+        game_smoke(GameToolArg::Smoke),
+        game_strict(GameToolArg::Strict),
+        game_browser(GameToolArg::Browser),
     ])
-    .args(&[Pos::new(BundleArg::Path, "PATH").help("The game: a folder with tvpipe.json, or a .zip to check")])
+    .args(&[Pos::new(GameToolArg::Path, "DIR")
+        .value_hint(ValueHint::DirPath)
+        .help("The game's folder (with tvpipe.json)")])
     .after_help(
-        "Checks what playshare needs: tvpipe.json, the pages and every file they load (HTML, CSS, \
-         JS imports), names that break in a zip or on other systems, the @tvpipe/party library and \
-         version, files from the internet. The zip is the same for the same files (sorted, fixed \
-         times). Exits 1 on errors. docs/games.md",
+        "The zip is the same for the same files (sorted, fixed times); it is checked first: \
+         nothing is written when the game has errors. 'tvpipe game check --help' says what is \
+         checked.",
     );
+
+static GAME_CHECK: Cli<GameToolArg> = Cli::new("check")
+    .about("Check a game (a folder or a .zip); write nothing")
+    .usage("PATH [--smoke] [--strict]")
+    .opts(&[
+        game_smoke(GameToolArg::Smoke),
+        game_strict(GameToolArg::Strict),
+        game_browser(GameToolArg::Browser),
+    ])
+    .args(&[Pos::new(GameToolArg::Path, "PATH")
+        .value_hint(ValueHint::FilePath)
+        .help("The game: a folder with tvpipe.json, or a .zip")])
+    .after_help(GAME_CHECKS);
+
+static GAME_NEW: Cli<GameToolArg> = Cli::new("new")
+    .about("Make a starter game in a new folder")
+    .args(&[Pos::new(GameToolArg::Path, "DIR")
+        .value_hint(ValueHint::DirPath)
+        .help("The folder to make (new, or empty)")])
+    .after_help("Then: tvpipe game play DIR, edit a file, reload the page. docs/games.md");
 
 static QR: Cli<QrArg> = Cli::new("qr")
     .about("Print a QR code of a text or link")
@@ -348,7 +424,7 @@ fn reconnect_secs<A: Copy + 'static>(p: &mut Parser<A>) -> Result<Duration, Erro
 }
 
 // The `--to browser` player page's options, the same in every subcommand
-// that streams (`play`, `test-pattern`, `preview`, `share`).
+// that streams (`play`, `debug pattern`, `preview`, `share`).
 
 const fn player_port<A>(id: A) -> Opt<A> {
     Opt::new(id)
@@ -548,8 +624,8 @@ static PLAY: Cli<PlayArg> = Cli::new("play")
          tvpipe play --to TV -- -f avfoundation -i 1:0",
     );
 
-static TEST_PATTERN: Cli<PlayArg> = Cli::new("test-pattern")
-    .about("Stream a test pattern with a burned-in wallclock for latency measurement")
+static PATTERN: Cli<PlayArg> = Cli::new("pattern")
+    .about("Stream a test pattern with a clock in it, to measure latency")
     .opts(PLAY_OPTS)
     .after_help(
         "The pattern (UTC clock in ms, frame counter, a beep and a flash every second) is \
@@ -558,7 +634,7 @@ static TEST_PATTERN: Cli<PlayArg> = Cli::new("test-pattern")
     );
 
 static PREVIEW: Cli<PlayArg> = Cli::new("preview")
-    .about("Play a file, URL, capture device, raw game input or the test pattern in a browser tab")
+    .about("Play a source in a browser tab")
     .usage("[OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]")
     .opts(play_opts!())
     .args(&[Pos::new(PlayArg::Input, "INPUT")
@@ -573,7 +649,7 @@ static PREVIEW: Cli<PlayArg> = Cli::new("preview")
     );
 
 static SHARE: Cli<ShareArg> = Cli::new("share")
-    .about("Mirror a browser tab, window or screen, or a web page (URL) in a browser of tvpipe's own")
+    .about("Mirror a browser tab, window, screen or web page")
     .usage("[URL] --to NAME|ADDR [OPTIONS]")
     .opts(&[
         to(ShareArg::To),
@@ -718,7 +794,7 @@ static SCREEN: Cli<ScreenArg> = Cli::new("screen")
          ffmpeg instead: no sound on macOS and Windows, no --window on macOS.",
     );
 
-static DEBUG_PIPELINE: Cli<PipelineArg> = Cli::new("debug-pipeline")
+static PIPELINE: Cli<PipelineArg> = Cli::new("pipeline")
     .about("Run ffmpeg and the demuxer and print every frame")
     .usage("[OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)")
     .opts(&[
@@ -757,7 +833,12 @@ fn parse_from(args: &[&str]) -> Result<(Global, Command), Error> {
 
 fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
     let mut g = Global::default();
-    while let Some(arg) = p.param()? {
+    loop {
+        let old = p.peek_raw_arg().and_then(|a| a.to_str());
+        if let Some((old, new)) = MOVED.iter().find(|(name, _)| Some(*name) == old) {
+            return Err(p.error(format!("'{old}' moved: use {new}")));
+        }
+        let Some(arg) = p.param()? else { break };
         match arg {
             Top::Verbose => g.verbose = true,
             Top::Debug => g.debug = true,
@@ -768,10 +849,6 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
             Top::Play => {
                 let o = parse_play(p.subcommand(&PLAY), Mode::Play, &mut g)?;
                 return Ok((g, Command::Play(o)));
-            }
-            Top::TestPattern => {
-                let o = parse_play(p.subcommand(&TEST_PATTERN), Mode::TestPattern, &mut g)?;
-                return Ok((g, Command::TestPattern(o)));
             }
             Top::Preview => {
                 let o = parse_play(p.subcommand(&PREVIEW), Mode::Preview, &mut g)?;
@@ -785,17 +862,38 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                 let cmd = parse_screen(p.subcommand(&SCREEN), &mut g)?;
                 return Ok((g, cmd));
             }
-            Top::Tunnel => {
-                let cmd = parse_tunnel(p.subcommand(&TUNNEL), &mut g)?;
+            Top::Game => return Ok((g, parse_game(p.subcommand(&GAME))?)),
+            Top::DebugGroup => {
+                let cmd = parse_debug(p.subcommand(&DEBUG), &mut g)?;
                 return Ok((g, cmd));
             }
-            Top::Qr => return Ok((g, parse_qr(p.subcommand(&QR))?)),
-            Top::Playshare => return Ok((g, parse_playshare(p.subcommand(&PLAYSHARE))?)),
-            Top::Bundle => return Ok((g, parse_bundle(p.subcommand(&BUNDLE))?)),
-            Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
     Err(p.help())
+}
+
+fn parse_debug(mut p: Parser<DebugCmd>, g: &mut Global) -> Result<Command, Error> {
+    match p.param()? {
+        Some(DebugCmd::Pattern) => {
+            let o = parse_play(p.subcommand(&PATTERN), Mode::TestPattern, g)?;
+            Ok(Command::TestPattern(o))
+        }
+        Some(DebugCmd::Pipeline) => parse_pipeline(p.subcommand(&PIPELINE)),
+        Some(DebugCmd::Tunnel) => parse_tunnel(p.subcommand(&TUNNEL), g),
+        Some(DebugCmd::Qr) => parse_qr(p.subcommand(&QR)),
+        None => Err(p.help()),
+    }
+}
+
+fn parse_game(mut p: Parser<GameCmd>) -> Result<Command, Error> {
+    use tvpipe::__cli::playshare::ToolAction;
+    match p.param()? {
+        Some(GameCmd::Play) => parse_playshare(p.subcommand(&GAME_PLAY)),
+        Some(GameCmd::Pack) => parse_game_tool(p.subcommand(&GAME_PACK), ToolAction::Pack),
+        Some(GameCmd::Check) => parse_game_tool(p.subcommand(&GAME_CHECK), ToolAction::Check),
+        Some(GameCmd::New) => parse_game_tool(p.subcommand(&GAME_NEW), ToolAction::New),
+        None => Err(p.help()),
+    }
 }
 
 fn parse_discover(mut p: Parser<DiscoverArg>) -> Result<Command, Error> {
@@ -858,7 +956,7 @@ fn parse_tunnel(mut p: Parser<TunnelArg>, g: &mut Global) -> Result<Command, Err
         }
     }
     let Some(port) = port else {
-        return Err(p.error("tunnel needs the PORT of a server on 127.0.0.1"));
+        return Err(p.error("debug tunnel needs the PORT of a server on 127.0.0.1"));
     };
     Ok(Command::Tunnel { port, provider })
 }
@@ -913,37 +1011,43 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
         tunnel.unwrap_or_default()
     };
     let Some(path) = path else {
-        return Err(p.error("playshare needs the PATH of a game (a folder or a .zip)"));
+        return Err(p.error("game play needs the PATH of a game (a folder or a .zip)"));
     };
     o.path = path.into();
     Ok(Command::Playshare(o))
 }
 
-fn parse_bundle(mut p: Parser<BundleArg>) -> Result<Command, Error> {
-    let mut o = tvpipe::__cli::playshare::BundleOptions::default();
+fn parse_game_tool(
+    mut p: Parser<GameToolArg>,
+    action: tvpipe::__cli::playshare::ToolAction,
+) -> Result<Command, Error> {
+    let mut o = tvpipe::__cli::playshare::ToolOptions {
+        action,
+        ..Default::default()
+    };
     let mut path = None;
     while let Some(arg) = p.param()? {
         match arg {
-            BundleArg::Path => path = Some(p.value::<String>()?),
-            BundleArg::Out => o.out = Some(p.value::<String>()?.into()),
-            BundleArg::Check => o.check = true,
-            BundleArg::Smoke => o.smoke = true,
-            BundleArg::Strict => o.strict = true,
-            BundleArg::Init => o.init = true,
-            BundleArg::Browser => o.browser = Some(p.value::<String>()?.into()),
+            GameToolArg::Path => path = Some(p.value::<String>()?),
+            GameToolArg::Out => o.out = Some(p.value::<String>()?.into()),
+            GameToolArg::Smoke => o.smoke = true,
+            GameToolArg::Strict => o.strict = true,
+            GameToolArg::Browser => o.browser = Some(p.value::<String>()?.into()),
         }
     }
     let Some(path) = path else {
-        return Err(p.error("bundle needs the PATH of a game (a folder, or a .zip with --check)"));
+        return Err(p.error(format!(
+            "{} needs the {}",
+            action.command(),
+            match action {
+                tvpipe::__cli::playshare::ToolAction::Check =>
+                    "PATH of a game (a folder or a .zip)",
+                _ => "DIR of the game",
+            }
+        )));
     };
-    if o.init && (o.check || o.smoke || o.out.is_some()) {
-        return Err(p.error("--init makes a game: no --check, --smoke or -o with it"));
-    }
-    if o.check && o.out.is_some() {
-        return Err(p.error("--check writes nothing: no -o with it"));
-    }
     o.path = path.into();
-    Ok(Command::Bundle(o))
+    Ok(Command::GameTool(o))
 }
 
 fn parse_qr(mut p: Parser<QrArg>) -> Result<Command, Error> {
@@ -957,7 +1061,7 @@ fn parse_qr(mut p: Parser<QrArg>) -> Result<Command, Error> {
         }
     }
     let Some(text) = text else {
-        return Err(p.error("qr needs the TEXT to encode"));
+        return Err(p.error("debug qr needs the TEXT to encode"));
     };
     Ok(Command::Qr { text, format })
 }
@@ -1360,7 +1464,8 @@ mod tests {
 
     #[test]
     fn builtin_encoder() {
-        let (_, cmd) = parse_from(&["test-pattern", "--to", "tv", "--encoder", "builtin"]).unwrap();
+        let (_, cmd) =
+            parse_from(&["debug", "pattern", "--to", "tv", "--encoder", "builtin"]).unwrap();
         let Command::TestPattern(o) = cmd else {
             panic!()
         };
@@ -1370,7 +1475,8 @@ mod tests {
 
     #[test]
     fn tunnel_and_qr() {
-        let Ok((g, Command::Tunnel { port, provider })) = parse_from(&["tunnel", "8080"]) else {
+        let Ok((g, Command::Tunnel { port, provider })) = parse_from(&["debug", "tunnel", "8080"])
+        else {
             panic!()
         };
         assert_eq!(
@@ -1378,58 +1484,93 @@ mod tests {
             (8080, Provider::Cloudflare, false)
         );
         let Ok((g, Command::Tunnel { port, provider })) =
-            parse_from(&["tunnel", "--tunnel=opentunnel", "--no-qr", "9"])
+            parse_from(&["debug", "tunnel", "--tunnel=opentunnel", "--no-qr", "9"])
         else {
             panic!()
         };
         assert_eq!((port, provider, g.no_qr), (9, Provider::OpenTunnel, true));
         for bad in [
-            &["tunnel"][..],
-            &["tunnel", "0"],
-            &["tunnel", "70000"],
-            &["tunnel", "--tunnel=nope", "1"],
+            &["debug", "tunnel"][..],
+            &["debug", "tunnel", "0"],
+            &["debug", "tunnel", "70000"],
+            &["debug", "tunnel", "--tunnel=nope", "1"],
         ] {
             assert!(parse_from(bad).is_err(), "{bad:?}");
         }
-        let Ok((_, Command::Qr { text, format })) = parse_from(&["qr", "--svg", "hi"]) else {
+        let Ok((_, Command::Qr { text, format })) = parse_from(&["debug", "qr", "--svg", "hi"])
+        else {
             panic!()
         };
         assert_eq!((text.as_str(), format), ("hi", QrFormat::Svg));
-        let Ok((_, Command::Qr { format, .. })) = parse_from(&["qr", "hi"]) else {
+        let Ok((_, Command::Qr { format, .. })) = parse_from(&["debug", "qr", "hi"]) else {
             panic!()
         };
         assert_eq!(format, QrFormat::Terminal);
-        assert!(parse_from(&["qr"]).is_err());
+        assert!(parse_from(&["debug", "qr"]).is_err());
     }
 
     #[test]
-    fn bundle_options() {
-        let Ok((_, Command::Bundle(o))) =
-            parse_from(&["bundle", "games/x", "-o", "x.zip", "--smoke"])
+    fn game_tool_options() {
+        use tvpipe::__cli::playshare::ToolAction;
+        let Ok((_, Command::GameTool(o))) =
+            parse_from(&["game", "pack", "games/x", "-o", "x.zip", "--smoke"])
         else {
-            panic!("bundle");
+            panic!("game pack");
         };
+        assert_eq!(o.action, ToolAction::Pack);
         assert_eq!(o.path.to_str(), Some("games/x"));
         assert_eq!(o.out.as_deref().and_then(|p| p.to_str()), Some("x.zip"));
-        assert!(o.smoke && !o.check && !o.init && !o.strict);
-        let Ok((_, Command::Bundle(o))) = parse_from(&["bundle", "--check", "--strict", "g.zip"])
+        assert!(o.smoke && !o.strict);
+        let Ok((_, Command::GameTool(o))) = parse_from(&["game", "check", "--strict", "g.zip"])
         else {
-            panic!("bundle --check");
+            panic!("game check");
         };
-        assert!(o.check && o.strict);
+        assert_eq!(o.action, ToolAction::Check);
+        assert!(o.strict && !o.smoke);
+        let Ok((_, Command::GameTool(o))) = parse_from(&["game", "new", "quiz"]) else {
+            panic!("game new");
+        };
+        assert_eq!((o.action, o.path.to_str()), (ToolAction::New, Some("quiz")));
         for bad in [
-            &["bundle"][..],
-            &["bundle", "--init", "--smoke", "x"],
-            &["bundle", "--check", "-o", "y.zip", "x"],
+            &["game", "pack"][..],
+            &["game", "check"],
+            &["game", "new"],
+            &["game", "new", "--smoke", "x"],
+            &["game", "check", "-o", "y.zip", "x"],
+            &["game", "bundle", "x"],
         ] {
             assert!(parse_from(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// The old top-level names say where the command went.
+    #[test]
+    fn moved_commands() {
+        for (old, new) in [
+            ("test-pattern", "tvpipe debug pattern"),
+            ("debug-pipeline", "tvpipe debug pipeline"),
+            ("tunnel", "tvpipe debug tunnel"),
+            ("qr", "tvpipe debug qr"),
+            ("playshare", "tvpipe game play"),
+            ("bundle", "tvpipe game pack"),
+        ] {
+            let e = parse_from(&["-v", old, "x"]).unwrap_err().to_string();
+            assert!(e.contains("moved") && e.contains(new), "{old}: {e}");
+        }
+        let Ok((_, Command::DebugPipeline(_))) = parse_from(&["debug", "pipeline"]) else {
+            panic!("debug pipeline");
+        };
+        // The groups alone print their help.
+        for group in ["debug", "game"] {
+            let e = parse_from(&[group]).unwrap_err();
+            assert_eq!(e.kind(), argument::ErrorKind::Help, "{group}");
         }
     }
 
     #[test]
     fn playshare_options() {
         use tvpipe::__cli::playshare::{TunnelChoice, WindowMode};
-        let Ok((_, Command::Playshare(o))) = parse_from(&["playshare", "games/x"]) else {
+        let Ok((_, Command::Playshare(o))) = parse_from(&["game", "play", "games/x"]) else {
             panic!()
         };
         assert_eq!(o.path, std::path::PathBuf::from("games/x"));
@@ -1437,7 +1578,8 @@ mod tests {
         assert_eq!(o.window, WindowMode::App);
         assert_eq!(o.lan, None);
         let Ok((_, Command::Playshare(o))) = parse_from(&[
-            "playshare",
+            "game",
+            "play",
             "--tunnel=cloudflare",
             "--lan=192.168.1.5",
             "--window",
@@ -1452,17 +1594,17 @@ mod tests {
         assert_eq!(o.lan, Some(Some("192.168.1.5".parse().unwrap())));
         assert_eq!((o.window, o.port), (WindowMode::None, 8000));
         let Ok((_, Command::Playshare(o))) =
-            parse_from(&["playshare", "--no-tunnel", "--lan", "x"])
+            parse_from(&["game", "play", "--no-tunnel", "--lan", "x"])
         else {
             panic!()
         };
         assert_eq!((o.tunnel, o.lan), (TunnelChoice::Off, Some(None)));
         for bad in [
-            &["playshare"][..],
-            &["playshare", "--tunnel", "--no-tunnel", "x"],
-            &["playshare", "--tunnel=nope", "x"],
-            &["playshare", "--window", "tab", "x"],
-            &["playshare", "--lan=nope", "x"],
+            &["game", "play"][..],
+            &["game", "play", "--tunnel", "--no-tunnel", "x"],
+            &["game", "play", "--tunnel=nope", "x"],
+            &["game", "play", "--window", "tab", "x"],
+            &["game", "play", "--lan=nope", "x"],
         ] {
             assert!(parse_from(bad).is_err(), "{bad:?}");
         }
@@ -1708,7 +1850,7 @@ mod tests {
         ];
         for cmd in [
             &["play", "--to", "browser", "x.mp4"][..],
-            &["test-pattern", "--to", "browser"],
+            &["debug", "pattern", "--to", "browser"],
             &["preview"],
             &["share", "--to", "browser"],
             &["share", "https://example.com", "--to", "browser"],
@@ -1719,7 +1861,7 @@ mod tests {
         }
         for cmd in [
             &["play", "--to", "tv", "x.mp4"][..],
-            &["test-pattern", "--to", "tv"],
+            &["debug", "pattern", "--to", "tv"],
             &["share", "--to", "tv"],
             &["share", "https://example.com", "--to", "tv"],
         ] {
@@ -1749,7 +1891,7 @@ mod tests {
         assert_eq!(get(&["share", "--to", "tv"]), DEFAULT_RECONNECT);
         let secs = Duration::from_secs;
         assert_eq!(
-            get(&["test-pattern", "--to", "tv", "--reconnect", "0"]),
+            get(&["debug", "pattern", "--to", "tv", "--reconnect", "0"]),
             secs(0)
         );
         assert_eq!(get(&["share", "--to", "tv", "--reconnect", "30"]), secs(30));
@@ -1815,11 +1957,11 @@ mod tests {
         ]);
         assert_eq!(o.to, ["tv", "Browser"]);
         assert!(o.browser.wait_for_viewer);
-        let o = play(&["test-pattern", "--to", "browser"]);
+        let o = play(&["debug", "pattern", "--to", "browser"]);
         assert_eq!(o.input, InputSpec::TestPattern);
         // The page's options need a page.
         assert!(parse_from(&["play", "--to", "tv", "--open", "x.mkv"]).is_err());
-        assert!(parse_from(&["test-pattern", "--to", "tv", "--port", "1"]).is_err());
+        assert!(parse_from(&["debug", "pattern", "--to", "tv", "--port", "1"]).is_err());
         assert!(play(&["preview", "--new-token"]).browser.new_token);
         assert_eq!(
             play(&["preview", "--tunnel"]).browser.tunnel,
@@ -1848,7 +1990,7 @@ mod tests {
             Some(Duration::from_secs(90))
         );
         assert!(parse_from(&["preview", "--tunnel-ttl", "5"]).is_err());
-        assert!(parse_from(&["test-pattern", "--to", "tv", "--tunnel"]).is_err());
+        assert!(parse_from(&["debug", "pattern", "--to", "tv", "--tunnel"]).is_err());
     }
 
     #[test]
@@ -1865,7 +2007,7 @@ mod tests {
         for args in [
             &["preview", "--no-qr"][..],
             &["play", "--to", "browser", "--tunnel", "--no-qr", "x.mp4"],
-            &["test-pattern", "--to", "tv", "--no-qr"],
+            &["debug", "pattern", "--to", "tv", "--no-qr"],
             &["share", "--to", "tv", "--tunnel", "--no-qr"],
             &["screen", "--to", "tv", "--no-qr"],
         ] {

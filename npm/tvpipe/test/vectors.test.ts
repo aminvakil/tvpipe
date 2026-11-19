@@ -97,7 +97,7 @@ for (const f of readdirSync(join(vectors, "machine", "sessions"))) {
     const r = replay(join(vectors, "machine", "sessions", f));
     const [kind, detail] = r.outcome.split(" ");
     const start = (): Promise<Session> => {
-      if (r.args[0] === "test-pattern") return testPattern({ binary: r.binary, to: "browser" });
+      if (r.args.join(" ").startsWith("debug pattern")) return testPattern({ binary: r.binary, to: "browser" });
       if (r.args.at(-1) === "-") {
         return stream({ binary: r.binary, to: "browser", video: { width: 64, height: 48, fps: 30 } });
       }

@@ -1,5 +1,6 @@
-//! `tvpipe bundle`: check a game, pack it into a zip, run it once
-//! without TVs, or start a new one from the template (docs/games.md).
+//! `tvpipe game pack`, `game check` and `game new`: pack a game into a
+//! zip, check it, run it once without TVs, or start a new one from the
+//! template (docs/games.md).
 
 use std::path::{Path, PathBuf};
 
@@ -9,41 +10,68 @@ use crate::codec::json::Value;
 use crate::error::{Error, Result};
 use crate::util::stop::Stop;
 
-/// `tvpipe bundle`'s options.
+/// Which of the game commands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolAction {
+    /// `game pack DIR`: check the folder and write the zip.
+    #[default]
+    Pack,
+    /// `game check PATH`: a folder or a zip; write nothing.
+    Check,
+    /// `game new DIR`: the starter game.
+    New,
+}
+
+impl ToolAction {
+    /// The command line's words (`game pack`).
+    pub fn command(self) -> &'static str {
+        match self {
+            ToolAction::Pack => "game pack",
+            ToolAction::Check => "game check",
+            ToolAction::New => "game new",
+        }
+    }
+}
+
+/// The options of `tvpipe game pack`, `game check` and `game new`.
 #[derive(Debug, Clone, Default)]
-pub struct BundleOptions {
-    /// The game: a folder (packed unless `check`) or a `.zip` (checked).
+pub struct ToolOptions {
+    pub action: ToolAction,
+    /// The game: a folder (packed by `Pack`) or a `.zip` (`Check`); the
+    /// new folder for `New`.
     pub path: PathBuf,
     /// `-o FILE`: the zip (default `NAME.zip` here).
     pub out: Option<PathBuf>,
-    /// `--check`: write nothing.
-    pub check: bool,
     /// `--smoke`: also run it once in a headless browser.
     pub smoke: bool,
     /// `--strict`: warnings fail too.
     pub strict: bool,
-    /// `--init`: make a starter game in `path`.
-    pub init: bool,
     /// `--browser`: for `--smoke`.
     pub browser: Option<PathBuf>,
 }
 
-/// Runs `tvpipe bundle`; the report goes to stdout. An error when the
+/// Runs a game command; the report goes to stdout. An error when the
 /// game has errors (or warnings with `strict`).
-pub fn run(o: &BundleOptions, stop: Stop) -> Result<()> {
-    if o.init {
+pub fn run(o: &ToolOptions, stop: Stop) -> Result<()> {
+    let cmd = o.action.command();
+    if o.action == ToolAction::New {
         let files = init(&o.path)?;
         let d = o.path.display();
         println!("made a starter game in {d} ({} files)", files.len());
         println!();
-        println!("  tvpipe playshare {d}            play it (edit a file, reload the page)");
-        println!("  tvpipe bundle --check {d}       check it");
-        println!("  tvpipe bundle {d}               pack it into a zip for others");
+        println!("  tvpipe game play {d}       play it (edit a file, reload the page)");
+        println!("  tvpipe game check {d}      check it");
+        println!("  tvpipe game pack {d}       pack it into a zip for others");
         return Ok(());
     }
     let mut c = check::check(&o.path)?;
-    let pack = !o.check && !c.is_zip;
-    let out = if pack {
+    let out = if o.action == ToolAction::Pack {
+        if c.is_zip {
+            return Err(Error::usage(format!(
+                "game pack: {} is a zip already (tvpipe game check checks it)",
+                o.path.display()
+            )));
+        }
         let name = c.manifest.as_ref().map_or("game", |m| m.name.as_str());
         let out = o
             .out
@@ -57,15 +85,10 @@ pub fn run(o: &BundleOptions, stop: Stop) -> Result<()> {
         }
         Some(out)
     } else {
-        if o.out.is_some() && c.is_zip {
-            return Err(Error::usage(
-                "bundle: a .zip is checked, not packed again (-o is for folders)",
-            ));
-        }
         None
     };
     print!("{}", c.render());
-    fail_on(&c, o.strict)?;
+    fail_on(&c, cmd, o.strict)?;
     let target = match &out {
         Some(out) => {
             let bytes = check::pack(&c)?;
@@ -94,7 +117,7 @@ pub fn run(o: &BundleOptions, stop: Stop) -> Result<()> {
         let warnings = r.problems.len() - r.errors();
         if r.errors() > 0 || (o.strict && warnings > 0) {
             return Err(Error::usage(format!(
-                "bundle: the smoke run found {} errors and {} warnings",
+                "{cmd}: the smoke run found {} errors and {} warnings",
                 r.errors(),
                 warnings
             )));
@@ -104,10 +127,10 @@ pub fn run(o: &BundleOptions, stop: Stop) -> Result<()> {
     Ok(())
 }
 
-fn fail_on(c: &Checked, strict: bool) -> Result<()> {
+fn fail_on(c: &Checked, cmd: &str, strict: bool) -> Result<()> {
     if c.errors() > 0 {
         return Err(Error::usage(format!(
-            "bundle: {} has {} error{}{}",
+            "{cmd}: {} has {} error{}{}",
             c.origin.display(),
             c.errors(),
             if c.errors() == 1 { "" } else { "s" },
@@ -116,7 +139,7 @@ fn fail_on(c: &Checked, strict: bool) -> Result<()> {
     }
     if strict && c.warnings() > 0 {
         return Err(Error::usage(format!(
-            "bundle: {} has {} warnings (--strict)",
+            "{cmd}: {} has {} warnings (--strict)",
             c.origin.display(),
             c.warnings()
         )));
@@ -181,7 +204,7 @@ pub fn init(dir: &Path) -> Result<Vec<PathBuf>> {
             .any(|e| !e.file_name().to_string_lossy().starts_with('.'));
         if busy {
             return Err(Error::usage(format!(
-                "bundle --init: {} is not empty",
+                "game new: {} is not empty",
                 dir.display()
             )));
         }
@@ -260,23 +283,26 @@ mod tests {
         let html = std::fs::read_to_string(dir.join("host/index.html")).unwrap();
         assert!(html.contains("<title>Quiz night</title>"));
         // Packing into the game's own folder leaves the zip out.
-        let o = BundleOptions {
+        let o = ToolOptions {
             path: dir.clone(),
             out: Some(dir.join("quiz-night.zip")),
-            ..BundleOptions::default()
+            ..ToolOptions::default()
         };
         run(&o, Stop::new()).unwrap();
         run(&o, Stop::new()).unwrap();
         let z = check::check(&dir.join("quiz-night.zip")).unwrap();
         assert!(z.problems.is_empty(), "{}", z.render());
         assert!(!z.paths().any(|p| p.ends_with(".zip")));
-        // A zip is not packed again.
-        let again = BundleOptions {
+        // A zip is checked, not packed again.
+        let mut again = ToolOptions {
             path: dir.join("quiz-night.zip"),
             out: Some(dir.join("x.zip")),
-            ..BundleOptions::default()
+            ..ToolOptions::default()
         };
         assert!(run(&again, Stop::new()).is_err());
+        again.action = ToolAction::Check;
+        again.out = None;
+        run(&again, Stop::new()).unwrap();
     }
 
     /// The starter game in a real headless Chrome: every step passes;

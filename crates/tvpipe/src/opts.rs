@@ -270,25 +270,25 @@ pub enum Command {
     Share(ShareOptions),
     Screen(ScreenOptions),
     DebugPipeline(PipelineOptions),
-    /// `tunnel PORT`: a public link for any server on 127.0.0.1:PORT.
+    /// `debug tunnel PORT`: a public link for any server on 127.0.0.1:PORT.
     Tunnel {
         port: u16,
         provider: Provider,
     },
-    /// `qr TEXT`: a QR code on stdout.
+    /// `debug qr TEXT`: a QR code on stdout.
     Qr {
         text: String,
         format: QrFormat,
     },
-    /// `playshare PATH`: a web game (docs/playshare-design.md).
+    /// `game play PATH`: a web game (docs/playshare-design.md).
     #[cfg(feature = "playshare")]
     Playshare(crate::playshare::Options),
-    /// `bundle PATH`: check and pack a game (docs/games.md).
+    /// `game pack`, `game check`, `game new`: make games (docs/games.md).
     #[cfg(feature = "playshare")]
-    Bundle(crate::playshare::tool::BundleOptions),
+    GameTool(crate::playshare::tool::ToolOptions),
 }
 
-/// How `qr` prints the code.
+/// How `debug qr` prints the code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QrFormat {
     /// Half blocks for a terminal.
@@ -300,7 +300,9 @@ pub enum QrFormat {
 }
 
 impl Command {
-    /// The subcommand's name (`preview` is `play`).
+    /// The command's name in the machine interface's `hello` (`preview`
+    /// is `play`; the `debug` commands keep the names they had as
+    /// top-level commands: `test-pattern`, `debug-pipeline`, `tunnel`, `qr`).
     pub fn name(&self) -> &'static str {
         match self {
             Command::Discover { .. } => "discover",
@@ -314,9 +316,9 @@ impl Command {
             Command::Tunnel { .. } => "tunnel",
             Command::Qr { .. } => "qr",
             #[cfg(feature = "playshare")]
-            Command::Playshare(_) => "playshare",
+            Command::Playshare(_) => "game play",
             #[cfg(feature = "playshare")]
-            Command::Bundle(_) => "bundle",
+            Command::GameTool(o) => o.action.command(),
         }
     }
 }

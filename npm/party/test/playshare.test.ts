@@ -1,5 +1,5 @@
 /**
- * End to end with the real `tvpipe playshare` (skipped when no binary is
+ * End to end with the real `tvpipe game play` (skipped when no binary is
  * built: `cargo build -p tvpipe-cli`, or `TVPIPE_BINARY`): Node plays the
  * host page (the API with `?t=`), fake phones connect through tvpipe's
  * public listener, a fake TV page through the local one.
@@ -31,7 +31,7 @@ interface Run {
 }
 
 async function playshare(path: string): Promise<Run> {
-  const child = spawn(binary!, ["playshare", path, "--window", "none", "--no-tunnel"], {
+  const child = spawn(binary!, ["game", "play", path, "--window", "none", "--no-tunnel"], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, TVPIPE_NO_QR: "1" },
   });

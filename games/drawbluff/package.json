@@ -2,7 +2,7 @@
   "name": "drawbluff",
   "private": true,
   "version": "0.2.0",
-  "description": "A Drawful-style party game for tvpipe playshare: draw your prompt, fake the others' titles, find the real one",
+  "description": "A Drawful-style party game for tvpipe (tvpipe game play): draw your prompt, fake the others' titles, find the real one",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {

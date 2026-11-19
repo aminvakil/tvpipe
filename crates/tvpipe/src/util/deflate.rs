@@ -1,4 +1,4 @@
-//! DEFLATE compression (RFC 1951) for the zip bundles `tvpipe bundle`
+//! DEFLATE compression (RFC 1951) for the zip bundles `tvpipe game pack`
 //! writes.
 //!
 //! LZ77 over a 32 KiB window (hash chains of three-byte prefixes, a

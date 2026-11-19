@@ -124,13 +124,13 @@ pub mod __cli {
     pub use crate::net::tunnel::{start as start_tunnel, Tunnel};
     #[cfg(feature = "playshare")]
     pub mod playshare {
-        pub use crate::playshare::tool::{run as bundle, BundleOptions};
+        pub use crate::playshare::tool::{run as game_tool, ToolAction, ToolOptions};
         pub use crate::playshare::{run, Options, TunnelChoice, WindowMode};
     }
     pub use crate::session::{run, GameIo};
     pub use crate::util::stop::Stop;
 
-    /// The `tunnel` event of `tunnel PORT` (the event's fields are not
+    /// The `tunnel` event of `debug tunnel PORT` (the event's fields are not
     /// constructible outside the library).
     pub fn port_tunnel_event(provider: crate::__cli::opts::Provider, url: String) -> crate::Event {
         crate::Event::Tunnel(crate::events::TunnelEvent {

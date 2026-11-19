@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! cargo run --example slrw-gen -- --size 640x360 --fps 30 --seconds 5 |
-//!     tvpipe debug-pipeline --raw-video 640x360@30:rgba --raw-audio 48000:2:s16le -
+//!     tvpipe debug pipeline --raw-video 640x360@30:rgba --raw-audio 48000:2:s16le -
 //! ```
 //!
 //! Options: `--size WxH` (default 640x360), `--fps N` (30), `--rate HZ`

@@ -94,7 +94,7 @@ impl Qr {
 }
 
 impl Qr {
-    /// One line per module row, `1` dark and `0` light (`tvpipe qr --rows`).
+    /// One line per module row, `1` dark and `0` light (`tvpipe debug qr --rows`).
     pub fn rows(&self) -> Vec<String> {
         (0..self.size)
             .map(|y| {
@@ -107,7 +107,7 @@ impl Qr {
 
     /// A standalone SVG document: one module per user unit, `quiet`
     /// light modules around the symbol, each row's dark runs as one path
-    /// segment (`tvpipe qr --svg`; scale it with CSS or `width`).
+    /// segment (`tvpipe debug qr --svg`; scale it with CSS or `width`).
     pub fn to_svg(&self, quiet: usize) -> String {
         let side = self.size + 2 * quiet;
         let mut d = String::new();

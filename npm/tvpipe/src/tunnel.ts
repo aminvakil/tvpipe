@@ -1,6 +1,7 @@
 /**
  * `tunnel()`: a public https link for any server on 127.0.0.1 (`tvpipe
- * tunnel PORT`), and `qr()`: QR codes as data (`tvpipe qr --rows`).
+ * debug tunnel PORT`), and `qr()`: QR codes as data (`tvpipe debug qr
+ * --rows`).
  */
 
 import { execFile } from "node:child_process";
@@ -40,7 +41,7 @@ export function tunnel(options: TunnelOptions): Promise<TunnelSession> {
     return Promise.reject(new TvpipeError("invalid-argument", "`port` must be a port number"));
   }
   if (options.signal?.aborted) return Promise.reject(new TvpipeError("aborted", "aborted"));
-  const args = ["tunnel", String(port)];
+  const args = ["debug", "tunnel", String(port)];
   if (options.provider) args.push(`--tunnel=${options.provider}`);
   return startOnce(
     options,
@@ -101,16 +102,16 @@ export function qr(text: string, options: BinaryOptions & Pick<ProcessOptions, "
   return new Promise((resolve, reject) => {
     execFile(
       binary,
-      ["qr", "--rows", text],
+      ["debug", "qr", "--rows", text],
       { windowsHide: true, env: { ...process.env, ...options.env }, maxBuffer: 1 << 20 },
       (err, stdout, stderr) => {
         if (err) {
-          reject(new TvpipeError("invalid-argument", `tvpipe qr: ${String(stderr).trim() || err.message}`, { cause: err }));
+          reject(new TvpipeError("invalid-argument", `tvpipe debug qr: ${String(stderr).trim() || err.message}`, { cause: err }));
           return;
         }
         const rows = stdout.split(/\r?\n/).filter((l) => l.length > 0);
         if (rows.length === 0 || !rows.every((r) => /^[01]+$/.test(r) && r.length === rows.length)) {
-          reject(new TvpipeError("protocol", "tvpipe qr: unexpected output"));
+          reject(new TvpipeError("protocol", "tvpipe debug qr: unexpected output"));
           return;
         }
         resolve(new QrCode(rows));

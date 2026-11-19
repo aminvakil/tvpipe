@@ -1,5 +1,5 @@
-//! Public links for any loopback port (`tvpipe tunnel PORT`,
-//! docs/tunnels.md) and QR codes as data (`tvpipe qr`).
+//! Public links for any loopback port (`tvpipe debug tunnel PORT`,
+//! docs/tunnels.md) and QR codes as data (`tvpipe debug qr`).
 
 use std::fmt;
 
@@ -118,7 +118,7 @@ impl QrCode {
         self.0.dark(x, y)
     }
 
-    /// One string per module row, `1` dark and `0` light (`tvpipe qr
+    /// One string per module row, `1` dark and `0` light (`tvpipe debug qr
     /// --rows`, the party protocol's `join.qr.rows`).
     pub fn rows(&self) -> Vec<String> {
         self.0.rows()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks `tvpipe debug-pipeline --raw` against `ffprobe -show_packets`.
+# Checks `tvpipe debug pipeline --raw` against `ffprobe -show_packets`.
 #
 # For several ffmpeg-generated files, the frames our demuxer reports
 # (stream, pts in ms, keyframe flag, size) must equal ffprobe's packets of
@@ -38,7 +38,7 @@ ff -f lavfi -i "testsrc2=size=1920x1080:rate=60" -t 1 -c:v libx264 -preset ultra
 
 compare() {
   local file="$1"
-  "$bin" debug-pipeline --raw "$file" >"$tmp/ours.txt"
+  "$bin" debug pipeline --raw "$file" >"$tmp/ours.txt"
   ffprobe -v error -show_entries packet=stream_index,pts_time,flags,size -of csv=p=0 \
     "$file" >"$tmp/probe.txt"
   python3 - "$tmp/ours.txt" "$tmp/probe.txt" "$file" <<'PY'
@@ -76,7 +76,7 @@ PY
 encode_check() {
   local file="$1" expect_frames="$2"
   shift 2
-  "$bin" debug-pipeline "$@" "$file" >"$tmp/enc.txt"
+  "$bin" debug pipeline "$@" "$file" >"$tmp/enc.txt"
   python3 - "$tmp/enc.txt" "$expect_frames" "$file" <<'PY'
 import sys
 frames = {}
@@ -115,7 +115,7 @@ encode_check "$tmp/1080p60.mkv" 29:31
 
 # SLRW game input end to end.
 "$gen" --size 320x180 --fps 30 --seconds 3 |
-  "$bin" debug-pipeline --raw-video 320x180@30:rgba --raw-audio 48000:2:s16le - >"$tmp/slrw.txt"
+  "$bin" debug pipeline --raw-video 320x180@30:rgba --raw-audio 48000:2:s16le - >"$tmp/slrw.txt"
 python3 - "$tmp/slrw.txt" <<'PY'
 import sys
 kinds = {}
