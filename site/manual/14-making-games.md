@@ -99,6 +99,23 @@ $ npm install --save-dev @tvpipe/party
 
 Put fonts, sounds and libraries into the game, so it works without internet.
 
+## Canvases on the TV
+
+:::aside Audio
+`audio: { context, node }` sends a Web Audio node's sound along with the picture.
+:::
+
+A game that draws its TV picture into a canvas, 2D or WebGL, can send it straight to the TVs. The page encodes it and tvpipe streams it, without a second browser in between. That takes about half the computer's effort, works in Chrome, Firefox and Safari, and gives every TV its own picture: one surface per screen.
+
+```js
+const tv = await tvpipe.surface({ canvas, fps: 30, to: ["Living Room"] });
+function draw() { render(ctx); tv.frame(); requestAnimationFrame(draw); }
+```
+
+Drawing stops while the window is minimized, unless the canvas lives in a worker. With an `OffscreenCanvas` drawn on a timer there (`clock: "timer"`), the library's `SurfaceEncoder` runs in the worker too.
+
+A TV page made of HTML can be drawn into a canvas in Chrome 157 and later (HTML-in-Canvas). The demo game offers it as **TV picture: drawn here**. `games/beam` in the repository shows both ways side by side, and [docs/playshare-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/playshare-design.md) explains surfaces in section 17.
+
 ## Check and pack
 
 ```sh

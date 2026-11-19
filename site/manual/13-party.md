@@ -50,6 +50,7 @@ tvpipe serves the game, casts its TV page and passes the phones' messages on. Th
 
 - The game's **host page** runs in the window: it holds the rules, the players and what everyone sees.
 - Its **TV page** runs in a browser tvpipe starts in the background. tvpipe streams that tab, picture and sound, to the TVs, as with [A web page on the TV](web-page.md).
+- Instead of a TV page, a game can also draw into a canvas and send that to the TVs, one picture per TV. See [Canvases on the TV](making-games.md#s4).
 - Its **phone page** loads over the public link. Every phone's connection ends in tvpipe, which hands it to the host page.
 
 ## Making a game
