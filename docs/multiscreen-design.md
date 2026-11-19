@@ -520,6 +520,54 @@ games/drawbluff/
   party (~0.3 MB) + canvas (~0.1 MB) + fonts (~0.3 MB) + phone UI
   (~0.1 MB) ≈ 3.5 MB stripped, 5.6 MB with `webrtc`.
 
+### 4.1 As built (plan step 6)
+
+`games/drawbluff` is a workspace member (package `drawbluff`, a library
+for the tests plus the binary; `publish = false`):
+
+- `src/rules.rs`: the rules, `Rng` (mulberry32), JavaScript's
+  `Math.round` for coordinates, `title_key` on `tvpipe_party::fold` (NFKD
+  without marks, now public with `clean_text` and `name_key`) and
+  `\p{L}\p{N}` as `is_alphanumeric` minus four `So` ranges that are
+  `Other_Alphabetic`. `test/vectors/rules.txt` is written by `node
+  test/vectors.ts --bless` from `game/rules.ts`: mulberry32 outputs,
+  shuffles, 34 titles (accents, ligatures, full width, Greek, Turkish,
+  CJK, Hangul, emoji, bidi), 23 drawings (rounding, clamping, every
+  refusal, the stroke and point limits) and 40 seeded turns (options,
+  what each voter sees, points, voters, reveal order); both test suites
+  replay it.
+- `src/game.rs`: the phase machine (`Drawbluff::new/open/event/tick/
+  wake/take_events`), `Collect` per phase, the views field for field as
+  `game.ts` (the phone and web screen pages are unchanged). Moderation of
+  lies is asked before `Collect::offer` (which holds the party).
+- `src/bots.rs`: a party client in Rust (hello, welcome, diffs as the
+  browser client applies them, acks, resync, resume after a dropped
+  socket) and the bots of `bots.ts`. `tests/game.rs` plays the five
+  games of `game.test.ts` over real WebSockets (~10 s).
+- `src/screen.rs`: `screen-video.ts` on `tvpipe-canvas`, same layout;
+  ★ and ✓ drawn as shapes (the fonts lack them), emoji stripped, the
+  lobby's QR code does not pulse (a still lobby costs the encoder
+  nothing). 0.1–1.4 ms per 1280×720 frame for text screens, 6.3 ms with
+  a drawing (release, one M-series core); redrawn only when the view or
+  the countdown's second changes. `tests/screen.rs` draws every phase
+  (`DRAWBLUFF_SCREEN_OUT=DIR` writes the frames and the views, which the
+  Node renderer drew side by side for comparison).
+- `src/sound.rs`: the web screen's cues (triangle notes, its
+  envelope), mixed over silence into continuous 48 kHz stereo.
+- `src/tv.rs`: the TV on its own thread, `Stream::start` (video) or
+  `tvpipe::share` (`--web-screen`, tvpipe feature `headless`), started
+  again with a backoff when the session ends.
+- `src/main.rs`: the CLI, arguments hand-rolled (`argument` stays in
+  tvpipe-cli). No Ctrl-C handler (the CLI's is in tvpipe-cli): an
+  interrupted game ends without the receivers' teardown.
+- `node test/live/play.ts --host rust [--video]`: the Rust binary with
+  the Node bots and a phone in headless Chrome, the TV in the browser
+  player; passes with both screens (13 screenshot pairs each).
+- Size: 5.5 MB stripped (release as configured, macOS arm64), 4.8 MB
+  with LTO and one codegen unit; the `tvpipe` CLI is 5.2 MB and 4.4 MB
+  built the same ways. The 3.5 MB estimate above was low: tvpipe with
+  its default features is the bulk, the game adds ~0.4 MB.
+
 ## 5. The TV screen rendered in Rust
 
 drawbluff's video screen in Node uses `@napi-rs/canvas` (Skia). In Rust

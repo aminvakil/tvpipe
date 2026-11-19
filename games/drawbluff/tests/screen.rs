@@ -173,3 +173,25 @@ fn odd_views_do_not_panic() {
         screen.render(&mut canvas, &view, NOW);
     }
 }
+
+/// How long a frame takes per phase (`cargo test --release -p drawbluff
+/// --test screen -- --ignored --nocapture`).
+#[test]
+#[ignore]
+fn render_speed() {
+    let (roster, join, views) = views();
+    let mut screen = Screen::new();
+    let mut canvas = Canvas::new(1280, 720);
+    for (name, s) in &views {
+        let view = json!({ "roster": roster.clone(), "screen": s.clone(), "join": join.clone() });
+        screen.render(&mut canvas, &view, NOW);
+        let t = std::time::Instant::now();
+        for _ in 0..50 {
+            screen.render(&mut canvas, &view, NOW);
+        }
+        println!(
+            "{name}: {:.2} ms",
+            t.elapsed().as_secs_f64() * 1000.0 / 50.0
+        );
+    }
+}
