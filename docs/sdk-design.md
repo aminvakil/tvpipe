@@ -75,7 +75,7 @@ await play("x.mp4", { to: "Living Room", onPin: askUser }); // pairs on demand, 
 | `pair(target, { onPin?, pin? })` | `pair` | `{ name, id }` |
 | `unpair(target)` | `unpair` | `void` |
 | `play(input, opts)` | `play` | `Session` once streaming started |
-| `testPattern(opts)` | `test-pattern` | `Session` |
+| `testPattern(opts)` | `debug pattern` | `Session` |
 | `preview(input?, opts?)` | `preview` | `Session` (`playerUrl` set) |
 | `share(url?, opts)` | `share [URL]` | `Session` (`shareUrl` without URL) |
 | `stream(opts)` | `play … -` (SLRW) | `StreamSession` once receivers are connected |

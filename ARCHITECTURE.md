@@ -14,12 +14,12 @@ detail lives in `docs/`:
   OS.
 - [`meet.md`](docs/meet.md): presenting into video calls.
 - [`playshare-design.md`](docs/playshare-design.md): party games as web
-  apps (`tvpipe playshare`, the browser library `@tvpipe/party`, the demo
+  apps (`tvpipe game play`, the browser library `@tvpipe/party`, the demo
   game `games/drawbluff`); [`party-protocol.md`](docs/party-protocol.md):
   what phones and the host page say; [`party-design.md`](docs/party-design.md):
   the first design (a Node host), for its reasoning and measurements;
   [`games.md`](docs/games.md): building, checking, packing and running
-  a game (`tvpipe bundle`).
+  a game (`tvpipe game`).
 - [`screen.md`](docs/screen.md): sharing a screen or a window with
   sound (`tvpipe screen`): Chrome's capture per OS, the ffmpeg fallback,
   native APIs assessed.
@@ -201,7 +201,7 @@ the pages are static files embedded in the binary.
 
 ## Party Games (playshare)
 
-`tvpipe playshare PATH` (`crates/tvpipe/src/playshare/`, the `playshare`
+`tvpipe game play PATH` (`crates/tvpipe/src/playshare/`, the `playshare`
 feature) runs a game that is a web app: a folder or a zip (our own zip
 reader and inflate, `util::zip`, `util::inflate`) with `tvpipe.json`
 naming its host, TV and phone pages. Design and protocols:
@@ -237,7 +237,7 @@ naming its host, TV and phone pages. Design and protocols:
   (TEARDOWN/STOP), the browsers quit, the tunnel closes.
 - **Tunnels**: OpenTunnel first (its identity is made once and reused, so
   frequent runs create nothing), Cloudflare if it fails; `--no-tunnel`.
-- **`tvpipe bundle`** (`playshare/check.rs`, `scan.rs`, `smoke.rs`,
+- **`tvpipe game pack`, `check`, `new`** (`playshare/check.rs`, `scan.rs`, `smoke.rs`,
   `tool.rs`; [`docs/games.md`](docs/games.md)) checks a game the way
   playshare loads it, plus what its pages load: tolerant scanners for
   HTML, CSS and JS module imports (`scan`) followed from the entry pages,
@@ -246,7 +246,7 @@ naming its host, TV and phone pages. Design and protocols:
   in `util::deflate`: hash-chain LZ77, the cheapest of stored, fixed and
   dynamic blocks) and reads it back before writing. `--smoke` runs the
   game with a stand-in receiver backend and a headless browser over
-  DevTools, and joins with a fake phone over the relay. `--init` writes
+  DevTools, and joins with a fake phone over the relay. `game new` writes
   the starter game embedded from `playshare/template/`.
 - **Surfaces** (`playshare/surface.rs`): a page encodes a canvas with
   WebCodecs and sends SLRW records over `/_tvpipe/surface`; tvpipe feeds
@@ -531,7 +531,7 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
   ffmpeg.
 - **Fake receivers** run in process for Cast (with injected loss), AirPlay
   mirroring and pairing. Full `play` sessions run against them.
-- **`tvpipe debug-pipeline INPUT`** runs ffmpeg and the demuxer and prints
+- **`tvpipe debug pipeline INPUT`** runs ffmpeg and the demuxer and prints
   every frame, without a receiver.
 - **Opt-in tests** against openscreen's `cast_receiver` and the Apple TV run
   with `--ignored` and `TVPIPE_*` variables.

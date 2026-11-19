@@ -285,9 +285,9 @@ against fake receivers. What makes it a CLI today is process-wide state.
 ### 4.2 The CLI on top of the library
 
 `tvpipe-cli` uses the public API for every command: `discover`, `pair`,
-`play`, `test-pattern`, `preview`, `share`, game input on stdin (an SLRW
+`play`, `debug pattern`, `preview`, `share`, game input on stdin (an SLRW
 reader that calls `Stream::write_*`), and `--machine` (serializing
-`Event`s). Debug commands (`debug-pipeline`) and test fixtures that need
+`Event`s). Debug commands (`debug pipeline`) and test fixtures that need
 internals go through a `#[doc(hidden)] pub mod __cli` that is outside the
 semver promise. The CLI is the first, always-tested user of the API: if
 the CLI can do something, a game can.
@@ -322,7 +322,7 @@ writers for other threads.
 | `unpair(target)` | `unpair` | `()` |
 | `stream(options)` / `Stream::start(options)` | `play … -` (SLRW) | `Stream` once connected / at once (state `Connecting`) |
 | `play(input, options)` | `play` (`files`/`ffmpeg`) | `Session` |
-| `test_pattern(options)` | `test-pattern` (`h264`) | `Session` |
+| `test_pattern(options)` | `debug pattern` (`h264`) | `Session` |
 | `preview(input, options)` | `preview` (`player`) | `Session` with `player_url()` |
 | `share(url, options)` | `share` (`share`/`headless`) | `Session` with `share_url()` |
 

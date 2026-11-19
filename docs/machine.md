@@ -12,7 +12,7 @@ which the Node SDK's tests read: `crates/tvpipe/tests/vectors/machine/`
 (every event type, and recorded sessions).
 
 ```sh
-tvpipe --machine test-pattern --to browser --port 0
+tvpipe --machine debug pattern --to browser --port 0
 ```
 
 `--machine` is a global flag (before the command). It changes only the
@@ -37,13 +37,13 @@ broke), by an `error`.
 
 | `type` | When | Fields |
 |---|---|---|
-| `hello` | first | `protocol` (1), `version`, `command` (`play` also for `preview`, `test-pattern`, `share`, `screen`, `discover`, `pair`, `unpair`) |
+| `hello` | first | `protocol` (1), `version`, `command` (`play` also for `preview`; `share`, `screen`, `discover`, `pair`, `unpair`; the `debug` commands keep their old names: `test-pattern` for `debug pattern`, `tunnel` for `debug tunnel`, `debug-pipeline`) |
 | `log` | each log line at the active level (`-v`: debug, `--debug`: trace) | `level` (`error`, `warn`, `info`, `debug`, `trace`), `module`, `message` |
 | `receiver` | a receiver changes state | `name`, `protocol` (`cast`, `airplay`, `browser`; on `connected`/`failed` while connecting), `state`, `error` and `code` (with `failed`, `lost`, `gave-up`) |
 | `player` | a `--to browser` page listens | `name`, `url` |
 | `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`), `public` (it came over the tunnel) |
 | `share-page` | `share` without URL listens | `url` (open it, press Share) |
-| `tunnel` | `--tunnel` or `tunnel PORT`: the public link works | `page` (`player`, `share`, `port`), `name` (the player's), `provider` (`cloudflare`, `opentunnel`), `url` (with its token) |
+| `tunnel` | `--tunnel` or `debug tunnel PORT`: the public link works | `page` (`player`, `share`, `port`), `name` (the player's), `provider` (`cloudflare`, `opentunnel`), `url` (with its token) |
 | `capture` | `share`, `share URL` or `screen`: the browser started sharing | `surface` (`monitor`, `window`, `browser`), `label`, `width`, `height` (the capture's), `audio` (it has sound) |
 | `connected` | the receivers are connected; the input opens next (SLRW is read from here on) | `receivers` (names) |
 | `started` | the input is open and the receivers started | `route` (`passthrough`, `ffmpeg`, `builtin`, `encoded`, `browser`), `video` (`codec`, `width`, `height`, `fps`), `audio` (list of `codec`, `sample_rate`, `channels`), `latency_ms` |

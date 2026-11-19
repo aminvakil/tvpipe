@@ -1,6 +1,6 @@
 # drawbluff at scale (design)
 
-Status: implemented. Since `tvpipe playshare` the game runs in its host
+Status: implemented. Since `tvpipe game play` the game runs in its host
 page in the browser (`game/` unchanged), the TV is the web screen only;
 the Rust host and the video screens mentioned below are gone, their
 measurements stay as recorded ([`playshare-design.md`](playshare-design.md)).
@@ -309,7 +309,7 @@ The live check plays it: `node test/live/playshare.ts --lang de` sets
 the host page to German, joins a German phone (`de-DE`) and checks every
 shot for layout problems (the phone at 390 and 320 px wide, the TV page
 at 1280×720: text out of its box, boxes off the screen) and for English
-left on the screen. Run against a real `tvpipe playshare
+left on the screen. Run against a real `tvpipe game play
 games/drawbluff`: 4 players (`--bots 3`), 9 (`--bots 8`, the gallery and
 6 options) and 50 (`--bots 49`), one round each, no bot errors, no
 layout problems, nothing English; screenshots in `/tmp/drawbluff-de`

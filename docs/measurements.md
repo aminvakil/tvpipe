@@ -6,7 +6,7 @@ The test pattern and how to measure with it: [Latency](https://mitsuhiko.github.
 
 ## Glass-to-glass latency: Apple TV 4K (2026-11-18)
 
-AppleTV6,2, tvOS 26.6.1. `tvpipe test-pattern --encoder builtin` (built-in
+AppleTV6,2, tvOS 26.6.1. `tvpipe debug pattern --encoder builtin` (built-in
 H.264, 1280x720@30, 2764 kbit/s), default latency profile ("wireless":
 video lead 100 ms, audio 170 ms), Wi-Fi sender (MacBook Pro), TV in its
 normal picture mode. The burned-in clock is the UTC wallclock at frame

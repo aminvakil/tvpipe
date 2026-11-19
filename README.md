@@ -21,7 +21,7 @@ tvpipe screen --to Kitchen                             # the screen, with sound
 tvpipe screen --to Kitchen --window Keynote            # one window
 tvpipe share --to Kitchen --open                       # a browser tab or the screen
 tvpipe share https://status.example.com --to Kitchen   # a web page
-tvpipe playshare games/drawbluff                       # a party game: TV, phones, a window here
+tvpipe game play games/drawbluff                       # a party game: TV, phones, a window here
 ```
 
 ## Installing
@@ -70,7 +70,7 @@ s.write_video(&frame, s.elapsed())?;
   public link for people elsewhere, who can also share their screen to
   your TV.
 - Takes raw or H.264 frames and sound from a game on stdin.
-- Runs party games written as web apps (`tvpipe playshare`): the TV page
+- Runs party games written as web apps (`tvpipe game play`): the TV page
   on the TVs, phones joining with a QR code, the game in a window on the
   computer (see below).
 - One self-contained binary for macOS, Linux and Windows, with its own mDNS,
@@ -108,8 +108,8 @@ that off; never with `--machine`).
 ## Party games
 
 ```sh
-tvpipe playshare games/drawbluff      # a folder with tvpipe.json
-tvpipe playshare drawbluff.zip        # or a zip of one
+tvpipe game play games/drawbluff      # a folder with tvpipe.json
+tvpipe game play drawbluff.zip        # or a zip of one
 ```
 
 A game is a web app: a host page (the rules), a TV page and a phone page,
@@ -126,9 +126,9 @@ Making one: [`docs/games.md`](docs/games.md) (layout, `tvpipe.json`,
 the pages and the library, the dev loop, running and troubleshooting).
 
 ```sh
-tvpipe bundle --init my-game          # a starter game
-tvpipe bundle --check my-game         # what would break, with files and lines
-tvpipe bundle my-game --smoke         # my-game.zip (deterministic), run once in a headless browser
+tvpipe game new my-game               # a starter game
+tvpipe game check my-game             # what would break, with files and lines
+tvpipe game pack my-game --smoke      # my-game.zip (deterministic), run once in a headless browser
 ```
 
 ## Manual
@@ -147,12 +147,12 @@ tvpipe bundle my-game --smoke         # my-game.zip (deterministic), run once in
 | [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
 | [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
 | [From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/) | the `tvpipe` crate |
-| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `tvpipe playshare` and `@tvpipe/party`: web games played with phones, the TV as the main screen |
+| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `tvpipe game` and `@tvpipe/party`: web games played with phones, the TV as the main screen |
 | [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
-| [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | `test-pattern`, `--latency`, measuring |
-| [ffmpeg and encoding](https://mitsuhiko.github.io/tvpipe/manual/encoding/) | when ffmpeg runs, `debug-pipeline` |
+| [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | `debug pattern`, `--latency`, measuring |
+| [ffmpeg and encoding](https://mitsuhiko.github.io/tvpipe/manual/encoding/) | when ffmpeg runs, `debug pipeline` |
 
 ## Development
 

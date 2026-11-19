@@ -83,7 +83,7 @@ Each card becomes a task file in `tasks/` (or an issue):
   - Live Matroska demuxer, H.264 SPS/avcC.
   - SLRW raw input with a sample generator binary (`examples/slrw-gen`);
     media clock; fanout with keyframe-skip.
-  - Done when: `debug-pipeline` output matches `ffprobe -show_packets` for
+  - Done when: `debug pipeline` output matches `ffprobe -show_packets` for
     test files, and SLRW works end to end.
 - **W5 AirPlay pairing**:
   - Controller identity and credential store.

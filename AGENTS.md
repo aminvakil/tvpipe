@@ -5,7 +5,7 @@ workstream.
 
 ## Rules
 
-- Rust workspace: `crates/tvpipe` (the library; `tvpipe playshare`, the
+- Rust workspace: `crates/tvpipe` (the library; `tvpipe game play`, the
   server for web games, is its `playshare` module), `crates/tvpipe-cli`
   (the `tvpipe` binary, on the library's API) and `crates/tvpipe-fairplay`
   (the LGPL FairPlay port; nothing outside it may copy from it). No async

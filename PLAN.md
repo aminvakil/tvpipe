@@ -210,7 +210,7 @@ tvpipe play --to NAME|ADDR [--to ...]      # repeatable: replication
                [--raw-video WxH@FPS:PIXFMT] [--raw-audio RATE:CH:FMT]   # game mode, SLRW on stdin
                [--ffmpeg PATH] [-- FFMPEG_INPUT_ARGS...]                # escape hatch
                INPUT | -
-tvpipe test-pattern --to ...                # ffmpeg testsrc2 + burned-in wallclock for latency measurement
+tvpipe debug pattern --to ...               # ffmpeg testsrc2 + burned-in wallclock for latency measurement
 ```
 
 Notes:
@@ -589,7 +589,7 @@ Honest caveats (this is not legal advice):
    | Samsung TV (year TBD) | AirPlay 2, Cast if 2023–2025 with 2026 update | available |
    | Google TV Streamer / Chromecast | Cast | to acquire if TVs lack Cast mirroring |
 
-5. **Latency measurement**: `tvpipe test-pattern` burns a millisecond
+5. **Latency measurement**: `tvpipe debug pattern` burns a millisecond
    wallclock and a frame counter into the video. Photograph the sender's screen
    and the TV together (or point a phone at both). Record the results in
    `docs/measurements.md` per device and setting.
@@ -605,7 +605,7 @@ Each milestone has an exit criterion that a human can verify.
 | M0 | Scaffold: crate, CLI skeleton, core types (§3), log, CI on mac/linux/windows | `tvpipe --help` works; CI green; types reviewed and frozen |
 | M1 | Foundations: AES/CTR/CBC, bigint, SRP, TLV8, bplist, JSON, protobuf, DNS codec | all KATs pass on 3 OSes |
 | M2 | Discovery | `tvpipe discover` lists Apple TV, LG, Samsung, and any Cast device, merged per device |
-| M3 | Media pipeline | `tvpipe debug-pipeline FILE` prints frames with pts/keyframe; ffmpeg→demux overhead measured; game SLRW input works with a sample generator |
+| M3 | Media pipeline | `tvpipe debug pipeline FILE` prints frames with pts/keyframe; ffmpeg→demux overhead measured; game SLRW input works with a sample generator |
 | M4 | AirPlay pairing + secure channel | `tvpipe pair "Apple TV"` with PIN; reconnect with pair-verify; encrypted `/info` round-trip |
 | M5 | FairPlay (clean-room) | all spec vectors pass; byte-identical against the oracle under fuzzing; real Apple TV accepts m3/m4 |
 | M6 | AirPlay mirror video | test pattern and a file visibly mirror on the Apple TV; latency measured |

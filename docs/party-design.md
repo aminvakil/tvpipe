@@ -3,10 +3,10 @@
 Status: **superseded** by [`playshare-design.md`](playshare-design.md):
 games are web apps now, their logic runs in a host page in the browser
 (`@tvpipe/party` became a browser library), tvpipe serves them and relays
-the phones (`tvpipe playshare`); the Node host, the video screen and
+the phones (`tvpipe game play`); the Node host, the video screen and
 `toTv` below are gone. Kept for the reasoning (§2, §6, §8) and the
 measurements (§13); the protocol (§5) lives on in
-[`party-protocol.md`](party-protocol.md). `tvpipe tunnel` and `tvpipe qr`
+[`party-protocol.md`](party-protocol.md). `tvpipe debug tunnel` and `tvpipe debug qr`
 remain.
 Goal: Jackbox-style
 party games: the TV shows the game and a QR code, everyone joins with
@@ -24,7 +24,7 @@ drawbluff, 11. tests, 12. plan and open questions, 13. as built.
 
 | Layer | Owns | Does not own |
 |---|---|---|
-| **tvpipe** (Rust: library, CLI, `--machine`) | streaming to TVs and tabs; casting a web page (`share URL`); **public tunnels for any loopback port** (new: `tvpipe tunnel PORT`); **QR codes as data** (new: `tvpipe qr`, `tvpipe::qr`) | rooms, players, game messages, HTTP routing of someone else's app |
+| **tvpipe** (Rust: library, CLI, `--machine`) | streaming to TVs and tabs; casting a web page (`share URL`); **public tunnels for any loopback port** (new: `tvpipe tunnel PORT`, now `tvpipe debug tunnel PORT`); **QR codes as data** (new: `tvpipe qr`, now `tvpipe debug qr`; `tvpipe::qr`) | rooms, players, game messages, HTTP routing of someone else's app |
 | **`@tvpipe/sdk`** (npm, exists) | spawning tvpipe: `stream`, `share`, …; new: `tunnel({ port })`, `qr(text)` | anything game-specific |
 | **`@tvpipe/party`** (npm, new, `npm/party/`) | the HTTP + WebSocket server (static files, the bus), rooms and join codes, players, VIP, reconnect tokens, actions with acks, state sync, rate limits, Host/Origin/key checks; the join link and its QR; helpers to put the screen on the TV (web or video); a small browser client (`/party/client.js`) | rules, UI, prompts, scoring |
 | **The game** (`games/drawbluff/`) | rules and phases, the phone UI (a static directory), the screen: a web page **or** a render function for video frames, assets | transport, identity, tunnels |
@@ -67,12 +67,12 @@ is written so a second implementation can speak it.
 
 ## 3. What tvpipe adds
 
-### 3.1 `tvpipe tunnel PORT`: a public link for any loopback port
+### 3.1 `tvpipe debug tunnel PORT`: a public link for any loopback port
 
 ```sh
-tvpipe tunnel 8080                     # Cloudflare quick tunnel
-tvpipe tunnel 8080 --tunnel=opentunnel # TLS ends here
-tvpipe --machine tunnel 8080           # {"type":"tunnel","page":"port","host":…,"url":…,"provider":…}
+tvpipe debug tunnel 8080                      # Cloudflare quick tunnel
+tvpipe debug tunnel 8080 --tunnel=opentunnel  # TLS ends here
+tvpipe --machine debug tunnel 8080            # {"type":"tunnel","page":"port","host":…,"url":…,"provider":…}
 ```
 
 - Runs `net::tunnel::start(port, provider)` (existing) until Ctrl-C,
@@ -91,14 +91,14 @@ tvpipe --machine tunnel 8080           # {"type":"tunnel","page":"port","host":�
 - Party option `tunnel: "auto"`: Cloudflare, falling back to OpenTunnel
   when trycloudflare answers 429.
 
-### 3.2 `tvpipe qr TEXT`: QR codes as data
+### 3.2 `tvpipe debug qr TEXT`: QR codes as data
 
 The encoder exists (`util/qr.rs`, Nayuki-checked vectors). Expose it:
 
 ```sh
-tvpipe qr https://example.com          # terminal (half blocks), as today
-tvpipe qr --svg https://example.com    # an SVG document on stdout
-tvpipe --machine qr TEXT               # {"type":"qr","version":5,"size":37,"rows":["1111111010…",…]}
+tvpipe debug qr https://example.com           # terminal (half blocks), as today
+tvpipe debug qr --svg https://example.com     # an SVG document on stdout
+tvpipe --machine debug qr TEXT                # {"type":"qr","version":5,"size":37,"rows":["1111111010…",…]}
 ```
 
 - Rust: `tvpipe::qr::encode(text) -> Option<QrCode>` with `size()`,
@@ -353,7 +353,7 @@ URL), `drawQr(ctx, join.qr, x, y, px)` for a canvas in the video path,
 module at 720p, 4 modules of quiet zone, dark on white), with the URL as
 text below (for people who type) and the room code; small in a corner
 during the game, for latecomers and phones that lost the page. The
-terminal shows the same QR code (`tvpipe tunnel` on a TTY) for the
+terminal shows the same QR code (`tvpipe debug tunnel` on a TTY) for the
 person setting up.
 
 **Remote players** use the same join link; they watch the main screen
@@ -543,7 +543,7 @@ Questions for the owner:
 
 1. Bus in the party library (B) rather than an app-server mode in tvpipe
    (A)?
-2. Names: `tvpipe tunnel PORT`, `tvpipe qr TEXT`; `@tvpipe/party` in
+2. Names: `tvpipe tunnel PORT`, `tvpipe qr TEXT` (now `tvpipe debug tunnel`, `tvpipe debug qr`); `@tvpipe/party` in
    `npm/party/`; the game `drawbluff` in `games/drawbluff/`.
 3. `@napi-rs/canvas` for the video variant (in the game only), or the
    zero-dependency bitmap-font renderer?
@@ -566,7 +566,7 @@ What changed against the design while building it:
   `tunnel` with `page: "port"`; `TunnelPage::Port` is a new, non-breaking
   variant) and `qr [--svg | --rows] TEXT` (plain stdout; refused with
   `--machine`, whose stdout is events). No `qr` event: the SDK runs
-  `tvpipe qr --rows` once per code. Internal: `Command::Tunnel`/`Qr`,
+  `tvpipe debug qr --rows` once per code. Internal: `Command::Tunnel`/`Qr`,
   `Qr::rows`/`to_svg`, doc-hidden `__cli` re-exports. The `tunnel`
   event has no `host` field (§3.1): the SDK takes it from `url`.
 - **Join throttling** counts only failed `hello`s (wrong key, unknown

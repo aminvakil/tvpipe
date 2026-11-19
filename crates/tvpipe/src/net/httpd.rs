@@ -5,7 +5,7 @@
 //! a response, or a response followed by handing the socket over (the
 //! WebSocket upgrade), in which case the connection thread becomes the
 //! upgraded connection's thread. Only loopback addresses can be bound
-//! unless [`Config::lan`] says otherwise (`playshare --lan`, the phones'
+//! unless [`Config::lan`] says otherwise (`game play --lan`, the phones'
 //! listener, docs/playshare-design.md §4): tvpipe's own pages never face a
 //! network (a `--tunnel` reaches them from loopback too; the pages' own
 //! checks decide, `browser::access`).

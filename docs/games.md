@@ -1,6 +1,6 @@
-# Web games for `tvpipe playshare`
+# Web games for `tvpipe game play`
 
-How to build a party game that `tvpipe playshare` runs (the TV shows the
+How to build a party game that `tvpipe game play` runs (the TV shows the
 game, everyone plays on their phone's browser), check it, pack it into a
 zip, and how to run one. The design behind it:
 [`playshare-design.md`](playshare-design.md); the library:
@@ -18,7 +18,7 @@ AirPlay PINs, phones and links, ending, troubleshooting).
  ┌──────────────────────────────────────────────────┐        ▲
  │ window: launcher → host page (the rules)          │        │ cast
  │ headless browser: TV page ───────────────────────────────────┘
- │ tvpipe playshare: serves the game, relays phones  │◀── phones (tunnel or Wi-Fi)
+ │ tvpipe game play: serves the game, relays phones  │◀── phones (tunnel or Wi-Fi)
  └──────────────────────────────────────────────────┘
 ```
 
@@ -36,8 +36,8 @@ library `@tvpipe/party`, which tvpipe serves itself.
 ## Start
 
 ```sh
-tvpipe bundle --init my-game     # a starter game: a buzzer, about 250 lines
-tvpipe playshare my-game         # play it
+tvpipe game new my-game          # a starter game: a buzzer, about 250 lines
+tvpipe game play my-game         # play it
 ```
 
 The starter is plain JavaScript, no build step: a host page that counts
@@ -111,9 +111,9 @@ drawbluff/
 | `limits.rate`, `limits.burst` | optional | messages per second per phone (1–200, default 20) and at once (default 50); more: closed with 4008 |
 
 Paths use `/`, stay inside `root` (no `..`, no leading `/`, no hidden
-names). Fields tvpipe does not know are ignored (`tvpipe bundle` warns
+names). Fields tvpipe does not know are ignored (`tvpipe game check` warns
 about them: usually typos), so `description` or your own data can go
-there. A wrong or missing required field stops `tvpipe playshare` with a
+there. A wrong or missing required field stops `tvpipe game play` with a
 message naming it.
 
 ## The pages
@@ -156,7 +156,7 @@ The host page:
 ```js
 import { Tvpipe, PartyError } from "/_tvpipe/lib/index.js";
 
-const tvpipe = await Tvpipe.connect();       // fails outside tvpipe playshare
+const tvpipe = await Tvpipe.connect();       // fails outside tvpipe game play
 const party = await tvpipe.party();          // { maxPlayers, lateJoin, moderate, … }
 if ((await tvpipe.selection()).length > 0) await party.cast();
 tvpipe.on("cast", (s) => showTvState(s));    // starting, streaming, failed, stopped
@@ -255,9 +255,9 @@ phone pages are the game's, in the game's own look.
 ## The dev loop
 
 ```sh
-tvpipe playshare ./my-game                    # the window opens with the launcher
-tvpipe playshare ./my-game --no-tunnel        # no public link: this computer only
-tvpipe playshare ./my-game --window open      # the host page in your own browser (DevTools)
+tvpipe game play ./my-game                    # the window opens with the launcher
+tvpipe game play ./my-game --no-tunnel        # no public link: this computer only
+tvpipe game play ./my-game --window open      # the host page in your own browser (DevTools)
 ```
 
 - A folder is read on every request: edit a file and reload the page.
@@ -281,9 +281,9 @@ tvpipe playshare ./my-game --window open      # the host page in your own browse
   Windows forgives `Logo.png` for `logo.png`, a zip and Linux do not.
 - Put fonts, sounds and libraries in the game. Phones on `--lan` and TVs
   may have no internet, and a party at a cabin should still work:
-  `tvpipe bundle` warns about every file loaded from `http(s)://`.
-- `fetch()` with URLs built at run time is not checked by `tvpipe
-  bundle`; `--smoke` notices if they fail while the pages start.
+  `tvpipe game check` warns about every file loaded from `http(s)://`.
+- `fetch()` with URLs built at run time is not checked by `tvpipe game
+  check`; `--smoke` notices if they fail while the pages start.
 - A bundle holds at most 10 000 files and 256 MiB unpacked; phones load
   what their page needs, so keep the phone page light (warnings above
   32 MiB per file).
@@ -291,18 +291,18 @@ tvpipe playshare ./my-game --window open      # the host page in your own browse
 ## Checking and packing
 
 ```sh
-tvpipe bundle --check ./my-game          # check a folder, write nothing
-tvpipe bundle ./my-game                  # check, then write my-game.zip here
-tvpipe bundle ./my-game -o out/my-game.zip --smoke
-tvpipe bundle --check my-game.zip        # check a zip (someone else's, or before sharing)
-tvpipe bundle --check --strict ./my-game # warnings fail too: for CI
+tvpipe game check ./my-game              # check a folder, write nothing
+tvpipe game pack ./my-game               # check, then write my-game.zip here
+tvpipe game pack ./my-game -o out/my-game.zip --smoke
+tvpipe game check my-game.zip            # check a zip (someone else's, or before sharing)
+tvpipe game check --strict ./my-game     # warnings fail too: for CI
 ```
 
 What it checks (errors stop it with exit code 1, warnings do not):
 
 | | Errors | Warnings |
 |---|---|---|
-| `tvpipe.json` | missing, not JSON, a wrong or missing field (as `tvpipe playshare` would refuse it), a `tvpipe` version this tvpipe cannot run | unknown fields and pages (typos), no `tvpipe` version |
+| `tvpipe.json` | missing, not JSON, a wrong or missing field (as `tvpipe game play` would refuse it), a `tvpipe` version this tvpipe cannot run | unknown fields and pages (typos), no `tvpipe` version |
 | the folder | `root` missing ("build the game first"), outside the folder, or empty; symlinks that leave `root` (never served) or are broken or loop; names with backslashes or control characters, or not UTF-8; a `_tvpipe` folder; more than 10 000 files or 256 MiB | names Windows cannot unpack (`<>:"\|?*`, a trailing dot or space); `node_modules` in `root`; files over 32 MiB |
 | a zip | not a zip, zip64, encryption, other methods, CRC errors; unsafe names (`..`, absolute, drive letters); a name twice; no `tvpipe.json` at the top or in its one top-level folder (with a hint for a folder too deep) | files outside `root` (never served) |
 | names | two files or folders that differ only in case (one is lost on macOS and Windows) | |
@@ -310,17 +310,17 @@ What it checks (errors stop it with exit code 1, warnings do not):
 | what pages load | a missing file, with the page and line: `<script src>`, `<link href>`, `<img src/srcset>`, media, `<iframe>`, CSS `url()` and `@import`, JS `import`/`export from`/`import("…")`, inline scripts and styles; a path above the root; a hidden file; a name that differs in case; an import without its extension; TypeScript or JSX loaded as a script; a module with `import` loaded as a classic script; a bare import (`"@tvpipe/party"`) no import map resolves; a `/_tvpipe/` path tvpipe does not serve | a file loaded from the internet; a missing `<a href>` target; `<base href>` |
 | `@tvpipe/party` | | a host page that never loads `/_tvpipe/lib/index.js` (or `tvpipe.js`); a TV or phone page without the client (not the TV page when the game streams a canvas: `tvpipe.surface`, `SurfaceEncoder`); a copy of the library inside the game |
 
-Finally the result is opened the way `tvpipe playshare` opens it.
+Finally the result is opened the way `tvpipe game play` opens it.
 
 The zip is **deterministic**: the same files give the same bytes
 (entries sorted, every time 1980-01-01, modes `rw-r--r--`, deflate or
 stored, whichever is smaller). It holds one folder named after the game
 with `tvpipe.json` (without `root`) and the files of `root`, so it
-unpacks into a tidy folder and `tvpipe playshare` reads it as it is.
+unpacks into a tidy folder and `tvpipe game play` reads it as it is.
 Hidden files (`.DS_Store`, `.git`) are left out, and so is the zip itself
 when it is written inside the game. A zip made by hand works too
-(`tvpipe playshare` ignores Finder's `__MACOSX/` and hidden files beside
-the game's folder), but `tvpipe bundle DIR` checks it and leaves them out.
+(`tvpipe game play` ignores Finder's `__MACOSX/` and hidden files beside
+the game's folder), but `tvpipe game pack DIR` checks it and leaves them out.
 
 **`--smoke`** runs the game once, without TVs or a tunnel, in a headless
 Chromium-based browser (Chrome, Edge, Chromium, Brave; `--browser PATH`
@@ -331,7 +331,7 @@ failed requests are errors, `console.error` and failed requests to the
 internet warnings. It takes about ten seconds:
 
 ```
-$ tvpipe bundle my-game --smoke
+$ tvpipe game pack my-game --smoke
 My game (my-game): 12 files, 9.3 KiB; 0 errors, 0 warnings
 wrote my-game.zip (6.1 KiB, 9.3 KiB unpacked)
 smoke: tvpipe's launcher loaded
@@ -350,14 +350,14 @@ page is then opened without its link); a game whose join link is not
 
 `"tvpipe": "0.2"` says which tvpipe the game is made for, and so which
 `@tvpipe/party` it uses: tvpipe serves its own copy at `/_tvpipe/lib/`,
-and the host page talks to tvpipe's API with it. `tvpipe playshare`
+and the host page talks to tvpipe's API with it. `tvpipe game play`
 refuses a game made for a newer tvpipe ("update tvpipe"), and, while
 tvpipe is 0.x, one made for another 0.x series ("update the game");
 from 1.0 on, the same major version. Without the field nothing is
-checked (`tvpipe bundle` warns).
+checked (`tvpipe game check` warns).
 
 When tvpipe moves to a new series: read the library's changelog, update
-the game, run its tests and `tvpipe bundle --smoke`, then set the new
+the game, run its tests and `tvpipe game check --smoke`, then set the new
 version. The phone protocol has its own version (`hello.v`, 1); the
 library on both sides is always tvpipe's, so it matches by itself.
 
@@ -370,8 +370,8 @@ a hash of the zip identifies a release.
 # Running a game
 
 ```sh
-tvpipe playshare drawbluff.zip            # a zip
-tvpipe playshare ./drawbluff              # or a folder with tvpipe.json
+tvpipe game play drawbluff.zip            # a zip
+tvpipe game play ./drawbluff              # or a folder with tvpipe.json
 ```
 
 tvpipe checks the game (errors before anything starts), opens a window
@@ -438,15 +438,15 @@ Ctrl-C).
 
 | Symptom | Cause, fix |
 |---|---|
-| `tvpipe.json: …` at start | the manifest is wrong; `tvpipe bundle --check PATH` lists everything at once |
-| `no tvpipe.json at the top of the archive` | the zip has more than one top-level entry (a stray file or folder; `__MACOSX/` and hidden names do not count) or the game is a folder too deep: pack it with `tvpipe bundle DIR` |
+| `tvpipe.json: …` at start | the manifest is wrong; `tvpipe game check PATH` lists everything at once |
+| `no tvpipe.json at the top of the archive` | the zip has more than one top-level entry (a stray file or folder; `__MACOSX/` and hidden names do not count) or the game is a folder too deep: pack it with `tvpipe game pack DIR` |
 | `pages.host: dist/… is not in the bundle (is the game built?)` | `root` points at a build output that is missing: run the game's build |
 | `the game needs tvpipe X or newer` | update tvpipe; `made for tvpipe X`: the game needs updating |
-| a blank or broken page | open it with `--window open` and look at the browser's console; `tvpipe bundle --check --smoke PATH` names missing files, exceptions and failed requests |
+| a blank or broken page | open it with `--window open` and look at the browser's console; `tvpipe game check --smoke PATH` names missing files, exceptions and failed requests |
 | the launcher finds no TVs | same network, TV awake, AirPlay or casting allowed; a firewall that blocks mDNS (UDP 5353); `tvpipe discover` |
 | AirPlay asks for a PIN every time | the pairing was refused or forgotten: pair again from the launcher, or `tvpipe pair NAME` |
 | phones cannot open the link | the tunnel failed (the host page says "on this computer only"): try `--tunnel=cloudflare`, or `--lan` with phones on the same Wi-Fi; on Windows allow tvpipe through the firewall for `--lan` |
 | phones lost the game | the host page was reloaded or closed: a reload starts a new party, so phones scan the new QR code |
 | "the room closed" on phones | the game ended (the window was closed, Ctrl-C) |
 | the TV shows the picture late | a cast is a video stream (about a second behind); keep timing-critical feedback on the phones |
-| more detail | `tvpipe -v playshare …` prints connections and casts; `--debug` the protocols |
+| more detail | `tvpipe -v game play …` prints connections and casts; `--debug` the protocols |

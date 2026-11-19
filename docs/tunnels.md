@@ -3,12 +3,12 @@
 `--tunnel` puts a browser page of tvpipe's on a public https URL, for
 people elsewhere:
 
-- **the player** (`play`/`preview`/`test-pattern`/`screen --to browser
+- **the player** (`play`/`preview`/`debug pattern`/`screen --to browser
   --tunnel`): they watch the stream;
 - **the share page** (`share --tunnel`): someone remote shares a tab,
   window or screen to the local receivers, after the local user says yes;
-- **any server on 127.0.0.1** (`tvpipe tunnel PORT`): a program's own web
-  app; see [below](#any-port-tvpipe-tunnel-port). `tvpipe playshare`
+- **any server on 127.0.0.1** (`tvpipe debug tunnel PORT`): a program's own web
+  app; see [below](#any-port-tvpipe-debug-tunnel-port). `tvpipe game play`
   starts its tunnel the same way for the phones' listener
   ([`playshare-design.md`](playshare-design.md) §11: OpenTunnel first).
 
@@ -92,13 +92,13 @@ to them from loopback like everything else, so the decision is made on
   never stalls (the relay buffers), and all viewers share the relay link,
   whose buffers would otherwise fill up for everyone.
 
-## Any port (`tvpipe tunnel PORT`)
+## Any port (`tvpipe debug tunnel PORT`)
 
 ```
-$ tvpipe tunnel 8080
+$ tvpipe debug tunnel 8080
 tunnel: connected to Cloudflare (vie02)
 tunnel: https://words-words-words.trycloudflare.com/ leads to http://127.0.0.1:8080 (Cloudflare quick tunnel; the link is new every run)
-$ tvpipe --machine tunnel 8080 --tunnel=opentunnel
+$ tvpipe --machine debug tunnel 8080 --tunnel=opentunnel
 {"type":"tunnel","page":"port","provider":"opentunnel","url":"https://….opentunnel.xyz/"}
 ```
 
@@ -114,7 +114,7 @@ address is in `cf-connecting-ip`; through OpenTunnel the server sees only
 loopback. The QR code is drawn on a terminal as for the pages. From Node:
 `tunnel({ port, provider })` in `@tvpipe/sdk`.
 
-`tvpipe qr [--svg | --rows] TEXT` prints the same QR codes for other
+`tvpipe debug qr [--svg | --rows] TEXT` prints the same QR codes for other
 uses: terminal art, an SVG document, or one line of `0`/`1` per module row
 for programs (the SDK's `qr()`, a party game's TV screen).
 
@@ -231,7 +231,7 @@ Rate limit: `api.trycloudflare.com` answered `429 Too Many Requests`
 after about 29 tunnels in 90 minutes from one address (tvpipe reports
 it as is). A quick tunnel outlives its connector, though: its
 credentials registered again after 120 s and the hostname served at once
-(`live_quick_tunnel_reuse`), so `tvpipe playshare` keeps the last ones
+(`live_quick_tunnel_reuse`), so `tvpipe game play` keeps the last ones
 and reuses them (`Tunnel::start_reusing`, docs/playshare-design.md §11).
 
 ### Stability and terms

@@ -16,8 +16,8 @@ beamed without a second browser.
 ## 1. Decisions (the owner's, final)
 
 - A game is a **web app**: static files that run in browsers. No Node,
-  no Rust game logic. tvpipe serves it: `tvpipe playshare ./game` or
-  `tvpipe playshare ./game.zip`.
+  no Rust game logic. tvpipe serves it: `tvpipe game play ./game` or
+  `tvpipe game play ./game.zip`.
 - The game's **host page** runs the game logic, in a visible browser
   window on the computer (an app window of tvpipe's own Chrome). Before
   it, a **launcher** in the same window picks the TVs (tvpipe's standard
@@ -43,7 +43,7 @@ beamed without a second browser.
  │  │ game logic, @tvpipe/party│              └───────┬──────────┘  │   │
  │  └──────┬───────────────────┘                      │ /_tvpipe/ws │   │
  │         │ /_tvpipe/api (API + relay)               │             │   │
- │  ┌──────┴──────────────── tvpipe playshare ────────┴───────────┐ │   │
+ │  ┌──────┴──────────────── tvpipe game play ────────┴───────────┐ │   │
  │  │ local listener 127.0.0.1:L   public listener 127.0.0.1:P    │ │   │
  │  │ bundle files, launcher, lib  bundle files, lib, /_tvpipe/ws │ │   │
  │  │ discovery, pairing, casting ◀── share session (capture.js) ◀┼─┘   │
@@ -55,7 +55,7 @@ beamed without a second browser.
 
 | Piece | Where | Owns |
 |---|---|---|
-| `tvpipe playshare` | `crates/tvpipe/src/playshare/` (feature `playshare`, reached by the CLI through `__cli`), `crates/tvpipe-cli` (arguments) | the bundle (folder or zip), two HTTP listeners, the local API, the relay, discovery and pairing for the launcher, the cast (a `share URL` session), the app window, the tunnel, teardown |
+| `tvpipe game play` | `crates/tvpipe/src/playshare/` (feature `playshare`, reached by the CLI through `__cli`), `crates/tvpipe-cli` (arguments) | the bundle (folder or zip), two HTTP listeners, the local API, the relay, discovery and pairing for the launcher, the cast (a `share URL` session), the app window, the tunnel, teardown |
 | `@tvpipe/party` | `npm/party/` (TypeScript, browser-first; tvpipe embeds the built JS and serves it at `/_tvpipe/lib/`) | the host (`Party`: rooms, players, keys, VIP, late join, actions exactly once, views and diffs, clock), the phone/TV client (`PartyClient`), the local API client (`Tvpipe`), test helpers |
 | standard launcher | `npm/party/launcher/` (built into `crates/tvpipe/src/playshare/web/launcher/`) | device list, AirPlay PIN entry, a "browser tab" receiver for trying without a TV, start |
 | the game | a folder or zip with `tvpipe.json` | host page (rules), TV page, phone page, assets; optionally its own launcher |
@@ -331,7 +331,7 @@ page (`--to browser`): the event's `player` is its URL.
 
 ## 10. Lifecycle
 
-1. `tvpipe playshare PATH [--lan [IP]] [--tunnel[=PROVIDER] | --no-tunnel] [--window app|open|none] [--browser PATH] [--port L]`:
+1. `tvpipe game play PATH [--lan [IP]] [--tunnel[=PROVIDER] | --no-tunnel] [--window app|open|none] [--browser PATH] [--port L]`:
    load and check the bundle (errors before anything starts), bind the
    listeners, start the tunnel (§11) in the background, open the
    window.
@@ -420,7 +420,7 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   over the public listener.
 - drawbluff: the rule vectors and game tests unchanged in substance,
   run with `memoryRelay()` and fake phones; a live script
-  (`test/live/playshare.ts`): `tvpipe playshare --window none`, the
+  (`test/live/playshare.ts`): `tvpipe game play --window none`, the
   launcher and the host page in headless Chrome over DevTools, the
   `browser` receiver, bots as phones, screenshots of the launcher,
   lobby and a round; the same from the zip.
@@ -437,8 +437,8 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   `screen-video.ts` (`@napi-rs/canvas`).
 - `docs/multiscreen-design.md` (replaced by this document); the parts of
   `docs/party-design.md` about the Node host are marked historical.
-- Kept: `@tvpipe/sdk`, the `tvpipe` library and CLI (`tunnel PORT`, `qr`
-  stay), the party protocol and the phone/TV pages.
+- Kept: `@tvpipe/sdk`, the `tvpipe` library and CLI (`tunnel PORT`, `qr`; now
+  `debug tunnel`, `debug qr`) stay, the party protocol and the phone/TV pages.
 
 ## 15. Plan
 
@@ -555,7 +555,7 @@ page (window or worker)                      tvpipe
 
 `node games/beam/measure.ts` (`games/beam`: a WebGL demo, 400 instanced
 triangles on an animated shader field, a beep a second; every picture
-carries the wall clock in ms as a row of blocks). tvpipe playshare
+carries the wall clock in ms as a row of blocks). tvpipe game play
 release build, the `browser` receiver, the player page in a second
 headless Chrome reading the blocks back from its canvas: latency is
 glass to glass on one machine including the player's 100 ms playout

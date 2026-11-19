@@ -26,7 +26,7 @@ Last updated 2026-11-18 (first runs on Windows).
 | Linux aarch64 (Docker, Ubuntu 24.04) | — | yes | yes (ffmpeg 6.1, the CI runner's) | — |
 | Linux x86_64 (Docker, emulated) | yes | yes | yes, except `rawin::ffmpeg_end_to_end` under emulation (emulated ffmpeg starts slowly: 24 of ≥25 frames) | — |
 | Windows 11 ARM64, aarch64 msvc (Parallels VM, native) | — | yes (clippy 1.100) | yes, all 427 (ffmpeg 8.1 winarm64) | yes, see "Windows 11 ARM64" below |
-| Windows 11 ARM64, x86_64 msvc (emulated) | — | yes (cross) | yes, all 427 (native ARM64 ffmpeg) | `discover`, `debug-pipeline` |
+| Windows 11 ARM64, x86_64 msvc (emulated) | — | yes (cross) | yes, all 427 (native ARM64 ffmpeg) | `discover`, `debug pipeline` |
 | Windows x86_64 gnu | — | yes (cross) | built, not run | `tvpipe.exe` links (UCRT, system DLLs only), not run |
 | MSRV 1.85 | — | `cargo check --all-targets` | — | — |
 
@@ -43,8 +43,8 @@ Parallels VM "Windows 11", build 26200, 4 vCPUs, network mode *shared*
 | `cargo build`, `clippy --all-targets -D warnings`, `cargo test` | pass (427; ~15 s) |
 | `tvpipe --help`, `--version` | ok |
 | `tvpipe discover` | finds the LAN's AirPlay and Cast receivers through the NAT (Parallels forwards mDNS); TCP to a Cast TV on the LAN connects |
-| `debug-pipeline FILE` / `-- -f lavfi ...` | ok (H.264 + PCM + Opus) |
-| `test-pattern --to cast:10.211.55.2:8011` (openscreen `cast_receiver` on the Mac's `bridge100`) | streams; receiver plays the frames; wallclock overlay renders (ffmpeg prints a harmless Fontconfig warning) |
+| `debug pipeline FILE` / `-- -f lavfi ...` | ok (H.264 + PCM + Opus) |
+| `debug pattern --to cast:10.211.55.2:8011` (openscreen `cast_receiver` on the Mac's `bridge100`) | streams; receiver plays the frames; wallclock overlay renders (ffmpeg prints a harmless Fontconfig warning) |
 | Ctrl-C (`CTRL_C_EVENT`) | handler runs, STOP sent, exit 130, ~0.3 s |
 | Ctrl-Break | same, exit 130 |
 | `q` + Enter on the console | clean stop, exit 0 |
@@ -132,7 +132,7 @@ a console; `scripts/windows/console-event.ps1` starts tvpipe in a console
 of its own and sends it Ctrl-C, Ctrl-Break or `q` + Enter. A local Cast
 receiver for the VM: `cast_receiver -x -r 8011 ... bridge100` on the Mac
 (see `scripts/receivers/cast-receiver.sh`), then
-`tvpipe test-pattern --to cast:10.211.55.2:8011` in the VM.
+`tvpipe debug pattern --to cast:10.211.55.2:8011` in the VM.
 
 Linux in Docker (a `rust` image plus `apt-get install ffmpeg`):
 
