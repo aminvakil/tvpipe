@@ -11,8 +11,9 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
+    "allowJs": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["*.ts", "game", "test"]
+  "include": ["*.ts", "game", "test", "web/phone/strokes.js"]
 }
