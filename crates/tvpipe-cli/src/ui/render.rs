@@ -1048,12 +1048,9 @@ pub fn clock(d: Duration) -> String {
     format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
 }
 
+/// Whole frames per second: a measured 29.1 does not flicker.
 fn fps(f: f64) -> String {
-    if (f - f.round()).abs() < 0.05 {
-        format!("{}", f.round() as i64)
-    } else {
-        format!("{f:.1}")
-    }
+    format!("{}", f.round().max(0.0) as u64)
 }
 
 fn mbits(bps: f64) -> String {
