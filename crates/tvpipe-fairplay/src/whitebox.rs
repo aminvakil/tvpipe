@@ -203,8 +203,7 @@ fn mix(t: &NetworkTables, state: &mut [u8; 16], substituted: &[u8; 16]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::ring::Sha256;
-    use crate::util::hex;
+    use crate::test_util::{hex, Sha256};
 
     /// Matches doubletake's TestFPSAPTableData expansion checksum, so the
     /// tables survived the port intact.

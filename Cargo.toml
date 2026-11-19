@@ -7,8 +7,19 @@ description = "Low-latency mirroring of video and audio to AirPlay and Google Ca
 license = "Apache-2.0 AND LGPL-3.0-or-later"
 publish = false
 
+[workspace]
+members = ["crates/tvpipe-fairplay"]
+
+[features]
+default = ["fairplay"]
+# FairPlay SAP for AirPlay (the LGPL-3.0-or-later tvpipe-fairplay crate).
+# Without it, AirPlay runs the HAP profile without FairPlay; receivers that
+# need it fail with `fairplay-required`.
+fairplay = ["dep:tvpipe-fairplay"]
+
 [dependencies]
 argument = "0.1"
+tvpipe-fairplay = { path = "crates/tvpipe-fairplay", version = "0.1.2", optional = true }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 

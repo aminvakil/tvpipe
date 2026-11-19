@@ -5,8 +5,8 @@
 
 use super::md5::{self, Mutation};
 use super::*;
-use crate::util::hex;
-use crate::util::vectors::{self, Block};
+use crate::test_util::hex;
+use crate::test_util::vectors::{self, Block};
 
 fn arr<const N: usize>(v: &[u8]) -> [u8; N] {
     v.try_into().expect("vector length")
@@ -86,7 +86,7 @@ fn primitive_known_answers() {
 
 #[test]
 fn sap_hash_corpus() {
-    let mut corpus = crate::crypto::ring::Sha256::new();
+    let mut corpus = crate::test_util::Sha256::new();
     let mut state: u64 = 0x6a09e667f3bcc909;
     for _ in 0..64 {
         let mut block = [0u8; 64];
@@ -211,7 +211,7 @@ fn captured_ekey_vectors() {
 
 #[test]
 fn primitive_vectors() {
-    let blocks = vectors::load("fairplay/primitives.txt");
+    let blocks = vectors::load("primitives.txt");
     let mut seen = [0; 3];
     for b in &blocks {
         let name = b.name();
@@ -259,24 +259,11 @@ fn check_session(b: &Block) {
 
 #[test]
 fn session_vectors() {
-    let blocks = vectors::load("fairplay/session.txt");
+    let blocks = vectors::load("session.txt");
     assert!(blocks.len() >= 13);
     for b in &blocks {
         check_session(b);
     }
-}
-
-#[test]
-fn stream_key_vectors() {
-    for b in &vectors::load("fairplay/stream_keys.txt") {
-        let master = stream_master_key(&arr(&b.hex("key")), &b.hex("secret"));
-        assert_eq!(master.to_vec(), b.hex("master"), "{}", b.name());
-        let (k, iv) = stream_key_iv(&master, b.parse("stream_connection_id"));
-        assert_eq!(k.to_vec(), b.hex("stream_key"), "{}", b.name());
-        assert_eq!(iv.to_vec(), b.hex("stream_iv"), "{}", b.name());
-    }
-    let key = [7u8; 16];
-    assert_eq!(stream_master_key(&key, &[]), key);
 }
 
 // ---------------------------------------------------------------------------
@@ -313,8 +300,6 @@ fn rejects_malformed_m2() {
         assert_eq!(err.kind(), kind, "{err}");
     }
 }
-
-use crate::error::ErrorKind;
 
 #[test]
 fn m4_and_wrap_need_m3() {
@@ -471,62 +456,4 @@ fn differential_oracle() {
     drop(stdin);
     let _ = child.wait();
     eprintln!("{n} rounds match the oracle");
-}
-
-/// The full exchange against a real receiver over the verified control
-/// channel (uses the real credential store, like the CLI):
-///
-/// ```text
-/// TVPIPE_ATV=192.168.1.34 cargo test hardware_fp_setup -- --ignored --nocapture
-/// ```
-#[test]
-#[ignore]
-fn hardware_fp_setup() {
-    use crate::airplay::credentials::Store;
-    use crate::airplay::pair;
-
-    let Ok(target) = std::env::var("TVPIPE_ATV") else {
-        eprintln!("TVPIPE_ATV not set; skipping");
-        return;
-    };
-    let target = pair::resolve(&target).unwrap();
-    let store = Store::open(&crate::storage::Storage::cli()).unwrap();
-    let mut control = pair::connect(&target, &store).unwrap();
-    eprintln!(
-        "verified with {} ({:?})",
-        control.addr,
-        match &control.auth {
-            pair::Auth::Verified(r) => r.name.as_str(),
-            pair::Auth::Transient => "transient",
-        }
-    );
-
-    let mut s = FpSession::new().unwrap();
-    let m2 = post(&mut control.client, &s.m1(), "m1").unwrap();
-    eprintln!(
-        "m2: {} bytes, mode {}",
-        m2.len(),
-        m2.get(13).copied().unwrap_or(0xff)
-    );
-    let m3 = s.m3(&m2).unwrap();
-    let m4 = post(&mut control.client, &m3, "m3").unwrap();
-    eprintln!("m4: {} bytes", m4.len());
-    s.check_m4(&m4).unwrap();
-    let ekey = s.wrap_key(&random_key()).unwrap();
-    eprintln!("m4 confirms m3; ekey {} bytes", ekey.len());
-
-    // The connection is still usable afterwards.
-    let resp = control.client.request("GET", "/info", &[], None).unwrap();
-    eprintln!("GET /info after fp-setup: {}", resp.status);
-
-    // And the one-call helper on a fresh connection.
-    let mut control = pair::connect(&target, &store).unwrap();
-    fp_setup(&mut control.client).unwrap();
-    eprintln!("fp_setup ok");
-}
-
-fn random_key() -> [u8; 16] {
-    let mut k = [0u8; 16];
-    random_fill(&mut k).unwrap();
-    k
 }

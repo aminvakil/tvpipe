@@ -8,14 +8,13 @@
 //! control) keys video with AES-128-CTR and audio with AES-128-CBC, both
 //! from the FairPlay stream master key `K`.
 //!
-//! The FairPlay parts (`K`, the legacy CTR key/IV) come from
-//! [`airplay::fairplay`](crate::airplay::fairplay), used only through its
-//! public API.
+//! FairPlay itself (the SAP exchange and the key wrap) is the optional
+//! `tvpipe-fairplay` crate; the derivations here only take its random
+//! input key `K_fp` and are written from the spec.
 //!
 //! Sources: docs/airplay-mirroring.md §2.2, §5, Appendix A; vectors
 //! tests/vectors/airplay-mirror/keys.txt, channels.txt.
 
-use crate::airplay::fairplay;
 use crate::airplay::secure::Keys;
 use crate::crypto::ring::{hkdf_sha512_array, Sha512, CHACHA_KEY_LEN};
 use crate::error::Result;
@@ -29,15 +28,37 @@ pub const EVENTS_RECEIVER_TO_SENDER_INFO: &[u8] = b"Events-Write-Encryption-Key"
 /// Sender → receiver (what we write).
 pub const EVENTS_SENDER_TO_RECEIVER_INFO: &[u8] = b"Events-Read-Encryption-Key";
 
-/// `K = SHA-512(K_fp ‖ S)[0..16]` (or `K_fp` for an empty secret, §2.2).
+/// The first 16 bytes of SHA-512 over `parts`.
+fn sha512_16(parts: &[&[u8]]) -> [u8; 16] {
+    let mut h = Sha512::new();
+    for p in parts {
+        h.update(p);
+    }
+    let d = h.finish();
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&d[..16]);
+    out
+}
+
+/// The stream master key `K = SHA-512(K_fp ‖ S)[0..16]`, or `K_fp` itself
+/// for an empty pair-verify secret (§2.2).
 pub fn stream_master_key(fairplay_key: &[u8; 16], pair_secret: &[u8]) -> [u8; 16] {
-    fairplay::stream_master_key(fairplay_key, pair_secret)
+    if pair_secret.is_empty() {
+        return *fairplay_key;
+    }
+    sha512_16(&[fairplay_key, pair_secret])
 }
 
 /// Legacy profile: the video AES-128-CTR key and initial counter block
-/// for a video `streamConnectionID` (§5.2).
-pub fn legacy_video_key_iv(master: &[u8; 16], stream_connection_id: u64) -> ([u8; 16], [u8; 16]) {
-    fairplay::stream_key_iv(master, stream_connection_id)
+/// for a video `streamConnectionID`, from the `shk` sent in SETUP (§5.2):
+/// `SHA-512("AirPlayStreamKey" ‖ dec(id) ‖ shk)[0..16]` and the same with
+/// `"AirPlayStreamIV"`.
+pub fn legacy_video_key_iv(shk: &[u8; 16], stream_connection_id: u64) -> ([u8; 16], [u8; 16]) {
+    let id = stream_connection_id.to_string();
+    (
+        sha512_16(&[b"AirPlayStreamKey", id.as_bytes(), shk]),
+        sha512_16(&[b"AirPlayStreamIV", id.as_bytes(), shk]),
+    )
 }
 
 fn datastream_salt(n: u64) -> Vec<u8> {
@@ -94,6 +115,24 @@ mod tests {
 
     fn arr16(v: &[u8]) -> [u8; 16] {
         v.try_into().unwrap()
+    }
+
+    /// The derivations against vectors from the LGPL FairPlay port's
+    /// oracle (`stream_keys.txt`): this clean implementation computes the
+    /// same keys.
+    #[test]
+    fn stream_key_vectors() {
+        let blocks = vectors::load("airplay-mirror/stream_keys.txt");
+        assert!(!blocks.is_empty());
+        for b in &blocks {
+            let master = stream_master_key(&arr16(&b.hex("key")), &b.hex("secret"));
+            assert_eq!(master.to_vec(), b.hex("master"), "{}", b.name());
+            let (k, iv) = legacy_video_key_iv(&master, b.parse("stream_connection_id"));
+            assert_eq!(k.to_vec(), b.hex("stream_key"), "{}", b.name());
+            assert_eq!(iv.to_vec(), b.hex("stream_iv"), "{}", b.name());
+        }
+        // §2.2: without a pair-verify secret the key is K_fp itself.
+        assert_eq!(stream_master_key(&[7; 16], &[]), [7; 16]);
     }
 
     #[test]

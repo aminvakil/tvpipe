@@ -1817,6 +1817,88 @@ mod tests {
         assert!((0..20u64).any(|src| alac_verbatim(&pcm(src), 2).unwrap() == r.audio[0].2));
     }
 
+    /// A receiver offering FairPlay with the HAP profile: a build without
+    /// FairPlay skips it (the §5.3 placeholders), a build with it tries
+    /// `/fp-setup` (404 from the fake) and goes on without. Both stream.
+    #[test]
+    fn hap_receiver_offering_fairplay_streams_either_way() {
+        let fake = FakeMirror::start(Behaviour {
+            fairplay_bit: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let opts = MirrorOptions::default();
+        let mut sink = connect(&fake, &opts);
+        assert!(sink.session.fairplay.is_none());
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 5);
+        wait_for("video", || {
+            fake.rec().video.iter().filter(|p| p.kind == 0).count() == 5
+        });
+        sink.stop().unwrap();
+        let tried = fake.rec().requests.iter().any(|r| r.contains("/fp-setup"));
+        assert_eq!(tried, crate::airplay::session::FAIRPLAY_BUILT);
+    }
+
+    /// The legacy profile with feature 14 needs FairPlay: without it the
+    /// session fails with `fairplay-required` before SETUP.
+    #[test]
+    fn legacy_receiver_needs_fairplay() {
+        let fake = FakeMirror::start(Behaviour {
+            legacy: Some(([0; 16], [0; 16])),
+            legacy_no_fairplay: true,
+            fairplay_bit: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let tcp = TcpStream::connect(fake.addr).unwrap();
+        let r = Session::establish(
+            RtspClient::new(tcp),
+            fake.addr,
+            fake.secret.clone(),
+            false,
+            &MirrorOptions::default(),
+        )
+        .map_err(SetupError::into_error);
+        if crate::airplay::session::FAIRPLAY_BUILT {
+            // /fp-setup is 404: legacy without FairPlay, as before.
+            assert!(r.unwrap().fairplay.is_none());
+        } else {
+            let e = r.err().unwrap();
+            assert_eq!(e.code(), Some("fairplay-required"), "{e}");
+            assert!(e.to_string().contains("`fairplay` feature"), "{e}");
+            assert!(fake.rec().setup_bodies.is_empty());
+        }
+    }
+
+    /// A receiver that refuses the session after FairPlay was skipped:
+    /// `fairplay-required` (with FairPlay built in, the refusal itself).
+    #[test]
+    fn refusal_without_fairplay_names_it() {
+        let fake = FakeMirror::start(Behaviour {
+            fairplay_bit: true,
+            refuse_session_setup: Some(403),
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let tcp = TcpStream::connect(fake.addr).unwrap();
+        let e = Session::establish(
+            RtspClient::new(tcp),
+            fake.addr,
+            fake.secret.clone(),
+            true,
+            &MirrorOptions::default(),
+        )
+        .map_err(SetupError::into_error)
+        .err()
+        .unwrap();
+        assert_eq!(
+            e.code() == Some("fairplay-required"),
+            !crate::airplay::session::FAIRPLAY_BUILT,
+            "{e}"
+        );
+    }
+
     /// Regression (audio stopped on a QuickTime recording): when the
     /// source stalls and the media clock re-anchors, the RTP timestamps
     /// get the same gap, so every sync packet stays on one sample<->time

@@ -2,52 +2,231 @@
 // Ported from doubletake internal/airplay/{fpsap.go,fairplay_crypto.go,fairplay.go,mirror.go}
 // @ be27776beb05beaa149a7096e4722f5cba60eb37 (LGPL-3.0-or-later).
 // Copyright of the original: the doubletake authors. See LICENSES/.
-//! FairPlay SAP for AirPlay mirroring (PLAN §7.3).
+//! FairPlay SAP for AirPlay mirroring, for the `tvpipe` crate's optional
+//! `fairplay` feature.
 //!
-//! **License:** this directory is an LGPL-3.0-or-later port of doubletake
-//! (ARCHITECTURE.md, "Licensing and Clean Room"). Nothing outside `src/airplay/fairplay/` may copy from
-//! it; use it only through the API below.
+//! **License:** LGPL-3.0-or-later, a port of doubletake (see the crate's
+//! README). Linking it into a program brings the LGPL's obligations
+//! (relinkability); `tvpipe` without its `fairplay` feature does not use
+//! it. Nothing outside this crate may copy from it.
+//!
+//! The crate is bytes in, bytes out: the HTTP requests, the keys derived
+//! from the wrapped key and everything else stay in `tvpipe`.
 //!
 //! # Use
 //!
-//! On the verified, encrypted control connection ([`pair::connect`]):
+//! On the verified, encrypted AirPlay control connection:
 //!
-//! 1. [`fp_setup`] (or by hand: create an [`FpSession`], `POST /fp-setup`
-//!    [`FpSession::m1`], feed the response body to [`FpSession::m3`],
-//!    `POST /fp-setup` the result, check the response with
-//!    [`FpSession::check_m4`]; both POSTs carry `X-Apple-ET: 32` and
-//!    `Content-Type: application/octet-stream`).
+//! 1. Create an [`FpSession`], `POST /fp-setup` [`FpSession::m1`], feed
+//!    the response body to [`FpSession::m3`], `POST /fp-setup` the result
+//!    and check the response with [`FpSession::check_m4`].
 //! 2. Pick a random 16-byte FairPlay key and wrap it with
 //!    [`FpSession::wrap_key`]; the 72 bytes are the `ekey` the receiver
 //!    unwraps to learn the key.
-//! 3. [`stream_master_key`] mixes that FairPlay key with the pair-verify
-//!    shared secret ([`pair::Control::shared`]) into the key the receiver
-//!    decrypts the stream with; [`stream_key_iv`] derives the per-stream
-//!    AES key and IV from it and a stream's `streamConnectionID`.
 //!
 //! Everything from the network is validated; malformed m2/m4 become
 //! errors, never panics.
-//!
-//! [`pair::connect`]: crate::airplay::pair::connect
-//! [`pair::Control::shared`]: crate::airplay::pair::Control
 
+#![forbid(unsafe_code)]
+
+mod aes;
 mod md5;
 mod message;
 mod sap;
 mod tables;
 mod whitebox;
 
-use std::io::{Read, Write};
+use crate::aes::Aes;
 
-use crate::crypto::aes::Aes;
-use crate::crypto::ring::{ct_eq, hmac_sha1, random_fill, Sha512};
-use crate::error::{Error, Result};
-use crate::net::rtsp::RtspClient;
+/// What went wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    /// An m2/m4 that does not parse.
+    Malformed,
+    /// A mode or key size this implementation does not know.
+    Unsupported,
+    /// m4 does not confirm m3.
+    Crypto,
+    /// Called out of order (m4 or a key wrap before m3).
+    Protocol,
+    /// The OS random number generator failed.
+    Random,
+}
 
-/// The `X-Apple-ET` header value both `/fp-setup` requests carry.
-pub const ENCRYPTION_TYPE: &str = "32";
-/// The `Content-Type` of both `/fp-setup` requests.
-pub const CONTENT_TYPE: &str = "application/octet-stream";
+/// A FairPlay error: its kind and a message (`fairplay: …`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Error {
+    kind: ErrorKind,
+    msg: String,
+}
+
+impl Error {
+    fn new(kind: ErrorKind, msg: impl Into<String>) -> Error {
+        Error {
+            kind,
+            msg: msg.into(),
+        }
+    }
+
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl std::error::Error for Error {}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+fn random_fill(buf: &mut [u8]) -> Result<()> {
+    use ring::rand::SecureRandom;
+    ring::rand::SystemRandom::new()
+        .fill(buf)
+        .map_err(|_| Error::new(ErrorKind::Random, "fairplay: no randomness from the OS"))
+}
+
+fn hmac_sha1(key: &[u8], msg: &[u8]) -> [u8; 20] {
+    let k = ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, key);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(ring::hmac::sign(&k, msg).as_ref());
+    out
+}
+
+/// Constant-time equality of two byte strings of the same length.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn hex_encode(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+#[cfg(test)]
+fn hex_decode(s: &str) -> Vec<u8> {
+    test_util::hex::decode(s).unwrap()
+}
+
+/// Helpers for the tests: hex, SHA-256, the `key = value` vector files.
+#[cfg(test)]
+pub(crate) mod test_util {
+    pub mod hex {
+        pub fn encode(b: &[u8]) -> String {
+            super::super::hex_encode(b)
+        }
+
+        pub fn decode(s: &str) -> Result<Vec<u8>, String> {
+            let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+            if s.len() % 2 != 0 {
+                return Err(format!("odd hex length {}", s.len()));
+            }
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string()))
+                .collect()
+        }
+    }
+
+    pub struct Sha256(ring::digest::Context);
+
+    impl Sha256 {
+        pub fn new() -> Sha256 {
+            Sha256(ring::digest::Context::new(&ring::digest::SHA256))
+        }
+
+        pub fn update(&mut self, d: &[u8]) -> &mut Self {
+            self.0.update(d);
+            self
+        }
+
+        pub fn finish(self) -> [u8; 32] {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(self.0.finish().as_ref());
+            out
+        }
+    }
+
+    /// Blank-line separated blocks of `key = value` lines (`#` comments,
+    /// indented lines continue the previous value), as in tvpipe.
+    pub mod vectors {
+        pub struct Block {
+            pub line: usize,
+            pub entries: Vec<(String, String)>,
+        }
+
+        impl Block {
+            pub fn get(&self, key: &str) -> Option<&str> {
+                self.entries
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.as_str())
+            }
+
+            pub fn str(&self, key: &str) -> &str {
+                self.get(key)
+                    .unwrap_or_else(|| panic!("block at line {}: no {key:?}", self.line))
+            }
+
+            pub fn hex(&self, key: &str) -> Vec<u8> {
+                super::hex::decode(self.str(key)).unwrap()
+            }
+
+            pub fn parse<T: std::str::FromStr>(&self, key: &str) -> T {
+                self.str(key)
+                    .parse()
+                    .unwrap_or_else(|_| panic!("block at line {}: bad {key:?}", self.line))
+            }
+
+            pub fn name(&self) -> String {
+                self.get("name")
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("line {}", self.line))
+            }
+        }
+
+        /// `tests/vectors/<name>` of this crate.
+        pub fn load(name: &str) -> Vec<Block> {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("vectors")
+                .join(name);
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let mut blocks = Vec::new();
+            let mut cur: Option<Block> = None;
+            for (i, raw) in text.lines().enumerate() {
+                if raw.trim().is_empty() {
+                    blocks.extend(cur.take());
+                    continue;
+                }
+                if raw.trim_start().starts_with('#') {
+                    continue;
+                }
+                let b = cur.get_or_insert_with(|| Block {
+                    line: i + 1,
+                    entries: Vec::new(),
+                });
+                if raw.starts_with([' ', '\t']) {
+                    if let Some((_, v)) = b.entries.last_mut() {
+                        v.push_str(raw.trim());
+                    }
+                    continue;
+                }
+                let (k, v) = raw
+                    .split_once('=')
+                    .unwrap_or_else(|| panic!("{name}:{}: no '='", i + 1));
+                b.entries.push((k.trim().to_owned(), v.trim().to_owned()));
+            }
+            blocks.extend(cur);
+            blocks
+        }
+    }
+}
 
 /// m1 capability byte: every mode is acceptable; the receiver picks.
 const M1_PAYLOAD: [u8; 4] = [0x02, 0x00, 0x03, 0xbb];
@@ -110,16 +289,17 @@ impl FpSession {
     pub fn m3(&mut self, m2: &[u8]) -> Result<[u8; 164]> {
         check_header(m2, 2, 130, "m2")?;
         if m2[12] != 2 {
-            return Err(Error::malformed(format!(
-                "fairplay: m2 payload marker {} (want 2)",
-                m2[12]
-            )));
+            return Err(Error::new(
+                ErrorKind::Malformed,
+                format!("fairplay: m2 payload marker {} (want 2)", m2[12]),
+            ));
         }
         let mode = m2[13] as usize;
         if mode >= message::MODES {
-            return Err(Error::unsupported(format!(
-                "fairplay: receiver picked unknown mode {mode}"
-            )));
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                format!("fairplay: receiver picked unknown mode {mode}"),
+            ));
         }
         let mut body = [0u8; 128];
         body.copy_from_slice(&m2[14..142]);
@@ -141,7 +321,10 @@ impl FpSession {
         let ex = self.exchanged()?;
         check_header(m4, 4, 20, "m4")?;
         if !ct_eq(&m4[12..], &ex.m3[144..]) {
-            return Err(Error::crypto("fairplay: m4 does not confirm m3"));
+            return Err(Error::new(
+                ErrorKind::Crypto,
+                "fairplay: m4 does not confirm m3",
+            ));
         }
         Ok(())
     }
@@ -182,72 +365,8 @@ impl FpSession {
     fn exchanged(&self) -> Result<&Exchanged> {
         self.exchanged
             .as_ref()
-            .ok_or_else(|| Error::protocol("fairplay: m3 has not been generated"))
+            .ok_or_else(|| Error::new(ErrorKind::Protocol, "fairplay: m3 has not been generated"))
     }
-}
-
-/// Runs the whole `/fp-setup` exchange on `client` (the encrypted control
-/// connection) and returns the session, ready for
-/// [`FpSession::wrap_key`].
-pub fn fp_setup<S: Read + Write>(client: &mut RtspClient<S>) -> Result<FpSession> {
-    let mut session = FpSession::new()?;
-    let m2 = post(client, &session.m1(), "m1")?;
-    let m3 = session.m3(&m2)?;
-    let m4 = post(client, &m3, "m3")?;
-    session.check_m4(&m4)?;
-    Ok(session)
-}
-
-fn post<S: Read + Write>(client: &mut RtspClient<S>, body: &[u8], what: &str) -> Result<Vec<u8>> {
-    let resp = client.request(
-        "POST",
-        "/fp-setup",
-        &[("X-Apple-ET", ENCRYPTION_TYPE)],
-        Some((CONTENT_TYPE, body.to_vec())),
-    )?;
-    if resp.status == 404 {
-        return Err(Error::unsupported(
-            "fairplay: receiver has no /fp-setup (404)",
-        ));
-    }
-    let resp = resp.error_for_status(&format!("fairplay: /fp-setup ({what})"))?;
-    Ok(resp.body)
-}
-
-/// The key the receiver decrypts the stream with, from the FairPlay `key`
-/// given to [`FpSession::wrap_key`] and the pair-verify shared secret
-/// (`pair::Control::shared.secret()`). Receivers paired through
-/// [`pair::connect`](crate::airplay::pair::connect) always expect the
-/// secret mixed in; an empty `pair_secret` returns `key` unchanged (only
-/// for receivers without HAP pairing).
-pub fn stream_master_key(key: &[u8; 16], pair_secret: &[u8]) -> [u8; 16] {
-    if pair_secret.is_empty() {
-        return *key;
-    }
-    // SHA-512(key || secret), truncated.
-    let mut h = Sha512::new();
-    h.update(key).update(pair_secret);
-    first16(&h.finish())
-}
-
-/// The per-stream AES-128 key and IV, from the [`stream_master_key`] and
-/// the stream's `streamConnectionID` exactly as sent in that stream's
-/// SETUP (a 64-bit integer; pass its unsigned value).
-pub fn stream_key_iv(master: &[u8; 16], stream_connection_id: u64) -> ([u8; 16], [u8; 16]) {
-    // SHA-512(label || decimal id || master), truncated, per label.
-    let derive = |label: &str| {
-        let mut h = Sha512::new();
-        h.update(format!("{label}{stream_connection_id}").as_bytes())
-            .update(master);
-        first16(&h.finish())
-    };
-    (derive("AirPlayStreamKey"), derive("AirPlayStreamIV"))
-}
-
-fn first16(d: &[u8; 64]) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    out.copy_from_slice(&d[..16]);
-    out
 }
 
 /// The 12-byte FPLY record header.
@@ -262,16 +381,19 @@ fn header(kind: u8, payload_len: u32) -> [u8; 12] {
 fn check_header(record: &[u8], kind: u8, payload_len: u32, what: &str) -> Result<()> {
     let want = 12 + payload_len as usize;
     if record.len() != want {
-        return Err(Error::malformed(format!(
-            "fairplay: {what} is {} bytes (want {want})",
-            record.len()
-        )));
+        return Err(Error::new(
+            ErrorKind::Malformed,
+            format!("fairplay: {what} is {} bytes (want {want})", record.len()),
+        ));
     }
     if record[..12] != header(kind, payload_len) {
-        return Err(Error::malformed(format!(
-            "fairplay: {what} has a bad header {}",
-            crate::util::hex::encode(&record[..12])
-        )));
+        return Err(Error::new(
+            ErrorKind::Malformed,
+            format!(
+                "fairplay: {what} has a bad header {}",
+                hex_encode(&record[..12])
+            ),
+        ));
     }
     Ok(())
 }

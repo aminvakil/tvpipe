@@ -29,9 +29,14 @@ jobs:
       # (Ubuntu 24.04 ships ffmpeg 6.1 with libx264 and libopus).
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      # Without the LGPL FairPlay crate (the library's default later on).
+      - if: runner.os == 'Linux'
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - if: runner.os == 'Linux'
+        run: cargo test --no-default-features
 
   msrv:
     runs-on: ubuntu-latest
@@ -39,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.85
-      - run: cargo check --all-targets
+      - run: cargo check --workspace --all-targets
 
   # The Node SDK (npm/tvpipe) against the debug binary.
   sdk:

@@ -1,15 +1,13 @@
 //! AirPlay mirroring sender (PLAN §7).
 //!
-//! Owners: W5 (pairing, secure channel, info, credentials), W6 (`fairplay/`,
-//! LGPL port), W7 (mirror, audio, timing, keys, sink).
+//! Owners: W5 (pairing, secure channel, info, credentials), W6 (FairPlay:
+//! the LGPL `tvpipe-fairplay` crate), W7 (mirror, audio, timing, keys,
+//! sink).
 
 pub mod audio;
 pub mod credentials;
 pub mod discovery;
 pub mod events;
-// Moving to its own crate (the next commit); still compiled in here.
-#[path = "../../crates/tvpipe-fairplay/src/lib.rs"]
-pub mod fairplay;
 pub mod fake_mirror;
 pub mod info;
 pub mod keys;

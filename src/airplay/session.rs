@@ -20,7 +20,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::airplay::events::{Event, EventChannel};
-use crate::airplay::fairplay::{self, FpSession};
 use crate::airplay::info::Info;
 use crate::airplay::keys;
 use crate::airplay::mdc::MediaDataControl;
@@ -32,8 +31,8 @@ use crate::airplay::setup::{
 };
 use crate::airplay::timing::{anchor_from_headers, NtpResponder, PtpClock, Timeline};
 use crate::codec::bplist::Plist;
-use crate::crypto::ring::{random_array, random_fill};
-use crate::error::{Error, Result};
+use crate::crypto::ring::random_array;
+use crate::error::{Error, ErrorKind, Result};
 use crate::net::http::Response;
 use crate::net::rtsp::RtspClient;
 
@@ -451,12 +450,24 @@ impl<S: ControlStream> Session<S> {
             warn!("airplay: receiver does not advertise screen mirroring (feature 7)");
         }
 
-        // FairPlay (§2.2).
-        let fairplay = if policy::has(features, bit::FAIRPLAY_SAP) {
-            fair_play(&mut control, &secret)?
-        } else {
+        // FairPlay (§2.2). Without the `fairplay` feature, HAP sessions go
+        // on with the §5.3 placeholders (what the Apple TV accepts); a
+        // legacy session needs it.
+        let mut fairplay_skipped = false;
+        let fairplay = if !policy::has(features, bit::FAIRPLAY_SAP) {
             debug!("airplay: no FairPlay (feature 14 not set)");
             None
+        } else if FAIRPLAY_BUILT {
+            fair_play(&mut control, &secret)?
+        } else if hap {
+            debug!("airplay: receiver offers FairPlay; this build has none, going on without");
+            fairplay_skipped = true;
+            None
+        } else {
+            return Err(SetupError::Fatal(fairplay_required(
+                info.name.as_deref().unwrap_or("the receiver"),
+                "its legacy (unpaired) profile",
+            )));
         };
 
         let ptp = opts.ptp && policy::use_ptp(hap, features, version.as_deref());
@@ -511,6 +522,19 @@ impl<S: ControlStream> Session<S> {
         let r = session.setup(opts, ptp, local_ip);
         match r {
             Ok(()) => Ok(session),
+            // A receiver that refuses the session after FairPlay was
+            // skipped most likely wants it.
+            Err(SetupError::Fatal(e))
+                if fairplay_skipped
+                    && matches!(e.kind(), ErrorKind::Protocol | ErrorKind::Auth) =>
+            {
+                session.cleanup();
+                debug!("airplay: setup without FairPlay failed: {e}");
+                Err(SetupError::Fatal(fairplay_required(
+                    session.info.name.as_deref().unwrap_or("the receiver"),
+                    &format!("it refused the session without it ({e})"),
+                )))
+            }
             Err(e) => {
                 session.cleanup();
                 Err(e)
@@ -968,19 +992,47 @@ impl<S: ControlStream> Session<S> {
     }
 }
 
+/// Whether this build includes FairPlay (the `fairplay` feature).
+pub const FAIRPLAY_BUILT: bool = cfg!(feature = "fairplay");
+
+/// The `X-Apple-ET` header both `/fp-setup` requests carry (§2.2).
+const FP_ENCRYPTION_TYPE: &str = "32";
+/// Their `Content-Type` (§2.2).
+const FP_CONTENT_TYPE: &str = "application/octet-stream";
+
+/// The error for a receiver that needs FairPlay in a build without it.
+pub fn fairplay_required(name: &str, why: &str) -> Error {
+    Error::unsupported(format!(
+        "airplay: {name} needs FairPlay ({why}), which this build does not include: \
+         enable tvpipe's `fairplay` feature (LGPL-3.0-or-later code, linked statically: \
+         the program then has the LGPL's obligations, including relinkability), or use \
+         the `tvpipe` command-line tool"
+    ))
+    .with_code("fairplay-required")
+}
+
+#[cfg(not(feature = "fairplay"))]
+fn fair_play<S: ControlStream>(
+    _control: &mut Control<S>,
+    _secret: &[u8],
+) -> Result<Option<FairPlayKeys>> {
+    Err(fairplay_required("the receiver", "built without it"))
+}
+
 /// `POST /fp-setup` ×2 (§2.2). `None`: the receiver does not do
 /// FairPlay (404). Any other failure aborts.
+#[cfg(feature = "fairplay")]
 fn fair_play<S: ControlStream>(
     control: &mut Control<S>,
     secret: &[u8],
 ) -> Result<Option<FairPlayKeys>> {
-    let mut fp = FpSession::new()?;
+    let mut fp = tvpipe_fairplay::FpSession::new().map_err(fp_error)?;
     let post = |control: &mut Control<S>, body: Vec<u8>| {
         control.request(
             "POST",
             "/fp-setup",
-            &[("X-Apple-ET", fairplay::ENCRYPTION_TYPE)],
-            Some((fairplay::CONTENT_TYPE, body)),
+            &[("X-Apple-ET", FP_ENCRYPTION_TYPE)],
+            Some((FP_CONTENT_TYPE, body)),
             DEFAULT_TIMEOUT,
         )
     };
@@ -990,21 +1042,66 @@ fn fair_play<S: ControlStream>(
         return Ok(None);
     }
     let m2 = check(m2, "fp-setup m1")?;
-    let m3 = fp.m3(&m2.body)?;
+    let m3 = fp.m3(&m2.body).map_err(fp_error)?;
     let m4 = post(control, m3.to_vec())?;
     if m4.status == 404 {
         debug!("airplay: /fp-setup m3 not found; no FairPlay");
         return Ok(None);
     }
     let m4 = check(m4, "fp-setup m3")?;
-    fp.check_m4(&m4.body)?;
+    fp.check_m4(&m4.body).map_err(fp_error)?;
     let k_fp: [u8; 16] = random_array()?;
-    let mut eiv = [0u8; 16];
-    random_fill(&mut eiv)?;
-    let ekey = fp.wrap_key(&k_fp)?;
+    let eiv: [u8; 16] = random_array()?;
+    let ekey = fp.wrap_key(&k_fp).map_err(fp_error)?;
     // §2.2: HAP mixes the pair-verify secret in (as does a raw verify
     // with X-Apple-PD: 1, which we would always send).
     let master = keys::stream_master_key(&k_fp, secret);
     debug!("airplay: FairPlay done");
     Ok(Some(FairPlayKeys { master, eiv, ekey }))
+}
+
+#[cfg(feature = "fairplay")]
+fn fp_error(e: tvpipe_fairplay::Error) -> Error {
+    use tvpipe_fairplay::ErrorKind as K;
+    match e.kind() {
+        K::Malformed => Error::malformed(e.to_string()),
+        K::Unsupported => Error::unsupported(e.to_string()),
+        K::Crypto => Error::crypto(e.to_string()),
+        _ => Error::protocol(e.to_string()),
+    }
+}
+
+#[cfg(all(test, feature = "fairplay"))]
+mod fairplay_tests {
+    use super::*;
+
+    /// The whole `/fp-setup` exchange against a real receiver over the
+    /// verified control channel (the CLI's pairings):
+    ///
+    /// ```text
+    /// TVPIPE_ATV=192.168.1.34 cargo test hardware_fp_setup -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn hardware_fp_setup() {
+        use crate::airplay::credentials::Store;
+        use crate::airplay::pair;
+
+        let Ok(target) = std::env::var("TVPIPE_ATV") else {
+            eprintln!("TVPIPE_ATV not set; skipping");
+            return;
+        };
+        let target = pair::resolve(&target).unwrap();
+        let store = Store::open(&crate::storage::Storage::cli()).unwrap();
+        let control = pair::connect(&target, &store).unwrap();
+        let secret = control.shared.secret().to_vec();
+        let mut c = Control::new(control.client);
+        let keys = fair_play(&mut c, &secret).unwrap().expect("FairPlay ran");
+        eprintln!("fp-setup ok; ekey {} bytes", keys.ekey.len());
+        // The connection is still usable afterwards.
+        let resp = c
+            .request("GET", "/info", &[], None, DEFAULT_TIMEOUT)
+            .unwrap();
+        eprintln!("GET /info after fp-setup: {}", resp.status);
+    }
 }
