@@ -21,6 +21,8 @@ Every command lists all of its options with `--help`.
 | `test-pattern` | Sends a test pattern. See [Latency](latency.md). |
 | `tunnel` | Puts a server on this computer on a public link. See [Public links](links.md#s3). |
 | `qr` | Prints a QR code, `--svg` or `--rows` for programs. |
+| `tunnel` | Puts a server on this computer on a public https link. See [Public links](links.md). |
+| `qr` | Prints a QR code of a text or link. |
 | `debug-pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |
 
 ## Streaming

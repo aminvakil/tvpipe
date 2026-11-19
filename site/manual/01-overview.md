@@ -17,6 +17,7 @@ tvpipe is a command line tool that puts video and sound from your computer on a 
 - Puts a web page on the TV, such as a dashboard.
 - Takes frames and sound from a game.
 - Sends to several TVs at once.
+- Runs party games that everyone plays with their phone.
 
 ## How it works
 

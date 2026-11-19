@@ -12,6 +12,10 @@ spec:
 
 The `@tvpipe/party` library (Node) and the `tvpipe-party` crate (Rust) are for games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. The phones open a web page the game provides, over a public link, so nobody installs anything. Both speak the same protocol to the same browser client.
 
+:::aside Not released yet
+Both packages come out with the next release. Until then, use them from a clone of the repository.
+:::
+
 ```sh
 $ npm install @tvpipe/party @tvpipe/sdk
 $ cargo add tvpipe-party tvpipe --features tvpipe/signals
@@ -100,7 +104,7 @@ party.shutdown(Duration::from_secs(2));
 
 ### Faster on the same Wi-Fi
 
-With the crate's `webrtc` feature, phones that can reach the computer on the local network also talk to it over WebRTC data channels, next to the WebSocket. Actions take under a millisecond there instead of tens of milliseconds through a tunnel, and continuous input is never held up by a lost packet. Phones elsewhere, or when anything goes wrong, keep using the WebSocket without noticing.
+With the crate's `webrtc` feature, phones that can reach the computer on the local network also talk to it over WebRTC data channels, next to the WebSocket. Actions arrive faster there than through a tunnel, and continuous input is never held up by a lost packet. Phones elsewhere, or when anything goes wrong, keep using the WebSocket without noticing.
 
 ## The main screen
 
@@ -119,7 +123,7 @@ The screen gets the join link and its QR code with everything else it shows. Wit
 
 The QR code holds the public link with the room's code and a key, so only people who can see the TV can join. People elsewhere can play too: they join with the same link and watch the screen with `party.links.watch`. `tunnel: false` keeps everything on this computer.
 
-A Rust game can also stay on the local network (`Join::Lan`): no third party sees the game, but the phones must be on the same Wi-Fi and the page is plain HTTP. When no tunnel comes up, the default falls back to it. Listening on the network brings up the firewall prompt on Windows; [docs/shipping-party-games.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/shipping-party-games.md) covers prompts and signing.
+A Rust game can also stay on the local network (`Join::Lan`): no third party sees the game, but the phones must be on the same Wi-Fi and the page is plain HTTP. When no tunnel comes up, the default falls back to it. Listening on the network brings up the firewall prompt on Windows. [docs/shipping-party-games.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/shipping-party-games.md) covers prompts and signing.
 
 ## Safety
 
@@ -130,7 +134,7 @@ A Rust game can also stay on the local network (`Join::Lan`): no third party see
 
 ## The demo game
 
-`games/drawbluff` in the repository is a drawing and bluffing game for 3 to 8 players, with two hosts: Node and Rust. Both run the main screen either way.
+`games/drawbluff` in the repository is a drawing and bluffing game for 3 to 50 players, with two hosts: Node and Rust. Both run the main screen either way. The Node host runs in `games/drawbluff`, the Rust one from the repository's root.
 
 ```sh
 $ node main.ts --to "Living Room"           # the screen page
