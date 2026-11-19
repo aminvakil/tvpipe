@@ -192,6 +192,9 @@ fn examples() -> Vec<(&'static str, Event)> {
                 tab: 1,
                 state: ViewerState::Connected,
                 public: false,
+                address: None,
+                country: None,
+                browser: Some(s("Chrome 131 on macOS")),
             }),
         ),
         (
@@ -201,6 +204,9 @@ fn examples() -> Vec<(&'static str, Event)> {
                 tab: 2,
                 state: ViewerState::Disconnected,
                 public: true,
+                address: Some(s("203.0.113.9")),
+                country: Some(s("DE")),
+                browser: Some(s("Safari 18 on iPhone")),
             }),
         ),
         (

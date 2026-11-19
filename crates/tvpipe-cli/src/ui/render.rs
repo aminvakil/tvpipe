@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tvpipe::__cli::events::{
     CaptureEvent, EndInfo, EndReason, ErrorInfo, Event, Progress, Protocol, ReceiverEvent,
-    ReceiverState, Started, Stats, Step, TunnelEvent, TunnelPage, ViewerState,
+    ReceiverState, Started, Stats, Step, TunnelEvent, TunnelPage, ViewerEvent, ViewerState,
 };
 use tvpipe::log::{Level, Record};
 
@@ -303,7 +303,7 @@ impl Renderer {
                     self.viewers += 1;
                     self.end_step(|s| *s == Step::Viewer);
                     if v.public {
-                        self.note("Someone opened the public link");
+                        self.note(&opened_link(v));
                     }
                 }
                 ViewerState::Disconnected => self.viewers = self.viewers.saturating_sub(1),
@@ -1131,4 +1131,18 @@ fn mbits(bps: f64) -> String {
     } else {
         format!("{} kbit/s", (bps / 1e3).round() as u64)
     }
+}
+
+/// "203.0.113.9 in DE (Safari 18 on iPhone) opened the public link", with
+/// what the tunnel and the browser told (checked by the library), else
+/// "Someone opened the public link".
+fn opened_link(v: &ViewerEvent) -> String {
+    let mut who = v.address.clone().unwrap_or_else(|| "Someone".into());
+    if let Some(c) = &v.country {
+        who.push_str(&format!(" in {c}"));
+    }
+    if let Some(b) = &v.browser {
+        who.push_str(&format!(" ({b})"));
+    }
+    format!("{who} opened the public link")
 }

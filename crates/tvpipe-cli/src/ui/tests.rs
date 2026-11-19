@@ -310,6 +310,54 @@ fn screen_with_a_public_link() {
 }
 
 #[test]
+fn who_opened_the_public_link() {
+    let raw = run(
+        Caps::plain(),
+        Kind::Stream("Live"),
+        SCREEN,
+        &[
+            (0, Json(PLAYER)),
+            (1, Json(TUNNEL)),
+            (
+                2,
+                Json(
+                    r#"{"type":"viewer","name":"browser","tab":1,"state":"connected","public":true,"address":"203.0.113.9","country":"DE","browser":"Safari 18 on iPhone"}"#,
+                ),
+            ),
+            (
+                3,
+                Json(
+                    r#"{"type":"viewer","name":"browser","tab":2,"state":"connected","public":true,"address":"198.51.100.7"}"#,
+                ),
+            ),
+            (
+                4,
+                Json(
+                    r#"{"type":"viewer","name":"browser","tab":3,"state":"connected","public":true}"#,
+                ),
+            ),
+            (
+                5,
+                Json(
+                    r#"{"type":"viewer","name":"browser","tab":4,"state":"connected","browser":"Chrome 131 on macOS"}"#,
+                ),
+            ),
+        ],
+    );
+    assert!(
+        raw.contains("• 203.0.113.9 in DE (Safari 18 on iPhone) opened the public link\n"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("• 198.51.100.7 opened the public link\n"),
+        "{raw}"
+    );
+    assert!(raw.contains("• Someone opened the public link\n"), "{raw}");
+    // A tab on this computer is no news.
+    assert_eq!(raw.matches("opened the public link").count(), 3, "{raw}");
+}
+
+#[test]
 fn the_qr_code_is_framed() {
     let caps = Caps {
         qr: true,

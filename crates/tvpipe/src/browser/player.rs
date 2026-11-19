@@ -349,6 +349,32 @@ struct Shared {
     cv: Condvar,
     /// `viewer` events.
     events: Events,
+    /// The public link is a Cloudflare one: Cloudflare sets `cf-ipcountry`
+    /// (anywhere else a visitor could send it).
+    cloudflare: AtomicBool,
+}
+
+/// Who a viewer is, for the `viewer` event (all of it checked, see
+/// `browser::agent`).
+#[derive(Clone, Default)]
+struct Visitor {
+    address: Option<String>,
+    country: Option<String>,
+    browser: Option<String>,
+}
+
+impl Visitor {
+    /// "203.0.113.9 in DE (Safari 18 on iPhone)", for the log.
+    fn describe(&self) -> String {
+        let mut s = self.address.clone().unwrap_or_else(|| "someone".into());
+        if let Some(c) = &self.country {
+            s.push_str(&format!(" in {c}"));
+        }
+        if let Some(b) = &self.browser {
+            s.push_str(&format!(" ({b})"));
+        }
+        s
+    }
 }
 
 impl Shared {
@@ -410,10 +436,14 @@ impl Shared {
                         return Reply::Response(httpd::error_response(503, "Too many viewers"));
                     }
                 }
+                let visitor = self.visitor(req, via);
                 match websocket::server_response(req) {
                     Ok(resp) => {
                         let me = self.clone();
-                        Reply::Upgrade(resp, Box::new(move |tcp, rest| me.tab(tcp, rest, via)))
+                        Reply::Upgrade(
+                            resp,
+                            Box::new(move |tcp, rest| me.tab(tcp, rest, via, visitor)),
+                        )
                     }
                     Err(e) => {
                         debug!("{}: bad upgrade: {e}", self.name);
@@ -431,8 +461,29 @@ impl Shared {
         }
     }
 
+    /// Who opens a tab: the browser for every tab, and over the public link
+    /// the address the tunnel reports and, with Cloudflare, the country.
+    fn visitor(&self, req: &Request, via: Via) -> Visitor {
+        use crate::browser::agent;
+        let public = via == Via::Public;
+        Visitor {
+            address: public
+                .then(|| self.access.remote_peer(httpd::current_peer()))
+                .flatten()
+                .and_then(|p| agent::address(&p)),
+            country: (public && self.cloudflare.load(Ordering::Relaxed))
+                .then(|| req.headers.get("cf-ipcountry").and_then(agent::country))
+                .flatten(),
+            browser: req
+                .headers
+                .get("user-agent")
+                .map(agent::describe)
+                .filter(|d| !d.is_empty()),
+        }
+    }
+
     /// One tab, on its connection thread until it closes.
-    fn tab(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>, via: Via) {
+    fn tab(self: Arc<Self>, tcp: TcpStream, rest: Vec<u8>, via: Via, visitor: Visitor) {
         if tcp.set_read_timeout(Some(TAB_POLL)).is_err()
             || tcp.set_write_timeout(Some(WRITE_TIMEOUT)).is_err()
         {
@@ -477,9 +528,9 @@ impl Shared {
             queue.close();
         }
         let from = if via == Via::Public {
-            ", over the tunnel"
+            format!(", over the tunnel: {}", visitor.describe())
         } else {
-            ""
+            String::new()
         };
         info!("{}: a viewer connected (tab {id}{from})", self.name);
         self.events.emit(Event::Viewer(ViewerEvent {
@@ -487,6 +538,9 @@ impl Shared {
             tab: id,
             state: ViewerState::Connected,
             public: via == Via::Public,
+            address: visitor.address.clone(),
+            country: visitor.country.clone(),
+            browser: visitor.browser.clone(),
         }));
         let why = loop {
             if self.lock().shutdown {
@@ -525,6 +579,9 @@ impl Shared {
             tab: id,
             state: ViewerState::Disconnected,
             public: via == Via::Public,
+            address: visitor.address,
+            country: visitor.country,
+            browser: visitor.browser,
         }));
         info!(
             "{}: viewer left (tab {id}: {why}{})",
@@ -654,6 +711,7 @@ impl BrowserSink {
             }),
             cv: Condvar::new(),
             events: ctx.events.clone(),
+            cloudflare: AtomicBool::new(false),
         });
         *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
         let url = format!("http://127.0.0.1:{port}/?t={token}");
@@ -677,6 +735,9 @@ impl BrowserSink {
             let token = shared
                 .access
                 .publish(t.host(), opts.tunnel_ttl, t.peer_lookup())?;
+            shared
+                .cloudflare
+                .store(provider == tunnel::Provider::Cloudflare, Ordering::Relaxed);
             // Over the internet the page needs more slack than on
             // loopback (docs/tunnels.md, Measurements).
             let delay = opts.latency_ms.max(PUBLIC_DELAY_MS);

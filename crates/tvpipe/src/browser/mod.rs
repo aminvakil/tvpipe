@@ -22,6 +22,8 @@
 
 #[cfg(feature = "player")]
 pub mod access;
+#[cfg(feature = "player")]
+pub mod agent;
 #[cfg(feature = "headless")]
 pub mod bidi;
 #[cfg(feature = "headless")]

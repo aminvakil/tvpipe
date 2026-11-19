@@ -1484,7 +1484,7 @@ fn describe_remote(cap: &CaptureInfo) -> String {
         .filter(|p| !p.is_empty())
         .unwrap_or("someone (address unknown)");
     let agent = remote
-        .map(|r| crate::browser::share::browser_name(&r.agent))
+        .map(|r| crate::browser::agent::describe(&r.agent))
         .filter(|a| !a.is_empty())
         .map(|a| format!(" ({a})"))
         .unwrap_or_default();

@@ -321,6 +321,14 @@ pub struct ViewerEvent {
     pub state: ViewerState,
     /// It came over the public link.
     pub public: bool,
+    /// Over the public link: the visitor's address, when the tunnel knows it.
+    pub address: Option<String>,
+    /// Over a Cloudflare link: the visitor's country, two letters
+    /// (Cloudflare's `cf-ipcountry`).
+    pub country: Option<String>,
+    /// The visitor's browser and system, from its user agent ("Safari 18
+    /// on iPhone").
+    pub browser: Option<String>,
 }
 
 /// A public link works.
@@ -725,7 +733,10 @@ impl Event {
                 .with("name", w.name.as_str())
                 .with("tab", w.tab)
                 .with("state", w.state.as_str())
-                .with("public", w.public),
+                .with("public", w.public)
+                .with_opt("address", w.address.as_deref())
+                .with_opt("country", w.country.as_deref())
+                .with_opt("browser", w.browser.as_deref()),
             Event::Tunnel(t) => v
                 .with("page", t.page.as_str())
                 .with_opt("name", t.name.as_deref())
@@ -846,6 +857,9 @@ impl Event {
                 tab: v.require_u64("tab")?,
                 state: wire(v, "state", ViewerState::from_wire)?,
                 public: v.get("public").and_then(Value::as_bool).unwrap_or(false),
+                address: opt_str(v, "address"),
+                country: opt_str(v, "country"),
+                browser: opt_str(v, "browser"),
             }),
             "tunnel" => Event::Tunnel(TunnelEvent {
                 page: wire(v, "page", TunnelPage::from_wire)?,

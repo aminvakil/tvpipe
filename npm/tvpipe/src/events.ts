@@ -61,6 +61,12 @@ export interface ViewerEvent {
   state: "connected" | "disconnected";
   /** It came over the public link. */
   public?: boolean;
+  /** Over the public link: the visitor's address, when the tunnel knows it. */
+  address?: string;
+  /** Over a Cloudflare link: the visitor's country, two letters. */
+  country?: string;
+  /** The visitor's browser and system, e.g. "Safari 18 on iPhone". */
+  browser?: string;
 }
 
 export interface SharePageEvent {

@@ -677,20 +677,6 @@ fn page_server_checks_token_and_host() {
 }
 
 #[test]
-fn browser_names() {
-    let chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-    let safari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15";
-    let firefox =
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0";
-    let edge = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
-    assert_eq!(browser_name(chrome), "Chrome 131");
-    assert_eq!(browser_name(safari), "Safari 18");
-    assert_eq!(browser_name(firefox), "Firefox 133");
-    assert_eq!(browser_name(edge), "Edg 131");
-    assert_eq!(browser_name("curl/8"), "");
-}
-
-#[test]
 fn square_pixel_check() {
     // The built-in encoder writes no aspect ratio: fine.
     let enc = h264enc::Encoder::new(h264enc::Config {

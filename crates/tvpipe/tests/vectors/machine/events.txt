@@ -49,11 +49,11 @@ json = {"type":"player","name":"browser","url":"http://127.0.0.1:8765/?t=0123456
 
 name = viewer
 type = viewer
-json = {"type":"viewer","name":"browser","tab":1,"state":"connected","public":false}
+json = {"type":"viewer","name":"browser","tab":1,"state":"connected","public":false,"browser":"Chrome 131 on macOS"}
 
 name = viewer over the tunnel leaves
 type = viewer
-json = {"type":"viewer","name":"browser","tab":2,"state":"disconnected","public":true}
+json = {"type":"viewer","name":"browser","tab":2,"state":"disconnected","public":true,"address":"203.0.113.9","country":"DE","browser":"Safari 18 on iPhone"}
 
 name = tunnel to the player
 type = tunnel

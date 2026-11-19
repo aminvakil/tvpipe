@@ -44,7 +44,7 @@ broke), by an `error`.
 | `log` | each log line at the active level (`-v`: debug, `--debug`: trace) | `level` (`error`, `warn`, `info`, `debug`, `trace`), `module`, `message` |
 | `receiver` | a receiver changes state | `name`, `protocol` (`cast`, `airplay`, `browser`; on `connected`/`failed` while connecting), `state`, `error` and `code` (with `failed`, `lost`, `gave-up`) |
 | `player` | a `--to browser` page listens | `name`, `url` |
-| `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`), `public` (it came over the tunnel) |
+| `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`), `public` (it came over the tunnel); optional: `address` (over the tunnel, the visitor's address when the tunnel knows it), `country` (over a Cloudflare tunnel, two letters from `cf-ipcountry`), `browser` (from the user agent: "Safari 18 on iPhone") |
 | `share-page` | `share` without URL listens | `url` (open it, press Share) |
 | `tunnel` | `--tunnel` or `debug tunnel PORT`: the public link works | `page` (`player`, `share`, `port`), `name` (the player's), `provider` (`cloudflare`, `opentunnel`), `url` (with its token) |
 | `capture` | `share`, `share URL` or `screen`: the browser started sharing | `surface` (`monitor`, `window`, `browser`), `label`, `width`, `height` (the capture's), `audio` (it has sound) |

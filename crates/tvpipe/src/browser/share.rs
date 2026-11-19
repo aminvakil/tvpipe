@@ -1015,7 +1015,7 @@ impl Input for ShareInput {
     }
 
     fn describe(&self) -> String {
-        let agent = browser_name(&self.agent);
+        let agent = crate::browser::agent::browser_name(&self.agent);
         format!(
             "shared {}",
             if agent.is_empty() {
@@ -1043,26 +1043,6 @@ impl Input for ShareInput {
         // Dropping the server tells the pages and stops listening.
         Ok(())
     }
-}
-
-/// "Chrome/131", "Safari/18.1", "Firefox/133" from a user agent.
-pub(crate) fn browser_name(agent: &str) -> String {
-    let find = |name: &str| {
-        agent.split_whitespace().find_map(|t| {
-            t.strip_prefix(name)
-                .and_then(|v| v.strip_prefix('/'))
-                .map(|v| format!("{name} {}", v.split('.').next().unwrap_or(v)))
-        })
-    };
-    find("Firefox")
-        .or_else(|| find("Edg"))
-        .or_else(|| find("Chrome"))
-        .or_else(|| {
-            find("Version")
-                .filter(|_| agent.contains("Safari"))
-                .map(|v| v.replace("Version", "Safari"))
-        })
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
