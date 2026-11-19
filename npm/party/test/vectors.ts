@@ -32,7 +32,8 @@
  *
  *   Actions the host handles: `echo` (the result is the data), `fail`
  *   (a PartyError with `data.code` and `data.message`), `set-room`,
- *   `set-screen`, `set-me` (merge the data into that state, no result).
+ *   `set-screen`, `set-me` (merge the data into that state, no result),
+ *   `inputs` (the latest `in` of each player that sent one, by id).
  *   The join info is `{code, url: "https://party.test/", qr: {size: 1,
  *   rows: ["1"]}}`.
  */
@@ -463,6 +464,29 @@ export const SCENARIOS: Scenario[] = [
     steps: ["c1 open", `c1 > ${hello("Ann")}`, "c1 >binary 00"],
   },
   {
+    name: "continuous input: the latest by sequence, players only, small",
+    steps: [
+      "c1 open",
+      `c1 > ${hello("Ann")}`,
+      "c2 open",
+      `c2 > {"t":"hello","v":1,"room":"$ROOM","role":"screen","key":"$SCREEN"}`,
+      `c1 > ${act(1, "inputs")}`,
+      `c1 > {"t":"in","s":1,"data":[0.5,-1]}`,
+      `c1 > {"t":"in","s":3,"data":"three"}`,
+      `c1 > {"t":"in","s":2,"data":"stale"}`,
+      `c1 > {"t":"in","s":0,"data":"zero"}`,
+      `c1 > {"t":"in","s":3.5,"data":"fraction"}`,
+      `c1 > {"t":"in","data":"no sequence"}`,
+      `c2 > {"t":"in","s":10,"data":"from the screen"}`,
+      `c1 > ${act(2, "inputs")}`,
+      `c1 >pad 4096 {"t":"in","s":4,"data":"big"}`,
+      `c1 > {"t":"in","s":5}`,
+      `c1 > ${act(3, "inputs")}`,
+      `c1 > {"t":"in","s":6,"data":{"x":1}}`,
+      `c1 > ${act(4, "inputs")}`,
+    ],
+  },
+  {
     name: "the room closes",
     steps: [
       "c1 open",
@@ -581,6 +605,11 @@ function installGame(party: Party): void {
   });
   party.handle("set-me", (data, from) => {
     if (from.role === "player" && isObject(data)) (from as Player).state.set(data);
+  });
+  party.handle("inputs", () => {
+    const o: JsonObject = {};
+    for (const p of party.players) if (p.input !== undefined) o[p.id] = p.input;
+    return o;
   });
 }
 

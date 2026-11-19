@@ -10,6 +10,13 @@
  *   party.on("view", (view) => render(view));
  *   await party.join("Ann");                 // or party.connect() with a saved identity
  *   await party.act("answer", { text: "…" }); // acked, resent after reconnects
+ *   party.input({ x: 0.3, y: -1 });          // continuous input, latest wins
+ *
+ * With a host that offers it (Rust hosts with the `webrtc` feature, in
+ * `welcome.rtc`), players upgrade to two WebRTC data channels on the LAN
+ * (docs/multiscreen-design.md §2.4): `r` (reliable) carries what the
+ * WebSocket carries, `u` (unordered, no retransmits) carries `input()`.
+ * The WebSocket stays and takes over whenever the channels are not open.
  */
 
 export const PROTOCOL = 1;
@@ -33,6 +40,10 @@ const FINAL = new Set([
 
 /** Unacknowledged actions kept at most. */
 const MAX_PENDING = 32;
+/** `input()` over the WebSocket at most this often, ms (latest wins). */
+const WS_INPUT_INTERVAL = 100;
+/** Messages larger than this go over the WebSocket even when `r` is open. */
+const MAX_FAST_MESSAGE = 60 * 1024;
 
 /** An action the host refused, or one that could not be sent. */
 export class PartyActionError extends Error {
@@ -155,6 +166,9 @@ export function drawQr(ctx, qr, x, y, size, opts = {}) {
  * @property {"player" | "screen" | "watch"} [role] Default `player`.
  * @property {StorageLike | null} [storage] Where the identity is kept (default `localStorage` when there is one).
  * @property {typeof WebSocket} [WebSocket] Default the global one.
+ * @property {boolean} [rtc] Upgrade to WebRTC data channels when the host offers it (default true; players only).
+ * @property {typeof RTCPeerConnection} [RTCPeerConnection] Default the global one.
+ * @property {number} [rtcTimeout] How long the channels may take to open, ms (default 3000).
  */
 
 /**
@@ -196,6 +210,9 @@ export class PartyClient {
     /** @type {StorageLike | null} */
     this.storage = opts.storage !== undefined ? opts.storage : safeStorage();
     this.WS = opts.WebSocket ?? globalThis.WebSocket;
+    /** @type {typeof RTCPeerConnection | undefined} */
+    this.RTC = opts.rtc === false || this.role !== "player" ? undefined : (opts.RTCPeerConnection ?? globalThis.RTCPeerConnection);
+    this.rtcTimeout = opts.rtcTimeout ?? 3000;
     /** The current view (`{ roster, room, me }` or `{ roster, screen, join }`). @type {Record<string, any>} */
     this.view = {};
     /** Who this client is, from `welcome`. @type {Record<string, any> | null} */
@@ -217,8 +234,20 @@ export class PartyClient {
     /** @type {string | undefined} */
     this._name = undefined;
     this._nextAct = 1;
-    /** @type {Map<number, { type: string, data: any, resolve: (v: any) => void, reject: (e: Error) => void }>} */
+    /** @type {Map<number, { type: string, data: any, resolve: (v: any) => void, reject: (e: Error) => void, via?: "ws" | "rtc" }>} */
     this._pending = new Map();
+    /** The WebRTC fast path, while it is being set up or open. @type {{ pc: RTCPeerConnection, r: RTCDataChannel, u: RTCDataChannel, open: boolean, timer: ReturnType<typeof setTimeout> | null } | null} */
+    this._rtc = null;
+    /** The host offered the fast path on this connection. */
+    this._rtcOffered = false;
+    /** Retries left after a network change. */
+    this._rtcRetries = 1;
+    this._inSeq = 0;
+    this._inLastWs = 0;
+    /** @type {{ data: any } | null} */
+    this._inQueued = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._inTimer = null;
     /** Clock: server time = Date.now() + offset. */
     this._offset = 0;
     this._bestRtt = Infinity;
@@ -227,11 +256,15 @@ export class PartyClient {
     /** @type {{ resolve: (v: any) => void, reject: (e: Error) => void } | null} */
     this._waiting = null;
     this._onVisible = () => {
-      if (globalThis.document?.visibilityState === "visible" && this.status === "reconnecting") {
+      if (globalThis.document?.visibilityState !== "visible") return;
+      if (this.status === "reconnecting") {
         this._attempt = 0;
         this._open();
+      } else {
+        this._rtcRetry();
       }
     };
+    this._onOnline = () => this._rtcRetry();
   }
 
   /** @returns {string} */
@@ -263,7 +296,7 @@ export class PartyClient {
   }
 
   /**
-   * @param {string} event `view`, `welcome`, `msg`, `status`, `bye`, `ack`
+   * @param {string} event `view`, `welcome`, `msg`, `status`, `bye`, `ack`, `transport`
    * @param {(...args: any[]) => void} fn
    */
   on(event, fn) {
@@ -313,6 +346,7 @@ export class PartyClient {
       this.byeReason = null;
       this._attempt = 0;
       globalThis.document?.addEventListener?.("visibilitychange", this._onVisible);
+      globalThis.addEventListener?.("online", this._onOnline);
       this._open();
     });
   }
@@ -346,6 +380,7 @@ export class PartyClient {
         if (this._name !== undefined) hello.name = this._name;
       }
       hello.agent = globalThis.navigator?.userAgent ?? "";
+      if (this.RTC) hello.caps = ["rtc"];
       ws.send(JSON.stringify(hello));
     };
     ws.onmessage = (ev) => {
@@ -363,6 +398,8 @@ export class PartyClient {
       if (this._ws !== ws) return;
       this._ws = null;
       this._stopPing();
+      this._rtcOffered = false;
+      this._rtcDown(null);
       const reason = this.byeReason;
       if (reason && FINAL.has(reason)) return this._fail(reason, ev.reason || reason);
       if (this.status === "closed") return;
@@ -386,7 +423,10 @@ export class PartyClient {
       this._waiting.reject(err);
       this._waiting = null;
     }
+    this._rtcDown(null);
+    this._stopInput();
     globalThis.document?.removeEventListener?.("visibilitychange", this._onVisible);
+    globalThis.removeEventListener?.("online", this._onOnline);
   }
 
   _forget() {
@@ -430,6 +470,9 @@ export class PartyClient {
         }
         for (const [id, p] of this._pending) this._sendAct(id, p.type, p.data);
         this._startPing();
+        this._rtcOffered = msg.rtc === true && !!this.RTC;
+        this._rtcRetries = 1;
+        if (this._rtcOffered) this._rtcStart();
         this._emit("welcome", msg);
         this._emit("view", this.view, null);
         if (this._waiting) {
@@ -439,11 +482,13 @@ export class PartyClient {
         return;
       }
       case "state": {
+        // Late from the other path (WebSocket or `r`): already superseded.
+        if (typeof msg.rev === "number" && msg.rev <= this._rev) return;
         if (msg.full) {
           this.view = msg.full;
         } else {
           if (msg.rev !== this._rev + 1) {
-            this._send({ t: "resync" });
+            this._sendFast({ t: "resync" });
           }
           applyDiff(this.view, msg);
         }
@@ -470,6 +515,17 @@ export class PartyClient {
         this.byeReason = String(msg.reason);
         this._emit("bye", this.byeReason, msg.message);
         return;
+      case "rtc":
+        if (typeof msg.sdp === "string" && this._rtc) {
+          const pc = this._rtc.pc;
+          pc.setRemoteDescription({ type: "answer", sdp: msg.sdp }).catch(() => {
+            if (this._rtc?.pc === pc) this._rtcDown("failed");
+          });
+        } else if (typeof msg.state === "string") {
+          // The host refused or ended it: no need to tell it.
+          this._rtcDown(null);
+        }
+        return;
     }
   }
 
@@ -494,7 +550,7 @@ export class PartyClient {
   _startPing() {
     this._stopPing();
     let n = 0;
-    const ping = () => this._send({ t: "ping", c: Date.now() });
+    const ping = () => this._sendFast({ t: "ping", c: Date.now() });
     ping();
     this._pinger = setInterval(() => {
       ping();
@@ -534,7 +590,183 @@ export class PartyClient {
    * @param {any} data
    */
   _sendAct(id, type, data) {
-    this._send({ t: "act", id, type, data });
+    const p = this._pending.get(id);
+    const msg = { t: "act", id, type, data };
+    // On `r` only while no earlier action is still on its way over the
+    // WebSocket: the host takes ids in order.
+    const wsBusy = [...this._pending].some(([i, q]) => i < id && q.via === "ws");
+    if (!wsBusy && this._sendRtc(msg)) {
+      if (p) p.via = "rtc";
+      return;
+    }
+    if (this._send(msg) && p) p.via = "ws";
+  }
+
+  /** @param {Record<string, any>} msg */
+  _sendFast(msg) {
+    return this._sendRtc(msg) || this._send(msg);
+  }
+
+  /**
+   * Sends on `r` if it is open (and the message is not too big).
+   * @param {Record<string, any>} msg
+   */
+  _sendRtc(msg) {
+    const rtc = this._rtc;
+    if (!rtc?.open || this.status !== "open") return false;
+    const text = JSON.stringify(msg);
+    if (text.length > MAX_FAST_MESSAGE) return false;
+    try {
+      rtc.r.send(text);
+      return true;
+    } catch {
+      this._rtcDown("failed");
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // The WebRTC fast path
+
+  /** Whether messages travel over WebRTC (`rtc`) or the WebSocket (`ws`). */
+  get transport() {
+    return this._rtc?.open ? "rtc" : "ws";
+  }
+
+  /** Offers the two channels (the host answers over the WebSocket). */
+  async _rtcStart() {
+    if (!this.RTC || this._rtc) return;
+    /** @type {RTCPeerConnection} */
+    let pc;
+    try {
+      pc = new this.RTC({ iceServers: [] });
+    } catch {
+      return;
+    }
+    const r = pc.createDataChannel("r", { negotiated: true, id: 0, ordered: true });
+    const u = pc.createDataChannel("u", { negotiated: true, id: 1, ordered: false, maxRetransmits: 0 });
+    const rtc = { pc, r, u, open: false, timer: /** @type {ReturnType<typeof setTimeout> | null} */ (null) };
+    this._rtc = rtc;
+    const mine = () => this._rtc === rtc;
+    const opened = () => {
+      if (!mine() || rtc.open || r.readyState !== "open" || u.readyState !== "open") return;
+      rtc.open = true;
+      if (rtc.timer) clearTimeout(rtc.timer);
+      rtc.timer = null;
+      this._emit("transport", "rtc");
+    };
+    r.onopen = opened;
+    u.onopen = opened;
+    r.onmessage = (ev) => {
+      if (!mine() || typeof ev.data !== "string") return;
+      /** @type {any} */
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (isObject(msg)) this._onMessage(msg);
+    };
+    const down = () => {
+      if (mine()) this._rtcDown("closed");
+    };
+    r.onclose = down;
+    u.onclose = down;
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") down();
+    };
+    rtc.timer = setTimeout(() => {
+      if (mine() && !rtc.open) this._rtcDown("timeout");
+    }, this.rtcTimeout);
+    try {
+      await pc.setLocalDescription(await pc.createOffer());
+      if (!mine()) return;
+      const sdp = pc.localDescription?.sdp;
+      if (!sdp || !this._send({ t: "rtc", sdp })) this._rtcDown(null);
+    } catch {
+      if (mine()) this._rtcDown("failed");
+    }
+  }
+
+  /**
+   * Ends the fast path: tells the host why (unless `why` is null), and
+   * sends what was waiting on `r` again over the WebSocket.
+   * @param {string | null} why
+   */
+  _rtcDown(why) {
+    const rtc = this._rtc;
+    if (!rtc) return;
+    this._rtc = null;
+    if (rtc.timer) clearTimeout(rtc.timer);
+    for (const ch of [rtc.r, rtc.u]) {
+      ch.onopen = ch.onclose = ch.onmessage = null;
+    }
+    rtc.pc.onconnectionstatechange = null;
+    try {
+      rtc.pc.close();
+    } catch {}
+    if (why) this._send({ t: "rtc", state: why === "timeout" ? "failed" : why });
+    if (rtc.open) this._emit("transport", "ws");
+    // Actions sent on `r` may be lost with it; the host applies each id once.
+    for (const [id, p] of this._pending) {
+      if (p.via === "rtc") {
+        p.via = undefined;
+        this._sendAct(id, p.type, p.data);
+      }
+    }
+  }
+
+  /** After a network change: one more try, if the host offered it. */
+  _rtcRetry() {
+    if (!this._rtcOffered || this._rtc || this.status !== "open" || this._rtcRetries <= 0) return;
+    this._rtcRetries--;
+    this._rtcStart();
+  }
+
+  // ---------------------------------------------------------------------
+  // Continuous input
+
+  /**
+   * Sends continuous input (a stick, a tilt): latest wins, never acked,
+   * may be lost. Over WebRTC (unreliable, unordered) when it is open;
+   * over the WebSocket at most every 100 ms otherwise (the latest data
+   * then). The host sees it as `Event::Input` (Rust) or `input` (Node).
+   * @param {any} data
+   */
+  input(data) {
+    if (this.status !== "open") return;
+    const rtc = this._rtc;
+    if (rtc?.open) {
+      try {
+        rtc.u.send(JSON.stringify({ t: "in", s: ++this._inSeq, data }));
+        return;
+      } catch {
+        this._rtcDown("failed");
+      }
+    }
+    this._inQueued = { data };
+    if (this._inTimer) return;
+    const wait = this._inLastWs + WS_INPUT_INTERVAL - Date.now();
+    if (wait <= 0) return this._flushInput();
+    this._inTimer = setTimeout(() => {
+      this._inTimer = null;
+      this._flushInput();
+    }, wait);
+  }
+
+  _flushInput() {
+    const q = this._inQueued;
+    this._inQueued = null;
+    if (!q || this.status !== "open") return;
+    this._inLastWs = Date.now();
+    this._send({ t: "in", s: ++this._inSeq, data: q.data });
+  }
+
+  _stopInput() {
+    if (this._inTimer) clearTimeout(this._inTimer);
+    this._inTimer = null;
+    this._inQueued = null;
   }
 
   /**
@@ -568,6 +800,8 @@ export class PartyClient {
     this._setStatus("closed");
     if (this._retry) clearTimeout(this._retry);
     this._stopPing();
+    this._rtcDown(null);
+    this._stopInput();
     const ws = this._ws;
     this._ws = null;
     if (ws) {
@@ -579,6 +813,7 @@ export class PartyClient {
     for (const p of this._pending.values()) p.reject(new PartyActionError("closed", "Closed"));
     this._pending.clear();
     globalThis.document?.removeEventListener?.("visibilitychange", this._onVisible);
+    globalThis.removeEventListener?.("online", this._onOnline);
   }
 
   /** For tests: drop the socket as a network loss would (the client reconnects). */

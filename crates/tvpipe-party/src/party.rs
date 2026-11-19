@@ -680,16 +680,20 @@ impl Core {
         self.closed
     }
 
+    /// What happened: the latest inputs first (an action sent after an
+    /// `in` sees it), then the rest in order.
     pub fn events(&mut self) -> Vec<Event> {
+        let mut out: Vec<Event> = Vec::with_capacity(self.events.len());
         for p in &mut self.players {
             if let Some(data) = p.input.take() {
-                self.events.push_back(Event::Input {
+                out.push(Event::Input {
                     player: p.id.clone(),
                     data,
                 });
             }
         }
-        self.events.drain(..).collect()
+        out.extend(self.events.drain(..));
+        out
     }
 
     /// Whether this player's phone has an open fast path.

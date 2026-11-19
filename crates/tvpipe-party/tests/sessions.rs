@@ -64,8 +64,12 @@ enum Host {
 }
 
 fn host_loop(mut party: Party, rx: mpsc::Receiver<Host>) {
+    let mut inputs = Object::new();
     loop {
         for event in party.wait(Duration::from_millis(2)) {
+            if let Event::Input { player, data } = &event {
+                inputs.insert(player.as_str(), data.clone());
+            }
             if let Event::Action(a) = event {
                 let data = a.data().clone();
                 let result = match a.kind() {
@@ -92,6 +96,7 @@ fn host_loop(mut party: Party, rx: mpsc::Receiver<Host>) {
                         Ok(Value::Null)
                     }
                     "set-room" | "set-screen" | "set-me" => Ok(Value::Null),
+                    "inputs" => Ok(Value::Object(inputs.clone())),
                     // Unanswered: `unknown-action` at the flush.
                     _ => {
                         drop(a);

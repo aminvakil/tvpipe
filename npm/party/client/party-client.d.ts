@@ -40,6 +40,11 @@ export interface PartyClientOptions {
   role?: Role | undefined;
   storage?: StorageLike | null | undefined;
   WebSocket?: typeof WebSocket | undefined;
+  /** Upgrade to WebRTC data channels when the host offers it (default true; players only). */
+  rtc?: boolean | undefined;
+  RTCPeerConnection?: typeof RTCPeerConnection | undefined;
+  /** How long the channels may take to open, ms (default 3000). */
+  rtcTimeout?: number | undefined;
 }
 
 export interface RosterEntry {
@@ -57,6 +62,8 @@ export interface Welcome {
   now: number;
   view: Record<string, any>;
   rev: number;
+  /** The host offers the WebRTC fast path (Rust hosts with `webrtc`). */
+  rtc?: boolean;
 }
 
 export declare class PartyClient {
@@ -80,11 +87,17 @@ export declare class PartyClient {
   on(event: "msg", fn: (type: string, data: any) => void): () => void;
   on(event: "status", fn: (status: Status) => void): () => void;
   on(event: "bye", fn: (reason: string, message?: string) => void): () => void;
+  /** Messages switched to WebRTC (`rtc`) or back to the WebSocket (`ws`). */
+  on(event: "transport", fn: (transport: "rtc" | "ws") => void): () => void;
   on(event: string, fn: (...args: any[]) => void): () => void;
   off(event: string, fn: (...args: any[]) => void): void;
   join(name: string): Promise<Welcome>;
   connect(): Promise<Welcome>;
   act<T = any>(type: string, data?: unknown): Promise<T>;
+  /** Continuous input (latest wins, never acked, may be lost). */
+  input(data: unknown): void;
+  /** Where messages travel now. */
+  readonly transport: "rtc" | "ws";
   now(): number;
   leave(): void;
   close(): void;

@@ -76,6 +76,8 @@ const SLOW_LIMIT = 256 * 1024;
 const ACK_CACHE = 32;
 /** Largest message other than `act`. */
 const MAX_CONTROL_MESSAGE = 16 * 1024;
+/** Largest `in` message (continuous input). */
+const MAX_INPUT = 4 * 1024;
 
 type Ack = { t: "ack"; id: number; ok: true; result?: Json; dup?: true } | { t: "ack"; id: number; ok: false; error: { code: string; message: string } };
 
@@ -94,6 +96,8 @@ export class Player {
   /** @internal */ lastAct = 0;
   /** @internal */ results = new Map<number, Ack | Promise<Ack>>();
   /** @internal */ client: Client | undefined;
+  /** The latest continuous input (`in`) from the phone, if any. */
+  input: Json | undefined;
 
   constructor(id: string, name: string, changed: () => void) {
     this.id = id;
@@ -146,6 +150,8 @@ export class Client {
   readonly bucket: TokenBucket;
   /** Screens: action ids seen on this connection. */
   lastAct = 0;
+  /** The last `in` sequence number on this connection. */
+  inSeq = 0;
 
   constructor(ws: WsConnection, role: Role, id: string, address: string, rate: number, burst: number) {
     this.ws = ws;
@@ -223,6 +229,12 @@ export interface PartyEvents {
   screen: [screen: Screen, connected: boolean];
   /** The screen view changed (after the tick's changes). */
   "screen-view": [view: JsonObject];
+  /**
+   * A player's continuous input (`in`: a stick, a tilt), newer than the
+   * last one (also kept as `player.input`). Never answered; Node hosts
+   * get it over the WebSocket (Rust hosts also over WebRTC).
+   */
+  input: [player: Player, data: Json];
 }
 
 export interface CollectOptions<T> {
@@ -606,6 +618,7 @@ export class Party extends EventEmitter<PartyEvents> {
       return c.bye("protocol", "not JSON");
     }
     if (!isObject(msg)) return c.bye("protocol", "not an object");
+    if (msg["t"] === "in" && (data as string).length > MAX_INPUT) return;
     if (msg["t"] !== "act" && (data as string).length > MAX_CONTROL_MESSAGE) return c.bye("protocol", "too big");
     switch (msg["t"]) {
       case "act":
@@ -617,6 +630,16 @@ export class Party extends EventEmitter<PartyEvents> {
         const view = toJson(this.#viewFor(c)) as JsonObject;
         c.sent = view;
         c.send({ t: "state", rev: ++c.rev, full: view });
+        return;
+      }
+      case "in": {
+        // Latest wins by `s` (per connection).
+        const seq = msg["s"];
+        const p = c.player;
+        if (!p || typeof seq !== "number" || !Number.isSafeInteger(seq) || seq <= c.inSeq) return;
+        c.inSeq = seq;
+        p.input = msg["data"] ?? null;
+        this.emit("input", p, p.input);
         return;
       }
       case "leave":
