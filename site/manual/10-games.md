@@ -5,7 +5,7 @@ group: Use
 spec:
   Input: `-` (stdin)
   Format: SLRW
-  Example: `examples/slrw-gen.rs`
+  Example: `crates/tvpipe/examples/slrw-gen.rs`
 ---
 
 A game, or any other program, can start tvpipe and write its frames and sound to tvpipe’s standard input.
@@ -73,4 +73,4 @@ Windows PowerShell 5.1 breaks binary pipes. Use `cmd.exe`, PowerShell 7.4 or new
 $ cargo run --example slrw-gen | tvpipe play --to TV --raw-video 1280x720@30:rgba -
 ```
 
-`examples/slrw-gen.rs` writes both raw and H.264 streams. The full format is in [docs/slrw.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/slrw.md).
+[`slrw-gen.rs`](https://github.com/mitsuhiko/tvpipe/blob/main/crates/tvpipe/examples/slrw-gen.rs) writes both raw and H.264 streams. The full format is in [docs/slrw.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/slrw.md).

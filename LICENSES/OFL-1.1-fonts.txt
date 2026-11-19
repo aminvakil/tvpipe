@@ -1,4 +1,4 @@
-Fonts in src/browser/fonts/ (served by the share page) and on the website
+Fonts in crates/tvpipe/src/browser/fonts/ (served by the share page) and on the website
 (site/build.py copies them). Latin subsets as served by Google Fonts,
 unmodified otherwise.
 
