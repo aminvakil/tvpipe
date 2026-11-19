@@ -35,6 +35,8 @@
 mod assets;
 mod collect;
 mod conn;
+#[cfg(feature = "webrtc")]
+mod fast;
 mod limits;
 mod names;
 mod party;

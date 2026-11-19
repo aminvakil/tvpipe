@@ -20,6 +20,10 @@ tunnel = ["tvpipe/tunnel"]
 # Game-defined message types with the `deser` crate (docs/multiscreen-design.md §10.1;
 # needs Rust 1.88, deser's minimum).
 deser = ["dep:deser", "deser/derive", "dep:deser-json"]
+# The WebRTC fast path: data channels to phones on the LAN, beside the
+# WebSocket (docs/multiscreen-design.md §2.4; the sans-IO `rtc` crate on
+# ring, driven from threads; needs Rust 1.89, rtc's minimum).
+webrtc = ["dep:rtc"]
 
 [dependencies]
 # The exact version: tvpipe-party uses tvpipe's hidden `__web` module
@@ -28,6 +32,7 @@ tvpipe = { path = "../tvpipe", version = "=0.2.0", default-features = false, fea
 ring = "0.17"
 deser = { version = "0.10", optional = true, default-features = false, features = ["std"] }
 deser-json = { version = "0.10", optional = true, default-features = false, features = ["std"] }
+rtc = { version = "0.21", optional = true, default-features = false, features = ["crypto-ring"] }
 
 [dev-dependencies]
 # The examples and doc tests stop on Ctrl-C.

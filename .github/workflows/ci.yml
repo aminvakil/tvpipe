@@ -49,7 +49,7 @@ jobs:
           components: clippy
       - name: One feature at a time
         run: |
-          for f in "" airplay fairplay cast aac player share headless tunnel files ffmpeg h264; do
+          for f in "" airplay fairplay cast aac player share headless tunnel files ffmpeg h264 signals; do
             echo "::group::features [$f]"
             cargo clippy -p tvpipe --no-default-features --features "$f" -- -D warnings
             echo "::endgroup::"
