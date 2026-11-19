@@ -10,6 +10,7 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-tvpipe = { path = "../../crates/tvpipe" }
+# `headless`: --web-screen (tvpipe's own browser shows web/screen/).
+tvpipe = { path = "../../crates/tvpipe", features = ["headless"] }
 tvpipe-party = { path = "../../crates/tvpipe-party" }
 tvpipe-canvas = { path = "../../crates/tvpipe-canvas" }

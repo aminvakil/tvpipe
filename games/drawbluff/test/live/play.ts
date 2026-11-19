@@ -5,11 +5,18 @@
  * every phase.
  *
  *   node test/live/play.ts [--video] [--tunnel=cloudflare|opentunnel] [--out DIR]
+ *   node test/live/play.ts --host rust [--video]
  *
- * Needs Chrome, and tvpipe built (target/release or TVPIPE_BINARY).
+ * Needs Chrome, and tvpipe built (target/release or TVPIPE_BINARY). With
+ * `--host rust` the game is the Rust binary (`cargo build --release -p
+ * drawbluff`; its video screen by default, `--web-screen` without
+ * `--video`), phones and bots unchanged: the same pages and the Node
+ * bots against the other host.
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -25,8 +32,23 @@ const { values: args } = parseArgs({
     video: { type: "boolean", default: false },
     tunnel: { type: "string" },
     out: { type: "string", default: "/tmp/drawbluff-live" },
+    host: { type: "string", default: "node" },
   },
 });
+
+/** The game as the script sees it: links, the phase, the end. */
+interface Host {
+  join: string;
+  room: string;
+  joinKey: string;
+  ws: string;
+  playerUrl: string;
+  phase(): string;
+  /** Changes with every new phase (and drawing). */
+  key(): string;
+  ended(): Promise<void>;
+  stop(): Promise<void>;
+}
 
 if (!process.env["TVPIPE_BINARY"]) {
   for (const profile of ["release", "debug"]) {
@@ -42,38 +64,104 @@ mkdirSync(out, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)}s ${m}`);
 
-const here = new URL("../../", import.meta.url);
-const party = await createParty({
-  phone: new URL("web/phone/", here),
-  screen: new URL("web/screen/", here),
-  tunnel: (args.tunnel as TunnelChoice | undefined) ?? false,
-  logLevel: "info",
-});
-log(`join ${party.links.join}`);
-const game = new Drawbluff(party, {
-  rounds: 1,
-  timings: { draw: 20_000, lie: 15_000, vote: 12_000, revealStep: 1800, revealEnd: 2500, scores: 4000 },
-});
-game.open();
-
-let tv;
-if (args.video) {
-  const { createCanvas } = await loadCanvas();
-  tv = await party.toTv({
-    mode: "video",
-    to: "browser",
-    canvas: createCanvas(1280, 720),
-    render: (ctx, view, t) => renderScreen(ctx, view, t, party.now()),
+async function nodeHost(): Promise<Host> {
+  const here = new URL("../../", import.meta.url);
+  const party = await createParty({
+    phone: new URL("web/phone/", here),
+    screen: new URL("web/screen/", here),
+    tunnel: (args.tunnel as TunnelChoice | undefined) ?? false,
+    logLevel: "info",
   });
-} else {
-  tv = await party.toTv({ mode: "web", to: "browser", size: "1280x720" });
+  const game = new Drawbluff(party, {
+    rounds: 1,
+    timings: { draw: 20_000, lie: 15_000, vote: 12_000, revealStep: 1800, revealEnd: 2500, scores: 4000 },
+  });
+  game.open();
+  let tv;
+  if (args.video) {
+    const { createCanvas } = await loadCanvas();
+    tv = await party.toTv({
+      mode: "video",
+      to: "browser",
+      canvas: createCanvas(1280, 720),
+      render: (ctx, view, t) => renderScreen(ctx, view, t, party.now()),
+    });
+  } else {
+    tv = await party.toTv({ mode: "web", to: "browser", size: "1280x720" });
+  }
+  return {
+    join: party.links.join,
+    room: party.code,
+    joinKey: party.joinKey,
+    ws: party.links.localJoin.replace(/^http/, "ws").replace(/\/\?.*$/, "/party/ws"),
+    playerUrl: (tv.session as { playerUrl?: string }).playerUrl!,
+    phase: () => game.phase,
+    key: () => `${game.phase}:${JSON.stringify(party.screen.peek()["artist"] ?? "")}`,
+    ended: () => new Promise<void>((r) => (game.phase === "final" ? r() : game.once("end", () => r()))),
+    stop: async () => {
+      game.close();
+      await party.shutdown();
+    },
+  };
 }
-const playerUrl = (tv.session as { playerUrl?: string }).playerUrl!;
-log(`TV (${args.video ? "video" : "web"}) in the player: ${playerUrl}`);
+
+/** The Rust binary, read from its output (`-v` prints the phases). */
+async function rustHost(): Promise<Host> {
+  const exe = fileURLToPath(new URL(`../../../../target/release/drawbluff${process.platform === "win32" ? ".exe" : ""}`, import.meta.url));
+  if (!existsSync(exe)) throw new Error(`build it first: cargo build --release -p drawbluff (${exe})`);
+  const join = args.tunnel ? [`--tunnel=${args.tunnel}`] : ["--local"];
+  const screen = args.video ? [] : ["--web-screen"];
+  const proc = spawn(exe, ["--to", "browser", ...join, ...screen, "--rounds", "1", "--fast", "-v"], { stdio: ["ignore", "pipe", "pipe"] });
+  let phase = "lobby";
+  let n = 0;
+  let end: () => void = () => {};
+  const ended = new Promise<void>((r) => (end = r));
+  const links: Record<string, string> = {};
+  let ready: () => void = () => {};
+  const linked = new Promise<void>((r) => (ready = r));
+  createInterface({ input: proc.stdout! }).on("line", (line) => {
+    const m = /^ {2}(phones join at|the TV's page|the screen) +(\S+)/.exec(line);
+    if (m) links[m[1]!] = m[2]!;
+    if (links["phones join at"] && links["the TV's page"] && links["the screen"]) ready();
+    if (line.includes("game over:")) end();
+  });
+  createInterface({ input: proc.stderr! }).on("line", (line) => {
+    const m = /^drawbluff: (lobby|draw|lie|vote|reveal|scores|final)$/.exec(line);
+    if (m) {
+      phase = m[1]!;
+      n++;
+    } else if (line.trim()) log(`rust: ${line}`);
+  });
+  proc.on("exit", (code) => {
+    log(`rust host exited (${code})`);
+    end();
+  });
+  await Promise.race([linked, new Promise((_, no) => setTimeout(() => no(new Error("no links from the rust host")), 60_000))]);
+  const join0 = links["phones join at"]!;
+  const u = new URL(join0);
+  const local = `ws://127.0.0.1:${new URL(links["the screen"]!).port}/party/ws`;
+  return {
+    join: join0,
+    room: u.searchParams.get("r")!,
+    joinKey: new URLSearchParams(u.hash.slice(1)).get("k")!,
+    ws: local,
+    playerUrl: links["the TV's page"]!,
+    phase: () => phase,
+    key: () => `${phase}:${n}`,
+    ended: () => ended,
+    stop: async () => {
+      proc.kill();
+    },
+  };
+}
+
+const host = args.host === "rust" ? await rustHost() : await nodeHost();
+log(`join ${host.join}`);
+log(`TV (${args.video ? "video" : "web"}, ${args.host} host) in the player: ${host.playerUrl}`);
 
 const browser = await Browser.launch();
-const tvTab = await browser.open(playerUrl, { width: 1280, height: 720 });
-const phone = await browser.open(party.links.join, { width: 390, height: 844, mobile: true });
+const tvTab = await browser.open(host.playerUrl, { width: 1280, height: 720 });
+const phone = await browser.open(host.join, { width: 390, height: 844, mobile: true });
 const shots: string[] = [];
 const shot = async (name: string) => {
   // The TV is ~0.1-0.4 s behind: let it catch up.
@@ -89,8 +177,7 @@ try {
   await phone.until(`!!document.getElementById("name")`);
   await phone.eval(`document.getElementById("name").value = "Phil"; document.querySelector("#join-form button").click(); true`);
   await phone.until(`document.querySelector("h1")?.textContent === "You're in!"`);
-  const url = party.links.localJoin.replace(/^http/, "ws").replace(/\/\?.*$/, "/party/ws");
-  const bs = await bots(2, { url, room: party.code, key: party.joinKey, names: ["Ada", "Bea"], think: () => 1500 + Math.random() * 2500 });
+  const bs = await bots(2, { url: host.ws, room: host.room, key: host.joinKey, names: ["Ada", "Bea"], think: () => 1500 + Math.random() * 2500 });
   await shot("lobby");
   // Phil is the VIP (joined first): start.
   await phone.until(`!document.querySelector("button.primary")?.disabled`);
@@ -114,9 +201,9 @@ try {
 
   // Per drawing: lie (or watch), vote, reveal.
   const seen = new Set<string>();
-  while (game.phase !== "scores" && game.phase !== "final") {
-    const phase = game.phase;
-    const key = `${phase}:${JSON.stringify(party.screen.peek()["artist"] ?? "")}`;
+  while (host.phase() !== "scores" && host.phase() !== "final") {
+    const phase = host.phase();
+    const key = host.key();
     if (seen.has(key)) {
       await new Promise((r) => setTimeout(r, 200));
       continue;
@@ -144,14 +231,13 @@ try {
   }
   await new Promise((r) => setTimeout(r, 800));
   await shot("scores");
-  await new Promise<void>((r) => (game.phase === "final" ? r() : game.once("end", () => r())));
+  await host.ended();
   await shot("final");
   for (const b of bs) b.close();
   const errors = bs.flatMap((b) => b.errors);
   log(`done: ${shots.length} screenshot pairs in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}`);
 } finally {
   browser.close();
-  game.close();
-  await party.shutdown();
+  await host.stop();
 }
 process.exit(0);

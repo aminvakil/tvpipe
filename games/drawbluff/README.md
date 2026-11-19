@@ -7,6 +7,10 @@ everyone votes for the real one. Points for finding the truth (1000), for
 the artist per player who found it (1000), and for every player fooled by
 your lie (500); round 2 counts double.
 
+There are two hosts with the same rules, prompts (`data/prompts.txt`) and
+phone page: Node (`main.ts`, `game/`, the protocol reference) and Rust
+(`src/`, one binary with the TV screen drawn in Rust; see below).
+
 It shows the two ways a game can put its main screen on the TV; the rules
 (`game/`) and the phone page (`web/phone/`) are the same for both:
 
@@ -39,6 +43,31 @@ node main.ts --to browser --bots 3 --fast   # alone, with three fake players
 Scan the QR code on the TV; the first player is the VIP and starts the
 game once three are in.
 
+## The Rust version
+
+```sh
+cargo run --release -p drawbluff -- --to "Living Room"       # video drawn in Rust
+cargo run --release -p drawbluff -- --to "Living Room" --web-screen
+cargo run --release -p drawbluff -- --to browser --open --bots 3 --fast
+```
+
+One binary: the party (`tvpipe-party`), the game (`src/game.rs`, a port
+of `game/game.ts` on the same views), the TV screen rendered with
+`tvpipe-canvas` (`src/screen.rs`, a port of `screen-video.ts`, with the
+TrueType fonts in `fonts/`), sound cues (`src/sound.rs`), bots
+(`src/bots.rs`), and the phone and web screen pages embedded. Phones
+join through a public link by default (`--tunnel`), else on the LAN
+(`--lan`, `http://IP:7420`, same Wi-Fi), or `--local`; `--rounds N`,
+`--fast`, `--size WxH`, `--seed N`, `-v`.
+
+The rules agree with the Node version by test: `node test/vectors.ts
+--bless` writes `test/vectors/rules.txt` from `game/rules.ts` (seeded
+turns, titles, drawings), and both `test/vectors.test.ts` and
+`tests/vectors.rs` replay it. `cargo test -p drawbluff` also plays whole
+games with bots (`tests/game.rs`, as `test/game.test.ts`) and draws every
+screen (`tests/screen.rs`). `node test/live/play.ts --host rust
+[--video]` runs the live check against the binary.
+
 ## Why `@napi-rs/canvas`
 
 The video screen is mostly text: names, prompts, lies, in several sizes
@@ -51,7 +80,7 @@ It uses tvpipe's fonts (`web/phone/fonts/`, SIL OFL 1.1, `OFL.txt`).
 
 ## Tests
 
-`npm test`: the rules and scoring, whole games with 3 and 8 fake phones
+`npm test`: the rules and scoring (and the vectors shared with Rust), whole games with 3 and 8 fake phones
 over real WebSockets (a player who drops mid-game and comes back, one who
 leaves, too few players, a late joiner, the VIP removing a player), and the
 video screen drawing every phase. `node test/live/play.ts [--video]

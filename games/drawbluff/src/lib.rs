@@ -6,6 +6,9 @@
 pub mod bots;
 pub mod game;
 pub mod rules;
+pub mod screen;
+pub mod sound;
+pub mod tv;
 
 /// The prompts to draw (`data/prompts.txt`, shared with the Node version;
 /// also the source of decoy lies).
