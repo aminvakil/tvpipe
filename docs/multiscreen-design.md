@@ -885,7 +885,11 @@ warnings`, `cargo test --workspace`, and `npm test` in `npm/party` and
    `docs/party-protocol.md` (protocol v1 + the `rtc`/`in` additions split
    out of party-design §5), a "Shipping a party game" page (§6.1), the
    manual's party chapter for Rust, the release workflow publishing the
-   new crates with the others.
+   new crates with the others. Built: `crates/tvpipe-party/README.md`,
+   `docs/party-protocol.md`, `docs/shipping-party-games.md`, the Rust
+   part of `site/manual/13-party.md`; `release.yml` publishes
+   `tvpipe-canvas` and `tvpipe-party` after `tvpipe-cli`, and CI checks
+   that the crates' path dependencies carry the workspace version.
 
 Later, not planned: per-player video (§7, option 2 first), STUN
 opt-in, WASM controllers (game code compiled for the phone).

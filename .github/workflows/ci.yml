@@ -100,7 +100,7 @@ jobs:
         with:
           node-version: 22
       - run: cargo build
-      - name: The npm packages' versions are the crate's
+      - name: Versions in lockstep (npm packages, crates)
         run: |
           cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           for pkg in tvpipe party; do
@@ -109,6 +109,10 @@ jobs:
           done
           peer="$(node -p "require('./npm/party/package.json').peerDependencies['@tvpipe/sdk']")"
           test "$cargo_version" = "$peer" || { echo "npm/party wants @tvpipe/sdk $peer, Cargo.toml $cargo_version" >&2; exit 1; }
+          # The crates go out in lockstep: every path dependency between
+          # them names this version (tvpipe-party pins tvpipe exactly).
+          bad="$(grep -hE '^tvpipe(-[a-z]+)? = \{ path' crates/*/Cargo.toml | grep -vE "version = \"=?$cargo_version\"" || true)"
+          test -z "$bad" || { echo "path dependencies not at $cargo_version:" >&2; echo "$bad" >&2; exit 1; }
       - working-directory: npm/tvpipe
         run: |
           npm ci

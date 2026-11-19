@@ -117,7 +117,7 @@ that off; never with `--machine`).
 | [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
 | [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
 | [From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/) | the `tvpipe` crate |
-| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `@tvpipe/party`: games played with phones, the TV as the main screen |
+| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `@tvpipe/party` and `tvpipe-party`: games played with phones, the TV as the main screen |
 | [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
@@ -131,18 +131,24 @@ cargo build --release        # → target/release/tvpipe (Rust 1.85+, a C compil
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
-The workspace has three crates: [`crates/tvpipe`](crates/tvpipe/) (the
+The workspace has five crates: [`crates/tvpipe`](crates/tvpipe/) (the
 library, Apache-2.0), [`crates/tvpipe-cli`](crates/tvpipe-cli/) (the
-`tvpipe` command on top of it) and
+`tvpipe` command on top of it),
 [`crates/tvpipe-fairplay`](crates/tvpipe-fairplay/) (the LGPL FairPlay port,
-behind the library's opt-in `fairplay` feature).
+behind the library's opt-in `fairplay` feature),
+[`crates/tvpipe-party`](crates/tvpipe-party/) (party games: phones as
+controllers, [protocol](docs/party-protocol.md),
+[shipping](docs/shipping-party-games.md)) and
+[`crates/tvpipe-canvas`](crates/tvpipe-canvas/) (a software 2D renderer
+for TV frames), plus the game [`games/drawbluff`](games/drawbluff/).
 
 The Node SDK's tests run against the debug binary: `cargo build && cd
 npm/tvpipe && npm ci && npm run check && npm test`. A release bumps the
 version in `Cargo.toml`, `Cargo.lock`, `npm/tvpipe/package.json` and
-`npm/party/package.json` (with its `@tvpipe/sdk` peer dependency)
+`npm/party/package.json` (with its `@tvpipe/sdk` peer dependency) and the
+crates' path dependencies (`tvpipe-party` pins `tvpipe` exactly)
 together (CI checks), then tags `vX.Y.Z`; `release.yml` publishes the GitHub
-release and the npm packages. Programs in other languages can drive tvpipe
+release, the npm packages and the crates. Programs in other languages can drive tvpipe
 through [`--machine`](docs/machine.md).
 
 Tests that use ffmpeg as an oracle are skipped without it; tests against

@@ -4,14 +4,17 @@ summary: Games on the TV that everyone plays with their phone.
 group: Use
 spec:
   Package: `@tvpipe/party` (npm)
+  Crate: `tvpipe-party` (crates.io)
   Node: 22 or newer
+  Rust: 1.85 or newer
   Example: `games/drawbluff`
 ---
 
-The `@tvpipe/party` library is for games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. The phones open a web page the game provides, over a public link, so nobody installs anything.
+The `@tvpipe/party` library (Node) and the `tvpipe-party` crate (Rust) are for games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. The phones open a web page the game provides, over a public link, so nobody installs anything. Both speak the same protocol to the same browser client.
 
 ```sh
 $ npm install @tvpipe/party @tvpipe/sdk
+$ cargo add tvpipe-party tvpipe --features tvpipe/signals
 ```
 
 ## What the library does
@@ -57,6 +60,48 @@ await party.act("answer", { text: "a nervous cactus" });
 
 The game never sends events to phones. It sets what each phone shows: `party.room` for every player, `player.state` for one player, and `party.screen` for the TV. A phone that comes back after its screen was locked gets everything it missed. Actions survive a dropped connection and are applied once.
 
+For a stick or a tilt, `party.input(data)` on the phone sends continuous input: never answered, the latest wins. The host gets it as the `input` event.
+
+## In Rust
+
+:::aside One binary
+The pages go into the binary with `assets!`. The game streams its main screen with the `tvpipe` crate and serves the phones itself.
+:::
+
+The Rust game owns the party and runs it from its own loop, without an async runtime:
+
+```rust
+use std::time::Duration;
+use tvpipe_party::{assets, json, Assets, Event, Party, PartyError, PartyOptions};
+
+static PHONE: Assets = assets!("web/phone", ["index.html", "phone.js"]);
+
+let mut party = Party::start(PartyOptions::new().phone(&PHONE))?;
+println!("join: {}", party.join_url());
+party.room().set(json!({ "phase": "lobby" }));
+let waker = party.waker();
+tvpipe::signals::on_signal(move || waker.wake());
+while !tvpipe::signals::requested() {
+    for event in party.wait(Duration::from_millis(50)) {
+        if let Event::Action(a) = event {
+            let reply = match a.kind() {
+                "start" => Ok(json!(null)),
+                _ => Err(PartyError::new("unknown-action", "Not now")),
+            };
+            party.reply(a, reply);
+        }
+    }
+    party.flush();
+}
+party.shutdown(Duration::from_secs(2));
+```
+
+`party.join_qr()` gives the QR code to draw on the TV. `party.screen_watch()` hands the screen's view to the thread that renders video frames, for example with the `tvpipe-canvas` crate. With tvpipe's `signals` feature, Ctrl-C ends the loop, so the TV leaves mirroring mode and the phones learn that the room closed.
+
+### Faster on the same Wi-Fi
+
+With the crate's `webrtc` feature, phones that can reach the computer on the local network also talk to it over WebRTC data channels, next to the WebSocket. Actions take under a millisecond there instead of tens of milliseconds through a tunnel, and continuous input is never held up by a lost packet. Phones elsewhere, or when anything goes wrong, keep using the WebSocket without noticing.
+
 ## The main screen
 
 | `mode` | The TV shows |
@@ -74,6 +119,8 @@ The screen gets the join link and its QR code with everything else it shows. Wit
 
 The QR code holds the public link with the room's code and a key, so only people who can see the TV can join. People elsewhere can play too: they join with the same link and watch the screen with `party.links.watch`. `tunnel: false` keeps everything on this computer.
 
+A Rust game can also stay on the local network (`Join::Lan`): no third party sees the game, but the phones must be on the same Wi-Fi and the page is plain HTTP. When no tunnel comes up, the default falls back to it. Listening on the network brings up the firewall prompt on Windows; [docs/shipping-party-games.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/shipping-party-games.md) covers prompts and signing.
+
 ## Safety
 
 - The library only accepts requests for its public link and for this computer.
@@ -83,12 +130,14 @@ The QR code holds the public link with the room's code and a key, so only people
 
 ## The demo game
 
-`games/drawbluff` in the repository is a drawing and bluffing game for 3 to 8 players. It runs its main screen both ways.
+`games/drawbluff` in the repository is a drawing and bluffing game for 3 to 8 players, with two hosts: Node and Rust. Both run the main screen either way.
 
 ```sh
 $ node main.ts --to "Living Room"           # the screen page
 $ node main.ts --to "Living Room" --video   # video frames
 $ node main.ts --to browser --bots 3 --fast # alone, with fake players
+$ cargo run --release -p drawbluff -- --to "Living Room"                # video drawn in Rust
+$ cargo run --release -p drawbluff -- --to "Living Room" --web-screen   # the screen page
 ```
 
-The design and the protocol are in [docs/party-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/party-design.md).
+The protocol is in [docs/party-protocol.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/party-protocol.md), the designs in [docs/party-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/party-design.md) and [docs/multiscreen-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/multiscreen-design.md).

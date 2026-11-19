@@ -166,6 +166,10 @@ uses one, made by `createParty()`.
 
 ## 5. The protocol (version 1)
 
+The protocol as it is now, with the later additions (continuous input,
+the WebRTC fast path), is specified in `docs/party-protocol.md`; this
+section is the original design.
+
 One WebSocket per client at `/party/ws`, JSON text messages with a `t`
 field; binary messages are reserved (version 1 sends drawings as compact
 JSON, §10). Unknown `t` and unknown fields are ignored by both sides.

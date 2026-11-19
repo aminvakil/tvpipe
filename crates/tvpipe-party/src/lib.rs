@@ -8,6 +8,12 @@
 //! The game owns the [`Party`] and drives it from its own loop: no async
 //! runtime, no callbacks on foreign threads.
 //!
+//! Features: `tunnel` (default; public links), `webrtc` (data channels to
+//! phones on the LAN beside the WebSocket: the fast path, with continuous
+//! input as [`Event::Input`]), `deser` (game-defined message types). The
+//! protocol is `docs/party-protocol.md` in the repository; shipping a game
+//! (Ctrl-C, firewall prompts, signing) is `docs/shipping-party-games.md`.
+//!
 //! ```no_run
 //! use std::time::Duration;
 //! use tvpipe_party::{json, Event, Join, Party, PartyError, PartyOptions};
