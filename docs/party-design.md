@@ -1,7 +1,13 @@
 # Party games on tvpipe (design)
 
-Status: implemented (`npm/party`, `games/drawbluff`, `tvpipe tunnel`,
-`tvpipe qr`); the decisions and what changed while building are in §13.
+Status: **superseded** by [`playshare-design.md`](playshare-design.md):
+games are web apps now, their logic runs in a host page in the browser
+(`@tvpipe/party` became a browser library), tvpipe serves them and relays
+the phones (`tvpipe playshare`); the Node host, the video screen and
+`toTv` below are gone. Kept for the reasoning (§2, §6, §8) and the
+measurements (§13); the protocol (§5) lives on in
+[`party-protocol.md`](party-protocol.md). `tvpipe tunnel` and `tvpipe qr`
+remain.
 Goal: Jackbox-style
 party games: the TV shows the game and a QR code, everyone joins with
 their phone's browser over a public link, the game runs on the computer

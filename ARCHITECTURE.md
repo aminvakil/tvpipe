@@ -13,9 +13,11 @@ detail lives in `docs/`:
 - [`cross-platform.md`](docs/cross-platform.md): what was checked on which
   OS.
 - [`meet.md`](docs/meet.md): presenting into video calls.
-- [`party-design.md`](docs/party-design.md): party games played with
-  phones (`@tvpipe/party`, `tvpipe tunnel PORT`, `tvpipe qr`, the demo
-  game `games/drawbluff`).
+- [`playshare-design.md`](docs/playshare-design.md): party games as web
+  apps (`tvpipe playshare`, the browser library `@tvpipe/party`, the demo
+  game `games/drawbluff`); [`party-protocol.md`](docs/party-protocol.md):
+  what phones and the host page say; [`party-design.md`](docs/party-design.md):
+  the first design (a Node host), for its reasoning and measurements.
 - [`screen.md`](docs/screen.md): sharing a screen or a window with
   sound (`tvpipe screen`): Chrome's capture per OS, the ffmpeg fallback,
   native APIs assessed.
@@ -194,6 +196,45 @@ built as strings (sound only on Linux). Why, and what works on which OS:
 
 The WebSocket, HTTP bits, base64 and the DevTools client are hand-rolled;
 the pages are static files embedded in the binary.
+
+## Party Games (playshare)
+
+`tvpipe playshare PATH` (`crates/tvpipe/src/playshare/`, the `playshare`
+feature) runs a game that is a web app: a folder or a zip (our own zip
+reader and inflate, `util::zip`, `util::inflate`) with `tvpipe.json`
+naming its host, TV and phone pages. Design and protocols:
+[`docs/playshare-design.md`](docs/playshare-design.md).
+
+- **Two listeners** on 127.0.0.1: the local one (the window's launcher and
+  host page, the TV page, the API) and the public one (phones; a tunnel
+  connects to it, `--lan` adds one on the LAN address). The public side
+  has no API at all. Both check `Host` (421) and WebSocket `Origin` (403);
+  the API also a per-run token (an `HttpOnly` cookie set by the window's
+  first URL, or `?t=`).
+- **The window** is an app window (`--app`) of tvpipe's own
+  Chromium-based browser with a temporary profile, watched over DevTools:
+  when its last page closes, playshare ends. Without such a browser, the
+  system's browser opens the URL and the end comes 30 s after the last
+  page went away.
+- **The local API** is one WebSocket: JSON calls and events (discovery
+  with `Discovery`, AirPlay pairing with `Pairing`, a QR code, the
+  launcher's choice of TVs, casting) and the relay.
+- **Casting** is `share URL` on the bundle's TV page: tvpipe's headless
+  browser renders it and the session streams the tab to the receivers,
+  with the reconnect window and the browser's crash restart. Only pages of
+  the local origin can be cast.
+- **The relay** hands every client WebSocket (`/_tvpipe/ws`) to the host
+  page: `open`/`close`/`busy`/`drain` as JSON, data as binary frames
+  (`op | conn | payload`) on the API socket. tvpipe enforces only generic
+  limits (message size, rate, connections, upgrades per address, a 1 MiB
+  backlog per client, pings); rooms, keys, names, views and actions are
+  the browser library's (`npm/party`, built into
+  `playshare/web/` and served at `/_tvpipe/lib/`). When the host page goes
+  away clients are closed with 1012 (they reconnect); at the end with
+  4011, after a second for the host's goodbyes; the cast is stopped
+  (TEARDOWN/STOP), the browsers quit, the tunnel closes.
+- **Tunnels**: OpenTunnel first (its identity is made once and reused, so
+  frequent runs create nothing), Cloudflare if it fails; `--no-tunnel`.
 
 ## Timing and Latency
 
@@ -393,7 +434,7 @@ Everything is platform-neutral except these, each with no crate and every
 `unsafe` block carrying a SAFETY comment:
 
 - **Ctrl-C** (`crates/tvpipe/src/signals.rs`, the opt-in `signals` feature;
-  the CLI enables it, and so do the Rust party games). Ctrl-C must send TEARDOWN or STOP,
+  the CLI enables it). Ctrl-C must send TEARDOWN or STOP,
   or the TV stays in mirroring mode. std cannot install a signal handler,
   and ffmpeg (in our process group) dies from the same signal, so the
   fallback "tear down on ffmpeg's EOF" does not work either. It uses the C
@@ -404,7 +445,7 @@ Everything is platform-neutral except these, each with no crate and every
 
   A second Ctrl-C exits immediately. The library never installs it by
   itself: a program calls `tvpipe::signals::stop_on_signal(stopper)` (or
-  `on_signal(f)`, e.g. with a party's `Waker`). In the CLI
+  `on_signal(f)`). In the CLI
   (`crates/tvpipe-cli/src/interrupt.rs`), `q` then Enter also stops, using std
   only (only when stdin is a terminal, not SLRW). On a stop the session
   does not drain: every sink's `stop()` runs and ffmpeg is killed and

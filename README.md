@@ -21,6 +21,7 @@ tvpipe screen --to Kitchen                             # the screen, with sound
 tvpipe screen --to Kitchen --window Keynote            # one window
 tvpipe share --to Kitchen --open                       # a browser tab or the screen
 tvpipe share https://status.example.com --to Kitchen   # a web page
+tvpipe playshare games/drawbluff                       # a party game: TV, phones, a window here
 ```
 
 ## Installing
@@ -69,6 +70,9 @@ s.write_video(&frame, s.elapsed())?;
   public link for people elsewhere, who can also share their screen to
   your TV.
 - Takes raw or H.264 frames and sound from a game on stdin.
+- Runs party games written as web apps (`tvpipe playshare`): the TV page
+  on the TVs, phones joining with a QR code, the game in a window on the
+  computer (see below).
 - One self-contained binary for macOS, Linux and Windows, with its own mDNS,
   protocol stacks and H.264/AAC encoders.
 
@@ -101,6 +105,23 @@ In a terminal, tvpipe also draws the public link as a QR code, so a phone
 can open it by scanning the screen (`--no-qr` or `TVPIPE_NO_QR=1` turns
 that off; never with `--machine`).
 
+## Party games
+
+```sh
+tvpipe playshare games/drawbluff      # a folder with tvpipe.json
+tvpipe playshare drawbluff.zip        # or a zip of one
+```
+
+A game is a web app: a host page (the rules), a TV page and a phone page,
+with a small `tvpipe.json`. tvpipe serves it, opens a window with a
+launcher (pick the TVs, AirPlay PIN pairing), then the game's host page;
+it renders the TV page in a headless browser of its own and casts it,
+and relays the phones' WebSockets (through a public link: OpenTunnel by
+default, or `--lan`) to the host page. Rooms, players, reconnects and
+views live in the browser library [`@tvpipe/party`](npm/party/README.md);
+the demo is [`games/drawbluff`](games/drawbluff/) (3–50 players). Closing
+the window ends everything. Design: [`docs/playshare-design.md`](docs/playshare-design.md).
+
 ## Manual
 
 | Page | Covers |
@@ -117,7 +138,7 @@ that off; never with `--machine`).
 | [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
 | [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
 | [From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/) | the `tvpipe` crate |
-| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `@tvpipe/party` and `tvpipe-party`: games played with phones, the TV as the main screen |
+| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `tvpipe playshare` and `@tvpipe/party`: web games played with phones, the TV as the main screen |
 | [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
@@ -131,23 +152,22 @@ cargo build --release        # → target/release/tvpipe (Rust 1.85+, a C compil
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
-The workspace has five crates: [`crates/tvpipe`](crates/tvpipe/) (the
+The workspace has three crates: [`crates/tvpipe`](crates/tvpipe/) (the
 library, Apache-2.0), [`crates/tvpipe-cli`](crates/tvpipe-cli/) (the
-`tvpipe` command on top of it),
+`tvpipe` command on top of it) and
 [`crates/tvpipe-fairplay`](crates/tvpipe-fairplay/) (the LGPL FairPlay port,
-behind the library's opt-in `fairplay` feature),
-[`crates/tvpipe-party`](crates/tvpipe-party/) (party games: phones as
-controllers, [protocol](docs/party-protocol.md),
-[shipping](docs/shipping-party-games.md)) and
-[`crates/tvpipe-canvas`](crates/tvpipe-canvas/) (a software 2D renderer
-for TV frames), plus the game [`games/drawbluff`](games/drawbluff/).
+behind the library's opt-in `fairplay` feature). Beside them: the Node
+SDK [`npm/tvpipe`](npm/tvpipe/), the browser game library
+[`npm/party`](npm/party/) (its build is copied into the library, which
+serves it to games: `npm run build` there) and the game
+[`games/drawbluff`](games/drawbluff/) (a web app; `npm run build`).
 
-The Node SDK's tests run against the debug binary: `cargo build && cd
-npm/tvpipe && npm ci && npm run check && npm test`. A release bumps the
-version in `Cargo.toml`, `Cargo.lock`, `npm/tvpipe/package.json` and
-`npm/party/package.json` (with its `@tvpipe/sdk` peer dependency) and the
-crates' path dependencies (`tvpipe-party` pins `tvpipe` exactly)
-together (CI checks), then tags `vX.Y.Z`; `release.yml` publishes the GitHub
+The Node SDK's and the game library's tests run against the debug binary:
+`cargo build && cd npm/tvpipe && npm ci && npm run check && npm test`
+(likewise in `npm/party`, after `npm run build`). A release bumps the
+version in `Cargo.toml`, `Cargo.lock`, `npm/tvpipe/package.json`,
+`npm/party/package.json` and the crates' path dependencies together (CI
+checks), then tags `vX.Y.Z`; `release.yml` publishes the GitHub
 release, the npm packages and the crates. Programs in other languages can drive tvpipe
 through [`--machine`](docs/machine.md).
 

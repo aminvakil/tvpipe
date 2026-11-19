@@ -1,24 +1,29 @@
 # The party protocol (version 1)
 
-What a party host (`@tvpipe/party` in Node, `tvpipe-party` in Rust) and
-its clients (phones, screens, watchers; the browser client
-`party-client.js`) say to each other. The Node host is the reference:
-the session vectors in `crates/tvpipe-party/tests/vectors/` are recorded
-from it (`node test/vectors.ts --bless` in `npm/party`) and replayed by
-both hosts. The design behind it: `docs/party-design.md` §5 (WebSocket)
-and `docs/multiscreen-design.md` §2.4–2.5 (the WebRTC fast path).
+What a party host (`Party` of `@tvpipe/party`, in a game's host page)
+and its clients (phones, screens, watchers; `PartyClient`) say to each
+other. The session vectors in `npm/party/test/vectors/` are recorded from
+the host (`node test/vectors.ts --bless` in `npm/party`) and replayed by
+its tests; they were first replayed by two hosts (Node and Rust), which
+is why the protocol is written down this precisely. The design behind
+it: `docs/party-design.md` §5; how the messages travel:
+`docs/playshare-design.md` §6.
 
 ## 1. Transport
 
-- One WebSocket per client at `/party/ws` on the party's origin (a
-  tunnel's `https://`, a LAN `http://IP:PORT`, or loopback). Text
-  messages, each one JSON object with a `t` field. Binary messages are
-  reserved: a host closes the socket on one (`bye protocol`).
+- One WebSocket per client at `/_tvpipe/ws` on the game's origin (a
+  tunnel's `https://`, a LAN `http://IP:PORT`, or loopback). It ends in
+  tvpipe, which relays it to the host page (`docs/playshare-design.md`
+  §6): the host sees each message as sent. Text messages, each one JSON
+  object with a `t` field. Binary messages are reserved: a host closes
+  the socket on one (`bye protocol`).
 - **Unknown `t` values and unknown fields are ignored** by both sides.
   Every addition below relies on this: an older peer does not see it.
-- Optional, Rust hosts with the `webrtc` feature: two WebRTC data
-  channels per player, signaled over the WebSocket (§9). The WebSocket
-  stays open and remains the source of truth.
+- tvpipe closes a socket by itself only for its own limits or the end:
+  1009 (a message too large), 4008 (too fast), 4013 (too far behind:
+  the client reconnects), 1012 (the host page went away: the client
+  reconnects), 4011 (the game ended). Clients treat 1009, 4008 and 4011
+  as final even without a `bye`.
 
 ## 2. Roles and links
 
@@ -40,28 +45,26 @@ so they never reach request lines or logs. Keys and resume tokens are
 
 | `t` | Fields | |
 |---|---|---|
-| `hello` | `v` (1), `room`, `role`, `key`, `name` (a new player), `resume` (a token from an earlier `welcome`), `agent`, `caps` | first message, within 5 s |
+| `hello` | `v` (1), `room`, `role`, `key`, `name` (a new player), `resume` (a token from an earlier `welcome`), `agent` | first message, within 5 s |
 | `act` | `id` (integer 1…2⁵³−1, increasing per player), `type`, `data` | answered by `ack` |
 | `in` | `s` (integer ≥ 1), `data` | continuous input, never answered (§8) |
 | `ping` | `c` (the client's clock, ms) | answered by `pong` |
 | `resync` | | asks for the full view (after a gap in `rev`) |
 | `leave` | | the player leaves for good |
-| `rtc` | `sdp` (an offer) or `state` (`failed`, `closed`) | the fast path (§9) |
 
-`caps` is a list of strings; `"rtc"` says the client can upgrade to
-WebRTC (players only). Hosts ignore capabilities they do not know.
+(Earlier clients sent `caps` and `rtc` messages for a WebRTC fast path
+of the Rust host; hosts ignore both, as any unknown field and type.)
 
 ### Host → client
 
 | `t` | Fields | |
 |---|---|---|
-| `welcome` | `v`, `room` (`code`), `you` (`id`, `role`; players: `name`, `vip`, `resume`, `lastAct`), `now` (the host's clock, ms since the epoch), `view` (the full view), `rev` (0), `rtc` (true: the host offers the fast path) | after a good `hello` |
+| `welcome` | `v`, `room` (`code`), `you` (`id`, `role`; players: `name`, `vip`, `resume`, `lastAct`), `now` (the host's clock, ms since the epoch), `view` (the full view), `rev` (0) | after a good `hello` |
 | `state` | `rev`, and `set` / `del` (a diff) or `full` (the whole view) | §5 |
 | `ack` | `id`, `ok`; `result` (if any) or `error` (`code`, `message`); `dup` (a replay of an id the host has no result for any more) | §6 |
 | `msg` | `type`, `data` | transient: a sound cue, a toast; lost when away |
 | `pong` | `c` (echoed), `now` | |
 | `bye` | `reason`, optional `message` | then the host closes the socket |
-| `rtc` | `sdp` (the answer) or `state` (`failed`, `closed`) | the fast path (§9) |
 
 ## 4. Closing and reconnecting
 
@@ -102,16 +105,16 @@ join order (`waiting: true` only for a waiting player, see §5.1).
   removed.
 - `rev` increases by one per `state` on a connection (`welcome` is 0). A
   client that sees a gap sends `resync` and gets `{t: "state", rev,
-  full}`. A `state` whose `rev` is not above the client's is dropped (it
-  can arrive late over the other path, §9).
-- A client that does not read (more than 64 KiB queued) gets no diffs
-  until it drains, then one diff against what it has (latest wins);
-  past 256 KiB of anything else it gets `bye slow`.
+  full}`. A `state` whose `rev` is not above the client's is dropped.
+- A client that does not read (tvpipe reports more than 64 KiB queued
+  for it: `busy`) gets no diffs until it drains, then one diff against
+  what it has (latest wins); past 1 MiB tvpipe closes it with 4013 and it
+  resumes.
 
 ### 5.1 Joining mid-game
 
 The game tells the host whether a game is in progress
-(`party.inProgress` / `set_in_progress`) and who may join meanwhile
+(`party.inProgress`) and who may join meanwhile
 (`lateJoin`: `closed`, `wait`, `open`; an option and a setter, default
 `wait`). Screens see both in `join` (`lateJoin`, `inProgress`), so the
 TV can say "join anytime" under the QR code.
@@ -121,11 +124,9 @@ TV can say "join anytime" under the QR code.
   (4030, the message "A game is in progress"); resume tokens keep
   working (a player who was in the room comes back as always).
 - With `wait` or `open` the newcomer joins the roster as a waiting
-  player (`waiting: true` in the roster, `player.waiting` /
-  `Player::waiting`). The host does nothing else with it: the game
-  deals them in when it wants (`party.activate(player)` /
-  `Party::activate`: the flag goes, the `active` event /
-  `Event::Active`). The two modes differ only in the game's rules
+  player (`waiting: true` in the roster, `player.waiting`). The host
+  does nothing else with it: the game deals them in when it wants
+  (`party.activate(player)`: the flag goes, the `active` event). The two modes differ only in the game's rules
   (drawbluff: `wait` at the next round, `open` at the next drawing).
 - Ending a game (`inProgress` false) changes nobody's flag: the game
   activates its waiting players itself.
@@ -135,12 +136,10 @@ TV can say "join anytime" under the QR code.
 - `act` ids increase per player identity; `welcome.you.lastAct` tells a
   reloaded page where to continue. Screens' ids are per connection.
 - The client keeps unacknowledged actions (at most 32) and sends them
-  again after a reconnect (or when the fast path goes down). The host
+  again after a reconnect. The host
   runs each id once: an id at or below the last one it ran is a replay,
   answered from a cache of the last 32 acks (`dup: true` when it is no
-  longer there). Hence: **ids must arrive in order** — a client must not
-  send an action on one path while an earlier one may still be on its
-  way over another (§9).
+  longer there). Hence: **ids must arrive in order**.
 - Within one host turn, `state` goes out before the acks: an ack's
   effects are in the view when the promise resolves.
 - Unanswered actions get `error.code` `unknown-action`; watchers get
@@ -162,79 +161,18 @@ may be lost, **latest wins**:
   above the last one seen on that connection is dropped, as are those
   without an integer `s` ≥ 1, those from screens and watchers, and those
   over 4 KiB.
-- Rust: `Event::Input { player, data }`, at most one per player per
-  poll (the latest), ahead of the poll's other events, so an action sent
-  after an `in` sees it. Node: `player.input` and the `input` event.
-- Over the WebSocket `in` counts against the socket's rate limit
-  (20/s), so the client sends it there at most every 100 ms (the latest
-  data). Over the fast path's `u` channel it has a bucket of its own
-  (120/s, 60 at once); what is over is dropped silently.
+- The host keeps it as `player.input` and emits the `input` event.
+- `in` counts against the socket's rate limit (20/s), so the client
+  sends it at most every 100 ms (the latest data).
 
-## 9. The WebRTC fast path
-
-Rust hosts with the `webrtc` feature. The phone is the offerer, the host
-an ICE-lite answerer with host candidates on its LAN address (or what
-`fast_addrs` says). No STUN, no TURN: a phone that cannot reach the LAN
-address (mobile data) stays on the WebSocket.
-
-1. `hello.caps` has `"rtc"`; `welcome.rtc` is `true`.
-2. The client creates `RTCPeerConnection({iceServers: []})` with two
-   **negotiated** channels: `r` (`negotiated: true, id: 0, ordered:
-   true`) and `u` (`negotiated: true, id: 1, ordered: false,
-   maxRetransmits: 0`), and sends `{t: "rtc", sdp: OFFER}` over the
-   WebSocket (no trickle; the host learns the phone's address from its
-   connectivity checks).
-3. The host answers `{t: "rtc", sdp: ANSWER}` (`a=ice-lite`, its
-   candidates inline), or `{t: "rtc", state: "failed"}` (no capability,
-   a bad offer, too many peers).
-4. Both channels open: the fast path is up.
-
-While it is up:
-
-- `r` carries what the WebSocket carries, as the same JSON text: the
-  client sends `act` (only while no earlier act is unacknowledged on the
-  WebSocket), `ping`, `resync`; the host sends `state`, `ack`, `msg`,
-  `pong`. `welcome`, `bye` and `rtc` only ever travel on the WebSocket.
-  Messages over 60 KiB go over the WebSocket.
-- `u` carries only `in`.
-- The host's limits are the WebSocket's (`r` shares the socket's rate
-  bucket and message sizes); 256 KiB unacknowledged on `r` ends the fast
-  path (too slow).
-
-It ends when the WebSocket that signaled it closes (the channels never
-outlive it), when a channel closes or ICE fails, when the channels do
-not open within 3 s of the offer (the client says `{t: "rtc", state:
-"failed"}`), or when the host ends it (`{t: "rtc", state: "closed"}`).
-The client then sends its actions that were on `r` again over the
-WebSocket, and tries once more after a network change (`online`, the
-page becoming visible). Peers that do not know `rtc` never offer or
-answer, so a Node host (no `welcome.rtc`) and an old client (no `caps`)
-simply stay on the WebSocket.
-
-Security: the SDP, with the DTLS fingerprints, only travels inside an
-authenticated WebSocket session, so a channel belongs to the player
-whose session negotiated it; ICE credentials are per peer, and the host
-answers STUN only for its peers' ufrags. Data channels are DTLS
-encrypted even where the WebSocket is plain HTTP (LAN links). Host
-candidates show players the host's LAN address.
-
-## 10. Limits
+## 9. Limits
 
 | | |
 |---|---|
 | `hello` within | 5 s |
-| messages per socket | 20/s, 50 at once (`bye rate-limited`) |
-| message size | 256 KiB for `act`, 16 KiB for the rest, 4 KiB for `in` (dropped) |
-| sockets per server | 2 per player + 16, at least 64 (`socketsFor(maxPlayers)` / `sockets_for`; 64 up to 24 players, 116 at 50); screens and watchers per room 16 |
+| messages per socket | 20/s, 50 at once (`bye rate-limited`; tvpipe's outer bound: the manifest's `limits`, close 4008) |
+| message size | 256 KiB for `act` (tvpipe: the manifest's `limits.message`, close 1009), 16 KiB for the rest, 4 KiB for `in` (dropped) |
+| sockets | 2 per player (`players.max`) + 16, at least 64, enforced by tvpipe; screens and watchers 16 |
 | failed `hello`s per address | 20 a minute |
 | pending actions per client | 32 |
 | liveness | WebSocket pings every 15 s, closed after 45 s without a pong |
-
-## 11. Hosts compared
-
-| | Node (`@tvpipe/party`) | Rust (`tvpipe-party`) |
-|---|---|---|
-| Protocol v1, vectors | reference | replays them |
-| `in` | WebSocket | WebSocket, and `u` with `webrtc` |
-| `rtc` | never offered | with the `webrtc` feature |
-| Links | tunnel, loopback | tunnel, LAN, loopback (`join.mode`) |

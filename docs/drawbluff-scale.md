@@ -1,5 +1,10 @@
 # drawbluff at scale (design)
 
+Status: implemented. Since `tvpipe playshare` the game runs in its host
+page in the browser (`game/` unchanged), the TV is the web screen only;
+the Rust host and the video screens mentioned below are gone, their
+measurements stay as recorded ([`playshare-design.md`](playshare-design.md)).
+
 drawbluff for 3 to 50 players in one mode, on one TV. Today's game
 (`games/drawbluff`, `docs/party-design.md` §10) is the small end of it:
 with 3–6 players nothing changes but a few extra lines on the screens.

@@ -1,6 +1,7 @@
 # playshare: web games on the TV (design)
 
-Status: design, being implemented on the `playshare` branch. Supersedes
+Status: implemented (`crates/tvpipe/src/playshare/`, `npm/party`,
+`games/drawbluff`); what changed while building it is in §16. Supersedes
 `docs/multiscreen-design.md` (Rust party host, WebRTC fast path, Rust
 TV rendering) and the Node host of `docs/party-design.md` (§2 B, §4, §7,
 §9). The wire protocol between phones and the game
@@ -358,11 +359,19 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   attach in ~0.3 s with no creation at all (only a new random route).
   If OpenTunnel fails, Cloudflare. `--tunnel=cloudflare` asks for a
   quick tunnel explicitly.
-- **Reusing quick-tunnel credentials** was considered: the credentials
-  (`AccountTag`, `TunnelID`, `TunnelSecret`) belong to a tunnel
-  Cloudflare deletes when no connector is left; whether a reconnect
-  after minutes works is undocumented (to measure in step 5, once;
-  if it does, a cache of the last credentials with their age).
+- **Reusing quick-tunnel credentials** works: a quick tunnel outlives
+  its connector (measured 2026-11-19: the same credentials registered
+  again after 120 s and the same hostname served at once,
+  `cftunnel::tests::live_quick_tunnel_reuse`). So when playshare uses
+  Cloudflare it keeps the last quick tunnel's credentials in the config
+  directory (`cloudflare-quick-tunnel.json`, 0600: the tunnel secret)
+  and tries them first (`cftunnel::Tunnel::start_reusing`: register and
+  resolve within 10 s, else a new quick tunnel, whose credentials replace
+  them). A run on reused credentials is up in under a second instead of
+  6–7 s. How long Cloudflare keeps an idle quick tunnel is not known; a
+  deleted one costs 10 s before the new one. The same hostname across
+  runs is harmless: every run has a new room code and join key, so an old
+  QR code leads nowhere.
 - `--lan [IP]`: phones on the same Wi-Fi over `http://IP:PORT` (no
   internet needed; the key crosses the Wi-Fi in clear: party-protocol
   security notes); `--no-tunnel`: this computer only.
@@ -439,3 +448,41 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
 4. drawbluff as a bundle (host page with `game/*.ts`, TV and phone pages
    as they are), tests, the live check, a zip.
 5. Deletions, README, ARCHITECTURE, AGENTS, the manual's text, CI.
+
+## 16. As built
+
+- **Rust** (`crates/tvpipe/src/playshare/`, feature `playshare`, the CLI
+  through `__cli::playshare`): `bundle` (manifest, folder, zip), `server`
+  (the listeners), `hub` (API, relay, progress), `conn` (a WebSocket with
+  an outbox: `busy`/`drain`, the backlog limit, pings), `backend`
+  (discovery, pairing, cast: fakes in tests), `window`, `web` (the
+  embedded library and launcher; `TVPIPE_PLAYSHARE_WEB=DIR` serves them
+  from a directory). The API calls a game's code makes are as in §5.
+- **The window**: Chromium-based browsers get the app window. Firefox has
+  no app windows: with only Firefox installed, `--window app` opens the
+  system's browser (`open`), and the end follows the pages' sockets.
+  `--window headless` exists for tests.
+- **The library** is TypeScript compiled by `tsc` (erasable syntax, ES
+  modules with `.js` imports); `npm run build` writes `dist/` and copies
+  the browser files into the crate (`scripts/web.ts`; `--check` in
+  `npm run check`). The session vectors moved to `npm/party/test/vectors/`.
+- **drawbluff**: `tvpipe.json` at the game's folder with `root: dist`;
+  `npm run build` compiles `game/` and `host/` and rewrites the library
+  imports to `/_tvpipe/lib/`; `npm run zip` writes `drawbluff.zip`
+  (`scripts/zip.ts`, deflate through Node's zlib). The host page shows
+  the room, the TVs (with "try again"), the players (remove, bots), the
+  rounds, timers and late joining, and a muted preview of the TV (the
+  watch link in an `<iframe>`).
+- **Checked** (2026-11-19, macOS 26, Chrome 157): `node
+  test/live/playshare.ts` (and `--zip`, and `--tunnel=opentunnel`): the
+  launcher and the host page in headless Chrome, a phone in headless
+  Chrome (joining through the phones' listener, drawing with touch,
+  lying, voting), bots, the TV through tvpipe's own headless Chrome and
+  the `browser` receiver, a whole game, the End button: tvpipe exits 0,
+  every phone says the room closed. The opt-in Rust test with a real
+  Chrome casts the TV page to the fake Cast receiver and notices the
+  window closing.
+- **Not yet**: a real TV (Apple TV, Chromecast) and a real phone; LAN
+  mode with a phone; a game's own launcher (only the contract and the
+  standard one); the host page keeping its state across a reload
+  (`sessionStorage`), so a reload sends phones back to their name entry.

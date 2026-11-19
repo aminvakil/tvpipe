@@ -168,7 +168,7 @@ await t.stop();
 PORT`). The server decides who may do what: requests arrive with `t.host`
 as `Host`, WebSockets with `Origin: https://${t.host}`. `qr()` returns the
 QR code of a text as data, for a page or a frame of your own.
-[`@tvpipe/party`](../party/README.md) builds party games on both.
+Party games are web apps for `tvpipe playshare` ([`@tvpipe/party`](../party/README.md)).
 
 ## Apple TV pairing
 
