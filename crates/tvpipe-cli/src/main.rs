@@ -73,9 +73,7 @@ fn main() -> ExitCode {
         });
     }
     if session {
-        if interrupt::install() {
-            interrupt::link(ctx.stop.clone());
-        } else {
+        if !interrupt::link(ctx.stop.clone()) {
             warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
         }
         // With --machine, stdin belongs to the machine interface's router.

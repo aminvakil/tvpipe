@@ -10,7 +10,8 @@
 //! ```
 //!
 //! The phone page is `examples/buzzer/` (set `TVPIPE_PARTY_DEV=1` to
-//! serve it from disk while editing).
+//! serve it from disk while editing). Ctrl-C ends the party: the phones
+//! are told the room closed.
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
@@ -76,7 +77,10 @@ fn main() {
     };
     game.publish(&mut party, Value::Null);
     party.flush();
-    loop {
+    // Ctrl-C ends the wait below (tvpipe's `signals` feature).
+    let waker = party.waker();
+    tvpipe::signals::on_signal(move || waker.wake());
+    while !tvpipe::signals::requested() {
         let deadline = match game.phase {
             Phase::Wait { go } => go,
             _ => Instant::now() + Duration::from_secs(1),
@@ -103,6 +107,8 @@ fn main() {
         }
         party.flush();
     }
+    party.shutdown(Duration::from_secs(2));
+    std::process::exit(130);
 }
 
 impl Game {

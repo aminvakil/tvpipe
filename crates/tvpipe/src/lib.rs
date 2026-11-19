@@ -15,7 +15,8 @@
         feature = "tunnel",
         feature = "files",
         feature = "ffmpeg",
-        feature = "h264"
+        feature = "h264",
+        feature = "signals"
     )),
     allow(unused)
 )]
@@ -53,6 +54,8 @@ mod types;
 mod util;
 
 pub mod recipes;
+#[cfg(feature = "signals")]
+pub mod signals;
 
 pub use api::{
     discover, discover_with, play, preview, share, stream, test_pattern, AudioWriter, ConfigFormat,

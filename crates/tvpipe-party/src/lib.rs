@@ -504,6 +504,31 @@ impl Party {
         self.core.events()
     }
 
+    /// Ends a [`wait`](Party::wait) from another thread, e.g. on Ctrl-C:
+    ///
+    /// ```no_run
+    /// # fn f(party: &mut tvpipe_party::Party) {
+    /// // With tvpipe's `signals` feature:
+    /// let waker = party.waker();
+    /// tvpipe::signals::on_signal(move || waker.wake());
+    /// while !tvpipe::signals::requested() {
+    ///     for event in party.wait(std::time::Duration::from_secs(1)) {
+    ///         // ...
+    ///     }
+    /// }
+    /// party.close();
+    /// # }
+    /// ```
+    pub fn waker(&self) -> Waker {
+        Waker(
+            self._shared
+                .inbox
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+        )
+    }
+
     /// Like [`wait`](Party::wait), until an instant.
     pub fn wait_until(&mut self, deadline: Instant) -> Vec<Event> {
         self.wait(deadline.saturating_duration_since(Instant::now()))
@@ -575,6 +600,26 @@ impl Party {
     /// Ends the party: every client gets `bye room-closed`.
     pub fn close(&mut self) {
         self.core.close();
+    }
+
+    /// Closes the party and waits up to `timeout` for every socket to
+    /// end, so the clients get their `bye room-closed` before the process
+    /// exits (after [`close`](Party::close) alone, exiting at once may cut
+    /// it off). True if every socket ended in time.
+    pub fn shutdown(&mut self, timeout: Duration) -> bool {
+        self.core.close();
+        let deadline = Instant::now() + timeout;
+        loop {
+            // Drain what the connection threads report meanwhile.
+            party::pump(&mut self.core, &self.inbox, None);
+            if self._shared.sockets.load(Ordering::SeqCst) == 0 {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Whether the party was closed.
@@ -680,6 +725,18 @@ fn bind_lan(
         }
     }
     Err(last.unwrap_or_else(|| tvpipe::Error::usage("party: no LAN port")))
+}
+
+/// Ends a [`Party::wait`] from another thread ([`Party::waker`]).
+#[derive(Clone, Debug)]
+pub struct Waker(mpsc::Sender<conn::Inbound>);
+
+impl Waker {
+    /// The waiting (or next) [`Party::wait`] returns now, with whatever
+    /// happened (possibly nothing). Does nothing once the party is gone.
+    pub fn wake(&self) {
+        let _ = self.0.send(conn::Inbound::Wake);
+    }
 }
 
 impl Drop for Party {

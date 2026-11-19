@@ -658,6 +658,7 @@ impl Core {
 
     pub fn handle(&mut self, inbound: Inbound) {
         match inbound {
+            Inbound::Wake => {}
             Inbound::Opened { conn } => {
                 if self.closed {
                     bye(&conn, Bye::RoomClosed, None);

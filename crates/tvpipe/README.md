@@ -80,6 +80,7 @@ opt-level = 3
 | `tunnel` | no | public HTTPS links for the pages (`rustls`) |
 | `files` | no | MP4/MOV/Matroska sent unchanged, without ffmpeg |
 | `ffmpeg` | no | files, URLs and capture through an ffmpeg subprocess |
+| `signals` | no | `signals`: Ctrl-C/SIGTERM stops a session cleanly (the receivers get their teardown) |
 
 A program that only wants AirPlay with its own encoder takes
 `default-features = false, features = ["airplay"]` (no `rustls`). Asking

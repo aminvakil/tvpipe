@@ -4,7 +4,8 @@
 # code (130 after Ctrl-C/Break, 0 after q) and tvpipe's output.
 #
 # `prlctl exec` gives a process no console, so this is how the console
-# paths of src/util/interrupt.rs are exercised from the Mac:
+# paths of crates/tvpipe/src/signals.rs and crates/tvpipe-cli/src/interrupt.rs
+# are exercised from the Mac:
 #
 #   prlctl exec "Windows 11" --current-user powershell -NoProfile
 #     -ExecutionPolicy Bypass -File Y:\...\scripts\windows\console-event.ps1

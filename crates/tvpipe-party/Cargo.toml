@@ -29,6 +29,10 @@ ring = "0.17"
 deser = { version = "0.10", optional = true, default-features = false, features = ["std"] }
 deser-json = { version = "0.10", optional = true, default-features = false, features = ["std"] }
 
+[dev-dependencies]
+# The examples and doc tests stop on Ctrl-C.
+tvpipe = { path = "../tvpipe", version = "=0.2.0", default-features = false, features = ["player", "signals"] }
+
 [[example]]
 name = "buzzer"
 # Its test checks the embedded page list against the directory.

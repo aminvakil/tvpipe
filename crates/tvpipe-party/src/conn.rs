@@ -42,6 +42,8 @@ pub(crate) enum Inbound {
     Drained { conn: ConnId },
     /// The socket ended (either side, an error, silence).
     Closed { conn: ConnId },
+    /// [`Waker::wake`](crate::Waker::wake): only ends a wait.
+    Wake,
 }
 
 pub(crate) enum Incoming {

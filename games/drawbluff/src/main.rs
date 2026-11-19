@@ -11,6 +11,7 @@
 use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::thread;
+use std::time::Duration;
 
 use drawbluff::bots::{bots, BotOptions};
 use drawbluff::game::{Drawbluff, GameEvent, GameOptions, Timings};
@@ -229,8 +230,14 @@ fn main() -> ExitCode {
         });
     }
 
+    // Ctrl-C/SIGTERM ends the wait below; then the phones and screens are
+    // told the room closed and the TV gets its teardown.
+    let waker = party.waker();
+    if !tvpipe::signals::on_signal(move || waker.wake()) && tv.is_some() {
+        eprintln!("drawbluff: cannot catch Ctrl-C; the TV will not get a clean stop");
+    }
     let mut shown_url = false;
-    loop {
+    while !tvpipe::signals::requested() {
         for event in party.wait_until(game.wake(&party)) {
             if args.verbose {
                 log(&party, &event);
@@ -259,6 +266,16 @@ fn main() -> ExitCode {
             }
         }
     }
+    if args.verbose {
+        eprintln!("drawbluff: stopping");
+    }
+    party.close();
+    party.flush();
+    if let Some(tv) = tv {
+        tv.stop();
+    }
+    party.shutdown(Duration::from_secs(2));
+    ExitCode::from(130)
 }
 
 fn log(party: &Party, e: &Event) {

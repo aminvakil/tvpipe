@@ -150,7 +150,8 @@ in another on the same user-defined bridge network.
 
 ## Platform differences handled in the code
 
-- Ctrl-C: `crates/tvpipe-cli/src/interrupt.rs`.
+- Ctrl-C: `crates/tvpipe/src/signals.rs` (the `signals` feature; the CLI's
+  `q` + Enter is `crates/tvpipe-cli/src/interrupt.rs`).
 - Timer resolution: `crates/tvpipe/src/util/timer.rs`, Windows only.
 - Config directory: `crates/tvpipe/src/storage.rs` (`%APPDATA%\tvpipe`).
 - `ffmpeg.exe`/`ffprobe.exe`: `std::env::consts::EXE_SUFFIX` in

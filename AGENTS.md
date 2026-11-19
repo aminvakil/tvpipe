@@ -17,7 +17,7 @@ workstream.
 - Never panic on data from the network or from ffmpeg. Return errors.
 - Platform-neutral code only. No OS media/discovery APIs; `cfg(target_os)` is
   only acceptable for config-directory paths. The exceptions are
-  `crates/tvpipe-cli/src/interrupt.rs` (Ctrl-C handling, `cfg(unix)`/`cfg(windows)`) and
+  `crates/tvpipe/src/signals.rs` (Ctrl-C handling, `cfg(unix)`/`cfg(windows)`) and
   `crates/tvpipe/src/util/timer.rs` (Windows 1 ms timer resolution, `cfg(windows)`); see
   "Platform-Specific Code" in `ARCHITECTURE.md`.
 

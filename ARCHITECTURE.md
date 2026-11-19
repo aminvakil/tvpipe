@@ -392,7 +392,8 @@ attribution.
 Everything is platform-neutral except these, each with no crate and every
 `unsafe` block carrying a SAFETY comment:
 
-- **Ctrl-C** (`crates/tvpipe-cli/src/interrupt.rs`). Ctrl-C must send TEARDOWN or STOP,
+- **Ctrl-C** (`crates/tvpipe/src/signals.rs`, the opt-in `signals` feature;
+  the CLI enables it, and so do the Rust party games). Ctrl-C must send TEARDOWN or STOP,
   or the TV stays in mirroring mode. std cannot install a signal handler,
   and ffmpeg (in our process group) dies from the same signal, so the
   fallback "tear down on ffmpeg's EOF" does not work either. It uses the C
@@ -401,7 +402,10 @@ Everything is platform-neutral except these, each with no crate and every
     swap. One code path for every Unix.
   - Windows: `SetConsoleCtrlHandler`.
 
-  A second Ctrl-C exits immediately. `q` then Enter also stops, using std
+  A second Ctrl-C exits immediately. The library never installs it by
+  itself: a program calls `tvpipe::signals::stop_on_signal(stopper)` (or
+  `on_signal(f)`, e.g. with a party's `Waker`). In the CLI
+  (`crates/tvpipe-cli/src/interrupt.rs`), `q` then Enter also stops, using std
   only (only when stdin is a terminal, not SLRW). On a stop the session
   does not drain: every sink's `stop()` runs and ffmpeg is killed and
   reaped. Ctrl-C/SIGTERM exits with 130, `q` with 0.

@@ -51,6 +51,9 @@ files = []
 ffmpeg = ["files"]
 # The built-in H.264 encoder (raw frames, the test pattern).
 h264 = []
+# `tvpipe::signals`: Ctrl-C/SIGTERM as a stop request (a handler of its own
+# over the C runtime; never installed unless asked for).
+signals = []
 
 [dependencies]
 ring = "0.17"

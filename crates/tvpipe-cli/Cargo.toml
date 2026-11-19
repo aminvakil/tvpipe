@@ -33,4 +33,5 @@ tvpipe = { path = "../tvpipe", version = "0.2.0", features = [
     "files",
     "ffmpeg",
     "h264",
+    "signals",
 ] }
