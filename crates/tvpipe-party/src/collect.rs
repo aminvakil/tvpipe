@@ -20,7 +20,7 @@ use crate::Party;
 ///                 let text = data.as_str().ok_or(PartyError::new("bad-data", "Text, please"))?;
 ///                 Ok((text.to_owned(), Value::Null))
 ///             }) {
-///                 party.reply(a, Err::<Value, _>(PartyError::new("not-now", "Not now")));
+///                 party.reply(a, Err(PartyError::new("not-now", "Not now")));
 ///             }
 ///         }
 ///     }
@@ -102,18 +102,18 @@ impl<T> Collect<T> {
             return Some(action);
         }
         let Some(player) = action.player().cloned() else {
-            party.reply(action, Err::<Value, _>(not_asked()));
+            party.reply(action, Err(not_asked()));
             return None;
         };
         if !self.from.contains(&player) {
-            party.reply(action, Err::<Value, _>(not_asked()));
+            party.reply(action, Err(not_asked()));
             return None;
         }
         let existing = self.answers.iter().position(|(p, _)| *p == player);
         if existing.is_some() && !self.replace {
             party.reply(
                 action,
-                Err::<Value, _>(PartyError::new("already-answered", "Already sent")),
+                Err(PartyError::new("already-answered", "Already sent")),
             );
             return None;
         }
@@ -123,9 +123,9 @@ impl<T> Collect<T> {
                     Some(i) => self.answers[i].1 = value,
                     None => self.answers.push((player, value)),
                 }
-                party.reply(action, Ok::<_, PartyError>(reply));
+                party.reply(action, Ok(reply));
             }
-            Err(e) => party.reply(action, Err::<Value, _>(e)),
+            Err(e) => party.reply(action, Err(e)),
         }
         None
     }

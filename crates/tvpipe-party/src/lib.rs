@@ -394,8 +394,8 @@ impl Party {
 
     /// Answers an action: a result for the phone (`null` for none) or an
     /// error. Sent by the next [`flush`](Party::flush), after the state.
-    pub fn reply<T: Into<Value>>(&mut self, action: Action, result: Result<T, PartyError>) {
-        self.core.reply(action, result.map(Into::into));
+    pub fn reply(&mut self, action: Action, result: Result<Value, PartyError>) {
+        self.core.reply(action, result);
     }
 
     /// What every player sees (`view.room`).
