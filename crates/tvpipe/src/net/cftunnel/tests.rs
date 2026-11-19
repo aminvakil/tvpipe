@@ -24,6 +24,22 @@ fn credentials() {
         (c.account_tag.as_str(), c.secret.as_slice()),
         ("abc123", &[1u8, 2, 3][..])
     );
+    // Saved for reuse, read back the same.
+    let again = parse_credentials(&c.to_saved()).unwrap();
+    assert_eq!(
+        (
+            again.hostname,
+            again.tunnel_id,
+            again.account_tag,
+            again.secret
+        ),
+        (
+            c.hostname.clone(),
+            c.tunnel_id,
+            c.account_tag.clone(),
+            c.secret.clone()
+        )
+    );
     let refused =
         r#"{"success":false,"result":null,"errors":[{"code":1015,"message":"rate limited"}]}"#;
     let e = parse_credentials(refused).err().unwrap();
@@ -340,4 +356,64 @@ fn live_quick_tunnel() {
         t1.elapsed()
     );
     drop(tunnel);
+}
+
+/// Whether a quick tunnel's credentials work again after its connector
+/// left (playshare starts often; docs/playshare-design.md §11):
+/// `TVPIPE_TEST_REUSE_WAIT=SECS cargo test --release
+/// live_quick_tunnel_reuse -- --ignored --nocapture` (makes one quick
+/// tunnel; default wait 120 s).
+#[test]
+#[ignore]
+fn live_quick_tunnel_reuse() {
+    let page = page_server();
+    let port = page.local_addr().port();
+    let creds = provision().unwrap();
+    let host = creds.hostname.clone();
+    let get = |path: &str| -> Result<Response> {
+        let (conn, tcp) = dial(&host, 443, &host, crate::net::roots::store())?;
+        let req = Request::new("GET", path, Version::Http11)
+            .header("Host", host.clone())
+            .header("Connection", "close");
+        Conn::new(StreamOwned::new(conn, tcp)).request(&req)
+    };
+    let works = |what: &str| {
+        let t0 = Instant::now();
+        while t0.elapsed() < Duration::from_secs(60) {
+            match get("/") {
+                Ok(r) if r.status == 200 => {
+                    eprintln!("{what}: 200 after {:?}", t0.elapsed());
+                    return true;
+                }
+                Ok(r) => eprintln!("{what}: {} {}", r.status, r.reason),
+                Err(e) => eprintln!("{what}: {e}"),
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        false
+    };
+    let tunnel = Tunnel::start_with(port, creds.clone(), &|| false, START_TIMEOUT, false).unwrap();
+    assert!(works("first run"));
+    drop(tunnel);
+    let wait: u64 = std::env::var("TVPIPE_TEST_REUSE_WAIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120);
+    eprintln!("connector gone; waiting {wait} s");
+    std::thread::sleep(Duration::from_secs(wait));
+    match Tunnel::start_with(port, creds, &|| false, REUSE_TIMEOUT, true) {
+        Ok(t) => {
+            let ok = works("reused credentials");
+            eprintln!(
+                "reuse after {wait} s: {}",
+                if ok {
+                    "works"
+                } else {
+                    "registers, but does not serve"
+                }
+            );
+            drop(t);
+        }
+        Err(e) => eprintln!("reuse after {wait} s: refused: {e}"),
+    }
 }

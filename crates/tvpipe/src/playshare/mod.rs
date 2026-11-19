@@ -281,7 +281,19 @@ fn start_tunnel(hub: &Arc<Hub>, choice: TunnelChoice) -> TunnelThread {
                 if stop.requested() {
                     return;
                 }
-                match crate::net::tunnel::start(port, p, &|| stop.requested()) {
+                let started = match p {
+                    // The last quick tunnel again, if Cloudflare kept it.
+                    Provider::Cloudflare => crate::storage::cli_dir()
+                        .map(|d| d.join("cloudflare-quick-tunnel.json"))
+                        .and_then(|f| {
+                            crate::net::cftunnel::Tunnel::start_reusing(port, &f, &|| {
+                                stop.requested()
+                            })
+                        })
+                        .map(|t| Box::new(t) as Box<dyn crate::net::tunnel::Tunnel>),
+                    _ => crate::net::tunnel::start(port, p, &|| stop.requested()),
+                };
+                match started {
                     Ok(t) => {
                         info!(
                             "playshare: phones join at https://{}/ ({})",

@@ -76,6 +76,8 @@ const NAME_SERVER: &str = "kevin.ns.cloudflare.com";
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// How long `start` waits for the first registration.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long saved credentials get to register and resolve.
+const REUSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Largest request body we pass on (the pages take none this large).
 const MAX_BODY: usize = 1 << 20;
 
@@ -231,11 +233,38 @@ impl Write for TlsWriter {
 // ---------------------------------------------------------------------------
 // Credentials
 
+#[derive(Clone)]
 struct Credentials {
     hostname: String,
     tunnel_id: [u8; 16],
     account_tag: String,
     secret: Vec<u8>,
+}
+
+impl Credentials {
+    /// As trycloudflare.com answers (`parse_credentials` reads it back).
+    fn to_saved(&self) -> String {
+        let h = crate::util::hex::encode(&self.tunnel_id);
+        let id = format!(
+            "{}-{}-{}-{}-{}",
+            &h[..8],
+            &h[8..12],
+            &h[12..16],
+            &h[16..20],
+            &h[20..]
+        );
+        Value::object()
+            .with("success", true)
+            .with(
+                "result",
+                Value::object()
+                    .with("id", id)
+                    .with("hostname", self.hostname.as_str())
+                    .with("account_tag", self.account_tag.as_str())
+                    .with("secret", base64::encode(&self.secret)),
+            )
+            .to_json()
+    }
 }
 
 /// Whether `host` is `LABEL.trycloudflare.com` (it becomes an allowed
@@ -728,6 +757,54 @@ impl Tunnel {
     pub fn start(port: u16, stop: &dyn Fn() -> bool) -> Result<Tunnel> {
         let creds = provision()?;
         debug!("tunnel: got {}", creds.hostname);
+        Tunnel::start_with(port, creds, stop, START_TIMEOUT, false)
+    }
+
+    /// A quick tunnel with the last one's credentials when they still
+    /// work, else a new one whose credentials are kept in `file` for next
+    /// time (`tvpipe playshare`, which starts often:
+    /// docs/playshare-design.md §11). A quick tunnel outlives its
+    /// connector (measured: back with the same name after 120 s,
+    /// `live_quick_tunnel_reuse`); one Cloudflare deleted fails to
+    /// register or to reach DNS, and a new one is made.
+    pub fn start_reusing(
+        port: u16,
+        file: &std::path::Path,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Tunnel> {
+        let saved = std::fs::read_to_string(file)
+            .ok()
+            .and_then(|t| parse_credentials(&t).ok());
+        if let Some(creds) = saved {
+            let host = creds.hostname.clone();
+            match Tunnel::start_with(port, creds, stop, REUSE_TIMEOUT, true) {
+                Ok(t) => {
+                    info!("tunnel: the last quick tunnel again, {host}");
+                    return Ok(t);
+                }
+                Err(e) => debug!("tunnel: the saved quick tunnel did not come back: {e}"),
+            }
+            if stop() {
+                return Err(Error::closed("tunnel: stopped"));
+            }
+        }
+        let creds = provision()?;
+        debug!("tunnel: got {}", creds.hostname);
+        if let Err(e) = crate::storage::write_private(file, creds.to_saved().as_bytes()) {
+            debug!("tunnel: cannot keep the credentials: {e}");
+        }
+        Tunnel::start_with(port, creds, stop, START_TIMEOUT, false)
+    }
+
+    /// [`start`](Self::start) with credentials from earlier; `require_dns`:
+    /// fail when the name does not resolve in time (a deleted tunnel).
+    fn start_with(
+        port: u16,
+        creds: Credentials,
+        stop: &dyn Fn() -> bool,
+        timeout: Duration,
+        require_dns: bool,
+    ) -> Result<Tunnel> {
         let inner = Arc::new(Inner {
             port,
             creds,
@@ -743,7 +820,7 @@ impl Tunnel {
             inner,
             thread: Some(thread),
         };
-        let deadline = Instant::now() + START_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         let location = {
             let mut st = lock(&tunnel.inner.state);
             loop {
@@ -767,6 +844,9 @@ impl Tunnel {
         };
         info!("tunnel: connected to Cloudflare ({location})");
         if let Err(e) = wait_for_dns(tunnel.host(), deadline, stop) {
+            if require_dns {
+                return Err(e);
+            }
             debug!("tunnel: {e}");
         }
         if stop() {

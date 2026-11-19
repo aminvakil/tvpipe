@@ -8,8 +8,9 @@ people elsewhere:
 - **the share page** (`share --tunnel`): someone remote shares a tab,
   window or screen to the local receivers, after the local user says yes;
 - **any server on 127.0.0.1** (`tvpipe tunnel PORT`): a program's own web
-  app, e.g. a party game's pages for the players' phones
-  ([`party-design.md`](party-design.md)); see [below](#any-port-tvpipe-tunnel-port).
+  app; see [below](#any-port-tvpipe-tunnel-port). `tvpipe playshare`
+  starts its tunnel the same way for the phones' listener
+  ([`playshare-design.md`](playshare-design.md) §11: OpenTunnel first).
 
 Two providers are built in, natively (no new crate, no external program),
 behind one small interface (`net::tunnel::Tunnel`); everything else here
@@ -111,7 +112,7 @@ hijacking), and the link has no token, so anything not meant for
 everyone needs a key of the server's. Through Cloudflare the visitor's
 address is in `cf-connecting-ip`; through OpenTunnel the server sees only
 loopback. The QR code is drawn on a terminal as for the pages. From Node:
-`tunnel({ port, provider })` in `@tvpipe/sdk`; `@tvpipe/party` uses it.
+`tunnel({ port, provider })` in `@tvpipe/sdk`.
 
 `tvpipe qr [--svg | --rows] TEXT` prints the same QR codes for other
 uses: terminal art, an SVG document, or one line of `0`/`1` per module row
@@ -228,7 +229,10 @@ The public player URL asks for `delay=300`, which these numbers support.
 
 Rate limit: `api.trycloudflare.com` answered `429 Too Many Requests`
 after about 29 tunnels in 90 minutes from one address (tvpipe reports
-it as is).
+it as is). A quick tunnel outlives its connector, though: its
+credentials registered again after 120 s and the hostname served at once
+(`live_quick_tunnel_reuse`), so `tvpipe playshare` keeps the last ones
+and reuses them (`Tunnel::start_reusing`, docs/playshare-design.md §11).
 
 ### Stability and terms
 
