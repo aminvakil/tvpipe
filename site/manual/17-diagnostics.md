@@ -21,7 +21,9 @@ What to try when a TV does not show up or the picture does not appear.
 ✗ an error
 :::
 
-tvpipe prints what happens for people: a title, a line per step, links with their QR codes, and on a terminal a status line at the bottom. `q` and Enter, or `Ctrl-C`, stops. An error says what to try next.
+tvpipe prints what happens for people: a title, a line per step, links with their QR codes, and on a terminal a status line at the bottom. An error says what to try next.
+
+`q` stops, and while a TV, a browser or phones are watching it asks first: press `q` again to stop, any other key to keep going. `Ctrl-C` never asks, and a second `Ctrl-C` quits at once. On Windows, `q` needs Enter.
 
 ```sh
 $ tvpipe play --to "Nowhere TV" movie.mp4

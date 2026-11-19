@@ -87,7 +87,7 @@ On macOS the browser needs permission to record the screen and the sound. The fi
 
 | Command | Stop with |
 |---|---|
-| `tvpipe screen` | `Ctrl-C`, `q` and Enter, or **Stop sharing** in the browser's bar |
+| `tvpipe screen` | `Ctrl-C`, `q` (twice while someone watches), or **Stop sharing** in the browser's bar |
 | `tvpipe share` | **Stop** on the share page, stopping the share in the browser, closing the page, or `Ctrl-C` |
 
 ## Without a browser
