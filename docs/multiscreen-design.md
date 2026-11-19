@@ -457,14 +457,14 @@ games/drawbluff/
   src/screen.rs       the TV renderer on tvpipe-canvas (port of screen-video.ts)
   src/sound.rs        generated cues (join, tick, reveal) as PCM for Stream::write_audio
   src/bots.rs         fake players over real WebSockets, for tests and --bots
-  data/prompts.txt    the prompts, one per line: read by prompts.ts (generated import) and include_str!
+  data/prompts.txt    the prompts, one per line: read by prompts.ts (`readFileSync`) and by `include_str!`
   fonts/*.ttf         TrueType versions of the OFL fonts the web UI uses (§5)
   web/phone/          unchanged, embedded with assets! (and served from disk with TVPIPE_PARTY_ASSETS)
   web/screen/         the web screen, embedded for --web-screen
   game/ main.ts …     the Node version, unchanged apart from reading data/prompts.txt
 ```
 
-- **Same rules, checked.** `tests/vectors/rules.txt` (shared): seeded
+- **Same rules, checked.** `games/drawbluff/test/vectors/rules.txt` (shared): seeded
   games as inputs (players, prompts, drawings' validity, lies, votes, the
   mulberry32 seed) and the expected options, reveal order and scores per
   round. The TS tests (`games/drawbluff/test/`) and the Rust tests replay
@@ -549,3 +549,92 @@ Performance: a 1280×720 frame of a busy phase (two drawings with 12 000
 points, 40 lines of text with a warm glyph cache) should render in
 under 10 ms on one core; the renderer redraws only when the view or an
 animation changes, otherwise it re-sends the last frame.
+
+## 6. Shipping and security
+
+### 6.1 Platform prompts and signing
+
+| | Tunnel mode, WebSocket only | LAN mode / WebRTC fast path |
+|---|---|---|
+| Listeners | 127.0.0.1 only (TCP) | a LAN address: TCP (pages, WebSocket) and UDP (ICE/DTLS) |
+| **Windows** | no firewall prompt (loopback); outbound to TVs as tvpipe today | Windows Defender Firewall asks on the first non-loopback listen ("allow on private networks"), signed or not; declined → phones cannot connect (LAN mode fails, the fast path falls back). The game should listen once at start, not mid-game, so the prompt comes up before people scan |
+| **macOS** | Local Network permission for the TVs (tvpipe already: `NSLocalNetworkUsageDescription`, `NSBonjourServices` for `_airplay._tcp`, `_raop._tcp`, `_googlecast._tcp` in a bundled game's `Info.plist`) | the same, plus the application firewall (off by default; when on, it asks to accept incoming connections for unsigned apps and allows signed ones). Whether Local Network permission also gates answering inbound LAN connections is to check on hardware |
+| **Linux** | nothing | a host firewall (ufw, firewalld) may block the port silently: print the port and the protocol on start; Flatpak needs network access |
+
+Signing: a downloaded macOS binary must be Developer ID signed and
+notarized or Gatekeeper refuses it (a CLI tool needs no bundle, but the
+Local Network prompt then names the terminal that ran it; a game shipped
+as an `.app` gets its own name in prompts). On Windows, Authenticode
+signing avoids SmartScreen's "unknown publisher" page; the firewall
+prompt shows the file description, so set it. tvpipe-party documents
+this in a "Shipping a party game" page next to `rust-sdk-design` §6.6;
+the repository's own `drawbluff` is built by CI unsigned, like `tvpipe`.
+
+### 6.2 Security, carried over and new
+
+Everything in party-design §6 holds unchanged in Rust: 128-bit keys
+from `ring::rand`, compared in constant time (`ring::constant_time`);
+the join key in the fragment; Host and Origin checks (now with the LAN
+case, §3.2); `hello` within 5 s; 64 sockets per server; failed `hello`s
+throttled per address; message size and rate limits; names cleaned
+(§1.6); text drawn as text (DOM `textContent`, canvas glyphs) never as
+markup; the CSP without inline scripts; the `moderate` hook; kicks by
+the VIP and the host. The Rust port reuses the session transcripts
+(§1.5) so the limits behave identically, and adds the crate to the fuzz
+smoke tests (HTTP requests, WebSocket frames, JSON, actions).
+
+New with the fast path:
+
+- **DTLS is mandatory in WebRTC** (DTLS 1.2, ECDHE, AES-GCM), so data
+  channels are encrypted even in LAN mode, where the WebSocket is not.
+  The host makes a fresh self-signed certificate per run.
+- **Fingerprints are bound to a player** (§2.4): the SDP with the
+  fingerprints only travels inside an authenticated WebSocket session;
+  a channel belongs to the player whose session negotiated it. ICE
+  credentials (ufrag/pwd) are per peer connection, so a stray STUN
+  packet from the LAN cannot attach to someone else's channel.
+- **UDP exposure**: one socket per interface, answering STUN only for
+  known ufrags (no amplification: a binding response is not larger than
+  the request plus the address), rate-limited per source address like
+  joins; DTLS handshakes only after a valid ICE check; at most one peer
+  connection per player and the socket cap overall.
+- **Address disclosure**: host candidates reveal the host's LAN
+  addresses to players (who are on that LAN anyway); with STUN (later,
+  opt-in) the public address too, which the tunnel otherwise hides.
+- **LAN mode is plaintext HTTP** (§3.2): keys can be sniffed on the
+  Wi-Fi; said on the TV and in the docs, tunnel mode recommended on
+  networks with strangers.
+
+## 7. Per-player video on phones (design only)
+
+Some games want a private picture per phone (your own hand of cards is
+DOM, but your own camera in a 3D world, a map only you see, a second
+screen with the game's own art). Options, cheapest first:
+
+1. **Don't stream; render on the phone.** The phone gets its view as
+   state and draws it in DOM or canvas (drawbluff does). Covers most
+   party games, costs nothing, crisp at any resolution. The default
+   recommendation; video only when the picture is genuinely made on the
+   host (a 3D render).
+2. **tvpipe's browser player per phone.** Each phone is a `browser`
+   receiver of its own `Stream` (`to("browser")`, tvpipe's player page
+   and WebSocket, WebCodecs on the phone), embedded in the controller
+   page as an iframe or a `<canvas>` fed by the same code. Exists today
+   (the `player` feature), latency ~100 ms + network, one H.264 encode
+   per phone (at 360p the built-in encoder's cost is small; 8 phones at
+   once is to measure). Needs a secure context for WebCodecs on some
+   browsers (to check: Safari), so tunnel mode or the hybrid.
+3. **WebRTC video tracks** on the same peer connection as the data
+   channel (`rtc` has RTP/SRTP and H.264 packetisation): the lowest
+   latency (jitter buffer ~50 ms), congestion control and NACK built in,
+   hardware decode on every phone. Needs our encoder to produce
+   constrained-baseline H.264 that phones' WebRTC accepts and to honour
+   keyframe requests (tvpipe's encoder already does both for AirPlay
+   and Cast).
+4. **Chrome as the peer** (§2.3) with `captureStream()` from a canvas
+   per player: hardware encoding, but the game would render in a
+   browser, which is not the Rust-first story.
+
+Recommendation when it is wanted: 2 as the first experiment (no new
+code paths, measures the encode budget), 3 as the real thing on top of
+the phase 4 fast path.
