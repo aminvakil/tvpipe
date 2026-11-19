@@ -190,6 +190,14 @@ try {
     log(`screenshots: ${name}`);
   };
   await shot("lobby");
+  // The phone's own language switch (in the lobby), there and back.
+  const other = lang === "de" ? "en" : "de";
+  await phone.eval(`document.getElementById("lang").click(); true`);
+  await phone.until(`document.documentElement.lang === ${JSON.stringify(other)} && !!document.querySelector(".card.lobby")`);
+  await phone.screenshot(`${out}/phone-lobby-switched.png`);
+  await phone.eval(`document.getElementById("lang").click(); true`);
+  await phone.until(`document.documentElement.lang === ${JSON.stringify(lang)} && localStorage.getItem("drawbluff:lang") === null`);
+  log(`phone: switched to ${other} and back to the room's ${lang}`);
   // Phil (the VIP) starts from the phone.
   await phone.until(`!document.querySelector("button.primary")?.disabled`);
   await phone.eval(`document.querySelector("button.primary").click(); true`);
