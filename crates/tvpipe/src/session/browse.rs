@@ -53,6 +53,7 @@ pub(super) fn browse(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
                     bin: bin.clone(),
                     viewport,
                     visible: o.visible,
+                    app: None,
                     screen: None,
                 },
                 profile: o.profile.clone(),

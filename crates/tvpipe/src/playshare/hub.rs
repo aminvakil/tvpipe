@@ -1,0 +1,850 @@
+//! The state of one playshare run: the API sockets, the relay's client
+//! connections and its host, the launcher's selection, discovery, pairing
+//! and the cast (docs/playshare-design.md §5, §6).
+//!
+//! Locks: `Hub::st` is taken briefly and never while waiting on a socket;
+//! outboxes have locks of their own, taken after `st` or alone.
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
+use std::time::{Duration, Instant};
+
+use crate::codec::json::Value;
+use crate::error::{Error, Result};
+use crate::net::tunnel::PeerLookup;
+use crate::net::websocket::Message;
+use crate::util::stop::Stop;
+
+use super::backend::{Backend, Cast, Discover, Pair};
+use super::bundle::Bundle;
+use super::conn::{self, Next, Out, WindowCounter};
+
+/// Relay frame ops (§6.2).
+pub const OP_TEXT: u8 = 1;
+pub const OP_BINARY: u8 = 2;
+
+/// A client's backlog that is reported as `busy`.
+pub const BUSY_MARK: usize = 64 * 1024;
+/// A client's backlog that closes it (4013, it reconnects).
+pub const CLIENT_LIMIT: usize = 1 << 20;
+/// The first message from a client must come within this.
+pub const FIRST_MESSAGE: Duration = Duration::from_secs(10);
+/// Upgrades per address and minute.
+pub const UPGRADES_PER_MINUTE: usize = 60;
+/// The API socket's largest message (the host sends to many clients).
+pub const API_MAX_MESSAGE: usize = 16 << 20;
+/// How long the host gets to say goodbye at the end.
+pub const CLOSING_GRACE: Duration = Duration::from_secs(1);
+
+/// The close code that tells clients the game ended (final for them).
+pub const CLOSE_ENDED: u16 = 4011;
+/// The close code for clients when the host went away (they reconnect).
+pub const CLOSE_RESTART: u16 = 1012;
+
+/// Where a relayed connection came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    /// The public listener: the tunnel, or loopback for tests.
+    Public,
+    /// The LAN listener.
+    Lan,
+    /// The local listener: the TV page, previews in the host window.
+    Local,
+}
+
+impl Via {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Via::Public => "public",
+            Via::Lan => "lan",
+            Via::Local => "local",
+        }
+    }
+}
+
+/// The listeners' addresses, once bound.
+#[derive(Debug, Clone, Copy)]
+pub struct Ports {
+    pub local: u16,
+    pub public: u16,
+    pub lan: Option<SocketAddr>,
+}
+
+/// The tunnel as the API reports it.
+#[derive(Debug, Clone, Default)]
+pub struct TunnelInfo {
+    /// `off`, `starting`, `up`, `failed`.
+    pub state: &'static str,
+    pub provider: Option<String>,
+    pub host: Option<String>,
+    pub error: Option<String>,
+}
+
+struct Client {
+    out: Out,
+}
+
+struct Api {
+    out: Out,
+    watching: bool,
+}
+
+struct St {
+    next_conn: u32,
+    next_api: u64,
+    clients: HashMap<u32, Client>,
+    apis: HashMap<u64, Api>,
+    host: Option<u64>,
+    selection: Vec<String>,
+    upgrades: WindowCounter,
+    discovery: Option<Box<dyn Discover>>,
+    devices: Value,
+    pairs: HashMap<String, (Box<dyn Pair>, Value)>,
+    cast: Option<(Box<dyn Cast>, Value)>,
+    /// When the last API socket went away (none open), or when the run
+    /// started if none came yet.
+    apis_gone_since: Option<Instant>,
+    seen_api: bool,
+    closing: bool,
+}
+
+pub struct Hub {
+    pub bundle: Bundle,
+    pub token: String,
+    pub ports: OnceLock<Ports>,
+    pub tunnel: RwLock<TunnelInfo>,
+    pub peers: RwLock<Option<PeerLookup>>,
+    pub stop: Stop,
+    pub version: &'static str,
+    backend: Box<dyn Backend>,
+    st: Mutex<St>,
+}
+
+/// `{"t":"event","type":…,"data":…}`.
+fn event(kind: &str, data: Value) -> String {
+    Value::object()
+        .with("t", "event")
+        .with("type", kind)
+        .with("data", data)
+        .to_json()
+}
+
+fn reply_ok(n: &Value, value: Value) -> String {
+    Value::object()
+        .with("t", "reply")
+        .with("n", n.clone())
+        .with("ok", true)
+        .with("value", value)
+        .to_json()
+}
+
+fn reply_err(n: &Value, code: &str, message: &str) -> String {
+    Value::object()
+        .with("t", "reply")
+        .with("n", n.clone())
+        .with("ok", false)
+        .with(
+            "error",
+            Value::object().with("code", code).with("message", message),
+        )
+        .to_json()
+}
+
+/// A relay data frame: `op | conn (u32be) | payload`.
+pub fn frame(op: u8, conn: u32, payload: &[u8]) -> Vec<u8> {
+    let mut f = Vec::with_capacity(5 + payload.len());
+    f.push(op);
+    f.extend_from_slice(&conn.to_be_bytes());
+    f.extend_from_slice(payload);
+    f
+}
+
+/// The pseudo-receiver for a browser tab on this computer.
+pub fn browser_device() -> Value {
+    Value::object()
+        .with("name", "browser")
+        .with("kind", "browser")
+        .with("title", "A browser tab on this computer")
+}
+
+impl Hub {
+    pub fn new(bundle: Bundle, token: String, backend: Box<dyn Backend>, stop: Stop) -> Arc<Hub> {
+        Arc::new(Hub {
+            bundle,
+            token,
+            ports: OnceLock::new(),
+            tunnel: RwLock::new(TunnelInfo {
+                state: "off",
+                ..TunnelInfo::default()
+            }),
+            peers: RwLock::new(None),
+            stop,
+            version: env!("CARGO_PKG_VERSION"),
+            backend,
+            st: Mutex::new(St {
+                next_conn: 0,
+                next_api: 0,
+                clients: HashMap::new(),
+                apis: HashMap::new(),
+                host: None,
+                selection: Vec::new(),
+                upgrades: WindowCounter::new(UPGRADES_PER_MINUTE, Duration::from_secs(60)),
+                discovery: None,
+                devices: Value::array(Vec::<Value>::new()),
+                pairs: HashMap::new(),
+                cast: None,
+                apis_gone_since: Some(Instant::now()),
+                seen_api: false,
+                closing: false,
+            }),
+        })
+    }
+
+    fn lock(&self) -> MutexGuard<'_, St> {
+        self.st.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn ports(&self) -> Ports {
+        self.ports.get().copied().unwrap_or(Ports {
+            local: 0,
+            public: 0,
+            lan: None,
+        })
+    }
+
+    /// The local origin (`http://127.0.0.1:L`).
+    pub fn local_origin(&self) -> String {
+        format!("http://127.0.0.1:{}", self.ports().local)
+    }
+
+    /// What phones open: `(base URL, mode)`.
+    pub fn phone_base(&self) -> (String, &'static str) {
+        let t = self.tunnel.read().unwrap_or_else(|e| e.into_inner());
+        if let (Some(host), "up") = (&t.host, t.state) {
+            return (format!("https://{host}/"), "tunnel");
+        }
+        let p = self.ports();
+        if let Some(lan) = p.lan {
+            return (format!("http://{lan}/"), "lan");
+        }
+        (format!("http://127.0.0.1:{}/", p.public), "local")
+    }
+
+    /// The most connections the relay takes at once.
+    pub fn max_clients(&self) -> usize {
+        (2 * self.bundle.manifest.max_players as usize + 16).max(64)
+    }
+
+    // -----------------------------------------------------------------
+    // Events
+
+    fn broadcast(&self, st: &St, text: &str) {
+        for a in st.apis.values() {
+            a.out.text(text.to_owned());
+        }
+    }
+
+    /// Sends an event to every API socket.
+    pub fn event(&self, kind: &str, data: Value) {
+        let text = event(kind, data);
+        let st = self.lock();
+        self.broadcast(&st, &text);
+    }
+
+    pub fn tunnel_value(&self) -> Value {
+        let t = self.tunnel.read().unwrap_or_else(|e| e.into_inner());
+        Value::object()
+            .with("state", t.state)
+            .with_opt("provider", t.provider.as_deref())
+            .with_opt("url", t.host.as_ref().map(|h| format!("https://{h}/")))
+            .with_opt("error", t.error.as_deref())
+    }
+
+    /// The tunnel changed: tell the API sockets.
+    pub fn tunnel_changed(&self) {
+        self.event("tunnel", self.tunnel_value());
+    }
+
+    // -----------------------------------------------------------------
+    // The relay's clients
+
+    /// Whether a new client may connect from `addr` (`Err`: the HTTP
+    /// status and reason).
+    pub fn admit(&self, addr: &str) -> std::result::Result<(), (u16, &'static str)> {
+        let mut st = self.lock();
+        if st.closing || st.host.is_none() {
+            return Err((503, "Service Unavailable"));
+        }
+        if st.clients.len() >= self.max_clients() {
+            return Err((503, "Service Unavailable"));
+        }
+        if !st.upgrades.hit(addr, Instant::now()) {
+            return Err((429, "Too Many Requests"));
+        }
+        Ok(())
+    }
+
+    /// Runs an upgraded client socket until it ends.
+    pub fn run_client(
+        self: &Arc<Hub>,
+        tcp: std::net::TcpStream,
+        leftover: Vec<u8>,
+        via: Via,
+        addr: String,
+        query: String,
+        agent: String,
+    ) {
+        let limits = self.bundle.manifest.limits;
+        let id = Arc::new(OnceLock::<u32>::new());
+        let hub = self.clone();
+        let mark_id = id.clone();
+        let mark: conn::MarkFn = Box::new(move |busy| {
+            if let Some(&conn) = mark_id.get() {
+                let st = hub.lock();
+                if let Some(h) = st.host.and_then(|h| st.apis.get(&h)) {
+                    let t = if busy { "busy" } else { "drain" };
+                    h.out
+                        .text(Value::object().with("t", t).with("conn", conn).to_json());
+                }
+            }
+        });
+        let opts = conn::Options {
+            name: "relay",
+            max_message: limits.message as usize,
+            first_message: Some(FIRST_MESSAGE),
+            mark: Some((BUSY_MARK, mark)),
+            limit: Some((CLIENT_LIMIT, 4013, "slow")),
+        };
+        let mut bucket = conn::Bucket::new(limits.rate, limits.burst);
+        let hub = self.clone();
+        let registered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reg = registered.clone();
+        let ended = conn::run(
+            tcp,
+            leftover,
+            opts,
+            |out| {
+                let mut st = hub.lock();
+                let Some(host) = st.host.filter(|_| !st.closing) else {
+                    out.close(CLOSE_RESTART, "no host");
+                    return;
+                };
+                st.next_conn += 1;
+                let conn = st.next_conn;
+                let _ = id.set(conn);
+                st.clients.insert(conn, Client { out: out.clone() });
+                reg.store(true, std::sync::atomic::Ordering::SeqCst);
+                let open = Value::object()
+                    .with("t", "open")
+                    .with("conn", conn)
+                    .with("via", via.as_str())
+                    .with("addr", addr.as_str())
+                    .with("query", query.as_str())
+                    .with("agent", agent.as_str())
+                    .to_json();
+                if let Some(h) = st.apis.get(&host) {
+                    h.out.text(open);
+                }
+                debug!("playshare: client {conn} from {addr} ({})", via.as_str());
+            },
+            |msg| {
+                let Some(&conn) = id.get() else {
+                    return Next::Close(CLOSE_RESTART, "no host".into());
+                };
+                if !bucket.take() {
+                    info!("playshare: client {conn} sends too fast; closed");
+                    return Next::Close(4008, "rate-limited".into());
+                }
+                let (op, payload) = match msg {
+                    Message::Text(t) => (OP_TEXT, t.into_bytes()),
+                    Message::Binary(b) => (OP_BINARY, b),
+                    Message::Close(_) => return Next::Continue,
+                };
+                let st = hub.lock();
+                match st.host.and_then(|h| st.apis.get(&h)) {
+                    Some(h) => {
+                        h.out.binary(frame(op, conn, &payload));
+                        Next::Continue
+                    }
+                    None => Next::Close(CLOSE_RESTART, "no host".into()),
+                }
+            },
+        );
+        if !registered.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let Some(&conn) = id.get() else { return };
+        let mut st = self.lock();
+        st.clients.remove(&conn);
+        if let Some(h) = st.host.and_then(|h| st.apis.get(&h)) {
+            h.out.text(
+                Value::object()
+                    .with("t", "close")
+                    .with("conn", conn)
+                    .with("code", u64::from(ended.code))
+                    .with("reason", ended.reason.as_str())
+                    .to_json(),
+            );
+        }
+        debug!("playshare: client {conn} closed ({})", ended.code);
+    }
+
+    fn close_clients(st: &mut St, code: u16, reason: &str) {
+        for c in st.clients.values() {
+            c.out.close(code, reason);
+        }
+    }
+
+    /// Clients still connected.
+    pub fn client_count(&self) -> usize {
+        self.lock().clients.len()
+    }
+
+    // -----------------------------------------------------------------
+    // API sockets
+
+    /// Runs an upgraded API socket until it ends.
+    pub fn run_api(self: &Arc<Hub>, tcp: std::net::TcpStream, leftover: Vec<u8>) {
+        let id = {
+            let mut st = self.lock();
+            st.next_api += 1;
+            st.next_api
+        };
+        let opts = conn::Options {
+            name: "playshare-api",
+            max_message: API_MAX_MESSAGE,
+            first_message: None,
+            mark: None,
+            limit: None,
+        };
+        let hub = self.clone();
+        let my_out: std::cell::OnceCell<Out> = std::cell::OnceCell::new();
+        conn::run(
+            tcp,
+            leftover,
+            opts,
+            |out| {
+                let _ = my_out.set(out.clone());
+                let mut st = hub.lock();
+                st.apis.insert(
+                    id,
+                    Api {
+                        out: out.clone(),
+                        watching: false,
+                    },
+                );
+                st.seen_api = true;
+                st.apis_gone_since = None;
+                if st.closing {
+                    out.text(event("closing", Value::Null));
+                }
+            },
+            |msg| {
+                match msg {
+                    Message::Text(t) => hub.on_api_text(id, my_out.get(), &t),
+                    Message::Binary(b) => hub.on_host_data(id, &b),
+                    Message::Close(_) => {}
+                }
+                Next::Continue
+            },
+        );
+        let mut st = self.lock();
+        st.apis.remove(&id);
+        if st.apis.is_empty() {
+            st.apis_gone_since = Some(Instant::now());
+        }
+        if st.host == Some(id) {
+            st.host = None;
+            info!("playshare: the host page went away; phones reconnect when it is back");
+            Hub::close_clients(&mut st, CLOSE_RESTART, "host restart");
+        }
+    }
+
+    /// Data from the host for a client.
+    fn on_host_data(&self, api: u64, data: &[u8]) {
+        if data.len() < 5 {
+            return;
+        }
+        let op = data[0];
+        let conn = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
+        // Pushing may report `busy`, which takes the lock: not under it.
+        let out = {
+            let st = self.lock();
+            if st.host != Some(api) {
+                return;
+            }
+            let Some(c) = st.clients.get(&conn) else {
+                return;
+            };
+            c.out.clone()
+        };
+        let payload = &data[5..];
+        match op {
+            OP_TEXT => {
+                if let Ok(t) = std::str::from_utf8(payload) {
+                    out.text(t.to_owned());
+                }
+            }
+            OP_BINARY => {
+                out.binary(payload.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    fn on_api_text(self: &Arc<Hub>, api: u64, out: Option<&Out>, text: &str) {
+        let Some(out) = out else { return };
+        let Ok(msg) = Value::parse(text) else {
+            debug!("playshare: API message that is not JSON");
+            return;
+        };
+        match msg.get("t").and_then(Value::as_str) {
+            Some("call") => {
+                let n = msg.get("n").cloned().unwrap_or(Value::Null);
+                let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+                let params = msg.get("params").cloned().unwrap_or_else(Value::object);
+                if method == "cast.start" {
+                    // Starting a cast takes seconds: not on the reader.
+                    let (hub, out, method) = (self.clone(), out.clone(), method.to_owned());
+                    let _ = std::thread::Builder::new()
+                        .name("playshare-cast".into())
+                        .spawn(move || {
+                            let r = hub.call(api, &method, &params);
+                            out.text(match r {
+                                Ok(v) => reply_ok(&n, v),
+                                Err(e) => reply_err(&n, e.code().unwrap_or("failed"), e.message()),
+                            });
+                        });
+                    return;
+                }
+                let r = self.call(api, method, &params);
+                out.text(match r {
+                    Ok(v) => reply_ok(&n, v),
+                    Err(e) => reply_err(&n, e.code().unwrap_or("failed"), e.message()),
+                });
+            }
+            Some("close") => {
+                let st = self.lock();
+                if st.host != Some(api) {
+                    return;
+                }
+                let conn = msg.get("conn").and_then(Value::as_u64).unwrap_or(0);
+                let code = msg
+                    .get("code")
+                    .and_then(Value::as_u64)
+                    .and_then(|c| u16::try_from(c).ok())
+                    .filter(|c| *c == 1000 || (3000..=4999).contains(c))
+                    .unwrap_or(1000);
+                let reason: String = msg
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect();
+                if let Some(c) = u32::try_from(conn).ok().and_then(|c| st.clients.get(&c)) {
+                    c.out.close(code, &reason);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// One API call.
+    pub fn call(self: &Arc<Hub>, api: u64, method: &str, params: &Value) -> Result<Value> {
+        let unknown = || Error::usage(format!("no method {method:?}")).with_code("unknown-method");
+        match method {
+            "info" => Ok(self.info()),
+            "devices.watch" => {
+                let on = params.get("on").and_then(Value::as_bool).unwrap_or(true);
+                let mut st = self.lock();
+                if let Some(a) = st.apis.get_mut(&api) {
+                    a.watching = on;
+                }
+                Ok(st.devices.clone())
+            }
+            "select" => {
+                let list = params
+                    .get("devices")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| Error::usage("select: devices is a list of names"))?;
+                let names: Vec<String> = list
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|s| !s.is_empty() && s.len() <= 200)
+                    .take(16)
+                    .map(str::to_owned)
+                    .collect();
+                let mut st = self.lock();
+                st.selection = names;
+                Ok(Value::object().with("devices", st.selection.clone()))
+            }
+            "selection" => Ok(Value::object().with("devices", self.lock().selection.clone())),
+            "pair.start" => {
+                let device = params
+                    .get("device")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::usage("pair.start: device"))?;
+                let job = self.backend.pair(device)?;
+                let mut st = self.lock();
+                if let Some((old, _)) = st.pairs.remove(device) {
+                    old.cancel();
+                }
+                st.pairs.insert(device.to_owned(), (job, Value::Null));
+                Ok(Value::object())
+            }
+            "pair.pin" => {
+                let device = params.get("device").and_then(Value::as_str).unwrap_or("");
+                let pin = params
+                    .get("pin")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::usage("pair.pin: pin"))?;
+                let st = self.lock();
+                let (job, _) = st
+                    .pairs
+                    .get(device)
+                    .ok_or_else(|| Error::usage(format!("no pairing with {device:?}")))?;
+                job.submit(pin)?;
+                Ok(Value::object())
+            }
+            "pair.cancel" => {
+                let device = params.get("device").and_then(Value::as_str).unwrap_or("");
+                if let Some((job, _)) = self.lock().pairs.remove(device) {
+                    job.cancel();
+                }
+                Ok(Value::object())
+            }
+            "cast.start" => self.cast_start(params),
+            "cast.stop" => {
+                let old = self.lock().cast.take();
+                if let Some((c, _)) = old {
+                    c.stop();
+                }
+                self.event("cast", Value::object().with("state", "stopped"));
+                Ok(Value::object())
+            }
+            "qr" => {
+                let text = params
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::usage("qr: text"))?;
+                let qr = crate::util::qr::encode(text.as_bytes(), crate::util::qr::MAX_VERSION)
+                    .ok_or_else(|| Error::usage("qr: the text does not fit a QR code"))?;
+                let rows = qr.rows();
+                Ok(Value::object().with("size", rows.len()).with("rows", rows))
+            }
+            "relay.attach" => {
+                let mut st = self.lock();
+                if st.closing {
+                    return Err(Error::closed("playshare is ending").with_code("closing"));
+                }
+                if let Some(old) = st.host.filter(|h| *h != api) {
+                    if let Some(a) = st.apis.get(&old) {
+                        a.out.text(event("detached", Value::Null));
+                        a.out.close(1000, "replaced");
+                    }
+                    Hub::close_clients(&mut st, CLOSE_RESTART, "host restart");
+                    info!("playshare: a new host page took over");
+                }
+                st.host = Some(api);
+                drop(st);
+                let (phone, mode) = self.phone_base();
+                Ok(Value::object()
+                    .with("public", phone)
+                    .with("mode", mode)
+                    .with("local", self.local_origin()))
+            }
+            "quit" => {
+                info!("playshare: the page asked to quit");
+                self.stop.request();
+                Ok(Value::object())
+            }
+            _ => Err(unknown()),
+        }
+    }
+
+    pub fn info(&self) -> Value {
+        let (phone, mode) = self.phone_base();
+        let p = self.ports();
+        self.bundle
+            .manifest
+            .to_value()
+            .with(
+                "phone",
+                Value::object()
+                    .with("url", phone)
+                    .with("mode", mode)
+                    .with_opt("lan", p.lan.map(|l| format!("http://{l}/"))),
+            )
+            .with("tunnel", self.tunnel_value())
+            .with("local", self.local_origin())
+            .with("version", self.version)
+    }
+
+    fn cast_start(self: &Arc<Hub>, params: &Value) -> Result<Value> {
+        let page = params
+            .get("page")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::usage("cast.start: page (a path of this game)"))?;
+        if !page.starts_with('/')
+            || page.starts_with("//")
+            || page.contains('\\')
+            || page.len() > 4096
+        {
+            return Err(Error::usage(
+                "cast.start: page must be a path on the local origin (/tv.html#…)",
+            ));
+        }
+        let to: Vec<String> = match params.get("to").and_then(Value::as_array) {
+            Some(list) => list
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            None => self.lock().selection.clone(),
+        };
+        if to.is_empty() {
+            return Err(Error::usage("no receivers chosen").with_code("no-receivers"));
+        }
+        let url = format!("{}{page}", self.local_origin());
+        let old = self.lock().cast.take();
+        if let Some((c, _)) = old {
+            c.stop();
+        }
+        self.event(
+            "cast",
+            Value::object()
+                .with("state", "starting")
+                .with("to", to.clone()),
+        );
+        info!("playshare: casting to {}", to.join(", "));
+        match self.backend.cast(&url, &to, self.bundle.manifest.tv_size) {
+            Ok(mut job) => {
+                if self.stop.requested() {
+                    job.stop();
+                    return Err(Error::closed("playshare is ending"));
+                }
+                let status = job.status();
+                self.lock().cast = Some((job, Value::Null));
+                Ok(status)
+            }
+            Err(e) => {
+                warn!("playshare: cast: {e}");
+                self.event(
+                    "cast",
+                    Value::object()
+                        .with("state", "failed")
+                        .with("error", e.message()),
+                );
+                Err(e)
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Background work
+
+    /// Discovery, pairing and cast progress: called every ~200 ms.
+    pub fn tick(&self) {
+        let mut events: Vec<String> = Vec::new();
+        let mut st = self.lock();
+        let watching = st.apis.values().any(|a| a.watching);
+        if watching && st.discovery.is_none() {
+            match self.backend.discover() {
+                Ok(d) => st.discovery = Some(d),
+                Err(e) => warn!("playshare: discovery: {e}"),
+            }
+        } else if !watching && st.discovery.is_some() {
+            st.discovery = None;
+        }
+        if let Some(d) = &st.discovery {
+            let mut list = vec![browser_device()];
+            list.extend(d.devices());
+            let list = Value::array(list);
+            if list != st.devices {
+                st.devices = list.clone();
+                events.push(event("devices", list));
+            }
+        }
+        let mut done = Vec::new();
+        for (device, (job, last)) in st.pairs.iter_mut() {
+            let v = job.state().with("device", device.as_str());
+            if v != *last {
+                *last = v.clone();
+                let state = v.get("state").and_then(Value::as_str).unwrap_or("");
+                if state == "done" || state == "failed" {
+                    done.push(device.clone());
+                }
+                events.push(event("pair", v));
+            }
+        }
+        for d in done {
+            st.pairs.remove(&d);
+        }
+        if let Some((job, last)) = st.cast.as_mut() {
+            let v = job.status();
+            if v != *last {
+                *last = v.clone();
+                events.push(event("cast", v));
+            }
+        }
+        for e in &events {
+            self.broadcast(&st, e);
+        }
+    }
+
+    /// With no window of our own: no API socket for this long ends the run.
+    pub fn apis_gone_for(&self) -> Option<Duration> {
+        let st = self.lock();
+        if !st.seen_api {
+            return None;
+        }
+        st.apis_gone_since.map(|t| t.elapsed())
+    }
+
+    /// The end (§10): `closing` to the pages, a second for the host's
+    /// goodbyes, then clients closed with 4011 and the cast stopped.
+    pub fn shutdown(&self) {
+        {
+            let mut st = self.lock();
+            if st.closing {
+                return;
+            }
+            st.closing = true;
+            let has_host = st.host.is_some();
+            let text = event("closing", Value::Null);
+            self.broadcast(&st, &text);
+            drop(st);
+            if has_host {
+                let until = Instant::now() + CLOSING_GRACE;
+                while Instant::now() < until && self.client_count() > 0 {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+        let (cast, pairs) = {
+            let mut st = self.lock();
+            Hub::close_clients(&mut st, CLOSE_ENDED, "closed");
+            st.discovery = None;
+            (st.cast.take(), std::mem::take(&mut st.pairs))
+        };
+        for (_, (p, _)) in pairs {
+            p.cancel();
+        }
+        if let Some((c, _)) = cast {
+            info!("playshare: stopping the cast");
+            c.stop();
+        }
+        let st = self.lock();
+        for a in st.apis.values() {
+            a.out.close(1001, "ended");
+        }
+        drop(st);
+        // Let the close frames go out.
+        let until = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < until && self.client_count() > 0 {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}

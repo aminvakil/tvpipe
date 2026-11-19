@@ -139,6 +139,7 @@ impl ScreenBrowser {
             bin: opts.bin.clone(),
             viewport: WINDOW,
             visible: true,
+            app: None,
             screen: Some(ScreenLaunch {
                 switches: switches(&opts.target),
                 background: opts.target != ScreenTarget::Pick,

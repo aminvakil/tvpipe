@@ -30,6 +30,7 @@ tvpipe = { path = "../tvpipe", version = "0.2.0", features = [
     "share",
     "headless",
     "tunnel",
+    "playshare",
     "files",
     "ffmpeg",
     "h264",

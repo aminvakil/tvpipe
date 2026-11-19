@@ -1,0 +1,356 @@
+//! The two listeners (docs/playshare-design.md §4): the local one (the
+//! window: launcher, host page, API; the TV page) and the public one
+//! (phones through the tunnel, or the LAN). Each checks `Host` (421:
+//! DNS rebinding) and WebSocket `Origin` (403: cross-site hijacking).
+
+use std::sync::Arc;
+
+use crate::crypto::ring::ct_eq;
+use crate::net::http::{Request, Response, Version};
+use crate::net::httpd::{self, Handler, Reply};
+use crate::net::websocket;
+
+use super::bundle::{self, clean_path, percent_decode, Lookup};
+use super::hub::{Hub, Via};
+use super::web;
+
+/// Which listener a handler serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listener {
+    Local,
+    Public,
+    Lan,
+}
+
+/// The standard launcher.
+pub const LAUNCHER: &str = "/_tvpipe/launcher/";
+
+fn loopback_names(port: u16) -> [String; 3] {
+    [
+        format!("127.0.0.1:{port}"),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ]
+}
+
+fn redirect(status: u16, location: &str) -> Response {
+    let mut r = httpd::response(
+        status,
+        if status == 301 {
+            "Moved Permanently"
+        } else {
+            "Found"
+        },
+        "text/plain; charset=utf-8",
+        Vec::new(),
+    );
+    r.headers.add("Location", location);
+    r
+}
+
+/// The session cookie's name: per local port, since cookies are shared
+/// by every port of a host.
+pub fn cookie_name(port: u16) -> String {
+    format!("tvpipe-{port}")
+}
+
+fn cookie<'a>(req: &'a Request, name: &str) -> Option<&'a str> {
+    req.headers.get_all("cookie").find_map(|h| {
+        h.split(';').find_map(|kv| {
+            let (k, v) = kv.trim().split_once('=')?;
+            (k == name).then_some(v)
+        })
+    })
+}
+
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
+}
+
+impl Hub {
+    fn host_ok(&self, req: &Request, l: Listener) -> bool {
+        let Some(host) = req
+            .headers
+            .get("host")
+            .map(|h| h.trim().to_ascii_lowercase())
+        else {
+            return false;
+        };
+        let p = self.ports.get().copied();
+        let Some(p) = p else { return false };
+        match l {
+            Listener::Local => loopback_names(p.local).contains(&host),
+            Listener::Lan => p.lan.is_some_and(|a| a.to_string() == host),
+            Listener::Public => {
+                if loopback_names(p.public).contains(&host) {
+                    return true;
+                }
+                let bare = host.strip_suffix(":443").unwrap_or(&host);
+                self.tunnel
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .host
+                    .as_deref()
+                    .is_some_and(|h| h.eq_ignore_ascii_case(bare))
+            }
+        }
+    }
+
+    fn origin_ok(&self, req: &Request, l: Listener) -> bool {
+        // Not a browser: tokens and keys still apply.
+        let Some(o) = req
+            .headers
+            .get("origin")
+            .map(|o| o.trim().to_ascii_lowercase())
+        else {
+            return true;
+        };
+        let Some(p) = self.ports.get().copied() else {
+            return false;
+        };
+        let loopback = |port: u16| {
+            o.strip_prefix("http://")
+                .is_some_and(|a| loopback_names(port).iter().any(|n| n == a))
+        };
+        match l {
+            Listener::Local => loopback(p.local),
+            Listener::Lan => p.lan.is_some_and(|a| o == format!("http://{a}")),
+            Listener::Public => {
+                loopback(p.public)
+                    || o.strip_prefix("https://").is_some_and(|h| {
+                        self.tunnel
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .host
+                            .as_deref()
+                            .is_some_and(|t| t.eq_ignore_ascii_case(h))
+                    })
+            }
+        }
+    }
+
+    /// Whether the request carries the API token (cookie or `?t=`).
+    pub fn token_ok(&self, req: &Request, query: &str) -> bool {
+        let port = self.ports.get().map(|p| p.local).unwrap_or(0);
+        let want = self.token.as_bytes();
+        query_param(query, "t").is_some_and(|t| ct_eq(t.as_bytes(), want))
+            || cookie(req, &cookie_name(port)).is_some_and(|t| ct_eq(t.as_bytes(), want))
+    }
+
+    /// The visitor's address for limits and the host.
+    fn address(&self, req: &Request, l: Listener) -> String {
+        let peer = httpd::current_peer();
+        if l == Listener::Public {
+            let host = req.headers.get("host").unwrap_or("").to_ascii_lowercase();
+            let tunnel = !host.starts_with("127.0.0.1:")
+                && !host.starts_with("localhost:")
+                && !host.starts_with("[::1]:");
+            if tunnel {
+                if let Some(cf) = req
+                    .headers
+                    .get("cf-connecting-ip")
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty() && c.len() < 64)
+                {
+                    return cf.to_owned();
+                }
+                let peers = self.peers.read().unwrap_or_else(|e| e.into_inner());
+                if let Some(v) = peers.as_ref().and_then(|f| peer.and_then(|a| f(a))) {
+                    return v;
+                }
+            }
+        }
+        peer.map(|a| a.ip().to_string())
+            .unwrap_or_else(|| "?".into())
+    }
+
+    fn launcher_path(&self) -> String {
+        match &self.bundle.manifest.pages.launcher {
+            Some(l) => format!("/{l}"),
+            None => LAUNCHER.to_owned(),
+        }
+    }
+
+    fn handle(self: &Arc<Hub>, req: &Request, l: Listener) -> Reply {
+        if !self.host_ok(req, l) {
+            return Reply::Response(httpd::error_response(421, "Misdirected Request"));
+        }
+        let (path, query) = req.target.split_once('?').unwrap_or((&req.target, ""));
+        if websocket::is_upgrade(req) {
+            return self.upgrade(req, l, path, query);
+        }
+        if req.method != "GET" && req.method != "HEAD" {
+            let mut r = httpd::error_response(405, "Method Not Allowed");
+            r.headers.add("Allow", "GET, HEAD");
+            return Reply::Response(r);
+        }
+        Reply::Response(self.get(req, l, path, query))
+    }
+
+    fn get(&self, req: &Request, l: Listener, path: &str, query: &str) -> Response {
+        if path == "/" {
+            return match l {
+                Listener::Local => {
+                    if self.token_ok(req, "") {
+                        redirect(302, &self.launcher_path())
+                    } else {
+                        httpd::error_response(403, "Forbidden: open the link tvpipe printed")
+                    }
+                }
+                _ => {
+                    let phone = format!("/{}", self.bundle.manifest.pages.phone);
+                    if query.is_empty() {
+                        redirect(302, &phone)
+                    } else {
+                        redirect(302, &format!("{phone}?{query}"))
+                    }
+                }
+            };
+        }
+        if let Some(rest) = path.strip_prefix("/_tvpipe/") {
+            if l == Listener::Local && rest == "start" {
+                if !self.token_ok(req, query) {
+                    return httpd::error_response(403, "Forbidden");
+                }
+                let port = self.ports.get().map(|p| p.local).unwrap_or(0);
+                let mut r = redirect(302, &self.launcher_path());
+                r.headers.add(
+                    "Set-Cookie",
+                    format!(
+                        "{}={}; Path=/; HttpOnly; SameSite=Strict",
+                        cookie_name(port),
+                        self.token
+                    ),
+                );
+                return r;
+            }
+            if rest == "launcher" && l == Listener::Local {
+                return redirect(301, LAUNCHER);
+            }
+            let Some(rel) = percent_decode(rest).and_then(|r| {
+                let r = if r.is_empty() || r.ends_with('/') {
+                    format!("{r}index.html")
+                } else {
+                    r
+                };
+                clean_path(&r)
+            }) else {
+                return httpd::error_response(404, "Not Found");
+            };
+            let allowed =
+                rel.starts_with("lib/") || (l == Listener::Local && rel.starts_with("launcher/"));
+            if !allowed {
+                return httpd::error_response(404, "Not Found");
+            }
+            return match web::get(&rel) {
+                Some(bytes) => file_response(req, &rel, bytes.into_owned(), None),
+                None => httpd::error_response(404, "Not Found"),
+            };
+        }
+        self.bundle_file(req, path, query)
+    }
+
+    fn bundle_file(&self, req: &Request, path: &str, query: &str) -> Response {
+        let Some(decoded) = percent_decode(path) else {
+            return httpd::error_response(400, "Bad Request");
+        };
+        let rel = decoded.trim_start_matches('/');
+        let rel = if rel.is_empty() || rel.ends_with('/') {
+            format!("{rel}index.html")
+        } else {
+            rel.to_owned()
+        };
+        let Some(rel) = clean_path(&rel) else {
+            return httpd::error_response(404, "Not Found");
+        };
+        if rel == "_tvpipe" || rel.starts_with("_tvpipe/") {
+            return httpd::error_response(404, "Not Found");
+        }
+        match self.bundle.get(&rel) {
+            Lookup::File(f) => file_response(req, &rel, f.bytes, Some(f.etag)),
+            Lookup::Dir => {
+                let q = if query.is_empty() {
+                    String::new()
+                } else {
+                    format!("?{query}")
+                };
+                redirect(301, &format!("{path}/{q}"))
+            }
+            Lookup::NotFound => httpd::error_response(404, "Not Found"),
+        }
+    }
+
+    fn upgrade(self: &Arc<Hub>, req: &Request, l: Listener, path: &str, query: &str) -> Reply {
+        let refuse =
+            |status: u16, reason: &str| Reply::Response(httpd::error_response(status, reason));
+        let api = path == "/_tvpipe/api";
+        if !(path == "/_tvpipe/ws" || (api && l == Listener::Local)) {
+            return refuse(404, "Not Found");
+        }
+        if !self.origin_ok(req, l) {
+            warn!(
+                "playshare: a WebSocket from origin {:?} refused",
+                req.headers.get("origin").unwrap_or("")
+            );
+            return refuse(403, "Forbidden");
+        }
+        if api && !self.token_ok(req, query) {
+            return refuse(403, "Forbidden");
+        }
+        let resp = match websocket::server_response(req) {
+            Ok(r) => r,
+            Err(e) => return refuse(400, &format!("Bad Request: {}", e.message())),
+        };
+        let hub = self.clone();
+        if api {
+            return Reply::Upgrade(resp, Box::new(move |tcp, rest| hub.run_api(tcp, rest)));
+        }
+        let addr = self.address(req, l);
+        if let Err((status, reason)) = self.admit(&addr) {
+            return refuse(status, reason);
+        }
+        let via = match l {
+            Listener::Local => Via::Local,
+            Listener::Public => Via::Public,
+            Listener::Lan => Via::Lan,
+        };
+        let query: String = query.chars().take(512).collect();
+        let agent: String = req
+            .headers
+            .get("user-agent")
+            .unwrap_or("")
+            .chars()
+            .take(256)
+            .collect();
+        Reply::Upgrade(
+            resp,
+            Box::new(move |tcp, rest| hub.run_client(tcp, rest, via, addr, query, agent)),
+        )
+    }
+}
+
+fn file_response(req: &Request, rel: &str, bytes: Vec<u8>, etag: Option<String>) -> Response {
+    let etag = etag.unwrap_or_else(|| bundle::etag_of(&bytes));
+    if req
+        .headers
+        .get("if-none-match")
+        .is_some_and(|v| v.trim() == etag)
+    {
+        let mut r = Response::new(Version::Http11, 304, "Not Modified");
+        r.headers.add("ETag", etag).add("Cache-Control", "no-cache");
+        return r;
+    }
+    let mut r = httpd::response(200, "OK", bundle::mime(rel), bytes);
+    r.headers
+        .set("Cache-Control", "no-cache")
+        .add("ETag", etag)
+        .add("Referrer-Policy", "no-referrer");
+    r
+}
+
+/// The handler of one listener.
+pub fn handler(hub: Arc<Hub>, l: Listener) -> Handler {
+    Arc::new(move |req: &Request| hub.handle(req, l))
+}

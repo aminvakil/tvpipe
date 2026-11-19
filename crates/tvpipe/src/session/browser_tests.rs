@@ -273,6 +273,7 @@ pub(super) fn chrome(bin: &str, url: &str) -> Chrome {
         bin: bin.into(),
         viewport: viewport(),
         visible: std::env::var("TVPIPE_TEST_CHROME_HEADED").is_ok(),
+        app: None,
         screen: None,
     };
     let browser = crate::browser::launch::Browser::launch(&opts, &profile).unwrap();
@@ -408,6 +409,7 @@ pub(super) fn firefox(bin: &str, url: &str, viewport: (u32, u32)) -> Firefox {
         bin: bin.into(),
         viewport,
         visible: std::env::var("TVPIPE_TEST_FIREFOX_HEADED").is_ok(),
+        app: None,
         screen: None,
     };
     assert_eq!(

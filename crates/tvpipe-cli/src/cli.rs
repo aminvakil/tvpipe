@@ -22,7 +22,19 @@ enum Top {
     Screen,
     Tunnel,
     Qr,
+    Playshare,
     DebugPipeline,
+}
+
+#[derive(Copy, Clone)]
+enum PlayshareArg {
+    Path,
+    Tunnel,
+    NoTunnel,
+    Lan,
+    Window,
+    Browser,
+    Port,
 }
 
 #[derive(Copy, Clone)]
@@ -166,6 +178,7 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::Screen, &SCREEN),
         Cmd::new(Top::Tunnel, &TUNNEL),
         Cmd::new(Top::Qr, &QR),
+        Cmd::new(Top::Playshare, &PLAYSHARE),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -211,6 +224,41 @@ static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
          arrive with the public name as Host (check it, and Origin for WebSockets). The link \
          works until tvpipe stops (Ctrl-C, q, or with --machine the stop command or stdin \
          closing). docs/tunnels.md",
+    );
+
+static PLAYSHARE: Cli<PlayshareArg> = Cli::new("playshare")
+    .about("Play a web game: its host page in a window here, its TV page on TVs, phones join with a QR code")
+    .usage("PATH [--tunnel[=PROVIDER] | --no-tunnel] [--lan[=IP]] [--window=MODE]")
+    .opts(&[
+        tunnel(
+            PlayshareArg::Tunnel,
+            "Who carries the phones' link: opentunnel or cloudflare (default: OpenTunnel, Cloudflare if it fails)",
+        ),
+        Opt::new(PlayshareArg::NoTunnel)
+            .long("no-tunnel")
+            .help("No public link: phones on the Wi-Fi (--lan) or this computer only"),
+        Opt::new(PlayshareArg::Lan)
+            .long("lan")
+            .optional_value("IP")
+            .help("Also serve phones on the Wi-Fi at http://IP:7420 (default: this computer's address)"),
+        Opt::new(PlayshareArg::Window)
+            .long("window")
+            .value("MODE")
+            .help("app (tvpipe's own browser window, the default), open (the system's browser) or none (print the link)"),
+        Opt::new(PlayshareArg::Browser)
+            .long("browser")
+            .value("PATH")
+            .value_hint(ValueHint::ExecutablePath)
+            .help("The browser for the window and the TV page (default: $TVPIPE_BROWSER, then Chrome, Edge, Chromium, Brave, Firefox)"),
+        Opt::new(PlayshareArg::Port)
+            .long("port")
+            .value("PORT")
+            .help("The window's port on 127.0.0.1 (default: any)"),
+    ])
+    .args(&[Pos::new(PlayshareArg::Path, "PATH").help("The game: a folder or a .zip with tvpipe.json")])
+    .after_help(
+        "Closing the window (or Ctrl-C) ends the game: the TVs stop, phones are told. \
+         docs/playshare-design.md",
     );
 
 static QR: Cli<QrArg> = Cli::new("qr")
@@ -693,6 +741,7 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                 return Ok((g, cmd));
             }
             Top::Qr => return Ok((g, parse_qr(p.subcommand(&QR))?)),
+            Top::Playshare => return Ok((g, parse_playshare(p.subcommand(&PLAYSHARE))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -762,6 +811,62 @@ fn parse_tunnel(mut p: Parser<TunnelArg>, g: &mut Global) -> Result<Command, Err
         return Err(p.error("tunnel needs the PORT of a server on 127.0.0.1"));
     };
     Ok(Command::Tunnel { port, provider })
+}
+
+fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
+    use tvpipe::__cli::playshare::{Options, TunnelChoice, WindowMode};
+    let mut o = Options::default();
+    let mut path = None;
+    let (mut tunnel, mut no_tunnel) = (None, false);
+    while let Some(arg) = p.param()? {
+        match arg {
+            PlayshareArg::Path => path = Some(p.value::<String>()?),
+            PlayshareArg::Tunnel => {
+                tunnel = Some(match p.optional_value::<String>()? {
+                    None => TunnelChoice::Auto,
+                    Some(v) if v == "auto" => TunnelChoice::Auto,
+                    Some(v) => match Provider::parse(&v) {
+                        Some(pr) => TunnelChoice::Provider(pr),
+                        None => {
+                            return Err(p.error("--tunnel=PROVIDER: opentunnel, cloudflare or auto"))
+                        }
+                    },
+                })
+            }
+            PlayshareArg::NoTunnel => no_tunnel = true,
+            PlayshareArg::Lan => {
+                o.lan = Some(match p.optional_value::<String>()? {
+                    None => None,
+                    Some(v) => match v.parse() {
+                        Ok(ip) => Some(ip),
+                        Err(_) => return Err(p.error(format!("--lan=IP: an address, not {v:?}"))),
+                    },
+                })
+            }
+            PlayshareArg::Window => {
+                let v: String = p.value()?;
+                o.window = match WindowMode::parse(&v) {
+                    Some(m) => m,
+                    None => return Err(p.error("--window: app, open or none")),
+                };
+            }
+            PlayshareArg::Browser => o.browser = Some(p.value::<String>()?.into()),
+            PlayshareArg::Port => o.port = p.value()?,
+        }
+    }
+    if no_tunnel && tunnel.is_some() {
+        return Err(p.error("--tunnel and --no-tunnel together"));
+    }
+    o.tunnel = if no_tunnel {
+        TunnelChoice::Off
+    } else {
+        tunnel.unwrap_or_default()
+    };
+    let Some(path) = path else {
+        return Err(p.error("playshare needs the PATH of a game (a folder or a .zip)"));
+    };
+    o.path = path.into();
+    Ok(Command::Playshare(o))
 }
 
 fn parse_qr(mut p: Parser<QrArg>) -> Result<Command, Error> {
@@ -1218,6 +1323,48 @@ mod tests {
         };
         assert_eq!(format, QrFormat::Terminal);
         assert!(parse_from(&["qr"]).is_err());
+    }
+
+    #[test]
+    fn playshare_options() {
+        use tvpipe::__cli::playshare::{TunnelChoice, WindowMode};
+        let Ok((_, Command::Playshare(o))) = parse_from(&["playshare", "games/x"]) else {
+            panic!()
+        };
+        assert_eq!(o.path, std::path::PathBuf::from("games/x"));
+        assert_eq!(o.tunnel, TunnelChoice::Auto);
+        assert_eq!(o.window, WindowMode::App);
+        assert_eq!(o.lan, None);
+        let Ok((_, Command::Playshare(o))) = parse_from(&[
+            "playshare",
+            "--tunnel=cloudflare",
+            "--lan=192.168.1.5",
+            "--window",
+            "none",
+            "--port",
+            "8000",
+            "x.zip",
+        ]) else {
+            panic!()
+        };
+        assert_eq!(o.tunnel, TunnelChoice::Provider(Provider::Cloudflare));
+        assert_eq!(o.lan, Some(Some("192.168.1.5".parse().unwrap())));
+        assert_eq!((o.window, o.port), (WindowMode::None, 8000));
+        let Ok((_, Command::Playshare(o))) =
+            parse_from(&["playshare", "--no-tunnel", "--lan", "x"])
+        else {
+            panic!()
+        };
+        assert_eq!((o.tunnel, o.lan), (TunnelChoice::Off, Some(None)));
+        for bad in [
+            &["playshare"][..],
+            &["playshare", "--tunnel", "--no-tunnel", "x"],
+            &["playshare", "--tunnel=nope", "x"],
+            &["playshare", "--window", "tab", "x"],
+            &["playshare", "--lan=nope", "x"],
+        ] {
+            assert!(parse_from(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -280,6 +280,9 @@ pub enum Command {
         text: String,
         format: QrFormat,
     },
+    /// `playshare PATH`: a web game (docs/playshare-design.md).
+    #[cfg(feature = "playshare")]
+    Playshare(crate::playshare::Options),
 }
 
 /// How `qr` prints the code.
@@ -307,6 +310,8 @@ impl Command {
             Command::DebugPipeline(_) => "debug-pipeline",
             Command::Tunnel { .. } => "tunnel",
             Command::Qr { .. } => "qr",
+            #[cfg(feature = "playshare")]
+            Command::Playshare(_) => "playshare",
         }
     }
 }

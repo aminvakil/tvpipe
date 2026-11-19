@@ -547,6 +547,9 @@ pub struct LaunchOptions {
     pub visible: bool,
     /// `tvpipe screen`: a normal window whose page captures the desktop.
     pub screen: Option<ScreenLaunch>,
+    /// `tvpipe playshare`: an app window (no tabs, no toolbar) showing
+    /// this URL, `viewport` its window size (Chromium-based only).
+    pub app: Option<String>,
 }
 
 /// How `tvpipe screen` starts the browser (`browser::screen`).
@@ -619,6 +622,9 @@ pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
     if let Some(screen) = &opts.screen {
         return screen_args(opts.viewport, screen, dir);
     }
+    if let Some(url) = &opts.app {
+        return app_args(opts, url, dir);
+    }
     let (w, h) = opts.viewport;
     let mut a: Vec<OsString> = Vec::new();
     if !opts.visible {
@@ -654,6 +660,36 @@ pub fn args(opts: &LaunchOptions, dir: &Path) -> Vec<OsString> {
     // The window is resized to the exact viewport once it is up.
     a.push(format!("--window-size={w},{h}").into());
     a.push("about:blank".into());
+    a
+}
+
+/// The command line of `tvpipe playshare`'s window: an app window on
+/// `url` (headless only for tests).
+fn app_args(opts: &LaunchOptions, url: &str, dir: &Path) -> Vec<OsString> {
+    let mut dir_arg = OsString::from("--user-data-dir=");
+    dir_arg.push(dir);
+    let mut a: Vec<OsString> = vec![dir_arg];
+    if !opts.visible {
+        a.push("--headless=new".into());
+    }
+    for s in [
+        "--remote-debugging-port=0",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--use-mock-keychain",
+        "--password-store=basic",
+        // The game's sounds play without a click first.
+        "--autoplay-policy=no-user-gesture-required",
+        // The host page keeps its timers when the window is behind others.
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
+    ] {
+        a.push(s.into());
+    }
+    let (w, h) = opts.viewport;
+    a.push(format!("--window-size={w},{h}").into());
+    a.push(format!("--app={url}").into());
     a
 }
 
@@ -1451,6 +1487,7 @@ mod tests {
             bin: bin.into(),
             viewport: (640, 360),
             visible: false,
+            app: None,
             screen: None,
         };
         let mut browser = Browser::launch(&opts, &profile).unwrap();
@@ -1500,6 +1537,7 @@ mod tests {
             bin: "chrome".into(),
             viewport: (1280, 720),
             visible: false,
+            app: None,
             screen: None,
         };
         let a: Vec<String> = args(&o, Path::new("/tmp/p"))

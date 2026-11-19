@@ -60,7 +60,9 @@ fn main() -> ExitCode {
     // themselves; pair reads its PIN from stdin).
     let (session, reads_stdin) = match &command {
         Command::Play(o) | Command::TestPattern(o) => (true, o.input == InputSpec::Stdin),
-        Command::Share(_) | Command::Screen(_) | Command::Tunnel { .. } => (true, false),
+        Command::Share(_) | Command::Screen(_) | Command::Tunnel { .. } | Command::Playshare(_) => {
+            (true, false)
+        }
         _ => (false, false),
     };
     // A person at a terminal gets the public links as QR codes too, after
@@ -173,6 +175,12 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
             Ok(())
         }
         Command::Tunnel { port, provider } => tunnel(port, provider, &ctx),
+        Command::Playshare(_) if global.machine => Err(error::Error::usage(
+            "playshare is for people: run it without --machine",
+        )),
+        Command::Playshare(o) => {
+            tvpipe::__cli::playshare::run(&o, ctx.stop.clone(), ctx.storage.clone())
+        }
         Command::Qr { .. } if global.machine => Err(error::Error::usage(
             "qr writes the code to stdout: run it without --machine",
         )),

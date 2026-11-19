@@ -1,0 +1,8 @@
+{
+  "name": "test-game",
+  "title": "Test game",
+  "pages": { "host": "host.html", "tv": "tv.html", "phone": "phone/index.html" },
+  "players": { "min": 2, "max": 4 },
+  "limits": { "message": 4096, "rate": 5, "burst": 10 },
+  "future": "ignored"
+}

@@ -45,6 +45,9 @@ share = ["player"]
 headless = ["share"]
 # Public links for the pages (Cloudflare quick tunnels, OpenTunnel).
 tunnel = ["dep:rustls", "player"]
+# `playshare`: web games served by tvpipe (a bundle, the relay for
+# phones, the TV page cast through `share URL`).
+playshare = ["headless", "tunnel"]
 # Passthrough of MP4/MOV/Matroska files without ffmpeg.
 files = []
 # Files, URLs and capture through an ffmpeg subprocess.
