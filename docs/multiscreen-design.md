@@ -580,7 +580,7 @@ animation changes, otherwise it re-sends the last frame.
 
 ### 5.1 As built (plan step 5)
 
-`crates/tvpipe-canvas` (no dependencies), about 2 000 lines with tests:
+`crates/tvpipe-canvas` (no dependencies), about 2 900 lines with tests:
 `Canvas` (RGBA8, straight alpha, clip, source-over; `fill_rect`,
 `fill_rounded_rect`, `fill_circle`, `fill_path`, `stroke_path`,
 `stroke_polyline`, `draw_rgba`/`draw_canvas`, `draw_rgba_scaled`
