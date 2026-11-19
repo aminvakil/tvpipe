@@ -4,17 +4,44 @@ summary: What to do when something does not work.
 group: Reference
 spec:
   Flags: `-v`, `--debug`
+  Variable: `TVPIPE_LOG`
 ---
 
 What to try when a TV does not show up or the picture does not appear.
 
-## More output
+## What tvpipe prints
 
-`-v` prints what tvpipe does. `--debug` also prints every protocol message, which is a lot.
+:::aside Marks
+✓ done
+
+• a note
+
+! a warning
+
+✗ an error
+:::
+
+tvpipe prints what happens for people: a title, a line per step, links with their QR codes, and on a terminal a status line at the bottom. `q` and Enter, or `Ctrl-C`, stops. An error says what to try next.
+
+```sh
+$ tvpipe play --to "Nowhere TV" movie.mp4
+tvpipe · Playing movie.mp4
+
+✗ No receiver named "Nowhere TV" answered on this network
+  See which receivers are on this network: tvpipe discover
+```
+
+## More detail
+
+`-v` prints the debug log and `--debug` adds every protocol message, which is a lot. `TVPIPE_LOG=info`, or `error`, `warn`, `debug` and `trace`, prints the log at that level.
 
 ```sh
 $ tvpipe -v play --to TV movie.mp4
 ```
+
+## Colours and QR codes
+
+Colours follow `NO_COLOR` and `CLICOLOR=0`, and `CLICOLOR_FORCE` or `FORCE_COLOR` force them. With `TERM=dumb`, in a pipe or in a log file, tvpipe prints plain lines without a status line. `--no-qr` or `TVPIPE_NO_QR=1` hides the QR codes.
 
 ## Common problems
 

@@ -21,12 +21,20 @@ A receiver is where tvpipe sends to: an Apple TV or AirPlay TV, a Chromecast or 
 
 ```sh
 $ tvpipe discover
-NAME          ADDRESS       PROTOCOLS             MODEL
-Living Room   192.168.1.20  airplay(mirror),raop  AppleTV6,2
-Kitchen       192.168.1.31  cast                  Chromecast
+tvpipe · Looking for receivers
+
+Found 2 receivers you can stream to:
+
+  Living Room   AirPlay       AppleTV6,2   192.168.1.20   paired
+  Kitchen       Google Cast   Chromecast   192.168.1.31
+
+Also found 2 speakers that play audio only (tvpipe streams video):
+  Bathroom, Office
+
+Stream to one: tvpipe play FILE --to "Living Room"
 ```
 
-You do not need to run `discover` before streaming. `--to` with a name finds the receiver by itself.
+Speakers that only play sound are listed apart, because tvpipe streams video. You do not need to run `discover` before streaming. `--to` with a name finds the receiver by itself.
 
 ## Choosing with `--to`
 

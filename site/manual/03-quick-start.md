@@ -18,9 +18,17 @@ List the TVs on your network:
 
 ```sh
 $ tvpipe discover
-NAME          ADDRESS       PROTOCOLS             MODEL
-Living Room   192.168.1.20  airplay(mirror),raop  AppleTV6,2
-Kitchen       192.168.1.31  cast                  Chromecast
+tvpipe · Looking for receivers
+
+Found 2 receivers you can stream to:
+
+  Living Room   AirPlay       AppleTV6,2   192.168.1.20   needs pairing
+  Kitchen       Google Cast   Chromecast   192.168.1.31
+
+Also found 2 speakers that play audio only (tvpipe streams video):
+  Bathroom, Office
+
+Stream to one: tvpipe play FILE --to "Living Room"
 ```
 
 ### Pair once (Apple TV only)
