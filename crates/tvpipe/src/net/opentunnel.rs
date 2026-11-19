@@ -379,8 +379,18 @@ type BoxRead = Box<dyn Read + Send>;
 type BoxWrite = Box<dyn Write + Send>;
 
 impl Link {
-    /// A reader and a writer usable from two threads, and the socket.
-    fn split(self) -> Result<(BoxRead, BoxWrite, TcpStream)> {
+    /// A reader and a writer usable from two threads, and the socket;
+    /// reads time out after `read_timeout`. Set before the handles are
+    /// cloned: on Windows a socket timeout belongs to the handle it was set
+    /// through (clones copy it), so setting it later on the returned socket
+    /// would not reach the reader (docs/cross-platform.md).
+    fn split(self, read_timeout: Duration) -> Result<(BoxRead, BoxWrite, TcpStream)> {
+        let tcp = match &self {
+            Link::Plain(s) => s,
+            Link::Tls(s) => &s.sock,
+        };
+        tcp.set_read_timeout(Some(read_timeout))
+            .map_err(|e| Error::io("opentunnel: socket", e))?;
         let clone = |s: &TcpStream| {
             s.try_clone()
                 .map_err(|e| Error::io("opentunnel: clone socket", e))
@@ -1043,9 +1053,7 @@ fn attach(ctx: &Ctx) -> Result<Attached> {
     };
     let (_, rest) =
         websocket::client_handshake(&mut link, &url, &[("Sec-WebSocket-Protocol", "opentunnel")])?;
-    let (r, w, sock) = link.split()?;
-    sock.set_read_timeout(Some(POLL))
-        .map_err(|e| Error::io("opentunnel: socket", e))?;
+    let (r, w, sock) = link.split(POLL)?;
     let tx = websocket::Sender::new(w, Role::Client);
     let mut rx = websocket::Receiver::new(
         r,
