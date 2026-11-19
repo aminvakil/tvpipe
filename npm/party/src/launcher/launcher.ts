@@ -190,7 +190,7 @@ function themes(): void {
 
 async function main(): Promise<void> {
   themes();
-  $("where").textContent = `tvpipe playshare · ${location.host}`;
+  $("where").textContent = `tvpipe game · ${location.host}`;
   try {
     tvpipe = await Tvpipe.connect();
   } catch (err) {

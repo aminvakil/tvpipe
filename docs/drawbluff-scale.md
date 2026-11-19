@@ -305,7 +305,7 @@ translated: "du", „…“ quotes, "Platz 3 von 8", "Bester Bluff",
 augen", compounds taken literally like "ein glückspilz", "ein ritter
 beim tüv", "die bahn hat wieder verspätung").
 
-The live check plays it: `node test/live/playshare.ts --lang de` sets
+The live check plays it: `node test/live/play.ts --lang de` sets
 the host page to German, joins a German phone (`de-DE`) and checks every
 shot for layout problems (the phone at 390 and 320 px wide, the TV page
 at 1280×720: text out of its box, boxes off the screen) and for English

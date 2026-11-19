@@ -420,7 +420,7 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   over the public listener.
 - drawbluff: the rule vectors and game tests unchanged in substance,
   run with `memoryRelay()` and fake phones; a live script
-  (`test/live/playshare.ts`): `tvpipe game play --window none`, the
+  (`test/live/play.ts`): `tvpipe game play --window none`, the
   launcher and the host page in headless Chrome over DevTools, the
   `browser` receiver, bots as phones, screenshots of the launcher,
   lobby and a round; the same from the zip.
@@ -476,7 +476,7 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   rounds, timers and late joining, and a muted preview of the TV (the
   watch link in an `<iframe>`).
 - **Checked** (2026-11-19, macOS 26, Chrome 157): `node
-  test/live/playshare.ts` (and `--zip`, and `--tunnel=opentunnel`): the
+  test/live/play.ts` (and `--zip`, and `--tunnel=opentunnel`): the
   launcher and the host page in headless Chrome, a phone in headless
   Chrome (joining through the phones' listener, drawing with touch,
   lying, voting), bots, the TV through tvpipe's own headless Chrome and
@@ -598,7 +598,7 @@ pixels in the canvas). So a game's existing DOM TV page can become a
 surface without changes: the host page puts the TV page in such an
 iframe, draws it every frame and encodes the canvas. drawbluff's host
 page does this with **TV picture: drawn here** (`host.ts`,
-`beamCanvas`); a whole game ran that way (`node test/live/playshare.ts
+`beamCanvas`); a whole game ran that way (`node test/live/play.ts
 --tv canvas`: the TV picture through the `browser` receiver, every
 phase as with the tab). Limits: Chromium only (the setting is disabled
 elsewhere); painting stops while the window is hidden, like

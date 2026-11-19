@@ -54,7 +54,7 @@ test("playshare: Node as the host page, phones and a TV page through tvpipe", { 
     assert.equal(start.status, 302);
     assert.match(start.headers.get("set-cookie") ?? "", /HttpOnly; SameSite=Strict/);
     const launcher = await fetch(new URL("/_tvpipe/launcher/", run.url));
-    assert.match(await launcher.text(), /tvpipe playshare/);
+    assert.match(await launcher.text(), /tvpipe game/);
 
     const token = run.url.searchParams.get("t")!;
     const tvpipe = await Tvpipe.connect({ url: `ws://${run.url.host}/_tvpipe/api`, token });

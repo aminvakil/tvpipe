@@ -8,7 +8,7 @@
  * stream); bots join through the public listener. Screenshots of the
  * launcher, the host window, the TV and the phone per phase.
  *
- *   npm run build && node test/live/playshare.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--lang en|de] [--out DIR]
+ *   npm run build && node test/live/play.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--lang en|de] [--out DIR]
  *
  * `--lang de`: the host page sets the room to German (its Language
  * setting), the phone is a German one (`de-DE`); the screenshots go to
@@ -55,7 +55,7 @@ const binary =
 if (!binary) throw new Error("build tvpipe first (cargo build --release -p tvpipe-cli)");
 const bundle = fileURLToPath(args.zip ? new URL("drawbluff.zip", here) : here);
 const lang = args.lang === "de" ? "de" : "en";
-const out = `${args.out ?? (lang === "de" ? "/tmp/drawbluff-de" : "/tmp/drawbluff-playshare")}${args.zip ? "-zip" : ""}${args.tv === "canvas" ? "-canvas" : ""}`;
+const out = `${args.out ?? (lang === "de" ? "/tmp/drawbluff-de" : "/tmp/drawbluff-play")}${args.zip ? "-zip" : ""}${args.tv === "canvas" ? "-canvas" : ""}`;
 mkdirSync(out, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);

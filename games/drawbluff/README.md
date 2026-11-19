@@ -78,7 +78,7 @@ whole games with 3, 8 and 50 bots on `@tvpipe/party`'s relay in memory
 (a player who drops mid-game and comes back, one who leaves, too few
 players, late joiners in every mode, the VIP removing a player, three
 games in one room without a repeated prompt, a whole game in German).
-`npm run build && node test/live/playshare.ts [--zip] [--bots N]
+`npm run build && node test/live/play.ts [--zip] [--bots N]
 [--rounds N] [--lang de] [--tunnel=PROVIDER]` runs the real thing: `tvpipe
 playshare` on the bundle (or the zip), a headless Chrome as the window
 (the launcher, the host page), as a phone (it joins, draws with touch

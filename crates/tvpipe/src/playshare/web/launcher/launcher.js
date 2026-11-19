@@ -186,7 +186,7 @@ function themes() {
 }
 async function main() {
     themes();
-    $("where").textContent = `tvpipe playshare · ${location.host}`;
+    $("where").textContent = `tvpipe game · ${location.host}`;
     try {
         tvpipe = await Tvpipe.connect();
     }

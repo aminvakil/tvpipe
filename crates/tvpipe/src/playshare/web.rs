@@ -79,7 +79,7 @@ pub fn error_page(status: u16, reason: &str, game: &str, heading: &str, text: &s
             "<link rel=\"stylesheet\" href=\"/_tvpipe/ui.css\">\n</head>\n<body>\n{logo}",
             "<header class=\"top\">\n",
             "  <div class=\"mark\"><svg viewBox=\"0 0 560 520\" aria-hidden=\"true\"><use href=\"#logo\"/></svg><span>tv<b>pipe</b></span></div>\n",
-            "  <div class=\"pair\">tvpipe<span>Playshare</span></div>\n",
+            "  <div class=\"pair\">tvpipe<span>Party game</span></div>\n",
             "  <div class=\"pair\">Game<span>{game}</span></div>\n",
             "</header>\n<main>\n  <section class=\"row ph\">\n",
             "    <div class=\"meta\"><span class=\"lbl\">Status</span><span class=\"state bad\">{status} {reason}</span></div>\n",
