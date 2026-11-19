@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { applyDiff as clientApply } from "../client/party-client.js";
+import { applyDiff as clientApply } from "../src/client.ts";
 import { applyDiff, diff, toJson, type Json, type JsonObject } from "../src/sync.ts";
 import { cleanText, graphemes, nameKey } from "../src/names.ts";
 

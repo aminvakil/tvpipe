@@ -1,0 +1,12 @@
+{
+  "name": "drawbluff",
+  "title": "drawbluff",
+  "root": "dist",
+  "pages": {
+    "host": "host/index.html",
+    "tv": "screen/index.html",
+    "phone": "phone/index.html"
+  },
+  "players": { "min": 3, "max": 50 },
+  "tv": { "width": 1280, "height": 720 }
+}

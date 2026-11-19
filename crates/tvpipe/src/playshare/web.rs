@@ -32,6 +32,7 @@ pub static FILES: &[Asset] = web![
     "lib/party.js",
     "lib/relay.js",
     "lib/sync.js",
+    "lib/testing.js",
     "lib/tvpipe.js",
     "launcher/index.html",
     "launcher/launcher.css",

@@ -9,9 +9,8 @@ name: Release
 #
 # npm publishing uses trusted publishing (OIDC): no token; each package on
 # npmjs.com trusts this repository's release.yml. So does crates.io for the
-# five crates (tvpipe-fairplay, tvpipe, tvpipe-cli, tvpipe-canvas,
-# tvpipe-party), which the `crates` job publishes in that order
-# (tvpipe-party pins tvpipe exactly, so they always go out together).
+# three crates (tvpipe-fairplay, tvpipe, tvpipe-cli), which the `crates`
+# job publishes in that order.
 
 on:
   push:
@@ -265,7 +264,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          for crate in tvpipe-fairplay tvpipe tvpipe-cli tvpipe-canvas tvpipe-party; do
+          for crate in tvpipe-fairplay tvpipe tvpipe-cli; do
             if curl -sf -A "tvpipe release workflow (github.com/mitsuhiko/tvpipe)" \
                 "https://crates.io/api/v1/crates/$crate/$VERSION" > /dev/null; then
               echo "$crate $VERSION is on crates.io already"

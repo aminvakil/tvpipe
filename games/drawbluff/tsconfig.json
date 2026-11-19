@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "ESNext.Disposable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "types": ["node"],
@@ -11,9 +11,8 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
-    "allowJs": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["*.ts", "game", "test", "web/phone/strokes.js"]
+  "include": ["game", "host", "test", "scripts"]
 }

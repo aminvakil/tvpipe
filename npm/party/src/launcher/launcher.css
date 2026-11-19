@@ -1,0 +1,41 @@
+:root {
+  color-scheme: dark;
+  --bg: #14121c;
+  --card: #201d2c;
+  --line: #36314a;
+  --text: #f3f0fa;
+  --muted: #a49cb8;
+  --accent: #7c5cff;
+  --accent-2: #b8a6ff;
+  --error: #ff7a8a;
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at 20% 0%, #2a2140, var(--bg) 60%); color: var(--text); min-height: 100vh; }
+main { max-width: 760px; margin: 0 auto; padding: 40px 28px 32px; display: flex; flex-direction: column; gap: 22px; min-height: 100vh; }
+header h1 { font-size: 40px; margin: 0; letter-spacing: -0.02em; }
+.kicker { text-transform: uppercase; letter-spacing: 0.14em; font-size: 12px; color: var(--accent-2); margin: 0 0 6px; }
+h2 { font-size: 18px; margin: 0 0 4px; }
+.muted { color: var(--muted); margin: 0; }
+.error { color: var(--error); margin: 6px 0 0; }
+.devices { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 10px; }
+.device { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+.device:hover { border-color: #4b4466; }
+.device.selected { border-color: var(--accent); background: #2a2442; }
+.device input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
+.device .name { font-weight: 600; }
+.device .meta { color: var(--muted); font-size: 14px; }
+.device .grow { flex: 1; min-width: 0; }
+.device .state { font-size: 13px; color: var(--accent-2); }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.searching::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 8px; animation: pulse 1.2s infinite ease-in-out; }
+@keyframes pulse { 50% { opacity: .25; } }
+footer { margin-top: auto; display: flex; gap: 14px; align-items: center; }
+button { font: inherit; border-radius: 10px; padding: 10px 18px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); font-weight: 600; padding: 12px 28px; }
+button.link { background: none; border: none; color: var(--accent-2); padding: 10px 6px; }
+dialog { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; width: min(420px, 90vw); }
+dialog::backdrop { background: rgba(0, 0, 0, .55); }
+dialog input { font: 600 28px/1.2 ui-monospace, monospace; letter-spacing: .3em; width: 100%; margin: 14px 0 4px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); text-align: center; }
+.row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }

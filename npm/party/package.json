@@ -1,8 +1,16 @@
 {
   "name": "@tvpipe/party",
   "version": "0.2.0",
-  "description": "Party games on tvpipe: rooms, players, reconnects and state sync between a game host and phone browsers, with the main screen on a TV",
-  "keywords": ["party-game", "jackbox", "websocket", "airplay", "chromecast", "tvpipe"],
+  "description": "Party games for tvpipe playshare: the game's host page keeps rooms, players, reconnects and views in sync with phone browsers, over tvpipe's relay; the phone/TV client and the local API client",
+  "keywords": [
+    "party-game",
+    "jackbox",
+    "websocket",
+    "airplay",
+    "chromecast",
+    "tvpipe",
+    "browser"
+  ],
   "homepage": "https://mitsuhiko.github.io/tvpipe/",
   "bugs": "https://github.com/mitsuhiko/tvpipe/issues",
   "repository": {
@@ -22,8 +30,12 @@
       "default": "./dist/index.js"
     },
     "./client": {
-      "types": "./client/party-client.d.ts",
-      "default": "./client/party-client.js"
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     },
     "./package.json": "./package.json"
   },
@@ -31,25 +43,15 @@
   "files": [
     "dist",
     "src",
-    "client",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && tsc -p tsconfig.client.json",
+    "build": "tsc -p tsconfig.json && node scripts/web.ts",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && node scripts/web.ts --check",
     "test": "node --test \"test/*.test.ts\"",
     "vectors": "node test/vectors.ts --bless"
   },
-  "peerDependencies": {
-    "@tvpipe/sdk": "0.2.0"
-  },
-  "peerDependenciesMeta": {
-    "@tvpipe/sdk": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@tvpipe/sdk": "file:../tvpipe",
     "@types/node": "^22.19.0",
     "typescript": "~5.9.3"
   }

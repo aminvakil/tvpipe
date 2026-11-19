@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { PartyServer, type LateJoin } from "@tvpipe/party";
+import { Party, type LateJoin } from "@tvpipe/party";
+import { MemoryRelay } from "@tvpipe/party/testing";
 
 async function until(cond: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
@@ -14,19 +15,20 @@ async function until(cond: () => boolean, ms = 3000): Promise<void> {
 import { bots } from "../game/bots.ts";
 import { Drawbluff } from "../game/game.ts";
 import { seeded } from "../game/rules.ts";
+import { PROMPT_LIST } from "./prompts.ts";
 
 const fast = { draw: 1500, lie: 1200, vote: 1200, revealStep: 20, revealEnd: 20, scores: 20, gallery: 20 };
 
 async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number; lateJoin?: LateJoin } = {}) {
-  const server = new PartyServer({ log: () => {}, maxSockets: 128 });
-  await server.listen();
-  const party = server.createParty({ grace: 100, maxPlayers: Math.max(8, n + 2) });
-  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7), lateJoin: opts.lateJoin });
+  const relay = new MemoryRelay();
+  const party = new Party({ grace: 100, maxPlayers: Math.max(8, n + 2) }).listen(relay);
+  const server = { relay, close: async () => party.close() };
+  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7), lateJoin: opts.lateJoin, prompts: PROMPT_LIST });
   g.open();
-  const url = `ws://127.0.0.1:${server.port}/party/ws`;
+  const url = "ws://party.test/_tvpipe/ws";
   const phases: string[] = [];
   g.on("phase", (p) => phases.push(p));
-  const players = await bots(n, { url, room: party.code, key: party.joinKey, rng: seeded(n), think: () => opts.think ?? 5 });
+  const players = await bots(n, { url, WebSocket: relay.WebSocket, room: party.code, key: party.joinKey, rng: seeded(n), think: () => opts.think ?? 5 });
   if (opts.silent !== undefined) {
     // One player who never answers: their client stays connected.
     players[opts.silent]!.client.on("view", () => {});
@@ -78,13 +80,13 @@ test("too few players, non-VIP start, a late joiner plays from the next round", 
   const { server, party, g, players } = await game(2);
   try {
     await assert.rejects(players[0]!.client.act("start"), (e: { code: string }) => e.code === "too-few");
-    const more = await bots(1, { url: `ws://127.0.0.1:${server.port}/party/ws`, room: party.code, key: party.joinKey, names: ["Zed"], think: () => 5 });
+    const more = await bots(1, { url: "ws://party.test/_tvpipe/ws", WebSocket: server.relay.WebSocket, room: party.code, key: party.joinKey, names: ["Zed"], think: () => 5 });
     players.push(...more);
     await assert.rejects(players[1]!.client.act("start"), (e: { code: string }) => e.code === "not-vip");
     const end = new Promise((r) => g.once("end", r));
     await players[0]!.client.act("start");
     await until(() => g.phase === "lie" || g.phase === "vote");
-    const late = await bots(1, { url: `ws://127.0.0.1:${server.port}/party/ws`, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 });
+    const late = await bots(1, { url: "ws://party.test/_tvpipe/ws", WebSocket: server.relay.WebSocket, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 });
     players.push(...late);
     await until(() => late[0]!.client.view["me"]?.task === "wait");
     assert.equal(late[0]!.client.view["me"].note, "round");
@@ -104,14 +106,14 @@ test("late join open: dealt in at the next drawing (never into a running vote), 
   // 13: pipelined, and in round 2 seven never-spotted players compete for six spotlights.
   const { server, party, g, players } = await game(13, { lateJoin: "open" });
   try {
-    const url = `ws://127.0.0.1:${server.port}/party/ws`;
+    const url = "ws://party.test/_tvpipe/ws";
     const end = new Promise((r) => g.once("end", r));
     await players[0]!.client.act("start");
     assert.equal(party.inProgress, true);
     await until(() => g.phase === "vote", 15_000);
     const s = party.screen.peek() as { round: number; spot: number };
     const running = `${s.round}.${s.spot}`;
-    const late = (await bots(1, { url, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 }))[0]!;
+    const late = (await bots(1, { url, WebSocket: server.relay.WebSocket, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 }))[0]!;
     players.push(late);
     const tasks: string[] = [];
     late.client.on("view", (v) => {
@@ -147,7 +149,7 @@ test("late join open: dealt in at the next drawing (never into a running vote), 
 test("late join closed: newcomers refused during the game, welcome after; the VIP's toggle", async () => {
   const { server, party, g, players } = await game(3, { rounds: 1 });
   try {
-    const url = `ws://127.0.0.1:${server.port}/party/ws`;
+    const url = "ws://party.test/_tvpipe/ws";
     assert.equal(players[0]!.client.view["room"].lateJoin, "wait");
     await assert.rejects(players[1]!.client.act("late-join", { mode: "closed" }), (e: { code: string }) => e.code === "not-vip");
     await assert.rejects(players[0]!.client.act("late-join", { mode: "maybe" }), (e: { code: string }) => e.code === "bad-mode");
@@ -157,9 +159,9 @@ test("late join closed: newcomers refused during the game, welcome after; the VI
     const end = new Promise((r) => g.once("end", r));
     await players[0]!.client.act("start");
     await assert.rejects(players[0]!.client.act("late-join", { mode: "open" }), (e: { code: string }) => e.code === "running");
-    await assert.rejects(bots(1, { url, room: party.code, key: party.joinKey, names: ["Late"] }), (e: { code: string }) => e.code === "in-progress");
+    await assert.rejects(bots(1, { url, WebSocket: server.relay.WebSocket, room: party.code, key: party.joinKey, names: ["Late"] }), (e: { code: string }) => e.code === "in-progress");
     await end;
-    const late = await bots(1, { url, room: party.code, key: party.joinKey, names: ["Late"] });
+    const late = await bots(1, { url, WebSocket: server.relay.WebSocket, room: party.code, key: party.joinKey, names: ["Late"] });
     players.push(...late);
     await until(() => late[0]!.client.view["me"]?.task === "final");
     assert.equal(party.players.length, 4);
@@ -177,7 +179,7 @@ test("a silent player and one who drops mid-game: deadlines move the game on", a
     const end = new Promise((r) => g.once("end", r));
     // A player who drops during the drawing phase and comes back.
     g.once("phase", (p) => {
-      if (p === "draw") players[2]!.client._drop();
+      if (p === "draw") players[2]!.client.drop();
     });
     const t0 = Date.now();
     await players[0]!.client.act("start");

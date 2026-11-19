@@ -17,7 +17,7 @@ function drawing(seed: number): { strokes: number[][] } {
 }
 
 test("50 phones: one answer, one phase change, one roster change", async () => {
-  const s = await setup({ server: { maxSockets: 128 }, party: { maxPlayers: 50 } });
+  const s = await setup({ party: { maxPlayers: 50 } });
   try {
     const phones = Array.from({ length: 50 }, () => s.phone());
     for (const [i, p] of phones.entries()) await p.join(`P${i}`);
@@ -73,7 +73,7 @@ test("50 phones: one answer, one phase change, one roster change", async () => {
     // A phone goes away: the roster changes for everybody.
     const away = await measure(
       "roster: a phone goes away (all clients)",
-      () => phones[49]!._drop(),
+      () => phones[49]!.drop(),
       () => phones[0]!.view["roster"]?.[49]?.["connected"] === false,
     );
     assert.ok(away.statesPerChange >= 50);

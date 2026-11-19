@@ -1,19 +1,21 @@
 /**
- * @tvpipe/party: party games on tvpipe. A server for the game's pages and
- * the phones' WebSockets, rooms with players, reconnects, actions and
- * state sync, the public link and its QR code, and the main screen on a
- * TV. See README.md and docs/party-design.md.
+ * @tvpipe/party: party games for `tvpipe playshare`. The game's host page
+ * keeps the room (players, keys, views, actions) with {@link Party} and
+ * talks to tvpipe with {@link Tvpipe}; phones and the TV page use
+ * {@link PartyClient}. tvpipe serves these modules at `/_tvpipe/lib/`.
+ * See README.md and docs/playshare-design.md.
  *
  * @module
  */
 
-export { createParty, socketsFor, toTv, consoleLogger, type CreatePartyOptions, type HostedParty, type PartyLinks, type TunnelChoice, type ToTvOptions, type ToTvWeb, type ToTvVideo, type TvHandle } from "./create.ts";
 export {
   Party,
   PartyError,
   Player,
   PROTOCOL,
   BYE,
+  HELLO_TIMEOUT,
+  token,
   type ActionHandler,
   type ByeReason,
   type CollectOptions,
@@ -30,8 +32,36 @@ export {
   type Screen,
   type Sender,
 } from "./party.ts";
-export { PartyServer, DEFAULT_CSP, type RouteHandler, type ServerOptions } from "./server.ts";
+export {
+  Tvpipe,
+  TvpipeError,
+  HostedParty,
+  type CastStatus,
+  type ConnectOptions,
+  type Device,
+  type Info,
+  type PairStatus,
+  type PartyLinks,
+  type ReceiverStatus,
+  type TunnelInfo,
+  type TvpipeEvents,
+} from "./tvpipe.ts";
+export { TvpipeRelay, frame, OP_TEXT, OP_BINARY, type Relay, type RelayConn, type Via } from "./relay.ts";
+export { Emitter } from "./emitter.ts";
 export { StateBox, diff, applyDiff, toJson, type Diff, type Json, type JsonObject } from "./sync.ts";
 export { cleanText, graphemes, nameKey } from "./names.ts";
-export { drawQr, qrToRgba } from "./qr.ts";
-export type { QrRows, CanvasLike } from "./tvpipe.ts";
+export { TokenBucket, WindowCounter } from "./limits.ts";
+export {
+  PartyClient,
+  PartyActionError,
+  memoryStorage,
+  qrSvg,
+  drawQr,
+  type PartyClientOptions,
+  type QrRows,
+  type StorageLike,
+  type Status,
+  type WebSocketFactory,
+  type WebSocketLike,
+} from "./client.ts";
+export { memoryRelay, MemoryRelay } from "./testing.ts";

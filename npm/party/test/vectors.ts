@@ -1,8 +1,8 @@
 /**
- * Protocol vectors shared with the Rust host (`crates/tvpipe-party/tests/vectors/`,
- * docs/multiscreen-design.md §1.5). This implementation is the reference:
- * `node test/vectors.ts --bless` writes the files from what this server
- * does; `vectors.test.ts` (and the Rust tests) replay them.
+ * Protocol vectors (`test/vectors/`): sessions, diffs and names, recorded
+ * from this host by `node test/vectors.ts --bless` (first written when a
+ * Node and a Rust host both replayed them); `vectors.test.ts` replays
+ * them against the host on a relay in memory.
  *
  * File format: tvpipe's test vector files (blocks of `key = value` lines,
  * separated by blank lines, `#` comments).
@@ -44,10 +44,11 @@ import { fileURLToPath } from "node:url";
 
 import { cleanText, MAX_NAME, nameKey } from "../src/names.ts";
 import { PartyError, type LateJoin, type Party, type Player } from "../src/party.ts";
-import { PartyServer } from "../src/server.ts";
+import { Party as PartyHost } from "../src/party.ts";
+import { MemoryRelay } from "../src/testing.ts";
 import { diff, isObject, type Json, type JsonObject } from "../src/sync.ts";
 
-export const VECTORS = fileURLToPath(new URL("../../../crates/tvpipe-party/tests/vectors/", import.meta.url));
+export const VECTORS = fileURLToPath(new URL("./vectors/", import.meta.url));
 
 // ---------------------------------------------------------------------------
 // The file format
@@ -544,7 +545,7 @@ export const SCENARIOS: Scenario[] = [
 // Running a session against this server (record or replay)
 
 interface Conn {
-  ws: WebSocket;
+  ws: { send(data: string | Uint8Array): void; close(code?: number): void };
   inbox: string[];
   closed: number | undefined;
   waiters: (() => void)[];
@@ -670,9 +671,8 @@ function partyOptions(o: JsonObject | undefined): Record<string, unknown> {
  * expectation is checked (throws on a mismatch).
  */
 export async function runSession(options: JsonObject | undefined, steps: string[], record: boolean): Promise<string[]> {
-  const server = new PartyServer({});
-  await server.listen();
-  const party = server.createParty(partyOptions(options));
+  const relay = new MemoryRelay();
+  const party = new PartyHost(partyOptions(options)).listen(relay);
   party.joinInfo = { code: party.code, url: "https://party.test/", qr: { size: 1, rows: ["1"] } };
   installGame(party);
   const vars = new Map<string, Json>([
@@ -683,7 +683,7 @@ export async function runSession(options: JsonObject | undefined, steps: string[
   ]);
   const conns = new Map<string, Conn>();
   const out: string[] = [];
-  const url = `ws://127.0.0.1:${server.port}/party/ws`;
+  const url = "ws://party.test/_tvpipe/ws";
 
   const flushRecorded = async () => {
     await settle(conns);
@@ -733,10 +733,14 @@ export async function runSession(options: JsonObject | undefined, steps: string[
       }
       if (record) out.push(verb === ">" || verb.startsWith(">*") ? `${who} ${verb} ${asciiJson(JSON.parse(rest) as Json)}` : step);
       if (verb === "open") {
-        const ws = new WebSocket(url);
+        const ws = new relay.WebSocket(url) as unknown as Conn["ws"] & {
+          onmessage: (e: { data: unknown }) => void;
+          onclose: (e: { code: number }) => void;
+          onopen: () => void;
+          onerror: () => void;
+        };
         const c: Conn = { ws, inbox: [], closed: undefined, waiters: [] };
         conns.set(who!, c);
-        ws.binaryType = "arraybuffer";
         ws.onmessage = (e) => c.inbox.push(typeof e.data === "string" ? e.data : `<binary>`);
         ws.onclose = (e) => {
           if (c.closed === undefined) c.closed = e.code;
@@ -761,7 +765,7 @@ export async function runSession(options: JsonObject | undefined, steps: string[
       } else if (verb === ">text") {
         conns.get(who!)!.ws.send(rest);
       } else if (verb === ">binary") {
-        conns.get(who!)!.ws.send(Buffer.from(rest, "hex"));
+        conns.get(who!)!.ws.send(Uint8Array.from(Buffer.from(rest, "hex")));
       } else {
         throw new Error(`bad step ${step}`);
       }
@@ -776,7 +780,7 @@ export async function runSession(options: JsonObject | undefined, steps: string[
     }
   } finally {
     for (const c of conns.values()) c.ws.close();
-    await server.close();
+    party.close();
   }
   return out;
 }

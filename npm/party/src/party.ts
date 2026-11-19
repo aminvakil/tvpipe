@@ -1,16 +1,15 @@
 /**
  * One party (a room): its players and screens, their views, actions and
- * messages (docs/party-design.md §5). A {@link PartyServer} hosts parties
- * and hands each socket to the party its `hello` names.
+ * messages (docs/party-protocol.md). It runs in the game's host page and
+ * takes its connections from tvpipe's relay ({@link Party.listen}); the
+ * protocol checks (`hello`, keys, names, limits) are all here.
  */
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { EventEmitter } from "node:events";
-
-import { TokenBucket } from "./limits.ts";
+import { Emitter } from "./emitter.ts";
+import { TokenBucket, WindowCounter } from "./limits.ts";
 import { cleanText, MAX_NAME, nameKey } from "./names.ts";
+import type { Relay, RelayConn } from "./relay.ts";
 import { deepEqual, diffAt, isObject, StateBox, toJson, type Json, type JsonObject } from "./sync.ts";
-import type { WsConnection } from "./ws.ts";
 
 export const PROTOCOL = 1;
 
@@ -60,30 +59,63 @@ export class PartyError extends Error {
   }
 }
 
+function randomBytes(n: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(n));
+}
+
+const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/** Base64url without padding. */
+export function base64url(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes[i]! << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+    out += B64URL[(n >> 18) & 63]! + B64URL[(n >> 12) & 63]!;
+    if (i + 1 < bytes.length) out += B64URL[(n >> 6) & 63]!;
+    if (i + 2 < bytes.length) out += B64URL[n & 63]!;
+  }
+  return out;
+}
+
 /** A random token: 128 bits, base64url. */
 export function token(): string {
-  return randomBytes(16).toString("base64url");
+  return base64url(randomBytes(16));
 }
 
 /** Constant-time string comparison (for keys and tokens). */
 export function sameToken(a: unknown, b: string): boolean {
-  if (typeof a !== "string") return false;
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
+  if (typeof a !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 /** Room codes: four consonants (no words, no 0/O confusion). */
 const CODE_LETTERS = "BCDFGHJKLMNPQRSTVWXZ";
 export function roomCode(): string {
-  const b = randomBytes(4);
-  return [...b].map((x) => CODE_LETTERS[x % CODE_LETTERS.length]).join("");
+  return [...randomBytes(4)].map((x) => CODE_LETTERS[x % CODE_LETTERS.length]).join("");
 }
 
-/** Bytes queued to one socket before its views wait (latest wins). */
-const STATE_HIGH_WATER = 64 * 1024;
-/** Bytes queued to one socket before it is closed as too slow. */
-const SLOW_LIMIT = 256 * 1024;
+/** The first message must come within this, ms. */
+export const HELLO_TIMEOUT = 5000;
+/** Failed `hello`s per address and minute before its new sockets are closed. */
+const FAILED_HELLOS = 20;
+
+/** UTF-8 length of a string (stats). */
+function utf8Length(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
 /** Results of earlier actions kept per player, for replays. */
 const ACK_CACHE = 32;
 /** Largest message other than `act`. */
@@ -178,7 +210,7 @@ export interface Hello {
 
 /** One socket after its `hello`. @internal */
 export class Client {
-  readonly ws: WsConnection;
+  readonly conn: RelayConn;
   readonly role: Role;
   readonly id: string;
   readonly address: string;
@@ -195,8 +227,8 @@ export class Client {
   /** The last `in` sequence number on this connection. */
   inSeq = 0;
 
-  constructor(ws: WsConnection, role: Role, id: string, address: string, rate: number, burst: number) {
-    this.ws = ws;
+  constructor(conn: RelayConn, role: Role, id: string, address: string, rate: number, burst: number) {
+    this.conn = conn;
     this.role = role;
     this.id = id;
     this.address = address;
@@ -207,23 +239,15 @@ export class Client {
     return this.sendText(JSON.stringify(msg));
   }
 
-  /** A message already serialized. */
+  /** A message already serialized (tvpipe closes a client that falls too far behind: 4013). */
   sendText(text: string): boolean {
-    if (this.ws.closed) return false;
-    if (this.ws.bufferedAmount > SLOW_LIMIT) {
-      this.bye("slow");
-      return false;
-    }
-    this.ws.send(text);
+    if (this.conn.closed) return false;
+    this.conn.send(text);
     return true;
   }
 
   bye(reason: ByeReason, message?: string): void {
-    if (this.ws.closed) return;
-    const msg: JsonObject = { t: "bye", reason };
-    if (message) msg["message"] = message;
-    this.ws.send(JSON.stringify(msg));
-    this.ws.close(BYE[reason], reason);
+    bye(this.conn, reason, message);
   }
 }
 
@@ -323,7 +347,7 @@ export interface PartyStats {
 
 let partySeq = 0;
 
-export class Party extends EventEmitter<PartyEvents> {
+export class Party extends Emitter<PartyEvents> {
   readonly code: string;
   readonly joinKey = token();
   readonly screenKey = token();
@@ -353,6 +377,7 @@ export class Party extends EventEmitter<PartyEvents> {
   readonly #moderate: PartyOptions["moderate"];
   readonly #limits: Required<PartyLimits>;
   readonly #log: Logger;
+  readonly #failed = new WindowCounter(FAILED_HELLOS, 60_000);
   /** @internal */ onClose: (() => void) | undefined;
 
   constructor(options: PartyOptions = {}) {
@@ -591,10 +616,53 @@ export class Party extends EventEmitter<PartyEvents> {
   }
 
   // -------------------------------------------------------------------------
-  // Sockets (called by the server)
+  // Connections
 
-  /** A socket's `hello` for this party. @internal */
-  attach(ws: WsConnection, hello: Hello, address: string, failed: () => void = () => {}): void {
+  /** Takes the connections of a relay (tvpipe's, or a test's). */
+  listen(relay: Relay): this {
+    relay.onopen = (conn) => this.accept(conn);
+    relay.onclosing = () => this.close();
+    return this;
+  }
+
+  /** A new connection: waits for its `hello` (5 s). */
+  accept(conn: RelayConn): void {
+    const address = conn.address;
+    if (this.#closed) return bye(conn, "room-closed");
+    if (this.#failed.over(address)) {
+      this.#log("warn", `party ${this.code}: too many failed joins from ${address}`);
+      return bye(conn, "rate-limited");
+    }
+    const fail = (reason: ByeReason, message?: string) => {
+      this.#failed.hit(address);
+      bye(conn, reason, message);
+    };
+    const timer = setTimeout(() => fail("protocol", "no hello"), HELLO_TIMEOUT);
+    conn.onclose = () => clearTimeout(timer);
+    conn.onmessage = (data) => {
+      clearTimeout(timer);
+      conn.onmessage = undefined;
+      conn.onclose = undefined;
+      let hello: unknown;
+      try {
+        hello = typeof data === "string" ? JSON.parse(data) : undefined;
+      } catch {
+        hello = undefined;
+      }
+      if (!isObject(hello) || hello["t"] !== "hello" || hello["v"] !== PROTOCOL) {
+        return fail("protocol", "expected hello, version 1");
+      }
+      const code = typeof hello["room"] === "string" ? hello["room"].toUpperCase() : "";
+      if (code !== this.code) {
+        this.#log("warn", `party ${this.code}: hello for room ${JSON.stringify(code.slice(0, 8))} from ${address}`);
+        return fail("no-room");
+      }
+      this.attach(conn, hello as unknown as Hello, address, () => this.#failed.hit(address));
+    };
+  }
+
+  /** A connection's `hello` for this party. @internal */
+  attach(ws: RelayConn, hello: Hello, address: string, failed: () => void = () => {}): void {
     if (this.#closed) {
       bye(ws, "room-closed");
       return;
@@ -673,14 +741,14 @@ export class Party extends EventEmitter<PartyEvents> {
 
   #adopt(c: Client): void {
     this.#clients.add(c);
-    c.ws.on("message", (data, binary) => this.#onMessage(c, data, binary));
-    c.ws.on("close", () => this.#onClose(c));
-    c.ws.socket.on("drain", () => {
+    c.conn.onmessage = (data) => this.#onMessage(c, data);
+    c.conn.onclose = () => this.#onClose(c);
+    c.conn.ondrain = () => {
       if (c.waiting) {
         this.#refreshRoster();
         this.#flushClient(c, new Map());
       }
-    });
+    };
   }
 
   /** The roster's section: a new version only when it changed. */
@@ -767,18 +835,19 @@ export class Party extends EventEmitter<PartyEvents> {
     this.#changed();
   }
 
-  #onMessage(c: Client, data: string | Buffer, binary: boolean): void {
+  #onMessage(c: Client, data: string | Uint8Array): void {
+    if (c.conn.closed) return;
     if (!c.bucket.take()) return c.bye("rate-limited");
-    if (binary) return c.bye("protocol", "binary messages are not used");
+    if (typeof data !== "string") return c.bye("protocol", "binary messages are not used");
     let msg: unknown;
     try {
-      msg = JSON.parse(data as string);
+      msg = JSON.parse(data);
     } catch {
       return c.bye("protocol", "not JSON");
     }
     if (!isObject(msg)) return c.bye("protocol", "not an object");
-    if (msg["t"] === "in" && (data as string).length > MAX_INPUT) return;
-    if (msg["t"] !== "act" && (data as string).length > MAX_CONTROL_MESSAGE) return c.bye("protocol", "too big");
+    if (msg["t"] === "in" && data.length > MAX_INPUT) return;
+    if (msg["t"] !== "act" && data.length > MAX_CONTROL_MESSAGE) return c.bye("protocol", "too big");
     switch (msg["t"]) {
       case "act":
         return void this.#onAct(c, msg);
@@ -805,7 +874,7 @@ export class Party extends EventEmitter<PartyEvents> {
           const p = c.player;
           this.#remove(p, "left");
         }
-        c.ws.close(1000, "left");
+        c.conn.close(1000, "left");
         return;
       default:
         return; // unknown types are ignored
@@ -889,8 +958,8 @@ export class Party extends EventEmitter<PartyEvents> {
    * gives.
    */
   #flushClient(c: Client, diffs: Map<string, SectionDiff>): void {
-    if (c.ws.closed || !c.sent || (c.role === "player" && !c.player)) return;
-    if (c.ws.bufferedAmount > STATE_HIGH_WATER) {
+    if (c.conn.closed || !c.sent || (c.role === "player" && !c.player)) return;
+    if (c.conn.busy) {
       // Latest wins: one diff against what it has once the socket drains.
       c.waiting = true;
       return;
@@ -928,16 +997,17 @@ export class Party extends EventEmitter<PartyEvents> {
     if (del.length > 0) text += `,"del":[${del.join(",")}]`;
     text += "}";
     this.#stats.states++;
-    this.#stats.stateBytes += Buffer.byteLength(text);
+    this.#stats.stateBytes += utf8Length(text);
     c.sendText(text);
   }
 }
 
-function bye(ws: WsConnection, reason: ByeReason, message?: string): void {
+function bye(conn: RelayConn, reason: ByeReason, message?: string): void {
+  if (conn.closed) return;
   const msg: JsonObject = { t: "bye", reason };
   if (message) msg["message"] = message;
-  ws.send(JSON.stringify(msg));
-  ws.close(BYE[reason], reason);
+  conn.send(JSON.stringify(msg));
+  conn.close(BYE[reason], reason);
 }
 
 export { bye as sendBye };

@@ -3,7 +3,10 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "scripts"]
 }

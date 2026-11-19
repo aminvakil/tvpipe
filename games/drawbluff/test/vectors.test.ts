@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import { PartyError } from "@tvpipe/party";
 
-import { PROMPT_LIST } from "../game/prompts.ts";
+import { PROMPT_LIST } from "./prompts.ts";
 import {
   buildOptions,
   cleanTitle,

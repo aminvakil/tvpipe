@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { PartyError } from "@tvpipe/party";
 
-import { PROMPT_LIST, PROMPTS } from "../game/prompts.ts";
+import { PROMPT_LIST, PROMPTS } from "./prompts.ts";
 import { buildOptions, cleanTitle, deal, displayTitle, LIE_SOFT, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
 
 test("titles compare without case, accents, punctuation and a leading article", () => {

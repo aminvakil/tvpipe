@@ -1,18 +1,15 @@
 /**
- * Replays the protocol vectors (crates/tvpipe-party/tests/vectors/,
- * written from this implementation by `node test/vectors.ts --bless`):
- * the Rust host replays the same files.
+ * Replays the protocol vectors (test/vectors/, written from this host by
+ * `node test/vectors.ts --bless`).
  */
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
-import { applyDiff as clientApply } from "../client/party-client.js";
+import { applyDiff as clientApply } from "../src/client.ts";
 import { cleanText, MAX_NAME, nameKey } from "../src/names.ts";
 import { applyDiff, diff, type Json, type JsonObject } from "../src/sync.ts";
-import { all, get, readVectors, runSession, VECTORS } from "./vectors.ts";
+import { all, get, readVectors, runSession } from "./vectors.ts";
 
 test("vectors: diffs, and the client's merge", () => {
   const blocks = readVectors("diff.txt");
@@ -50,10 +47,4 @@ test("vectors: sessions", async () => {
       throw new Error(`session "${get(b, "name")}" (line ${b.line}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-});
-
-test("the browser client is the Rust crate's, byte for byte", () => {
-  const here = readFileSync(fileURLToPath(new URL("../client/party-client.js", import.meta.url)));
-  const there = readFileSync(`${VECTORS}../../web/party-client.js`);
-  assert.ok(here.equals(there), "npm/party/client/party-client.js differs from crates/tvpipe-party/web/party-client.js: copy the canonical one (the crate's)");
 });

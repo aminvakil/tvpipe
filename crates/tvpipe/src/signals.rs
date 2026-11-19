@@ -150,8 +150,7 @@ mod tests {
     #[test]
     fn installs() {
         // Raising a signal here would set the process-wide flag for every
-        // other test; the handler itself is checked by hand (see 0004) and
-        // by drawbluff's Ctrl-C test.
+        // other test; the handler itself is checked by hand (see 0004).
         assert!(install());
         assert!(install(), "installing twice is fine");
         assert!(!requested());

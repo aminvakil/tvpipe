@@ -49,23 +49,16 @@ jobs:
           components: clippy
       - name: One feature at a time
         run: |
-          for f in "" airplay fairplay cast aac player share headless tunnel files ffmpeg h264 signals; do
+          for f in "" airplay fairplay cast aac player share headless tunnel playshare files ffmpeg h264 signals; do
             echo "::group::features [$f]"
             cargo clippy -p tvpipe --no-default-features --features "$f" -- -D warnings
             echo "::endgroup::"
           done
-      - name: The party crate's features
-        run: |
-          cargo clippy -p tvpipe-party --no-default-features --all-targets -- -D warnings
-          cargo clippy -p tvpipe-party --all-features --all-targets -- -D warnings
-          cargo test -p tvpipe-party --all-features
       - name: Documentation
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
           cargo doc -p tvpipe --no-deps --all-features
-          cargo doc -p tvpipe-party --no-deps --all-features
-          cargo doc -p tvpipe-canvas --no-deps
       # The library's own license field is LGPL-free, and so is its default
       # dependency tree, while `fairplay` really pulls the LGPL crate in.
       - name: License check
@@ -107,10 +100,8 @@ jobs:
             v="$(node -p "require('./npm/$pkg/package.json').version")"
             test "$cargo_version" = "$v" || { echo "npm/$pkg/package.json has $v, Cargo.toml $cargo_version" >&2; exit 1; }
           done
-          peer="$(node -p "require('./npm/party/package.json').peerDependencies['@tvpipe/sdk']")"
-          test "$cargo_version" = "$peer" || { echo "npm/party wants @tvpipe/sdk $peer, Cargo.toml $cargo_version" >&2; exit 1; }
           # The crates go out in lockstep: every path dependency between
-          # them names this version (tvpipe-party pins tvpipe exactly).
+          # them names this version.
           bad="$(grep -hE '^tvpipe(-[a-z]+)? = \{ path' crates/*/Cargo.toml | grep -vE "version = \"=?$cargo_version\"" || true)"
           test -z "$bad" || { echo "path dependencies not at $cargo_version:" >&2; echo "$bad" >&2; exit 1; }
       - working-directory: npm/tvpipe
@@ -122,13 +113,16 @@ jobs:
         env:
           TVPIPE_BINARY: ${{ github.workspace }}/target/debug/tvpipe${{ runner.os == 'Windows' && '.exe' || '' }}
         run: npm test
-      # The party library (npm/party) and the demo game on it.
+      # The game library (npm/party; `check` also fails when the copy tvpipe
+      # embeds is not what the sources build) against the debug binary
+      # (playshare end to end), and the demo game on it.
       - working-directory: npm/party
         env:
           TVPIPE_BINARY: ${{ github.workspace }}/target/debug/tvpipe${{ runner.os == 'Windows' && '.exe' || '' }}
         run: |
           npm ci
           npm run build
+          git diff --exit-code -- ../../crates/tvpipe/src/playshare/web
           npm run check
           npm test
       - working-directory: games/drawbluff
@@ -136,3 +130,4 @@ jobs:
           npm ci
           npm run check
           npm test
+          npm run zip

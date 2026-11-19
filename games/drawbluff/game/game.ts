@@ -16,11 +16,8 @@
  * - `party.screen` (the TV): `{ phase, … }` per phase, see each method.
  */
 
-import { EventEmitter } from "node:events";
+import { Emitter, LATE_JOIN, PartyError, type LateJoin, type Party, type Player } from "@tvpipe/party";
 
-import { LATE_JOIN, PartyError, type LateJoin, type Party, type Player } from "@tvpipe/party";
-
-import { PROMPT_LIST } from "./prompts.ts";
 import {
   buildOptions,
   cleanTitle,
@@ -94,8 +91,8 @@ export interface GameOptions {
   minPlayers?: number | undefined;
   timings?: Partial<Timings> | undefined;
   rng?: (() => number) | undefined;
-  /** The prompts (default `data/prompts.txt`); plain strings have no structure. */
-  prompts?: readonly (string | Prompt)[] | undefined;
+  /** The prompts (`data/prompts.txt` through `parsePrompts`); plain strings have no structure. */
+  prompts: readonly (string | Prompt)[];
   /**
    * Who may join during a game (the VIP can change it in the lobby):
    * `wait` (the default) from the next round, `open` from the next
@@ -147,11 +144,11 @@ interface Tally {
   votes: number;
 }
 
-export class Drawbluff extends EventEmitter<GameEvents> {
+export class Drawbluff extends Emitter<GameEvents> {
   readonly party: Party;
-  readonly rounds: number;
+  rounds: number;
   readonly minPlayers: number;
-  readonly timings: Timings;
+  timings: Timings;
   readonly #rng: () => number;
   readonly #prompts: readonly Prompt[];
   /** Points per player id (players in the game; late joiners from their first round). */
@@ -175,14 +172,15 @@ export class Drawbluff extends EventEmitter<GameEvents> {
   /** Spotlights of this round whose vote has not started (a newcomer in `open` mode can still vote). */
   #votesLeft = 0;
 
-  constructor(party: Party, options: GameOptions = {}) {
+  constructor(party: Party, options: GameOptions) {
     super();
     this.party = party;
     this.rounds = options.rounds ?? 2;
     this.minPlayers = options.minPlayers ?? 3;
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
     this.#rng = options.rng ?? Math.random;
-    this.#prompts = (options.prompts ?? PROMPT_LIST).map((p) => (typeof p === "string" ? { text: p, tag: "" } : p));
+    this.#prompts = options.prompts.map((p) => (typeof p === "string" ? { text: p, tag: "" } : p));
+    if (this.#prompts.length === 0) throw new Error("drawbluff: no prompts");
     if (options.lateJoin !== undefined) party.lateJoin = options.lateJoin;
   }
 
@@ -238,6 +236,14 @@ export class Drawbluff extends EventEmitter<GameEvents> {
       party.screen.set(this.#joinedView());
     });
     this.#lobby();
+  }
+
+  /** Changes the rounds or the timers before a game (the lobby shows the rounds). */
+  configure(o: { rounds?: number | undefined; timings?: Partial<Timings> | undefined }): void {
+    if (this.#running) throw new PartyError("running", "Not during a game");
+    if (o.rounds !== undefined) this.rounds = Math.max(1, Math.min(5, Math.round(o.rounds)));
+    if (o.timings) this.timings = { ...DEFAULT_TIMINGS, ...o.timings };
+    if (this.#phase === "lobby") this.party.room.set({ rounds: this.rounds });
   }
 
   /** Ends the game and its timers (the party stays). */

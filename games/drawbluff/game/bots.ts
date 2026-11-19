@@ -1,16 +1,19 @@
 /**
- * Fake players: browser clients without a browser that play drawbluff
- * by themselves (scribbles, silly lies, random votes). For the tests and
- * for trying the game alone (`node main.ts --bots 3`).
+ * Fake players: clients that play drawbluff by themselves (scribbles,
+ * silly lies, random votes). For the tests (in Node), and for trying the
+ * game alone: the host page's "Add a bot" runs them in the window,
+ * connected through tvpipe like a phone.
  */
 
-import { memoryStorage, PartyClient } from "@tvpipe/party/client";
+import { memoryStorage, PartyClient, type WebSocketFactory } from "@tvpipe/party/client";
 
 import type { Drawing } from "./rules.ts";
 
 export interface BotOptions {
-  /** The WebSocket URL (`ws://127.0.0.1:PORT/party/ws`). */
+  /** The WebSocket URL (`ws://127.0.0.1:PORT/_tvpipe/ws`). */
   url: string;
+  /** Default the global one (tests: a memory relay's). */
+  WebSocket?: WebSocketFactory | undefined;
   room: string;
   key: string;
   name: string;
@@ -90,7 +93,7 @@ export class Bot {
     this.#o = o;
     this.name = o.name;
     this.#rng = o.rng ?? Math.random;
-    this.client = new PartyClient({ url: o.url, room: o.room, key: o.key, storage: memoryStorage() });
+    this.client = new PartyClient({ url: o.url, room: o.room, key: o.key, storage: memoryStorage(), WebSocket: o.WebSocket });
     this.client.on("view", (view) => this.#onView(view));
   }
 

@@ -46,7 +46,7 @@ import { fileURLToPath } from "node:url";
 import { PartyError } from "@tvpipe/party";
 
 import { doodle } from "../game/bots.ts";
-import { PROMPT_LIST, PROMPTS } from "../game/prompts.ts";
+import { PROMPT_LIST, PROMPTS } from "./prompts.ts";
 import {
   buildOptions,
   cleanTitle,
@@ -72,8 +72,6 @@ import {
 } from "../game/rules.ts";
 
 export const RULES = fileURLToPath(new URL("./vectors/rules.txt", import.meta.url));
-/** Screen views of a 50-player game, drawn by both video screens' tests. */
-export const SCREENS = fileURLToPath(new URL("./vectors/screens-50.json", import.meta.url));
 
 export type Block = { line: number; entries: [string, string][] };
 
@@ -342,86 +340,6 @@ function pick<T>(r: () => number, xs: readonly T[]): T {
   return xs[Math.floor(r() * xs.length)]!;
 }
 
-const NAMES = ["Ada", "Bea", "Cy", "Dot", "Eli", "Fay", "Gus", "Hal", "Ivy", "Jo", "Kai", "Lou", "Max", "Nell", "Oz", "Pia", "Quinn"];
-
-/** A 50-player game's screen views (`{roster, join, now, views: [[name, screen]]}`). */
-export function bigScreens(): Record<string, unknown> {
-  const r = seeded(50);
-  const roster = Array.from({ length: 50 }, (_, i) => ({
-    id: `p${i + 1}`,
-    name: i === 7 ? "Maximiliane-Josephine" : `${NAMES[i % NAMES.length]}${i >= NAMES.length ? Math.floor(i / NAMES.length) + 1 : ""}`,
-    vip: i === 0,
-    connected: i % 13 !== 5,
-  }));
-  const ids = roster.map((p) => p.id);
-  const now = 1_000_000;
-  const rows = Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => ((x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13) ? "1" : "0")).join(""));
-  const join = { code: "BCDF", url: "https://words-words-words-words.trycloudflare.com/?r=BCDF#k=abcdefghijklmnopqrstuv", qr: { size: 21, rows }, lateJoin: "open", inProgress: true };
-  const drawing = doodle(seeded(9));
-  // Newcomers this round ("+ Anna" in the corner): the last three and a count.
-  const joined = { joined: ["Anna", "Maximiliane-Josephine", "Bob"], joinedMore: 2 };
-  const artist = { id: "p4", name: roster[3]!.name };
-  const liars = ["p4", "p9", "p17", "p23", "p30", "p41", "p48"];
-  const voters = ids.filter((id) => id !== "p4" && !liars.includes(id));
-  // The longest prompts (40 characters, as long as a lie may be): the layouts must hold them.
-  const longest = [...PROMPTS].sort((a, b) => b.length - a.length || a.localeCompare(b));
-  const gallery = Array.from({ length: 8 }, (_, i) => ({ id: ids[10 + i]!, name: roster[10 + i]!.name, prompt: i % 2 === 0 ? longest[i]! : PROMPTS[i * 7]!, drawing: doodle(seeded(100 + i)) }));
-  const long40 = "the moment you see your teacher shopping";
-  const options = ["the moment the referee blows the whistle", "a sad potato", "the cat's revenge", long40, "the fridge's view of a midnight snack", "abstract art", "a sneaky pancake", "the moment the robot becomes self aware"].map((text, i) => ({ id: `o${i + 1}`, text }));
-  const names = (n: number) => voters.slice(0, n).map((id) => roster.find((p) => p.id === id)!.name);
-  const item = (id: string, text: string, n: number, seen: number, o: Record<string, unknown> = {}) => ({
-    id, text, truth: false, decoy: false, authors: [roster[(n * 7) % 50]!.name], voters: names(Math.min(n, 6)), count: n, seen,
-    points: share(n, 500, seen), artistPoints: 0, same: false, ...o,
-  });
-  const lines = roster.slice(0, 8).map((p, i) => ({ id: p.id, name: p.name, score: 9000 - i * 650, delta: 1200 - i * 100 }));
-  const views: [string, Record<string, unknown>][] = [
-    ["lobby-50", { phase: "lobby", minPlayers: 3, maxPlayers: 50 }],
-    ["draw-50", { phase: "draw", round: 1, rounds: 2, deadline: now + 42_000, waiting: ids, done: ids.filter((_, i) => i % 9 !== 2), ...joined }],
-    ["gallery-50", { phase: "gallery", round: 1, rounds: 2, page: 2, pages: 6, count: 44, items: gallery, liars, done: liars.slice(0, 3), artist, ...joined }],
-    ["lie-50", { phase: "lie", round: 1, spot: 2, spots: 6, deadline: now + 4000, drawing, artist, waiting: liars, done: liars.slice(0, 5), ...joined }],
-    ["vote-50", { phase: "vote", round: 1, spot: 2, spots: 6, deadline: now + 14_000, drawing, artist, options, waiting: voters, done: voters.filter((_, i) => i % 4 !== 0), writing: 7, ...joined }],
-    [
-      "reveal-50",
-      {
-        phase: "reveal", round: 2, spot: 3, spots: 6, drawing, artist, prompt: "a haunted toaster", step: 5,
-        items: [
-          item("o2", "a sad potato", 2, 30),
-          item("o5", "a very tired frog", 4, 31, { same: true, authors: ["Bea", "Lou"] }),
-          item("o7", "a sneaky pancake", 9, 29),
-          item("o3", "the cat's revenge", 14, 31),
-          { id: "o1", text: "a haunted toaster", truth: true, decoy: false, authors: [], voters: names(6), count: 14, seen: 43, points: 2000, artistPoints: 2 * share(14, 1000, 43), same: false },
-        ],
-      },
-    ],
-    [
-      // Seven liars and the truth: the most a drawing gets.
-      "reveal-50-full",
-      {
-        phase: "reveal", round: 1, spot: 1, spots: 6, drawing, artist, prompt: "a haunted toaster", step: 8, ...joined,
-        items: [
-          item("o2", "a sad potato", 1, 30),
-          item("o4", "my uncle on monday", 2, 31, { authors: ["Maximiliane-Josephine", "Quinn2"] }),
-          item("o5", "a very tired frog", 3, 31, { same: true, authors: ["Bea", "Lou"] }),
-          item("o6", "abstract art", 4, 29, { decoy: true, authors: [] }),
-          item("o7", "the fridge's view of a midnight snack", 6, 29),
-          item("o8", long40, 9, 30, { authors: ["Maximiliane-Josephine", "Quinn2", "Bea"] }),
-          item("o3", "the cat's revenge", 14, 31),
-          { id: "o1", text: "the moment the referee blows the whistle", truth: true, decoy: false, authors: [], voters: names(6), count: 11, seen: 43, points: 2000, artistPoints: 2 * share(11, 1000, 43), same: false },
-        ],
-      },
-    ],
-    [
-      "scores-50",
-      {
-        phase: "scores", round: 1, rounds: 2, scores: lines, total: 50, last: false, ...joined,
-        highlights: [{ kind: "liar", id: "p9", name: roster[8]!.name, count: 23 }, { kind: "eye", id: "p12", name: roster[11]!.name, count: 5, of: 6 }],
-      },
-    ],
-    ["final-50", { phase: "final", scores: lines.map((l) => ({ ...l, delta: 0 })), total: 50 }],
-  ];
-  void r;
-  return { roster, join, now, views };
-}
 
 function bless(): void {
   const out: string[] = [
@@ -489,8 +407,6 @@ function bless(): void {
   }
   writeFileSync(RULES, out.join("\n\n") + "\n");
   console.log(`wrote ${RULES}`);
-  writeFileSync(SCREENS, JSON.stringify(bigScreens()) + "\n");
-  console.log(`wrote ${SCREENS}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

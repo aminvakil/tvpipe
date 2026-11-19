@@ -1,68 +1,50 @@
-/** Test helpers: a party on a local server, fake phones and screens. */
+/** Test helpers: a party on a relay in memory, fake phones and screens. */
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { memoryStorage, PartyClient } from "../client/party-client.js";
-import { PartyServer, type ServerOptions } from "../src/server.ts";
-import type { Party, PartyOptions } from "../src/party.ts";
+import { memoryStorage, PartyClient } from "../src/client.ts";
+import { Party, type PartyOptions } from "../src/party.ts";
+import { MemoryRelay } from "../src/testing.ts";
 
 export interface Setup {
-  server: PartyServer;
+  relay: MemoryRelay;
   party: Party;
+  /** The socket URL clients use (any: the relay takes every one). */
   ws: string;
   phone(name?: string): PartyClient;
   screen(role?: "screen" | "watch"): PartyClient;
+  /** A client of the party with its own options. */
+  client(opts: { key?: string; room?: string; role?: "player" | "screen" | "watch"; storage?: ReturnType<typeof memoryStorage> }): PartyClient;
   close(): Promise<void>;
 }
 
-/** A directory with a phone and a screen page. */
-export function pages(): { phone: string; screen: string } {
-  const root = mkdtempSync(join(tmpdir(), "party-test-"));
-  const phone = join(root, "phone");
-  const screen = join(root, "screen");
-  mkdirSync(join(phone, "sub"), { recursive: true });
-  mkdirSync(screen);
-  writeFileSync(join(phone, "index.html"), "<!doctype html><title>phone</title>");
-  writeFileSync(join(phone, "app.js"), "export const x = 1;\n");
-  writeFileSync(join(phone, "sub", "index.html"), "sub");
-  writeFileSync(join(phone, ".secret"), "nope");
-  writeFileSync(join(root, "outside.txt"), "outside");
-  writeFileSync(join(screen, "index.html"), "<!doctype html><title>screen</title>");
-  return { phone, screen };
-}
-
-export async function setup(opts: { server?: ServerOptions; party?: PartyOptions } = {}): Promise<Setup> {
-  const server = new PartyServer({ ...pages(), ...opts.server });
-  await server.listen();
-  const party = server.createParty(opts.party);
-  party.joinInfo = { code: party.code, url: `${server.origin}/?r=${party.code}#k=${party.joinKey}`, qr: { size: 1, rows: ["1"] } };
-  const ws = `ws://127.0.0.1:${server.port}/party/ws`;
+export async function setup(opts: { party?: PartyOptions } = {}): Promise<Setup> {
+  const relay = new MemoryRelay();
+  const party = new Party(opts.party).listen(relay);
+  party.joinInfo = { code: party.code, url: `https://party.test/?r=${party.code}#k=${party.joinKey}`, qr: { size: 1, rows: ["1"] } };
+  const ws = "ws://party.test/_tvpipe/ws";
   const clients: PartyClient[] = [];
+  const client: Setup["client"] = (o) => {
+    const c = new PartyClient({
+      url: ws,
+      room: o.room ?? party.code,
+      key: o.key,
+      role: o.role ?? "player",
+      storage: o.storage ?? memoryStorage(),
+      WebSocket: relay.WebSocket,
+    });
+    clients.push(c);
+    return c;
+  };
   return {
-    server,
+    relay,
     party,
     ws,
-    phone() {
-      const c = new PartyClient({ url: ws, room: party.code, key: party.joinKey, storage: memoryStorage() });
-      clients.push(c);
-      return c;
-    },
-    screen(role = "screen") {
-      const c = new PartyClient({
-        url: ws,
-        room: party.code,
-        key: role === "screen" ? party.screenKey : party.watchKey,
-        role,
-        storage: memoryStorage(),
-      });
-      clients.push(c);
-      return c;
-    },
+    client,
+    phone: () => client({ key: party.joinKey }),
+    screen: (role = "screen") => client({ key: role === "screen" ? party.screenKey : party.watchKey, role }),
     async close() {
       for (const c of clients) c.close();
-      await server.close();
+      party.close();
+      await tick(5);
     },
   };
 }

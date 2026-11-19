@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { PartyActionError } from "../client/party-client.js";
+import { PartyActionError } from "../src/client.ts";
 import { PartyError, type Player } from "../src/party.ts";
 import { setup, tick, until } from "./helpers.ts";
 
@@ -56,12 +56,11 @@ test("names: taken (case/accent-insensitive), invalid, moderated", async () => {
 test("wrong keys and unknown rooms are refused for good", async () => {
   const s = await setup();
   try {
-    const { PartyClient, memoryStorage } = await import("../client/party-client.js");
-    const bad = new PartyClient({ url: s.ws, room: s.party.code, key: "nope", storage: memoryStorage() });
+    const bad = s.client({ key: "nope" });
     await assert.rejects(bad.join("Eve"), (e: PartyActionError) => e.code === "bad-key");
-    const noroom = new PartyClient({ url: s.ws, room: "ZZZZ", key: s.party.joinKey, storage: memoryStorage() });
+    const noroom = s.client({ room: "ZZZZ", key: s.party.joinKey });
     await assert.rejects(noroom.join("Eve"), (e: PartyActionError) => e.code === "no-room");
-    const scr = new PartyClient({ url: s.ws, room: s.party.code, key: s.party.joinKey, role: "screen", storage: memoryStorage() });
+    const scr = s.client({ key: s.party.joinKey, role: "screen" });
     await assert.rejects(scr.connect(), (e: PartyActionError) => e.code === "bad-key");
     assert.equal(s.party.players.length, 0);
   } finally {
@@ -78,7 +77,7 @@ test("a phone that drops comes back as the same player with the full view", asyn
     const a = s.phone();
     await a.join("Ann");
     const id = a.you!.id;
-    a._drop();
+    a.drop();
     await until(() => events.includes("away Ann"));
     assert.equal(s.party.players[0]!.connected, false);
     // Changes while away arrive with the welcome.
@@ -98,11 +97,10 @@ test("a phone that drops comes back as the same player with the full view", asyn
 test("a reloaded page resumes from storage; a second tab replaces the first", async () => {
   const s = await setup();
   try {
-    const { PartyClient } = await import("../client/party-client.js");
     const a = s.phone();
     await a.join("Ann");
     // Same storage, a new page.
-    const again = new PartyClient({ url: s.ws, room: s.party.code, key: s.party.joinKey, storage: a.storage });
+    const again = s.client({ key: s.party.joinKey, storage: a.storage as ReturnType<typeof import("../src/client.ts").memoryStorage> });
     assert.equal(again.canResume, true);
     const w = await again.connect();
     assert.equal(w.you.name, "Ann");
@@ -141,7 +139,7 @@ test("actions are acked, refused with codes, and applied once across reconnects"
     // the client sends it again after the reconnect, the host runs it once.
     const p = a.act("slow", { n: 1 });
     await until(() => calls === 1);
-    a._drop();
+    a.drop();
     await until(() => a.status === "reconnecting" || a.status === "open");
     await until(() => a.status === "open", 3000);
     release();
@@ -163,7 +161,7 @@ test("actions queued while disconnected are sent after the reconnect", async () 
     });
     const a = s.phone();
     await a.join("Ann");
-    a._drop();
+    a.drop();
     const r = a.act("say", "hello");
     assert.equal(await r, 1);
     assert.deepEqual(got, ["hello"]);
@@ -204,7 +202,7 @@ test("lock and maxPlayers refuse new players, resumes still work", async () => {
     s.party.lock();
     s.party.kick(s.party.players[1]!);
     await assert.rejects(s.phone().join("Dee"), (e: PartyActionError) => e.code === "locked");
-    a._drop();
+    a.drop();
     await until(() => !s.party.players[0]!.connected);
     await until(() => a.status === "open" && s.party.players[0]!.connected, 3000);
   } finally {
@@ -220,7 +218,7 @@ test("late join: closed refuses new names in a game, wait/open let them wait unt
     s.party.inProgress = true;
     await assert.rejects(s.phone().join("Bob"), (e: PartyActionError) => e.code === "in-progress");
     assert.equal(s.party.players.length, 1);
-    a._drop();
+    a.drop();
     await until(() => a.status === "open" && s.party.players[0]!.connected, 3000);
     assert.equal(s.party.players[0]!.waiting, false);
     s.party.lateJoin = "open";
@@ -371,38 +369,75 @@ test("a flood of messages is cut off", async () => {
   }
 });
 
-test("a phone that stops reading gets latest-wins views, then is dropped as slow", async () => {
-  const { connect } = await import("node:net");
-  const { randomBytes } = await import("node:crypto");
-  const { encodeFrame } = await import("../src/ws.ts");
+test("a busy phone gets latest-wins views: one diff when it drains", async () => {
   const s = await setup();
   try {
-    const sock = connect(s.server.port, "127.0.0.1");
-    await new Promise((r) => sock.once("connect", r));
-    sock.write(
-      `GET /party/ws HTTP/1.1\r\nHost: 127.0.0.1:${s.server.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
-        `Sec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
-    );
-    const hello = { t: "hello", v: 1, room: s.party.code, role: "player", key: s.party.joinKey, name: "Slow" };
-    sock.write(encodeFrame(1, Buffer.from(JSON.stringify(hello)), true, randomBytes(4)));
-    await until(() => s.party.players.length === 1);
-    sock.pause(); // stops reading: the kernel buffers fill, then the server's
+    const slow = s.phone();
+    await slow.join("Slow");
     const fast = s.phone();
     await fast.join("Fast");
-    const big = "x".repeat(100_000);
-    for (let i = 0; i < 60 && s.party.players[0]!.connected; i++) {
-      s.party.room.set({ big: big + i });
-      await tick(5);
+    await until(() => slow.view["roster"]?.length === 2);
+    await new Promise((r) => setTimeout(r, 20));
+    const conn = [...s.relay.connections()][0]!;
+    let states = 0;
+    slow.on("view", (_v: unknown, msg: unknown) => {
+      if (msg) states++;
+    });
+    s.relay.setBusy(conn, true);
+    for (let i = 0; i < 20; i++) {
+      s.party.room.set({ n: i });
+      await tick(2);
     }
-    // The fast phone has the latest view all along.
-    await until(() => fast.view["room"]?.big === big + 59 || !s.party.players[0]!.connected, 3000);
-    for (let i = 0; i < 40 && s.party.players[0]!.connected; i++) {
-      s.party.broadcast("blob", big);
-      await tick(5);
-    }
-    await until(() => !s.party.players[0]!.connected, 5000, "slow phone dropped");
-    assert.equal(fast.status, "open");
-    sock.destroy();
+    await until(() => fast.view["room"]?.n === 19);
+    assert.equal(states, 0, "nothing while busy");
+    s.relay.setBusy(conn, false);
+    await until(() => slow.view["room"]?.n === 19);
+    assert.equal(states, 1, "one catch-up diff");
+  } finally {
+    await s.close();
+  }
+});
+
+test("tvpipe's own closes are final for the client (4011, 4008, 1009)", async () => {
+  const s = await setup();
+  try {
+    const a = s.phone();
+    await a.join("Ann");
+    const conn = [...s.relay.connections()][0]!;
+    conn.close(4011, "closed");
+    await until(() => a.status === "closed");
+    assert.equal(a.byeReason, "room-closed");
+  } finally {
+    await s.close();
+  }
+});
+
+test("the end: closing, then the room closes for every phone", async () => {
+  const s = await setup();
+  const a = s.phone();
+  await a.join("Ann");
+  const tv = s.screen();
+  await tv.connect();
+  await s.relay.end();
+  await until(() => a.status === "closed" && tv.status === "closed");
+  assert.equal(a.byeReason, "room-closed");
+  assert.ok(s.party.closed);
+  await s.close();
+});
+
+test("a host restart (1012): phones reconnect, and a new party turns them away for good", async () => {
+  const s = await setup();
+  try {
+    const a = s.phone();
+    await a.join("Ann");
+    // Another host on the same relay, as after a reload of the host page.
+    const { Party } = await import("../src/party.ts");
+    const fresh = new Party({ code: s.party.code });
+    for (const c of [...s.relay.connections()]) c.close(1012, "host restart");
+    fresh.listen(s.relay);
+    await until(() => a.status === "closed", 5000);
+    // The old identity and key mean nothing to the new party.
+    assert.equal(a.byeReason, "bad-key");
   } finally {
     await s.close();
   }
