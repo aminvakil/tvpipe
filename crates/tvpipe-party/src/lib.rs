@@ -1,22 +1,511 @@
 //! Party games on tvpipe, hosted in Rust (docs/multiscreen-design.md).
 //!
-//! Phones join with a QR code on the TV, the host keeps rooms, players
-//! and their views in sync over WebSockets, speaking the protocol of
-//! `@tvpipe/party` (the same browser client, the same vectors).
+//! Phones join with a QR code on the TV; the host keeps the room, its
+//! players and what each of them sees in sync over WebSockets, speaking
+//! the protocol of the `@tvpipe/party` npm package (the same browser
+//! client, the same test vectors).
+//!
+//! The game owns the [`Party`] and drives it from its own loop: no async
+//! runtime, no callbacks on foreign threads.
+//!
+//! ```no_run
+//! use std::time::Duration;
+//! use tvpipe_party::{json, Event, Join, Party, PartyError, PartyOptions};
+//!
+//! static PHONE: tvpipe_party::Assets = tvpipe_party::Assets::new("", &[]);
+//!
+//! let mut party = Party::start(PartyOptions::new().phone(&PHONE).join(Join::Local))?;
+//! println!("join: {}", party.join_url());
+//! party.room().set(json!({ "phase": "lobby" }));
+//! loop {
+//!     for event in party.wait(Duration::from_millis(50)) {
+//!         if let Event::Action(a) = event {
+//!             let reply = match a.kind() {
+//!                 "hello" => Ok(json!("hi")),
+//!                 _ => Err(PartyError::new("unknown-action", "Not now")),
+//!             };
+//!             party.reply(a, reply);
+//!         }
+//!     }
+//!     party.flush();
+//! }
+//! # Ok::<(), tvpipe::Error>(())
+//! ```
 
-// Until the server (step 3 of the plan) uses every piece.
-#![allow(dead_code)]
-
+mod assets;
+mod conn;
+mod limits;
 mod names;
+mod party;
+mod server;
 mod sync;
 #[cfg(test)]
 mod testutil;
 mod value;
 
+use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
+
+use tvpipe::__web::httpd;
+use tvpipe::{QrCode, Tunnel, TunnelProvider};
+
+pub use assets::{Asset, Assets};
+pub use party::{
+    Action, Event, Limits, Moderate, Moderation, PartyError, Player, PlayerId, Role, ScreenWatch,
+    Source, State, PROTOCOL,
+};
+pub use server::DEFAULT_CSP;
 pub use value::{Number, Object, Value};
+
+use limits::WindowCounter;
+use party::{Core, CoreOptions, Inbox};
+use server::Shared;
 
 /// The browser client (`/party/client.js`), shared with `@tvpipe/party`.
 pub const CLIENT_JS: &str = include_str!("../web/party-client.js");
+
+/// How phones reach the party.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Join {
+    /// A public link: Cloudflare, else OpenTunnel (the default).
+    #[default]
+    Auto,
+    /// A public link through this provider.
+    Tunnel(TunnelProvider),
+    /// This computer only (`http://127.0.0.1:PORT`): development, tests.
+    Local,
+}
+
+/// How a [`Party`] starts.
+pub struct PartyOptions {
+    phone: Option<&'static Assets>,
+    screen: Option<&'static Assets>,
+    join: Join,
+    max_players: usize,
+    limits: Limits,
+    code: Option<String>,
+    port: u16,
+    csp: Option<String>,
+    max_sockets: usize,
+    max_message: usize,
+    joins_per_minute: usize,
+    moderate: Option<Moderate>,
+}
+
+impl Default for PartyOptions {
+    fn default() -> PartyOptions {
+        PartyOptions::new()
+    }
+}
+
+impl PartyOptions {
+    /// The defaults: a public link (`Join::Auto`), at most 8 players.
+    pub fn new() -> PartyOptions {
+        PartyOptions {
+            phone: None,
+            screen: None,
+            join: Join::Auto,
+            max_players: 8,
+            limits: Limits::default(),
+            code: None,
+            port: 0,
+            csp: Some(DEFAULT_CSP.to_owned()),
+            max_sockets: 64,
+            max_message: 256 * 1024,
+            joins_per_minute: 20,
+            moderate: None,
+        }
+    }
+
+    /// The phone pages, served at `/`.
+    pub fn phone(mut self, assets: &'static Assets) -> Self {
+        self.phone = Some(assets);
+        self
+    }
+
+    /// The screen pages (a web screen), served at `/screen/`.
+    pub fn screen(mut self, assets: &'static Assets) -> Self {
+        self.screen = Some(assets);
+        self
+    }
+
+    /// How phones reach the party.
+    pub fn join(mut self, join: Join) -> Self {
+        self.join = join;
+        self
+    }
+
+    /// Players at most (default 8).
+    pub fn max_players(mut self, n: usize) -> Self {
+        self.max_players = n;
+        self
+    }
+
+    /// Rate limits and the number of screens.
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The room code (default: four random consonants).
+    pub fn code(mut self, code: &str) -> Self {
+        self.code = Some(code.to_owned());
+        self
+    }
+
+    /// The port on 127.0.0.1 (default 0: any free one).
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    /// The Content-Security-Policy of HTML pages (`None`: none).
+    pub fn csp(mut self, csp: Option<&str>) -> Self {
+        self.csp = csp.map(str::to_owned);
+        self
+    }
+
+    /// WebSockets at once (default 64).
+    pub fn max_sockets(mut self, n: usize) -> Self {
+        self.max_sockets = n;
+        self
+    }
+
+    /// The largest message from a client (default 256 KiB).
+    pub fn max_message(mut self, bytes: usize) -> Self {
+        self.max_message = bytes;
+        self
+    }
+
+    /// Failed `hello`s per address and minute before it is refused
+    /// (default 20).
+    pub fn joins_per_minute(mut self, n: usize) -> Self {
+        self.joins_per_minute = n;
+        self
+    }
+
+    /// Checks names (and what the game passes to [`Party::moderate`]).
+    pub fn moderate(mut self, f: impl Fn(&str, &str) -> Moderation + Send + 'static) -> Self {
+        self.moderate = Some(Box::new(f));
+        self
+    }
+}
+
+/// A party: the HTTP and WebSocket server, its link and QR code, the room
+/// and its players. Dropping it closes everything.
+pub struct Party {
+    core: Core,
+    inbox: Inbox,
+    // The HTTP handler's state (public hosts, limits).
+    _shared: Arc<Shared>,
+    server: httpd::Server,
+    tunnel: Option<Tunnel>,
+    local: String,
+    public: Option<String>,
+    qr: Option<QrCode>,
+}
+
+impl std::fmt::Debug for Party {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Party")
+            .field("code", &self.core.code)
+            .field("local", &self.local)
+            .field("public", &self.public)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Party {
+    /// Starts the server (and the tunnel, which may take several
+    /// seconds) and makes the room.
+    pub fn start(options: PartyOptions) -> tvpipe::Result<Party> {
+        let (tx, inbox) = mpsc::channel();
+        let joins = Arc::new(Mutex::new(WindowCounter::new(
+            options.joins_per_minute,
+            Duration::from_secs(60),
+        )));
+        let shared = Arc::new(Shared {
+            port: OnceLock::new(),
+            hosts: RwLock::new(Vec::new()),
+            visitor: RwLock::new(None),
+            joins: joins.clone(),
+            sockets: Arc::new(AtomicUsize::new(0)),
+            next_conn: AtomicU64::new(0),
+            inbox: Mutex::new(tx),
+            phone: options.phone,
+            screen: options.screen,
+            csp: options.csp,
+            max_sockets: options.max_sockets,
+            max_message: options.max_message,
+        });
+        let config = httpd::Config {
+            // Sockets, plus room for page loads.
+            max_connections: options.max_sockets + 32,
+            ..httpd::Config::default()
+        };
+        let server = httpd::Server::bind_with(
+            SocketAddr::from((Ipv4Addr::LOCALHOST, options.port)),
+            server::handler(shared.clone()),
+            config,
+        )?;
+        let port = server.local_addr().port();
+        let _ = shared.port.set(port);
+        let core = Core::new(
+            CoreOptions {
+                code: options.code,
+                max_players: options.max_players,
+                limits: options.limits,
+                moderate: options.moderate,
+            },
+            joins,
+        );
+        let tunnel = match options.join {
+            Join::Local => None,
+            Join::Tunnel(p) => Some(Tunnel::start(port, p)?),
+            Join::Auto => Some(Tunnel::start_auto(port, &|| false)?),
+        };
+        let public = tunnel.as_ref().map(|t| format!("https://{}", t.host()));
+        if let Some(t) = &tunnel {
+            shared
+                .hosts
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(t.host().to_ascii_lowercase());
+        }
+        let mut party = Party {
+            core,
+            inbox,
+            _shared: shared,
+            server,
+            tunnel,
+            local: format!("http://127.0.0.1:{port}"),
+            public,
+            qr: None,
+        };
+        let url = party.join_url();
+        party.qr = QrCode::encode(&url);
+        let qr = party.qr.as_ref().map_or(Value::Null, |q| {
+            Value::object()
+                .with("size", q.size())
+                .with("rows", Value::array(q.rows()))
+        });
+        let join = Value::object()
+            .with("code", party.core.code.as_str())
+            .with("url", url)
+            .with("qr", qr);
+        party.core.set_join(join);
+        party.core.flush();
+        Ok(party)
+    }
+
+    /// The room code.
+    pub fn code(&self) -> &str {
+        &self.core.code
+    }
+
+    /// The port on 127.0.0.1.
+    pub fn port(&self) -> u16 {
+        self.server.local_addr().port()
+    }
+
+    /// The join link for the QR code and the TV:
+    /// `https://HOST/?r=CODE#k=KEY` (or the local one without a tunnel).
+    pub fn join_url(&self) -> String {
+        let base = self.public.as_deref().unwrap_or(&self.local);
+        format!("{base}/?r={}#k={}", self.core.code, self.core.join_key)
+    }
+
+    /// The join link on this computer (`http://127.0.0.1:PORT/…`).
+    pub fn local_join_url(&self) -> String {
+        format!(
+            "{}/?r={}#k={}",
+            self.local, self.core.code, self.core.join_key
+        )
+    }
+
+    /// The web screen on this computer, with the screen key (cast it with
+    /// `tvpipe::share`; it never leaves the machine).
+    pub fn screen_url(&self) -> String {
+        format!(
+            "{}/screen/#r={}&k={}&role=screen",
+            self.local, self.core.code, self.core.screen_key
+        )
+    }
+
+    /// The public read-only screen (`None` without a tunnel).
+    pub fn watch_url(&self) -> Option<String> {
+        self.public.as_ref().map(|p| {
+            format!(
+                "{p}/screen/#r={}&k={}&role=watch",
+                self.core.code, self.core.watch_key
+            )
+        })
+    }
+
+    /// The QR code of [`join_url`](Party::join_url).
+    pub fn join_qr(&self) -> Option<&QrCode> {
+        self.qr.as_ref()
+    }
+
+    /// The tunnel, if there is one.
+    pub fn tunnel(&self) -> Option<&Tunnel> {
+        self.tunnel.as_ref()
+    }
+
+    /// The server's clock (ms since the Unix epoch): deadlines in views
+    /// use it, phones count down to the same instant.
+    pub fn now(&self) -> u64 {
+        party::now_ms()
+    }
+
+    /// What happened since the last call; never blocks.
+    pub fn poll(&mut self) -> Vec<Event> {
+        party::pump(&mut self.core, &self.inbox, None);
+        self.core.events()
+    }
+
+    /// Like [`poll`](Party::poll), but waits up to `timeout` for something
+    /// to happen first.
+    pub fn wait(&mut self, timeout: Duration) -> Vec<Event> {
+        party::pump(&mut self.core, &self.inbox, Some(timeout));
+        self.core.events()
+    }
+
+    /// Like [`wait`](Party::wait), until an instant.
+    pub fn wait_until(&mut self, deadline: Instant) -> Vec<Event> {
+        self.wait(deadline.saturating_duration_since(Instant::now()))
+    }
+
+    /// Sends what changed since the last flush: one `state` diff per
+    /// client, then the answers to actions (unanswered ones are refused
+    /// as `unknown-action`).
+    pub fn flush(&mut self) {
+        self.core.flush();
+    }
+
+    /// Answers an action: a result for the phone (`null` for none) or an
+    /// error. Sent by the next [`flush`](Party::flush), after the state.
+    pub fn reply<T: Into<Value>>(&mut self, action: Action, result: Result<T, PartyError>) {
+        self.core.reply(action, result.map(Into::into));
+    }
+
+    /// What every player sees (`view.room`).
+    pub fn room(&mut self) -> &mut State {
+        &mut self.core.room
+    }
+
+    /// What screens see (`view.screen`).
+    pub fn screen(&mut self) -> &mut State {
+        &mut self.core.screen
+    }
+
+    /// What only this player sees (`view.me`).
+    pub fn player_state(&mut self, id: &PlayerId) -> Option<&mut State> {
+        self.core.player_mut(id).map(|p| &mut p.state)
+    }
+
+    /// The players in join order (away ones included).
+    pub fn players(&self) -> &[Player] {
+        self.core.players()
+    }
+
+    /// A player.
+    pub fn player(&self, id: &PlayerId) -> Option<&Player> {
+        self.core.player(id)
+    }
+
+    /// The VIP.
+    pub fn vip(&self) -> Option<&Player> {
+        self.core.players().iter().find(|p| p.vip())
+    }
+
+    /// No new players from now on (resumes still work).
+    pub fn lock(&mut self) {
+        self.core.lock();
+    }
+
+    /// New players may join again.
+    pub fn unlock(&mut self) {
+        self.core.unlock();
+    }
+
+    /// Whether new players are refused.
+    pub fn locked(&self) -> bool {
+        self.core.locked()
+    }
+
+    /// Removes a player for good, telling their phone why.
+    pub fn kick(&mut self, id: &PlayerId, reason: &str) {
+        self.core.kick(id, reason);
+    }
+
+    /// Ends the party: every client gets `bye room-closed`.
+    pub fn close(&mut self) {
+        self.core.close();
+    }
+
+    /// Whether the party was closed.
+    pub fn closed(&self) -> bool {
+        self.core.closed()
+    }
+
+    /// A transient message to one player (lost when the phone is away).
+    pub fn send(&mut self, to: &PlayerId, kind: &str, data: impl Into<Value>) {
+        self.core.send(to, kind, data.into());
+    }
+
+    /// A transient message to every connected player.
+    pub fn broadcast(&mut self, kind: &str, data: impl Into<Value>) {
+        self.core.broadcast(kind, data.into(), &[Role::Player]);
+    }
+
+    /// A transient message to every connected client of these roles.
+    pub fn broadcast_to(&mut self, roles: &[Role], kind: &str, data: impl Into<Value>) {
+        self.core.broadcast(kind, data.into(), roles);
+    }
+
+    /// Runs the moderation hook on a text the game shows.
+    pub fn moderate(&self, text: &str, kind: &str) -> Moderation {
+        self.core.moderate(text, kind)
+    }
+
+    /// The screen view (`{roster, screen, join}`) as of the last flush,
+    /// for a renderer on another thread.
+    pub fn screen_watch(&self) -> ScreenWatch {
+        self.core.watch()
+    }
+
+    /// The screen view now.
+    pub fn screen_view(&self) -> Value {
+        Value::Object(self.core.screen_view())
+    }
+
+    /// Replaces the join info screens get (tests).
+    #[doc(hidden)]
+    pub fn __set_join(&mut self, join: Value) {
+        self.core.set_join(join);
+    }
+
+    /// The party's keys (tests): join, screen, watch.
+    #[doc(hidden)]
+    pub fn __keys(&self) -> (&str, &str, &str) {
+        (
+            &self.core.join_key,
+            &self.core.screen_key,
+            &self.core.watch_key,
+        )
+    }
+}
+
+impl Drop for Party {
+    fn drop(&mut self) {
+        self.core.close();
+        self.server.shutdown();
+    }
+}
 
 #[cfg(test)]
 mod tests {

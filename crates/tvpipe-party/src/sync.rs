@@ -94,6 +94,7 @@ pub(crate) fn json_equal(a: &Value, b: &Value) -> bool {
 }
 
 /// Applies a diff to `view` (the client's rules).
+#[cfg(test)]
 pub(crate) fn apply(view: &mut Object, d: &Diff) {
     merge(view, &d.set);
     for path in &d.del {
@@ -110,6 +111,7 @@ pub(crate) fn apply(view: &mut Object, d: &Diff) {
     }
 }
 
+#[cfg(test)]
 fn merge(target: &mut Object, patch: &Object) {
     for (k, pv) in patch.iter() {
         match (target.get_mut(k), pv) {

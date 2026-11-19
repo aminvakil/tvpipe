@@ -427,6 +427,7 @@ fn grapheme_starts(s: &str) -> Vec<usize> {
 }
 
 /// Number of user-perceived characters.
+#[cfg(test)]
 pub(crate) fn graphemes(s: &str) -> usize {
     grapheme_starts(s).len()
 }
