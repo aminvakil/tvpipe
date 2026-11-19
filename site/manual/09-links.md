@@ -42,6 +42,21 @@ Nothing reaches the TV until you allow it. tvpipe asks in the terminal and shows
 
 Programs that use `--machine` or the [Node SDK](node.md) have no terminal to ask in. They need `--yes`, in the SDK `yes: true`, or remote shares never show.
 
+## Any web app
+
+:::aside QR codes
+`tvpipe qr TEXT` prints any link as a QR code, `--svg` as an SVG file.
+:::
+
+`tvpipe tunnel PORT` puts a server of your own on a public link, for example a web app on port 8080. It runs until you stop it.
+
+```sh
+$ tvpipe tunnel 8080
+$ tvpipe tunnel 8080 --tunnel=opentunnel
+```
+
+Your server answers everything that comes in, so it decides who may do what. The [party games](party.md) library uses this for the players' phones.
+
 ## Providers
 
 :::aside Spelling

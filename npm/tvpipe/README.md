@@ -153,6 +153,23 @@ so pass `yes: true` or remote shares are refused. The `tunnel` event and
 `viewer` events (`public: true`) tell you what happens. Details:
 [docs/tunnels.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/tunnels.md).
 
+### Any server, and QR codes
+
+```js
+import { tunnel, qr } from "@tvpipe/sdk";
+
+const t = await tunnel({ port: 8080 });          // or provider: "opentunnel"
+console.log(t.url);                              // https://….trycloudflare.com/ → http://127.0.0.1:8080
+const code = await qr(t.url);                    // code.size, code.rows, code.dark(x, y), code.svg()
+await t.stop();
+```
+
+`tunnel()` puts any server on 127.0.0.1 on a public link (`tvpipe tunnel
+PORT`). The server decides who may do what: requests arrive with `t.host`
+as `Host`, WebSockets with `Origin: https://${t.host}`. `qr()` returns the
+QR code of a text as data, for a page or a frame of your own.
+[`@tvpipe/party`](../party/README.md) builds party games on both.
+
 ## Apple TV pairing
 
 Some AirPlay receivers show a PIN the first time:

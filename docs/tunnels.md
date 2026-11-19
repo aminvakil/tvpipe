@@ -6,7 +6,10 @@ people elsewhere:
 - **the player** (`play`/`preview`/`test-pattern`/`screen --to browser
   --tunnel`): they watch the stream;
 - **the share page** (`share --tunnel`): someone remote shares a tab,
-  window or screen to the local receivers, after the local user says yes.
+  window or screen to the local receivers, after the local user says yes;
+- **any server on 127.0.0.1** (`tvpipe tunnel PORT`): a program's own web
+  app, e.g. a party game's pages for the players' phones
+  ([`party-design.md`](party-design.md)); see [below](#any-port-tvpipe-tunnel-port).
 
 Two providers are built in, natively (no new crate, no external program),
 behind one small interface (`net::tunnel::Tunnel`); everything else here
@@ -87,6 +90,32 @@ to them from loopback like everything else, so the decision is made on
   resumes at the next keyframe. Behind a tunnel a slow viewer's socket
   never stalls (the relay buffers), and all viewers share the relay link,
   whose buffers would otherwise fill up for everyone.
+
+## Any port (`tvpipe tunnel PORT`)
+
+```
+$ tvpipe tunnel 8080
+tunnel: connected to Cloudflare (vie02)
+tunnel: https://words-words-words.trycloudflare.com/ leads to http://127.0.0.1:8080 (Cloudflare quick tunnel; the link is new every run)
+$ tvpipe --machine tunnel 8080 --tunnel=opentunnel
+{"type":"tunnel","page":"port","provider":"opentunnel","url":"https://….opentunnel.xyz/"}
+```
+
+The same providers, for a server tvpipe does not own: the link carries
+requests to `127.0.0.1:PORT` until Ctrl-C, `q`, or (`--machine`) the
+`stop` command or stdin closing. None of the access rules above apply:
+**the server decides**. Requests arrive with the public name as `Host`
+(the server should accept only that and its loopback names: DNS
+rebinding), WebSockets with `Origin: https://HOST` (check it: cross-site
+hijacking), and the link has no token, so anything not meant for
+everyone needs a key of the server's. Through Cloudflare the visitor's
+address is in `cf-connecting-ip`; through OpenTunnel the server sees only
+loopback. The QR code is drawn on a terminal as for the pages. From Node:
+`tunnel({ port, provider })` in `@tvpipe/sdk`; `@tvpipe/party` uses it.
+
+`tvpipe qr [--svg | --rows] TEXT` prints the same QR codes for other
+uses: terminal art, an SVG document, or one line of `0`/`1` per module row
+for programs (the SDK's `qr()`, a party game's TV screen).
 
 ## Comparison
 

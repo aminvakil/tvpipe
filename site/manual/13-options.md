@@ -19,6 +19,8 @@ Every command lists all of its options with `--help`.
 | `share` | Shares a browser tab or a web page. See [Sharing the screen](screen.md#s3) and [A web page on the TV](web-page.md). |
 | `preview` | Plays in a browser tab. See [Playing to a browser](browser.md). |
 | `test-pattern` | Sends a test pattern. See [Latency](latency.md). |
+| `tunnel` | Puts a server on this computer on a public link. See [Public links](links.md#s3). |
+| `qr` | Prints a QR code, `--svg` or `--rows` for programs. |
 | `debug-pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |
 
 ## Streaming

@@ -43,7 +43,7 @@ broke), by an `error`.
 | `player` | a `--to browser` page listens | `name`, `url` |
 | `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`), `public` (it came over the tunnel) |
 | `share-page` | `share` without URL listens | `url` (open it, press Share) |
-| `tunnel` | `--tunnel`: the public link works | `page` (`player`, `share`), `name` (the player's), `provider` (`cloudflare`, `opentunnel`), `url` (with its token) |
+| `tunnel` | `--tunnel` or `tunnel PORT`: the public link works | `page` (`player`, `share`, `port`), `name` (the player's), `provider` (`cloudflare`, `opentunnel`), `url` (with its token) |
 | `capture` | `share`, `share URL` or `screen`: the browser started sharing | `surface` (`monitor`, `window`, `browser`), `label`, `width`, `height` (the capture's), `audio` (it has sound) |
 | `connected` | the receivers are connected; the input opens next (SLRW is read from here on) | `receivers` (names) |
 | `started` | the input is open and the receivers started | `route` (`passthrough`, `ffmpeg`, `builtin`, `encoded`, `browser`), `video` (`codec`, `width`, `height`, `fps`), `audio` (list of `codec`, `sample_rate`, `channels`), `latency_ms` |
