@@ -25,6 +25,9 @@
 //!
 //! A handler may only touch an atomic, so [`on_signal`] and
 //! [`stop_on_signal`] poll it from a thread of their own (every 20 ms).
+//! [`before_forced_exit`] does the same for the second signal: with it,
+//! the second signal leaves the exit to that thread (which first runs its
+//! cleanup, e.g. restoring the terminal) and only a third exits at once.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -32,6 +35,19 @@ use std::time::Duration;
 use crate::Stopper;
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
+/// A [`before_forced_exit`] thread waits for the second signal.
+static DEFERRED: AtomicBool = AtomicBool::new(false);
+/// The second signal came; the waiting thread exits.
+static FORCED: AtomicBool = AtomicBool::new(false);
+
+/// What the handler does on a signal: stop (first), leave the exit to
+/// the [`before_forced_exit`] thread (second, if one waits), exit at once.
+fn on_signal_flags() -> bool {
+    if !REQUESTED.swap(true, Ordering::SeqCst) {
+        return true;
+    }
+    DEFERRED.load(Ordering::SeqCst) && !FORCED.swap(true, Ordering::SeqCst)
+}
 
 /// Installs the Ctrl-C/SIGTERM handler (again is fine). Returns false if
 /// the platform refused or has none here; Ctrl-C then ends the process as
@@ -64,6 +80,29 @@ pub fn on_signal(f: impl FnOnce() + Send + 'static) -> bool {
         .is_ok()
 }
 
+/// Runs `f` before a second Ctrl-C/SIGTERM ends the process (after
+/// [`install`]): `f` runs on a thread of its own, then the process exits
+/// with 130. Meant for quick cleanup such as restoring the terminal; a
+/// third signal exits at once, also while `f` runs. Returns false if the
+/// thread could not start (the second signal then exits at once, as
+/// without this).
+pub fn before_forced_exit(f: impl FnOnce() + Send + 'static) -> bool {
+    let started = std::thread::Builder::new()
+        .name("tvpipe-forced-exit".into())
+        .spawn(move || {
+            while !FORCED.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            f();
+            std::process::exit(130);
+        })
+        .is_ok();
+    if started {
+        DEFERRED.store(true, Ordering::SeqCst);
+    }
+    started
+}
+
 /// Stops a session or stream on Ctrl-C/SIGTERM ([`on_signal`] with
 /// [`Stopper::stop`]).
 pub fn stop_on_signal(stopper: Stopper) -> bool {
@@ -72,8 +111,6 @@ pub fn stop_on_signal(stopper: Stopper) -> bool {
 
 #[cfg(unix)]
 mod sys {
-    use super::REQUESTED;
-    use std::sync::atomic::Ordering;
 
     // POSIX signal numbers; identical on every unix we build for.
     const SIGINT: i32 = 2;
@@ -89,9 +126,9 @@ mod sys {
     }
 
     extern "C" fn on_signal(_signum: i32) {
-        // Only async-signal-safe operations: a lock-free atomic swap, and
+        // Only async-signal-safe operations: lock-free atomics, and
         // `_exit` (which runs no atexit handlers or destructors).
-        if REQUESTED.swap(true, Ordering::SeqCst) {
+        if !super::on_signal_flags() {
             // SAFETY: `_exit` is async-signal-safe and takes any status.
             unsafe { _exit(130) }
         }
@@ -107,9 +144,6 @@ mod sys {
 
 #[cfg(windows)]
 mod sys {
-    use super::REQUESTED;
-    use std::sync::atomic::Ordering;
-
     const CTRL_C_EVENT: u32 = 0;
     const CTRL_BREAK_EVENT: u32 = 1;
 
@@ -122,9 +156,10 @@ mod sys {
 
     unsafe extern "system" fn on_ctrl(event: u32) -> i32 {
         match event {
-            // First press: handled (TRUE); second: not handled (FALSE), so
+            // First press (and the second with a `before_forced_exit`
+            // thread waiting): handled (TRUE); then not handled (FALSE), so
             // the default handler ends the process.
-            CTRL_C_EVENT | CTRL_BREAK_EVENT => !REQUESTED.swap(true, Ordering::SeqCst) as i32,
+            CTRL_C_EVENT | CTRL_BREAK_EVENT => super::on_signal_flags() as i32,
             _ => 0,
         }
     }
