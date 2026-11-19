@@ -88,6 +88,28 @@ fn padded_bottom_up_frames_are_packed() {
 }
 
 #[test]
+fn frame_buffers_are_filled_in_place_and_reused() {
+    let mut s = stream(browser().video(4, 2, 30, PixelFormat::Rgba)).unwrap();
+    let mut b = s.frame_buffer();
+    assert_eq!(b.len(), 32);
+    b.fill(7);
+    assert_eq!(s.submit(b, Duration::ZERO).unwrap(), Written::Queued);
+    let rec = s.last_record().unwrap();
+    assert_eq!((rec[0], &rec[13..]), (1, &[7u8; 32][..]));
+    // Too soon for the frame rate: dropped, the buffer goes back.
+    let b = s.frame_buffer();
+    assert_eq!(
+        s.submit(b, Duration::from_millis(1)).unwrap(),
+        Written::Dropped
+    );
+    let mut other = stream(browser().video(2, 2, 30, PixelFormat::Rgba)).unwrap();
+    let b = other.frame_buffer();
+    assert!(s.submit(b, Duration::from_secs(1)).is_err());
+    other.stop().unwrap();
+    s.stop().unwrap();
+}
+
+#[test]
 fn test_pattern_session_stops() {
     let mut s = test_pattern(browser().size(160, 90)).unwrap();
     let until = Instant::now() + Duration::from_secs(10);

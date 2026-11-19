@@ -54,8 +54,8 @@ pub mod recipes;
 
 pub use api::{
     discover, discover_with, play, preview, share, stream, test_pattern, AudioWriter, ConfigFormat,
-    Discovery, Frame, Input, Options, PairingState, PixelFormat, PlayerOptions, ReceiverInfo,
-    Session, SessionState, Stopper, Stream, TunnelProvider, Written, H264,
+    Discovery, Frame, FrameBuffer, Input, Options, PairingState, PixelFormat, PlayerOptions,
+    ReceiverInfo, Session, SessionState, Stopper, Stream, TunnelProvider, Written, H264,
 };
 #[cfg(feature = "airplay")]
 pub use api::{pair, pair_with, unpair, Pairing};

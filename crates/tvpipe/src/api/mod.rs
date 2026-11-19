@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 pub use options::{Input, Options, PixelFormat, PlayerOptions, TunnelProvider};
 pub use session::{ReceiverInfo, Session, SessionState, Stopper};
-pub use stream::{AudioWriter, ConfigFormat, Frame, Stream, Written, H264};
+pub use stream::{AudioWriter, ConfigFormat, Frame, FrameBuffer, Stream, Written, H264};
 
 use crate::error::{Error, Result};
 use crate::events::{Event, Paired, PinRequest, Unpaired};

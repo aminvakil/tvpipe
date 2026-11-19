@@ -139,7 +139,12 @@ struct PipeState {
     video: usize,
     audio_bytes: usize,
     closed: bool,
+    /// Video records the reader is done with, for the next frames.
+    pool: Vec<Vec<u8>>,
 }
+
+/// Frame buffers kept for reuse.
+const POOL: usize = VIDEO_QUEUE + 2;
 
 /// SLRW bytes from the writers to the session's reader.
 struct Pipe {
@@ -188,8 +193,13 @@ impl Read for PipeReader {
                 buf[..n].copy_from_slice(&chunk[st.pos..st.pos + n]);
                 st.pos += n;
                 if st.pos == len {
-                    st.chunks.pop_front();
+                    let done = st.chunks.pop_front();
                     st.pos = 0;
+                    if let Some((ChunkKind::Video, v)) = done {
+                        if st.pool.len() < POOL {
+                            st.pool.push(v);
+                        }
+                    }
                     match kind {
                         ChunkKind::Video => st.video -= 1,
                         ChunkKind::Audio => st.audio_bytes -= len,
@@ -208,10 +218,63 @@ impl Read for PipeReader {
 
 pub(crate) fn record(kind: Kind, pts: Duration, payload_len: usize) -> Vec<u8> {
     let mut r = Vec::with_capacity(13 + payload_len);
-    r.push(kind.code());
-    r.extend_from_slice(&(pts.as_micros().min(u64::MAX as u128) as u64).to_le_bytes());
-    r.extend_from_slice(&(payload_len as u32).to_le_bytes());
+    r.extend_from_slice(&header(kind, pts, payload_len));
     r
+}
+
+fn header(kind: Kind, pts: Duration, payload_len: usize) -> [u8; 13] {
+    let mut h = [0u8; 13];
+    h[0] = kind.code();
+    h[1..9].copy_from_slice(&(pts.as_micros().min(u64::MAX as u128) as u64).to_le_bytes());
+    h[9..13].copy_from_slice(&(payload_len as u32).to_le_bytes());
+    h
+}
+
+impl Pipe {
+    /// A video record of `payload_len` bytes (zeroed header), from the
+    /// pool when one is free.
+    fn video_buffer(&self, payload_len: usize) -> Vec<u8> {
+        let mut v = self.lock().pool.pop().unwrap_or_default();
+        v.clear();
+        v.resize(13 + payload_len, 0);
+        v
+    }
+
+    fn recycle(&self, v: Vec<u8>) {
+        let mut st = self.lock();
+        if st.pool.len() < POOL {
+            st.pool.push(v);
+        }
+    }
+}
+
+/// A raw frame to fill in place (a GPU readback writing straight into
+/// it skips a copy): from [`Stream::frame_buffer`], queued with
+/// [`Stream::submit`]. Derefs to the frame's packed bytes.
+pub struct FrameBuffer {
+    record: Vec<u8>,
+}
+
+impl std::fmt::Debug for FrameBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FrameBuffer")
+            .field("len", &(self.record.len() - 13))
+            .finish()
+    }
+}
+
+impl std::ops::Deref for FrameBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.record[13..]
+    }
+}
+
+impl std::ops::DerefMut for FrameBuffer {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.record[13..]
+    }
 }
 
 /// The keyframe requests the encoded input writes (`keyframe\n` lines).
@@ -403,8 +466,9 @@ impl Stream {
         if !self.accept_video(pts) {
             return Ok(Written::Dropped);
         }
-        let mut r = record(Kind::Video, pts, frame.len());
-        r.extend_from_slice(frame);
+        let mut r = self.pipe.video_buffer(frame.len());
+        r[..13].copy_from_slice(&header(Kind::Video, pts, frame.len()));
+        r[13..].copy_from_slice(frame);
         self.pipe.push(ChunkKind::Video, r);
         self.last_video = Some(pts);
         Ok(Written::Queued)
@@ -446,6 +510,35 @@ impl Stream {
                 r.extend_from_slice(&data[src * stride..src * stride + row]);
             }
         }
+        self.pipe.push(ChunkKind::Video, r);
+        self.last_video = Some(pts);
+        Ok(Written::Queued)
+    }
+
+    /// A buffer for one packed raw frame (reused between frames) to fill
+    /// and [`submit`](Stream::submit): no copy of the frame on the
+    /// caller's thread.
+    pub fn frame_buffer(&mut self) -> FrameBuffer {
+        FrameBuffer {
+            record: self.pipe.video_buffer(self.frame_size),
+        }
+    }
+
+    /// Queues a filled [`FrameBuffer`] (or drops it, like
+    /// [`write_video`](Stream::write_video); the buffer is reused).
+    pub fn submit(&mut self, buffer: FrameBuffer, pts: Duration) -> Result<Written> {
+        if self.video.format.is_none() {
+            return Err(Error::usage("this stream takes H.264 (write_h264)"));
+        }
+        let mut r = buffer.record;
+        if r.len() != 13 + self.frame_size {
+            return Err(Error::usage("a frame buffer of another stream"));
+        }
+        if !self.accept_video(pts) {
+            self.pipe.recycle(r);
+            return Ok(Written::Dropped);
+        }
+        r[..13].copy_from_slice(&header(Kind::Video, pts, self.frame_size));
         self.pipe.push(ChunkKind::Video, r);
         self.last_video = Some(pts);
         Ok(Written::Queued)

@@ -2,9 +2,8 @@
 
 Status: implemented (plan steps 1–4 and 6; step 5, the hardware matrix,
 is open). Decisions marked **Decided** are listed in §10. Not built yet
-from §5.3: `convert_on_caller()` and the pooled `frame_buffer()`/`submit()`
-(frames are copied on the caller and converted on the encoder thread,
-decision 8's default).
+from §5.3: `convert_on_caller()` (frames are copied on the caller and
+converted on the encoder thread, decision 8's default).
 Goal: a Rust game (or any Rust program) adds one
 dependency and streams its own frames and sound to an Apple TV, a
 Chromecast or a browser tab:
