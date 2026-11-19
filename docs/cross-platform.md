@@ -170,6 +170,13 @@ in another on the same user-defined bridge network.
   deadline (`util::thread::join_until`).
 - Socket timeouts are per handle on Windows (copied by `try_clone`): set
   them before cloning, or on the handle that reads.
+- Windows serializes synchronous I/O on a file object: while a thread
+  blocks in `ReadFile` on a pipe, other calls on that handle wait for it,
+  including `is_terminal` (it asks the pipe for its name to spot MSYS
+  terminals). With `--machine` the stdin router reads stdin from the
+  start, so nothing else may touch stdin then; `interrupt::watch_stdin`
+  checked `is_terminal` first and hung the session at start on Windows
+  runners until the parent wrote again.
 - A refused loopback `connect` takes about 2 s on Windows (it retries
   the SYN), not a few microseconds: tests that count retries in a short
   window fail the connects themselves.

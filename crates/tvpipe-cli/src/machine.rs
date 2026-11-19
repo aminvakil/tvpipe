@@ -160,7 +160,9 @@ pub struct Router(Arc<Shared>);
 static ROUTER: OnceLock<Router> = OnceLock::new();
 
 /// Starts the process's router on stdin (`main`, with `--machine`);
-/// `stop` is the session's.
+/// `stop` is the session's. From then on nothing else may touch stdin,
+/// not even to ask whether it is a terminal: on Windows that waits for the
+/// router's pending read (`interrupt::watch_stdin`).
 pub fn start_router(stop: tvpipe::__cli::Stop) {
     let r = Router::spawn(
         io::stdin(),

@@ -100,7 +100,18 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
 /// If stdin is a terminal, reads it on a background thread and requests
 /// `stop` on a line `q` (like ffmpeg). Does nothing otherwise, so piped or
 /// closed stdin never stops a session.
+///
+/// Never with `--machine`: the router owns stdin then, and on Windows
+/// `is_terminal` must not run while its read is pending. Windows
+/// serializes synchronous I/O on a file object, and `is_terminal` asks a
+/// pipe for its name (`GetFileInformationByHandleEx`, to spot MSYS
+/// terminals), which waits until the router's `ReadFile` returns: until
+/// the parent writes again, possibly never (the SDK's sessions hung at
+/// start on Windows runners).
 pub fn watch_stdin(stop: Stop) {
+    if crate::machine::router().is_some() {
+        return;
+    }
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
         return;
