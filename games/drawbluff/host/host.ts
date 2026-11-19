@@ -7,7 +7,7 @@
  * TV.
  */
 
-import { qrSvg, Tvpipe, type CastStatus, type HostedParty, type LateJoin } from "@tvpipe/party";
+import { qrSvg, Tvpipe, type CastStatus, type HostedParty, type LateJoin, type SurfaceEncoder } from "@tvpipe/party";
 
 import { bots, type Bot } from "../game/bots.ts";
 import { DEFAULT_TIMINGS, Drawbluff, FAST_TIMINGS } from "../game/game.ts";
@@ -102,13 +102,76 @@ function renderCast(s: CastStatus): void {
   if (s.player) player.href = s.player;
 }
 
+/** How the TV gets its picture (docs/playshare-design.md §17). */
+let tvMode: "page" | "canvas" = "page";
+let surface: SurfaceEncoder | undefined;
+let stopCanvas: (() => void) | undefined;
+
+/** Whether this browser draws HTML into a canvas (Chrome 157+). */
+const htmlInCanvas = "drawElementImage" in CanvasRenderingContext2D.prototype;
+
 async function cast(): Promise<void> {
   showError(null);
+  surface?.close();
+  surface = undefined;
+  stopCanvas?.();
+  stopCanvas = undefined;
   try {
-    renderCast(await party.cast());
+    if (tvMode === "canvas") await beamCanvas();
+    else renderCast(await party.cast());
   } catch (err) {
     renderCast({ state: "failed", error: (err as Error).message });
   }
+}
+
+/**
+ * The TV page in this window, inside a canvas that draws it
+ * (HTML-in-Canvas), encoded here and streamed by tvpipe: no second
+ * browser. Needs the window visible (painting stops when it is not); the
+ * TV page's sound stays here.
+ */
+async function beamCanvas(): Promise<void> {
+  await party.stopCast().catch(() => {});
+  const canvas = document.createElement("canvas") as HTMLCanvasElement & { onpaint: (() => void) | null; requestPaint(): void };
+  canvas.width = 1280;
+  canvas.height = 720;
+  canvas.setAttribute("layoutsubtree", "");
+  canvas.setAttribute("content", "drawable");
+  const tv = document.createElement("iframe");
+  tv.setAttribute("drawable", "");
+  tv.title = "The TV page";
+  tv.style.cssText = "width:1280px;height:720px;border:0";
+  tv.src = `${party.links.tv}&mute=1`;
+  canvas.append(tv);
+  const preview = $<HTMLIFrameElement>("preview");
+  preview.hidden = true;
+  preview.parentElement!.append(canvas);
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D & { drawElementImage(e: Element, x: number, y: number, w: number, h: number): unknown };
+  const s = await tvpipe.surface({ canvas, fps: 30 });
+  surface = s;
+  s.on("status", (st) => renderCast(st as CastStatus));
+  s.on("error", (e) => showError(`The TV picture: ${e.message}`));
+  canvas.onpaint = () => {
+    ctx.reset();
+    try {
+      ctx.drawElementImage(tv, 0, 0, 1280, 720);
+    } catch {
+      return; // not painted yet
+    }
+    s.frame();
+  };
+  let live = true;
+  const tick = () => {
+    if (!live) return;
+    canvas.requestPaint();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  stopCanvas = () => {
+    live = false;
+    canvas.remove();
+    preview.hidden = false;
+  };
 }
 
 function fitPreview(): void {
@@ -184,6 +247,15 @@ async function main(): Promise<void> {
   };
   $("quit").onclick = () => void tvpipe.quit();
   $("cast-again").onclick = () => void cast();
+  const mode = $<HTMLSelectElement>("tvmode");
+  if (!htmlInCanvas) {
+    mode.disabled = true;
+    mode.title = "Needs a browser that draws HTML into a canvas (Chrome 157 or later)";
+  }
+  mode.onchange = () => {
+    tvMode = mode.value === "canvas" ? "canvas" : "page";
+    void cast();
+  };
 
   const chosen = await tvpipe.selection();
   if (chosen.length > 0) await cast();

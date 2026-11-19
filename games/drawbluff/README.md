@@ -52,8 +52,12 @@ room code and QR code, the TVs, the players, rounds and timers, and who
 may join during a game (from the next round, anytime, or not at all).
 "Add a bot" adds fake players to try it alone. Scan the QR code on the
 TV; the first player is the VIP and starts the game from their phone
-once three are in (or the host page's Start). Closing the window ends
-it all. `tvpipe playshare --help`: tunnels (`--tunnel=opentunnel`,
+once three are in (or the host page's Start). The TV picture comes
+from tvpipe's own browser showing the TV page (the default), or, with
+**TV picture: drawn here** in Chrome 157+, from the TV page drawn into a
+canvas in the window (HTML-in-Canvas) and streamed as a surface: no
+second browser, but the window must stay visible (docs/playshare-design.md
+§17). Closing the window ends it all. `tvpipe playshare --help`: tunnels (`--tunnel=opentunnel`,
 `--no-tunnel`), the LAN (`--lan`), `--window`.
 
 ## Tests

@@ -8,7 +8,11 @@
  * stream); bots join through the public listener. Screenshots of the
  * launcher, the host window, the TV and the phone per phase.
  *
- *   npm run build && node test/live/playshare.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--out DIR]
+ *   npm run build && node test/live/playshare.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--out DIR]
+ *
+ * `--tv canvas`: the TV page drawn into a canvas in the window
+ * (HTML-in-Canvas) and streamed as a surface instead of tvpipe's own
+ * browser capturing it (docs/playshare-design.md §17).
  *
  * Needs Chrome and tvpipe built (target/release, else target/debug, or
  * TVPIPE_BINARY).
@@ -30,6 +34,7 @@ const { values: args } = parseArgs({
     rounds: { type: "string", default: "1" },
     tunnel: { type: "string" },
     out: { type: "string", default: "/tmp/drawbluff-playshare" },
+    tv: { type: "string", default: "page" },
   },
 });
 
@@ -41,7 +46,7 @@ const binary =
   ["release", "debug"].map((p) => fileURLToPath(new URL(`target/${p}/${exe}`, repo))).find((p) => existsSync(p));
 if (!binary) throw new Error("build tvpipe first (cargo build --release -p tvpipe-cli)");
 const bundle = fileURLToPath(args.zip ? new URL("drawbluff.zip", here) : here);
-const out = `${args.out}${args.zip ? "-zip" : ""}`;
+const out = `${args.out}${args.zip ? "-zip" : ""}${args.tv === "canvas" ? "-canvas" : ""}`;
 mkdirSync(out, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
@@ -84,6 +89,12 @@ try {
   log(`room ${links.code}, phones join at ${links.join.replace(/#.*/, "#k=…")}`);
   // The TV: the browser receiver's player page, once the cast streams.
   await win.until(`!document.getElementById("player").hidden`, 60_000);
+  if (args.tv === "canvas") {
+    const before = await win.eval<string>(`document.getElementById("player").href`);
+    await win.eval(`(() => { const m = document.getElementById("tvmode"); m.value = "canvas"; m.dispatchEvent(new Event("change")); return true; })()`);
+    await win.until(`document.getElementById("player").href !== ${JSON.stringify(before)} && !document.getElementById("player").hidden`, 60_000);
+    log("the TV picture is drawn in the window (HTML-in-Canvas) and streamed as a surface");
+  }
   const playerUrl = await win.eval<string>(`document.getElementById("player").href`);
   const tv = await browser.open(playerUrl, { width: 1280, height: 720 });
   log(`TV: ${playerUrl.replace(/t=.*/, "t=…")}`);
