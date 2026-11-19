@@ -7,6 +7,7 @@
 // Until the server (step 3 of the plan) uses every piece.
 #![allow(dead_code)]
 
+mod names;
 mod sync;
 #[cfg(test)]
 mod testutil;
