@@ -466,13 +466,21 @@ Everything is platform-neutral except these, each with no crate and every
     swap. One code path for every Unix.
   - Windows: `SetConsoleCtrlHandler`.
 
-  A second Ctrl-C exits immediately. The library never installs it by
-  itself: a program calls `tvpipe::signals::stop_on_signal(stopper)` (or
-  `on_signal(f)`). In the CLI
-  (`crates/tvpipe-cli/src/interrupt.rs`), `q` then Enter also stops, using std
-  only (only when stdin is a terminal, not SLRW). On a stop the session
-  does not drain: every sink's `stop()` runs and ffmpeg is killed and
-  reaped. Ctrl-C/SIGTERM exits with 130, `q` with 0.
+  A second Ctrl-C exits immediately (after a `before_forced_exit(f)`
+  cleanup, if a program registered one; then a third does). The library
+  never installs it by itself: a program calls
+  `tvpipe::signals::stop_on_signal(stopper)` (or `on_signal(f)`). In the
+  CLI (`crates/tvpipe-cli/src/interrupt.rs`), `q` also stops, using std
+  only (only when stdin is a terminal, not SLRW; while something is
+  watched the first `q` asks). On a stop the session does not drain:
+  every sink's `stop()` runs and ffmpeg is killed and reaped.
+  Ctrl-C/SIGTERM exits with 130, `q` with 0.
+- **`q` without Enter** (`crates/tvpipe-cli/src/tty.rs`): the CLI runs
+  `stty -icanon -echo min 1 time 0` on its terminal and `stty` with what
+  `stty -g` printed when it ends (also on errors, panics, a second Ctrl-C,
+  and around prompts that read a line). A command, not an OS API: where
+  there is none, or it changes nothing (Windows consoles), `q` needs
+  Enter.
 - **Windows timer resolution** (`crates/tvpipe/src/util/timer.rs`). Windows ends timed
   waits on the 15.6 ms system tick, which made Cast pacing bursty.
   `timeBeginPeriod(1)` (winmm, once per process, no `timeEndPeriod`: since

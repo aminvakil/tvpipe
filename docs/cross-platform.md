@@ -47,7 +47,7 @@ Parallels VM "Windows 11", build 26200, 4 vCPUs, network mode *shared*
 | `debug pattern --to cast:10.211.55.2:8011` (openscreen `cast_receiver` on the Mac's `bridge100`) | streams; receiver plays the frames; wallclock overlay renders (ffmpeg prints a harmless Fontconfig warning) |
 | Ctrl-C (`CTRL_C_EVENT`) | handler runs, STOP sent, exit 130, ~0.3 s |
 | Ctrl-Break | same, exit 130 |
-| `q` + Enter on the console | clean stop, exit 0 |
+| `q` + Enter on the console (no `stty`: line mode) | clean stop, exit 0 |
 | SLRW raw RGBA via a `cmd` pipe and via `< file` | ok (binary-safe) |
 | SLRW encoded with `slrw-gen --exec` (keyframe back channel on stdout) | ok, keyframe request reaches the game |
 | SLRW through a Windows PowerShell 5.1 pipe | **corrupted** (PowerShell 5.1 re-encodes native pipes as text: `slrw: unknown record kind 10`); use `cmd`, PowerShell 7.4+, a file, or spawn tvpipe from the game |
@@ -151,7 +151,10 @@ in another on the same user-defined bridge network.
 ## Platform differences handled in the code
 
 - Ctrl-C: `crates/tvpipe/src/signals.rs` (the `signals` feature; the CLI's
-  `q` + Enter is `crates/tvpipe-cli/src/interrupt.rs`).
+  `q` is `crates/tvpipe-cli/src/interrupt.rs`).
+- `q` as a single key: `crates/tvpipe-cli/src/tty.rs` runs `stty -icanon
+  -echo` (restored at the end); where there is no `stty` (Windows
+  consoles) it stays `q` + Enter.
 - Timer resolution: `crates/tvpipe/src/util/timer.rs`, Windows only.
 - Config directory: `crates/tvpipe/src/storage.rs` (`%APPDATA%\tvpipe`).
 - `ffmpeg.exe`/`ffprobe.exe`: `std::env::consts::EXE_SUFFIX` in

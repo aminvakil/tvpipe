@@ -9,6 +9,7 @@ extern crate tvpipe;
 mod cli;
 mod interrupt;
 mod machine;
+mod tty;
 mod ui;
 
 use tvpipe::__cli::{error, events};
@@ -46,6 +47,13 @@ fn main() -> ExitCode {
         }
         _ => (false, false),
     };
+    // `q` on the terminal: a single key where stty can switch it to that
+    // (restored when `_tty` drops at the end of main, and on panics and a
+    // second Ctrl-C), else `q` + Enter. With --machine, stdin belongs to
+    // the machine interface's router; with `-` it is ffmpeg's input.
+    let watch = session && !reads_stdin && !global.machine && interrupt::stdin_is_terminal();
+    let _tty = tty::Guard;
+    let keys = watch && tty::enter();
     match mode {
         ui::Mode::Machine => {
             let level = if global.debug {
@@ -89,11 +97,11 @@ fn main() -> ExitCode {
             }
         }
         ui::Mode::People => {
-            use std::io::IsTerminal;
-            let hint = match session {
-                false => ui::term::StopHint::None,
-                true if !reads_stdin && std::io::stdin().is_terminal() => ui::term::StopHint::Q,
-                true => ui::term::StopHint::CtrlC,
+            let hint = match (session, watch, keys) {
+                (false, _, _) => ui::term::StopHint::None,
+                (true, true, true) => ui::term::StopHint::Key,
+                (true, true, false) => ui::term::StopHint::Line,
+                (true, false, _) => ui::term::StopHint::CtrlC,
             };
             ctx.events = ui::install(&command, global.no_qr, hint, ctx.stop.clone());
         }
@@ -101,9 +109,15 @@ fn main() -> ExitCode {
     if session {
         if !interrupt::link(ctx.stop.clone()) {
             warn!("cannot catch Ctrl-C; receivers will not get a clean stop");
+        } else if !global.machine {
+            // A second Ctrl-C exits at once: without the status line, with
+            // the terminal as it was.
+            tvpipe::signals::before_forced_exit(|| {
+                ui::abandon();
+                tty::restore();
+            });
         }
-        // With --machine, stdin belongs to the machine interface's router.
-        if !reads_stdin && !global.machine {
+        if watch {
             interrupt::watch_stdin(ctx.stop.clone());
         }
     }
@@ -404,6 +418,8 @@ fn prompt_pin(req: &events::PinRequest) -> error::Result<String> {
     if let Some(router) = machine::router() {
         return router.wait_pin();
     }
+    // Lines with echo while asking.
+    let _cooked = tty::Cooked::new();
     ui::prompt(&format!("Enter the PIN shown on {}:", req.name));
     let _ = std::io::stderr().flush();
     let mut line = String::new();

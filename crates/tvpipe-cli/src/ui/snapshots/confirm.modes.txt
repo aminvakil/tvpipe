@@ -1,0 +1,44 @@
+tvpipe · Playing movie.mkv
+
+✓ Connected to Living Room TV · Google Cast (1.8 s)
+● Playing · 1920×1080 · 24 fps · 5.2 Mbit/s · Living Room TV · 00:00:02    q + Enter to stop
+---
+tvpipe · Playing movie.mkv
+
+✓ Connected to Living Room TV · Google Cast (1.8 s)
+? Stop playing? Type q and Enter again to stop, just Enter to keep going
+---
+tvpipe · Playing movie.mkv
+
+✓ Connected to Living Room TV · Google Cast (1.8 s)
+⠋ Stopping…
+===
+tvpipe · drawbluff
+
+  Play in a browser on this computer
+  http://127.0.0.1:62991/
+
+✓ Public link ready
+
+  Phones join here
+  https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/
+  Carried by OpenTunnel
+
+✓ Game window open (1.1 s)
+• Casting to Living Room TV
+? End the game? Press q again to end it, any other key to keep playing
+---
+tvpipe · drawbluff
+
+  Play in a browser on this computer
+  http://127.0.0.1:62991/
+
+✓ Public link ready
+
+  Phones join here
+  https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/
+  Carried by OpenTunnel
+
+✓ Game window open (1.1 s)
+• Casting to Living Room TV
+⠋ Stopping…

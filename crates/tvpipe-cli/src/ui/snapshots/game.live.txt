@@ -11,4 +11,4 @@ tvpipe · drawbluff
 
 ✓ Game window open (1.1 s)
 • Casting to Living Room TV
-● Running · 3 phones · on Living Room TV · 00:12:00    q + Enter to stop
+● Running · 3 phones · on Living Room TV · 00:12:00    q to stop

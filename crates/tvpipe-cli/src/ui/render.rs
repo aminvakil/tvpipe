@@ -14,6 +14,7 @@ use tvpipe::__cli::events::{
 };
 use tvpipe::log::{Level, Record};
 
+use super::confirm::{Confirm, Key};
 use super::term::{Caps, StopHint};
 
 /// What kind of command runs, for the status line and the end.
@@ -86,6 +87,8 @@ pub struct Renderer {
     up: bool,
     prompting: bool,
     stopping: bool,
+    /// `q` asked whether to stop.
+    confirm: Confirm,
     ended: bool,
     /// Steps running, with when they began.
     steps: Vec<(Step, Duration)>,
@@ -129,6 +132,7 @@ impl Renderer {
             up: false,
             prompting: false,
             stopping: false,
+            confirm: Confirm::default(),
             ended: false,
             steps: Vec::new(),
             began: Vec::new(),
@@ -639,6 +643,12 @@ impl Renderer {
         self.clear_live();
     }
 
+    /// The process ends at once (a second Ctrl-C): no status line.
+    pub fn abandon(&mut self) {
+        self.ended = true;
+        self.clear_live();
+    }
+
     /// The command failed: `✗ what: why`, then what to try.
     pub fn error(&mut self, e: &ErrorInfo, now: Duration) {
         let _ = now;
@@ -719,7 +729,64 @@ impl Renderer {
     /// Stopping was requested (q, Ctrl-C).
     pub fn stopping(&mut self, now: Duration) {
         self.stopping = true;
+        self.confirm.stopped();
         self.redraw(now);
+    }
+
+    /// A key on the terminal (a line in line mode): true to stop now.
+    /// The first `q` asks on the status line while something is watched
+    /// or played; without a status line `q` stops at once.
+    pub fn key(&mut self, key: Key, now: Duration) -> bool {
+        if !self.caps.live || self.stopping || self.ended || self.prompting {
+            return key == Key::Quit;
+        }
+        let watched = self.watched();
+        let stop = self.confirm.key(key, watched, now);
+        if stop {
+            // "Stopping…" right away, not the numbers in between.
+            self.stopping(now);
+        } else {
+            self.redraw(now);
+        }
+        stop
+    }
+
+    /// Someone would notice a stop: a receiver shows the stream, a
+    /// browser watches it, phones play the game.
+    fn watched(&self) -> bool {
+        match self.kind {
+            Kind::Stream(_) => !self.receivers.is_empty() || self.viewers > 0,
+            Kind::Game => self.phones > 0,
+            Kind::Tunnel | Kind::Once => false,
+        }
+    }
+
+    /// The question after the first `q`, fitted to `width`.
+    fn question(&self, width: usize) -> String {
+        let p = self.paint;
+        let (question, verb, keep) = match self.kind {
+            Kind::Stream("Playing") => ("Stop playing?", "stop", "keep going"),
+            Kind::Game => ("End the game?", "end it", "keep playing"),
+            _ => ("Stop streaming?", "stop", "keep going"),
+        };
+        let (long, short) = match self.caps.stop {
+            StopHint::Line => (
+                format!("Type q and Enter again to {verb}, just Enter to {keep}"),
+                format!("q + Enter again to {verb}"),
+            ),
+            _ => (
+                format!("Press q again to {verb}, any other key to {keep}"),
+                format!("Press q again to {verb}"),
+            ),
+        };
+        let head = format!("{} {}", p.yellow("?"), p.bold(question));
+        for how in [long, short] {
+            let line = format!("{head} {how}");
+            if visible(&line) <= width {
+                return line;
+            }
+        }
+        cut(&head, width)
     }
 
     // -----------------------------------------------------------------
@@ -731,6 +798,7 @@ impl Renderer {
         if !self.caps.live || self.prompting {
             return;
         }
+        self.confirm.expire(now);
         let text = if self.ended { None } else { self.status(now) };
         if self.drawn && !self.up && text.as_ref() == Some(&self.last) {
             return;
@@ -763,6 +831,9 @@ impl Renderer {
                 p,
             ));
         }
+        if self.confirm.asking() {
+            return Some(self.question(width));
+        }
         if let Some((step, t)) = self.steps.first() {
             let mut s = format!("{} {}", p.accent(&spin.to_string()), self.pending(step));
             let waited = now.saturating_sub(*t);
@@ -775,7 +846,8 @@ impl Renderer {
             return Some(fit(&[s], None, width, p));
         }
         let hint = match self.caps.stop {
-            StopHint::Q => Some("q + Enter to stop"),
+            StopHint::Key => Some("q to stop"),
+            StopHint::Line => Some("q + Enter to stop"),
             StopHint::CtrlC => Some("Ctrl-C to stop"),
             StopHint::None => None,
         };

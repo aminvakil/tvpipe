@@ -9,6 +9,7 @@
 //! one renderer of the process and writes to stderr. stdout stays for
 //! data (discover's list, `--window none`'s URL, keyframe requests).
 
+pub mod confirm;
 pub mod render;
 pub mod term;
 
@@ -76,7 +77,16 @@ fn with(f: impl FnOnce(&mut Renderer, Duration)) -> bool {
     let Some(ui) = UI.get() else {
         return false;
     };
-    let mut r = ui.r.lock().unwrap_or_else(|e| e.into_inner());
+    let r = ui.r.lock().unwrap_or_else(|e| e.into_inner());
+    write(r, ui, f);
+    true
+}
+
+fn write(
+    mut r: std::sync::MutexGuard<'_, Renderer>,
+    ui: &Ui,
+    f: impl FnOnce(&mut Renderer, Duration),
+) {
     f(&mut r, ui.start.elapsed());
     let out = r.take();
     if !out.is_empty() {
@@ -86,7 +96,6 @@ fn with(f: impl FnOnce(&mut Renderer, Duration)) -> bool {
         let _ = err.write_all(out.as_bytes());
         let _ = err.flush();
     }
-    true
 }
 
 /// Whether the people's UI runs.
@@ -247,7 +256,27 @@ pub fn answered(newline: bool) {
     }
 }
 
+/// A second Ctrl-C ends the process now: the status line goes, so the
+/// shell's prompt starts on a line of its own. Skipped if the renderer is
+/// busy (whatever holds it may be stuck).
+pub fn abandon() {
+    if let Some(ui) = UI.get() {
+        if let Ok(r) = ui.r.try_lock() {
+            write(r, ui, |r, _| r.abandon());
+        }
+    }
+}
+
 /// A line was typed on the terminal (its echo moved the cursor).
 pub fn typed() {
     with(|ui, _| ui.typed());
+}
+
+/// A key on the terminal (a line in line mode): whether to stop now. The
+/// first `q` may ask on the status line instead ([`confirm`]); without the
+/// people's UI `q` stops at once.
+pub fn key(key: confirm::Key) -> bool {
+    let mut stop = key == confirm::Key::Quit;
+    with(|ui, now| stop = ui.key(key, now));
+    stop
 }

@@ -9,8 +9,12 @@
 /// How a person stops the command, for the hint on the status line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopHint {
-    /// `q` + Enter (stdin is a terminal and not the input).
-    Q,
+    /// `q` (stdin is a terminal and not the input, in single-key mode:
+    /// `crate::tty`).
+    Key,
+    /// `q` + Enter (the same, where the terminal stays line by line:
+    /// Windows, no `stty`).
+    Line,
     /// Only Ctrl-C (stdin is the input or not a terminal).
     CtrlC,
     /// The command ends by itself.
@@ -133,7 +137,7 @@ mod tests {
             &Facts {
                 env: &env,
                 stderr_tty: tty,
-                stop: StopHint::Q,
+                stop: StopHint::Key,
                 no_qr: false,
             },
             &|| Some(132),

@@ -13,7 +13,7 @@
   ␛[36;4mhttps://galleries-courtesy-incredible-priced.trycloudflare.com/?t=05fc5f84727fa4b88dd604050721dd5a&delay=300␛[0m
   ␛[2mCloudflare quick tunnel · a new link every run␛[0m
 
-␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0mno viewers yet␛[2m · ␛[0m00:00:00    ␛[2mq + Enter to stop␛[0m␛[?7h␍␛[2K␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0mno viewers yet␛[2m · ␛[0m00:00:01    ␛[2mq + Enter to stop␛[0m␛[?7h␍␛[2K␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0m12.4 Mbit/s␛[2m · ␛[0mno viewers yet␛[2m · ␛[0m00:00:02    ␛[2mq + Enter to stop␛[0m␛[?7h␍␛[2K␛[2m•␛[0m Someone opened the public link
-␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0m12.4 Mbit/s␛[2m · ␛[0m1 viewer␛[2m · ␛[0m00:00:02    ␛[2mq + Enter to stop␛[0m␛[?7h␍␛[2K␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0m12.5 Mbit/s␛[2m · ␛[0m1 viewer␛[2m · ␛[0m00:03:12    ␛[2mq + Enter to stop␛[0m␛[?7hq
+␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0mno viewers yet␛[2m · ␛[0m00:00:00    ␛[2mq to stop␛[0m␛[?7h␍␛[2K␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0mno viewers yet␛[2m · ␛[0m00:00:01    ␛[2mq to stop␛[0m␛[?7h␍␛[2K␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0m12.4 Mbit/s␛[2m · ␛[0mno viewers yet␛[2m · ␛[0m00:00:02    ␛[2mq to stop␛[0m␛[?7h␍␛[2K␛[2m•␛[0m Someone opened the public link
+␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0m12.4 Mbit/s␛[2m · ␛[0m1 viewer␛[2m · ␛[0m00:00:02    ␛[2mq to stop␛[0m␛[?7h␍␛[2K␛[?7l␛[36m●␛[0m Live␛[2m · ␛[0m3840×2160␛[2m · ␛[0m30 fps␛[2m · ␛[0m12.5 Mbit/s␛[2m · ␛[0m1 viewer␛[2m · ␛[0m00:03:12    ␛[2mq to stop␛[0m␛[?7hq
 ␛[1A␍␛[2K␛[?7l␛[36m⠋␛[0m Stopping…␛[?7h␍␛[2K
 Stopped. Streamed 00:03:12 to the browser page.

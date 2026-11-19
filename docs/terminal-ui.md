@@ -39,7 +39,7 @@ tvpipe · Sharing your screen
 
   Cloudflare quick tunnel · a new link every run
 
-● Live · 3840×2160 · 30 fps · 12.5 Mbit/s · 1 viewer · 00:03:12    q + Enter to stop
+● Live · 3840×2160 · 30 fps · 12.5 Mbit/s · 1 viewer · 00:03:12    q to stop
 ```
 
 - A **title** names what runs (`tvpipe · Playing movie.mkv`, `· Test
@@ -57,6 +57,11 @@ tvpipe · Sharing your screen
   rate and bitrate, who watches, the time) or a game's (phones, the
   cast), "Stopping…" after a stop request; how to stop at the right.
   Lines are printed above it.
+- **`q`** stops (see [Keys](#keys)); while something is watched or
+  played, the first `q` turns the status line into a question:
+  `? Stop streaming? Press q again to stop, any other key to keep going`
+  (`Stop playing?` for a file, `End the game? … to end it, … to keep
+  playing` for `game play`).
 - At the end one line: `Stopped. Streamed 00:03:12 to Living Room TV.`,
   `✓ Done. Played 00:42:10 to Living Room TV.`; a failure is `✗ what:
   why` and, below, what to try (by the error's stable `code`:
@@ -97,9 +102,10 @@ All from the environment, no OS calls (AGENTS.md):
   `TERM` set and not `dumb`, or a Windows terminal that says so otherwise
   (`WT_SESSION`, `ConEmuANSI=ON`, `ANSICON`). The line is drawn with
   autowrap off (`ESC[?7l`) and cut to the width, so it never wraps, and
-  only redrawn when it changes (a ticker looks 10 times a second). A line
-  typed on the terminal (`q`, Enter) moves the cursor down; the next draw
-  goes up first, so no copy of the status line stays behind.
+  only redrawn when it changes (a ticker looks 10 times a second). In
+  line mode (below), a line typed on the terminal (`q`, Enter) moves the
+  cursor down; the next draw goes up first, so no copy of the status line
+  stays behind.
 - **Colours**: as above, unless `NO_COLOR` is set or `CLICOLOR=0`;
   `CLICOLOR_FORCE` or `FORCE_COLOR` (not `0`) force them. One accent
   (cyan) for the title, `✓`, `●` and URLs; dim for secondary text;
@@ -115,6 +121,32 @@ All from the environment, no OS calls (AGENTS.md):
   `SetConsoleMode`, which is not done (no platform code outside the
   allowed files).
 
+## Keys
+
+Sessions (play, share, screen, `debug pattern`, `debug tunnel`, `game
+play`) read `q` from the terminal, when stdin is one and is not the input
+(`-`), never with `--machine` (`crates/tvpipe-cli/src/interrupt.rs`):
+
+- **Single keys**: `crates/tvpipe-cli/src/tty.rs` runs `stty -icanon
+  -echo min 1 time 0` (std::process, stdin inherited; no OS calls), so
+  `q` needs no Enter and typed keys are not echoed. The state `stty -g`
+  printed comes back when tvpipe ends (normally, on an error, after `q`
+  or Ctrl-C), on a panic (a hook), before a second Ctrl-C ends the
+  process (`tvpipe::signals::before_forced_exit`, which also clears the
+  status line), and while a prompt reads a line (`share --tunnel`'s
+  `[y/N]`, pair's PIN). The hint says `q to stop`.
+- **Line mode**: where there is no `stty`, or it changes nothing
+  (Windows consoles), `q` + Enter, as before; the hint says
+  `q + Enter to stop`.
+- **The question**: while something would notice (a receiver connected,
+  a browser viewer, phones in a game), the first `q` asks on the status
+  line; `q` again stops, any other key (any other line in line mode)
+  keeps going, and after 5 s the status line comes back by itself.
+  Otherwise `q` stops at once. Without a status line (stderr not a
+  terminal, `-v`) `q` stops at once. Ctrl-C never asks; a second Ctrl-C
+  exits at once.
+- Code: `ui/confirm.rs` (the state machine), `Renderer::key`.
+
 ## Tests
 
 `cargo test -p tvpipe-cli ui::` replays scripted event sequences
@@ -123,5 +155,7 @@ one fails and one reconnects, errors, pairing, a game, a tunnel,
 discovery) through the renderer: live terminal output through a small
 terminal emulator (what stays on the screen), with colours (escapes made
 visible), without a terminal, at 40 columns; every width from 0 to 199
-for panics and status lines wider than the terminal.
+for panics and status lines wider than the terminal; the question after
+`q` (`confirm.*`: the timeout, another key, Ctrl-C, line mode, a game,
+50 columns).
 `UPDATE_SNAPSHOTS=1` rewrites `crates/tvpipe-cli/src/ui/snapshots/`.

@@ -342,7 +342,8 @@ page (`--to browser`): the event's `player` is its URL.
    `none` prints the URL (tests, a browser of one's choice).
 3. The launcher, then the host page (§7, §8).
 4. **End** on any of: the app window closed (no page target left, or
-   the browser exited), `quit`, Ctrl-C/SIGTERM, `q` + Enter; with
+   the browser exited), `quit`, Ctrl-C/SIGTERM, `q` (asked again
+   while phones play); with
    `open`/`none`, no API socket for 30 s after one was seen. Then:
    `closing` to the host (1 s), clients closed 4011, the cast stopped
    (TEARDOWN/STOP to every TV), the headless and the window browsers

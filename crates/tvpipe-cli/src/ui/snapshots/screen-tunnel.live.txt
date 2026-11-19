@@ -15,4 +15,4 @@ tvpipe · Sharing your screen
   Cloudflare quick tunnel · a new link every run
 
 • Someone opened the public link
-● Live · 3840×2160 · 30 fps · 12.5 Mbit/s · 1 viewer · 00:03:12    q + Enter to stop
+● Live · 3840×2160 · 30 fps · 12.5 Mbit/s · 1 viewer · 00:03:12    q to stop

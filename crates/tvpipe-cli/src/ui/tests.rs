@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use tvpipe::__cli::events::{Event, Progress, Step};
 
+use super::confirm::Key as K;
 use super::render::{Kind, Renderer};
 use super::term::{Caps, StopHint};
 
@@ -29,7 +30,13 @@ enum In {
     Finish(bool),
     /// The ticker: the status line redrawn.
     Tick,
+    /// A key on the terminal, and whether it must stop the session.
+    Key(K, bool),
+    /// Marks the output here, for [`shots`].
+    Shot,
 }
+
+const SHOT: &str = "\0shot\0";
 
 use In::*;
 
@@ -83,6 +90,11 @@ fn run(caps: Caps, kind: Kind, title: Option<&str>, script: &[(u64, In)]) -> Str
             }
             Finish(stopped) => r.finish(*stopped, now),
             Tick => r.redraw(now),
+            Key(k, stop) => assert_eq!(r.key(*k, now), *stop, "{k:?} at {ms} ms"),
+            Shot => {
+                out.push_str(&r.take());
+                out.push_str(SHOT);
+            }
         }
     }
     out.push_str(&r.take());
@@ -173,6 +185,16 @@ fn shown(bytes: &str, width: usize) -> String {
     s + "\n"
 }
 
+/// The screen at each [`Shot`] and at the end, separated by `---`.
+fn shots(raw: &str, width: usize) -> String {
+    let mut all = Vec::new();
+    for (i, _) in raw.match_indices(SHOT) {
+        all.push(shown(&raw[..i].replace(SHOT, ""), width));
+    }
+    all.push(shown(&raw.replace(SHOT, ""), width));
+    all.join("---\n")
+}
+
 /// Escape sequences made visible.
 fn escaped(bytes: &str) -> String {
     bytes.replace('\x1b', "␛").replace('\r', "␍")
@@ -199,7 +221,7 @@ fn live(width: usize, color: bool) -> Caps {
         live: true,
         width,
         qr: false,
-        stop: StopHint::Q,
+        stop: StopHint::Key,
     }
 }
 
@@ -615,7 +637,12 @@ fn a_typed_line_does_not_leave_a_copy_of_the_status_line() {
 
 #[test]
 fn no_panics_at_any_width() {
-    let scripts = [screen_tunnel_end(), play_file(), game()];
+    let scripts = [
+        screen_tunnel_end(),
+        play_file(),
+        game(),
+        screen_tunnel_confirm(),
+    ];
     for width in 0..200 {
         for color in [false, true] {
             for script in &scripts {
@@ -677,4 +704,108 @@ fn modes() {
         Mode::pick(false, false, false, Some("nonsense")),
         Mode::People
     );
+}
+
+/// `q` while someone watches: the question, another key, the question
+/// again, its timeout, then q q.
+fn screen_tunnel_confirm() -> Vec<(u64, In)> {
+    let mut s = screen_tunnel();
+    s.extend([
+        (200_000, Key(K::Quit, false)),
+        (200_100, Tick),
+        (200_100, Shot),
+        (203_000, Key(K::Other, false)),
+        (203_000, Shot),
+        (204_000, Key(K::Quit, false)),
+        (208_900, Tick),
+        (208_900, Shot),
+        (209_000, Tick),
+        (209_000, Shot),
+        (210_000, Key(K::Quit, false)),
+        (210_500, Key(K::Quit, true)),
+        (210_500, Stopping),
+        (210_500, Shot),
+        (
+            211_000,
+            Json(r#"{"type":"end","reason":"stopped","receivers":[]}"#),
+        ),
+        (211_000, Finish(true)),
+    ]);
+    s
+}
+
+#[test]
+fn q_asks_while_someone_watches() {
+    let s = screen_tunnel_confirm();
+    let raw = run(live(100, false), Kind::Stream("Live"), SCREEN, &s);
+    snapshot("confirm.live", &shots(&raw, 100));
+    let raw = run(live(100, true), Kind::Stream("Live"), SCREEN, &s);
+    snapshot("confirm.color", &escaped(&raw));
+    // Narrow: the question gets shorter.
+    let raw = run(live(50, false), Kind::Stream("Live"), SCREEN, &s);
+    snapshot("confirm.narrow", &shots(&raw, 50));
+}
+
+/// Nobody watches yet (or a tunnel): `q` stops at once.
+#[test]
+fn q_stops_at_once_when_nobody_watches() {
+    let mut s: Vec<(u64, In)> = screen_tunnel()
+        .into_iter()
+        .filter(|(_, i)| !matches!(i, Json(j) if j.contains("\"viewer\"")))
+        .collect();
+    s.extend([(200_000, Key(K::Quit, true))]);
+    run(live(100, false), Kind::Stream("Live"), SCREEN, &s);
+    let s = [
+        (
+            0,
+            Json(
+                r#"{"type":"tunnel","page":"port","provider":"cloudflare","url":"https://a-b-c.trycloudflare.com/"}"#,
+            ),
+        ),
+        (1000, Key(K::Quit, true)),
+    ];
+    run(
+        live(80, false),
+        Kind::Tunnel,
+        Some("Public link to port 8080"),
+        &s,
+    );
+    // Without a status line there is nowhere to ask.
+    let mut s = screen_tunnel();
+    s.push((200_000, Key(K::Quit, true)));
+    run(Caps::plain(), Kind::Stream("Live"), SCREEN, &s);
+}
+
+/// A file to a TV, in line mode (q + Enter; Windows), and a game.
+#[test]
+fn the_question_per_command_and_mode() {
+    let line = Caps {
+        stop: StopHint::Line,
+        ..live(100, false)
+    };
+    let mut s = play_file();
+    s.truncate(9);
+    s.extend([
+        (4000, Tick),
+        (4000, Shot),
+        (5000, Typed),
+        (5000, Key(K::Quit, false)),
+        (5000, Shot),
+        (6000, Typed),
+        (6000, Key(K::Quit, true)),
+        (6000, Stopping),
+    ]);
+    let raw = run(line, Kind::Stream("Playing"), Some("Playing movie.mkv"), &s);
+    let mut all = shots(&raw, 100);
+    let mut s = game();
+    s.extend([
+        (722_000, Key(K::Quit, false)),
+        (722_000, Shot),
+        // Ctrl-C while asking: no question, it stops.
+        (723_000, Stopping),
+    ]);
+    let raw = run(live(100, false), Kind::Game, None, &s);
+    all.push_str("===\n");
+    all.push_str(&shots(&raw, 100));
+    snapshot("confirm.modes", &all);
 }

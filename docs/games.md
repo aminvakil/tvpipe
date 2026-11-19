@@ -428,7 +428,9 @@ browser. `--port PORT` fixes the window's port on 127.0.0.1.
 ## Ending
 
 Any of these ends everything: closing the window, the game's own end
-button (`tvpipe.quit()`), Ctrl-C, or `q` and Enter in the terminal. The
+button (`tvpipe.quit()`), Ctrl-C, or `q` in the terminal (twice while
+phones play: the first asks; `q` and Enter where the terminal has no
+`stty`, as on Windows). The
 host page gets a second to say goodbye, phones show that the room
 closed, the TVs leave mirroring (TEARDOWN/STOP), the browsers quit and
 their profiles are removed, the tunnel closes. Exit code 0 (130 after

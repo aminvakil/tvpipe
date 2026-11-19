@@ -4,18 +4,23 @@
 //! Ctrl-C and SIGTERM come through the library's `tvpipe::signals` (the
 //! `signals` feature; the platform FFI lives there, see ARCHITECTURE.md,
 //! "Platform-Specific Code"). [`watch_stdin`] adds a std-only way to stop:
-//! `q` + Enter on a terminal. Other lines answer [`ask`] (the
-//! `share --tunnel` confirmation).
+//! `q` on a terminal, a single key where `stty` can switch the terminal
+//! to that (`crate::tty`), else `q` + Enter. While something is watched
+//! the first `q` asks on the status line (`ui::confirm`). Lines answer
+//! [`ask`] (the `share --tunnel` confirmation), with the terminal back in
+//! line mode meanwhile.
 //!
 //! The library never reads stdin; this module is the CLI's.
 
-use std::io::{BufRead, IsTerminal};
+use std::io::{IsTerminal, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tvpipe::__cli::Stop;
+
+use crate::ui::confirm::Key;
 
 /// The stdin watcher runs (stdin is a terminal).
 static WATCHING: AtomicBool = AtomicBool::new(false);
@@ -30,8 +35,8 @@ pub fn link(stop: Stop) -> bool {
     tvpipe::signals::on_signal(move || stop.request())
 }
 
-/// Whether the stop came from Ctrl-C/SIGTERM (exit status 130; `q` +
-/// Enter exits with 0).
+/// Whether the stop came from Ctrl-C/SIGTERM (exit status 130; `q`
+/// exits with 0).
 pub fn signalled() -> bool {
     tvpipe::signals::requested()
 }
@@ -44,6 +49,8 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
         return None;
     }
     let (tx, rx) = mpsc::channel();
+    // Lines with echo while asking.
+    let _cooked = crate::tty::Cooked::new();
     *ANSWER.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
     crate::ui::prompt(question);
     let answer = loop {
@@ -61,9 +68,16 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
     answer
 }
 
-/// If stdin is a terminal, reads it on a background thread and requests
-/// `stop` on a line `q` (like ffmpeg). Does nothing otherwise, so piped or
-/// closed stdin never stops a session.
+/// Whether stdin is a terminal the person types on, for [`watch_stdin`]
+/// (never asked with `--machine`: see there).
+pub fn stdin_is_terminal() -> bool {
+    crate::machine::router().is_none() && std::io::stdin().is_terminal()
+}
+
+/// If stdin is a terminal, reads it on a background thread: `q` (a key,
+/// or a line in line mode) stops via `stop`, after the status line's
+/// question while something is watched (like ffmpeg's `q`). Does nothing
+/// otherwise, so piped or closed stdin never stops a session.
 ///
 /// Never with `--machine`: the router owns stdin then, and on Windows
 /// `is_terminal` must not run while its read is pending. Windows
@@ -73,31 +87,48 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
 /// the parent writes again, possibly never (the SDK's sessions hung at
 /// start on Windows runners).
 pub fn watch_stdin(stop: Stop) {
-    if crate::machine::router().is_some() {
-        return;
-    }
-    let stdin = std::io::stdin();
-    if !stdin.is_terminal() {
+    if !stdin_is_terminal() {
         return;
     }
     let spawned = std::thread::Builder::new()
         .name("stdin-quit".into())
         .spawn(move || {
-            for line in stdin.lock().lines() {
-                // The terminal echoed the line: the status line moved up.
-                crate::ui::typed();
-                match line {
-                    Ok(l) if l.trim().eq_ignore_ascii_case("q") => {
-                        stop.request();
-                        return;
-                    }
-                    Ok(l) => {
+            let press = |key| {
+                if crate::ui::key(key) {
+                    stop.request();
+                }
+            };
+            let mut stdin = std::io::stdin().lock();
+            let mut buf = [0u8; 64];
+            let mut line = Vec::new();
+            loop {
+                let n = match stdin.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                };
+                for &b in &buf[..n] {
+                    let asking = ANSWER.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+                    if crate::tty::keys() && !asking {
+                        line.clear();
+                        press(Key::from_byte(b));
+                    } else if b == b'\n' {
+                        // The terminal echoed the line: the status line
+                        // moved up.
+                        crate::ui::typed();
+                        let l = String::from_utf8_lossy(&line).into_owned();
+                        line.clear();
                         let tx = ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take();
-                        if let Some(tx) = tx {
-                            let _ = tx.send(l);
+                        match tx {
+                            Some(tx) => {
+                                let _ = tx.send(l);
+                            }
+                            None => press(Key::from_line(&l)),
                         }
+                    } else if b != b'\r' {
+                        line.push(b);
                     }
-                    Err(_) => return,
                 }
             }
             WATCHING.store(false, Ordering::SeqCst);
