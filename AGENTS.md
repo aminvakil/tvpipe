@@ -5,13 +5,20 @@ workstream.
 
 ## Rules
 
-- Rust workspace of three crates: `crates/tvpipe` (the library),
-  `crates/tvpipe-cli` (the `tvpipe` binary, on the library's API) and
-  `crates/tvpipe-fairplay` (the LGPL FairPlay port; nothing outside it may
-  copy from it). No async runtime: use `std::thread` and blocking I/O.
-- Dependencies: only `argument` (in `tvpipe-cli` only), `rustls` (ring
-  backend, no default features), and `ring`. Do not add crates without
-  asking the human first.
+- Rust workspace: `crates/tvpipe` (the library), `crates/tvpipe-cli` (the
+  `tvpipe` binary, on the library's API), `crates/tvpipe-fairplay` (the LGPL
+  FairPlay port; nothing outside it may copy from it), `crates/tvpipe-party`
+  (the host for multi-screen party games), `crates/tvpipe-canvas` (a small
+  2D software renderer for game TV screens) and `games/drawbluff` (the
+  reference game, not published). No async runtime anywhere: use
+  `std::thread` and blocking I/O.
+- Dependencies: `tvpipe` and `tvpipe-fairplay` use only `ring` and `rustls`
+  (ring backend, no default features); `argument` is allowed in `tvpipe-cli`
+  only; `tvpipe-canvas` has none. `tvpipe-party` may additionally use `rtc`
+  (behind its optional `webrtc` feature) and `deser` (behind its optional
+  `deser` feature), both owner-approved; its default features add nothing
+  beyond `tvpipe`. Games may take their own dependencies. Do not add crates
+  anywhere else without asking the human first.
 - Hand-roll formats and simple algorithms (see PLAN §2/§9), each with
   known-answer tests or fixtures.
 - Never panic on data from the network or from ffmpeg. Return errors.
