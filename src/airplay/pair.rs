@@ -625,7 +625,7 @@ mod hardware {
 
     fn atv() -> Option<Target> {
         let addr = parse_addr(&std::env::var("TVPIPE_ATV").ok()?)?;
-        crate::log::set_level(crate::log::Level::Trace);
+        crate::log::to_stderr(crate::log::Level::Trace);
         Some(Target { addr, device: None })
     }
 

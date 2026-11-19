@@ -70,12 +70,15 @@ fn write_line(line: &str) {
 
 /// The session's events as lines on stdout.
 pub fn events() -> Events {
-    Events::to(|e| {
-        if matches!(e, Event::End(_)) {
-            END_SENT.store(true, Ordering::SeqCst);
-        }
-        write_line(&e.to_json());
-    })
+    Events::to(|e| emit_event(&e))
+}
+
+/// Writes one event line.
+pub fn emit_event(e: &Event) {
+    if matches!(e, Event::End(_)) {
+        END_SENT.store(true, Ordering::SeqCst);
+    }
+    write_line(&e.to_json());
 }
 
 /// `hello`, the first event.

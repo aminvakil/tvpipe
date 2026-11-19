@@ -395,7 +395,16 @@ fn remote_shares_wait_for_the_local_yes() {
         no_audio: true,
         ..share_opts(vec!["browser".into()])
     };
-    share_rejoin(o, &connect, &never(), &hook, None, ShareKind::Page, &approve).unwrap();
+    share_rejoin(
+        o,
+        &connect,
+        &never(),
+        &hook,
+        None,
+        ShareKind::Page,
+        &approve,
+    )
+    .unwrap();
     let (first, second) = pages.lock().unwrap().take().unwrap().join().unwrap();
     assert!(first.plan.is_none(), "{first:?}");
     assert_eq!(

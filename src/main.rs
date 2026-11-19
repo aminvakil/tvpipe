@@ -27,6 +27,35 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let (global, command) = cli::parse_env();
+    let level = if global.debug {
+        log::Level::Trace
+    } else if global.verbose {
+        log::Level::Debug
+    } else {
+        log::Level::Info
+    };
+    let installed = if global.machine {
+        log::set_logger(level, |r| {
+            machine::emit_event(&events::Event::Log(r.clone()))
+        })
+    } else {
+        let start = std::time::Instant::now();
+        log::set_logger(level, move |r| {
+            use std::io::Write;
+            let t = start.elapsed();
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "{:>4}.{:03} {} {}: {}",
+                t.as_secs(),
+                t.subsec_millis(),
+                r.level.label(),
+                r.module,
+                r.message
+            );
+        })
+    };
+    // Only fails when installed twice, which main does not.
+    let _ = installed;
     let mut ctx = ctx::Ctx::new();
     if global.machine {
         ctx.events = machine::events();
@@ -34,13 +63,6 @@ fn main() -> ExitCode {
         machine::hello(command.name());
         machine::start_router(ctx.stop.clone());
     }
-    log::set_level(if global.debug {
-        log::Level::Trace
-    } else if global.verbose {
-        log::Level::Debug
-    } else {
-        log::Level::Info
-    });
     // Fine-grained timed waits for pacing (Windows; `util::timer`).
     util::timer::raise_resolution();
     // Ctrl-C and `q` stop sessions (not discover/pair, which end by

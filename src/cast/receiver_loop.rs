@@ -313,7 +313,7 @@ fn openscreen_receiver_loop() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
-    crate::log::set_level(crate::log::Level::Debug);
+    crate::log::to_stderr(crate::log::Level::Debug);
     let g = generate(secs, "1280x720");
     let (avcc, vframes) = h264_frames(&g.h264);
     let (codec, frame_samples, apackets) = match acodec.as_str() {
