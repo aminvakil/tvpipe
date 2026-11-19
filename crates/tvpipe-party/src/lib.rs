@@ -4,6 +4,16 @@
 //! and their views in sync over WebSockets, speaking the protocol of
 //! `@tvpipe/party` (the same browser client, the same vectors).
 
+// Until the server (step 3 of the plan) uses every piece.
+#![allow(dead_code)]
+
+mod sync;
+#[cfg(test)]
+mod testutil;
+mod value;
+
+pub use value::{Number, Object, Value};
+
 /// The browser client (`/party/client.js`), shared with `@tvpipe/party`.
 pub const CLIENT_JS: &str = include_str!("../web/party-client.js");
 
