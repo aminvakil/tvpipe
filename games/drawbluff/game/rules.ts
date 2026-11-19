@@ -57,13 +57,16 @@ export const LIE_SOFT = 40;
 /**
  * A title as the TV and the phones show it, the truth and the lies alike,
  * so formatting gives nothing away (the typed text is kept): quotes and
- * apostrophes unified, spacing collapsed, lowercase, no trailing `.`, `!`,
- * `?`, `…`, no surrounding quotes.
+ * apostrophes unified (German „…“ too), commas gone but in numbers (a
+ * German relative clause takes one, the prompts have none), spacing
+ * collapsed, lowercase, no trailing `.`, `!`, `?`, `…`, no surrounding
+ * quotes.
  */
 export function displayTitle(text: string): string {
   let s = text
     .replace(/[\u2018\u2019\u201A\u201B\u2032\u0060\u00B4]/gu, "'")
     .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/gu, '"')
+    .replace(/(?<!\p{N}),|,(?!\p{N})/gu, " ")
     .replace(/\s+/gu, " ")
     .trim()
     .toLowerCase();
@@ -78,19 +81,38 @@ export function displayTitle(text: string): string {
   }
 }
 
+/** The languages drawbluff speaks (`data/prompts.txt`, `data/prompts.de.txt`); a room has one. */
+export const LANGS = ["en", "de"] as const;
+export type Lang = (typeof LANGS)[number];
+
+/** A language tag (`de-AT`, `en`, …) as one of {@link LANGS}: German for `de…`, else English. */
+export function pickLang(tag: unknown): Lang {
+  return typeof tag === "string" && /^de\b/i.test(tag) ? "de" : "en";
+}
+
+/** The leading articles {@link titleKey} drops, per language. */
+const ARTICLES: Record<Lang, RegExp> = {
+  en: /^(a|an|the) /,
+  de: /^(der|die|das|den|dem|des|ein|eine|einen|einem|einer|eines) /,
+};
+
 /**
  * How titles compare, on their display form: case, accents, punctuation,
  * spacing and a leading article do not matter ("A nervous cactus!" =
- * "nervous cactus").
+ * "nervous cactus"); `ß` is `ss`, and in German `ä`, `ö`, `ü` are `ae`,
+ * `oe`, `ue` ("Der Bär" = "baer"), elsewhere their letter ("café" =
+ * "cafe").
  */
-export function titleKey(text: string): string {
-  return displayTitle(text)
+export function titleKey(text: string, lang: Lang = "en"): string {
+  let s = displayTitle(text).normalize("NFC").replace(/ß/g, "ss");
+  if (lang === "de") s = s.replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue");
+  return s
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
-    .replace(/^(a|an|the) /, "")
+    .replace(ARTICLES[lang] ?? ARTICLES.en, "")
     .replace(/ /g, "");
 }
 
@@ -117,12 +139,13 @@ export function buildOptions(
   spares: readonly string[],
   rng: () => number,
   min = 4,
+  lang: Lang = "en",
 ): Option[] {
   const byKey = new Map<string, Option>();
-  const truthKey = titleKey(truth);
+  const truthKey = titleKey(truth, lang);
   let n = 0;
   for (const [author, text] of lies) {
-    const k = titleKey(text);
+    const k = titleKey(text, lang);
     if (!k || k === truthKey) continue; // refused when typed; never shown
     const o = byKey.get(k);
     if (o) o.authors.push(author);
@@ -131,7 +154,7 @@ export function buildOptions(
   const options = [{ id: `o${++n}`, text: displayTitle(truth), truth: true, authors: [], decoy: false }, ...byKey.values()];
   for (const s of spares) {
     if (options.length >= min) break;
-    const k = titleKey(s);
+    const k = titleKey(s, lang);
     if (k === truthKey || byKey.has(k)) continue;
     byKey.set(k, { id: "", text: s, truth: false, authors: [], decoy: true });
     options.push({ id: `o${++n}`, text: displayTitle(s), truth: false, authors: [], decoy: true });
@@ -341,8 +364,12 @@ export function parsePrompts(text: string): Prompt[] {
   return out;
 }
 
-/** Prompts in a row among which a structure appears at most once, when it can. */
-export const SPREAD = 3;
+/**
+ * Prompts in a row among which a structure appears at most once, when it
+ * can: with 17 structures, a round of up to 8 players draws 8 kinds of
+ * prompt.
+ */
+export const SPREAD = 8;
 
 /**
  * Reorders `items` so that no tag comes twice among `window` in a row
@@ -380,6 +407,56 @@ export function spread<T>(items: readonly T[], tag: (item: T) => string, window 
  */
 export function deck(prompts: readonly Prompt[], rng: () => number): Prompt[] {
   return spread(shuffle(prompts, rng), (p) => p.tag).reverse();
+}
+
+/** Prompts a room's deck keeps undealt when it deals: the decoys come from them. */
+export const DECK_RESERVE = 16;
+
+/**
+ * A room's deck, kept from game to game: it deals no prompt twice until
+ * it dealt (or discarded) all of them. When fewer than a hand and
+ * {@link DECK_RESERVE} are left, a new {@link deck} of the others goes
+ * under the rest, so the rest comes first and nothing is dealt twice in
+ * a row; with fewer prompts than a hand, prompts repeat.
+ */
+export class PromptDeck {
+  readonly prompts: readonly Prompt[];
+  readonly #rng: () => number;
+  /** Undealt, the next one last (`pop()`). */
+  #cards: Prompt[] = [];
+
+  constructor(prompts: readonly Prompt[], rng: () => number) {
+    if (prompts.length === 0) throw new Error("drawbluff: no prompts");
+    this.prompts = prompts;
+    this.#rng = rng;
+  }
+
+  /** The prompts not dealt yet, the next one first. */
+  get left(): Prompt[] {
+    return [...this.#cards].reverse();
+  }
+
+  /** The next `n` prompts. */
+  deal(n: number): Prompt[] {
+    if (this.#cards.length < n + DECK_RESERVE) this.#refill();
+    const out: Prompt[] = [];
+    while (out.length < n) {
+      if (this.#cards.length === 0) this.#cards = deck(this.prompts, this.#rng);
+      out.push(this.#cards.pop()!);
+    }
+    return out;
+  }
+
+  /** Takes prompts out of this pass (decoys shown on the TV): they are not dealt as prompts until the next one. */
+  discard(texts: Iterable<string>): void {
+    const gone = new Set(texts);
+    this.#cards = this.#cards.filter((p) => !gone.has(p.text));
+  }
+
+  #refill(): void {
+    const keep = new Set(this.#cards.map((p) => p.text));
+    this.#cards = [...deck(this.prompts.filter((p) => !keep.has(p.text)), this.#rng), ...this.#cards];
+  }
 }
 
 /** Decoys for a drawing: the spares of its own structure first, each part in its order. */

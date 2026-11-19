@@ -12,18 +12,18 @@ async function until(cond: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-import { bots } from "../game/bots.ts";
+import { bots, LIES } from "../game/bots.ts";
 import { Drawbluff } from "../game/game.ts";
-import { seeded } from "../game/rules.ts";
-import { PROMPT_LIST } from "./prompts.ts";
+import { seeded, type Lang } from "../game/rules.ts";
+import { PROMPT_LIST, PROMPTS_BY_LANG } from "./prompts.ts";
 
 const fast = { draw: 1500, lie: 1200, vote: 1200, revealStep: 20, revealEnd: 20, scores: 20, gallery: 20 };
 
-async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number; lateJoin?: LateJoin } = {}) {
+async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number; lateJoin?: LateJoin; lang?: Lang } = {}) {
   const relay = new MemoryRelay();
   const party = new Party({ grace: 100, maxPlayers: Math.max(8, n + 2) }).listen(relay);
   const server = { relay, close: async () => party.close() };
-  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7), lateJoin: opts.lateJoin, prompts: PROMPT_LIST });
+  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7), lateJoin: opts.lateJoin, prompts: opts.lang ? PROMPTS_BY_LANG : PROMPT_LIST, lang: opts.lang });
   g.open();
   const url = "ws://party.test/_tvpipe/ws";
   const phases: string[] = [];
@@ -248,6 +248,88 @@ test("50 players: spotlights, rotating liars, pipelined lies, sampled options, e
     assert.equal(screen["scores"].length, 8);
     assert.ok(players.every((b) => b.client.view["me"].of === 50));
     assert.deepEqual(new Set(players.flatMap((b) => b.errors)), new Set());
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
+test("a room deals no prompt twice over several games, nor one it showed as a decoy", async () => {
+  // 3 players: two liars, so every vote has a decoy (an unused prompt).
+  const { server, party, g, players } = await game(3);
+  try {
+    const shown = new Set<string>();
+    const dealt: string[] = [];
+    const problems: string[] = [];
+    g.on("phase", (p) => {
+      if (p === "draw") {
+        // Every phone's prompt, once the host set it.
+        queueMicrotask(() => {
+          for (const pl of party.players) {
+            const me = pl.state.peek() as { task?: string; prompt?: string };
+            if (me.task !== "draw" || !me.prompt) continue;
+            if (shown.has(me.prompt)) problems.push(`${me.prompt} again`);
+            shown.add(me.prompt);
+            dealt.push(me.prompt);
+          }
+        });
+      }
+      if (p === "vote") {
+        queueMicrotask(() => {
+          for (const o of (party.screen.peek() as { options: { text: string }[] }).options) shown.add(o.text);
+        });
+      }
+    });
+    for (let n = 0; n < 3; n++) {
+      const end = new Promise((r) => g.once("end", r));
+      await players[0]!.client.act("start");
+      await end;
+    }
+    assert.equal(dealt.length, 3 * 2 * 3, "3 games, 2 rounds, 3 prompts");
+    assert.deepEqual(problems, []);
+    assert.deepEqual(new Set(players.flatMap((b) => b.errors)), new Set());
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
+test("German: the room's language reaches every phone and the TV, with German prompts and German bots' lies", async () => {
+  const { server, party, g, players } = await game(4, { lang: "en" });
+  try {
+    assert.equal(players[1]!.client.view["room"].lang, "en");
+    assert.deepEqual(g.langs.sort(), ["de", "en"]);
+    g.configure({ lang: "de" });
+    await until(() => players.every((b) => b.client.view["room"]?.lang === "de"));
+    assert.equal((party.screenView()["screen"] as { lang: string }).lang, "de");
+    const de = new Set(PROMPTS_BY_LANG.de.map((p) => p.text));
+    const prompts: string[] = [];
+    const lies: string[] = [];
+    const langs = new Set<string>();
+    g.on("phase", (p) => {
+      langs.add((party.screen.peek() as { lang: string }).lang);
+      langs.add(party.room.peek()["lang"] as string);
+      if (p === "draw") queueMicrotask(() => prompts.push(...party.players.map((pl) => (pl.state.peek() as { prompt?: string }).prompt).filter((x) => typeof x === "string")));
+      if (p === "vote") {
+        queueMicrotask(() => {
+          const s = party.screen.peek() as { options: { text: string }[] };
+          lies.push(...s.options.map((o) => o.text).filter((t) => !de.has(t)));
+        });
+      }
+    });
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    assert.throws(() => g.configure({ lang: "en" }), (e: { code: string }) => e.code === "running");
+    const table = (await end) as unknown[];
+    assert.equal(table.length, 4);
+    assert.deepEqual([...langs], ["de"], "every phase in German");
+    assert.equal(prompts.length, 8);
+    for (const p of prompts) assert.ok(de.has(p), `${p}: a German prompt`);
+    assert.ok(lies.length > 0);
+    for (const l of lies) assert.ok(LIES.de.some((x) => l.startsWith(x)), `${l}: a German lie`);
+    await until(() => players.every((b) => b.client.view["me"].task === "final" && b.client.view["room"].lang === "de"));
+    assert.deepEqual(new Set(players.flatMap((b) => b.errors)), new Set());
+    assert.throws(() => g.configure({ lang: "fr" as Lang }), (e: { code: string }) => e.code === "bad-lang");
   } finally {
     for (const b of players) b.close();
     await server.close();

@@ -1,0 +1,766 @@
+# drawbluffs Begriffe auf Deutsch: für Deutschsprachige geschrieben,
+# nicht übersetzt (auch die Quelle der Köder-Lügen). Der Host lädt sie
+# für Räume auf Deutsch (data/prompts.txt: Englisch).
+#
+# Format wie data/prompts.txt: `[tag]` beginnt eine Struktur, dann ein
+# Begriff pro Zeile; Leerzeilen und `#`-Kommentare zählen nicht.
+#
+# Jeder Begriff steht in seiner Anzeigeform (klein geschrieben, nur
+# Buchstaben mit ä, ö, ü, ß, Leerzeichen und Apostrophe, nichts am
+# Ende, NFC) und hat höchstens 40 Zeichen (LIE_SOFT), so verrät weder
+# Form noch Länge die Wahrheit. Zeichenbar, familientauglich, unser
+# eigenes; keine zwei gleichen (test/prompts.test.ts prüft das).
+#
+# Die Strukturen:
+#   odd       seltsame Paare: ein hai im nichtschwimmerbecken
+#   idiom     Redewendungen wörtlich: tomaten auf den augen
+#   wort      zusammengesetzte Wörter wörtlich: ein glückspilz
+#   feeling   Gefühle und Begriffe: fernweh
+#   moment    der Moment, wenn: wenn der bus vor der nase wegfährt
+#   secret    das geheime Leben der Dinge: was der kühlschrank nachts macht
+#   invented  erfundene Berufe, Sportarten, Feiertage: ein pfützeninspektor
+#   contra    Widersprüche: ein wasserscheuer hai
+#   view      ungewohnte Blickwinkel: die welt aus sicht einer ameise
+#   drama     kleine Dramen: die wespe und der pflaumenkuchen
+#   title     berühmt klingende Titel: der herr der zwiebelringe
+#   animal    Tiere mit Menschenproblemen: ein zebra am zebrastreifen
+#   food      Essen mit Eigenleben: eine suppe die zurückschlägt
+#   place     Orte, die es nicht geben sollte: eine schule für babydrachen
+#   gadget    Erfindungen, die keiner braucht: ein föhn für katzen
+#   power     nutzlose Superkräfte: unsichtbar aber nur dienstags
+#   then      Geschichte durcheinander: ein ritter beim tüv
+#   scene     Alltag geht schief: schrankaufbau ohne anleitung
+
+[odd]
+ein schneemann im solarium
+ein ritter in der waschanlage
+ein pinguin am grill
+ein gespenst im fundbüro
+ein dinosaurier in der straßenbahn
+ein tintenfisch als schülerlotse
+eine giraffe im kleinwagen
+eine meerjungfrau im hallenbad
+ein cowboy auf einem rasenmäher
+ein yeti im freibad
+ein koch in der schwerelosigkeit
+ein löwe beim elternabend
+ein elch im möbelhaus
+ein wikinger auf der kirmes
+ein pfau auf dem standesamt
+ein wal im planschbecken
+ein zyklop mit lesebrille
+ein pirat in der stadtbibliothek
+ein astronaut im schrebergarten
+ein roboter auf dem bauernhof
+ein sumoringer auf dem schwebebalken
+eine mumie beim wellness
+ein krokodil beim kaffeekränzchen
+ein zauberer am fahrkartenautomaten
+ein unterseeboot im gartenteich
+ein bär an der käsetheke
+eine ritterrüstung in der disco
+eine vogelscheuche auf dem laufsteg
+eine schnecke beim stadtlauf
+ein könig im autoscooter
+ein außerirdischer auf dem flohmarkt
+ein flamingo beim schlittschuhlaufen
+ein goldfisch in der achterbahn
+ein pferd im aufzug
+ein nilpferd im ballett
+ein kamel in der skihütte
+ein ninja beim kindergeburtstag
+ein pantomime im fußballstadion
+ein gorilla beim klavierkonzert
+ein hai im nichtschwimmerbecken
+ein igel in der hüpfburg
+ein eisbär in der sauna
+ein walross im kino
+eine kuh auf dem eiffelturm
+ein kaktus im wasserbett
+ein dackel auf dem laufband
+ein vampir beim blutspenden
+
+[idiom]
+tomaten auf den augen
+einen vogel haben
+schmetterlinge im bauch
+die katze im sack kaufen
+jemandem einen bären aufbinden
+da steppt der bär
+schwein haben
+bohnen in den ohren
+den nagel auf den kopf treffen
+die hosen anhaben
+eulen nach athen tragen
+jemandem auf den keks gehen
+alles in butter
+ein brett vor dem kopf
+hummeln im hintern
+die nadel im heuhaufen
+lügen haben kurze beine
+der groschen ist gefallen
+auf dem schlauch stehen
+wie ein elefant im porzellanladen
+auf wolke sieben
+unter einer decke stecken
+einen frosch im hals haben
+haare auf den zähnen
+mit dem linken fuß aufgestanden
+öl ins feuer gießen
+den wald vor lauter bäumen nicht sehen
+aus einer mücke einen elefanten machen
+jemandem einen korb geben
+die seele baumeln lassen
+luftschlösser bauen
+den kopf in den sand stecken
+mit den hühnern ins bett gehen
+schnee von gestern
+ein haar in der suppe finden
+nur bahnhof verstehen
+eine extrawurst bekommen
+die eierlegende wollmilchsau
+kalte füße bekommen
+hahn im korb
+jemandem auf der nase herumtanzen
+die beine in die hand nehmen
+jemandem ein loch in den bauch fragen
+morgenstund hat gold im mund
+die kirche im dorf lassen
+perlen vor die säue werfen
+ins fettnäpfchen treten
+die kuh vom eis holen
+den teufel an die wand malen
+um den heißen brei herumreden
+sich zum affen machen
+das blaue vom himmel lügen
+wie auf glühenden kohlen sitzen
+auf den hund gekommen
+zwei fliegen mit einer klappe
+vom regen in die traufe
+die rechnung ohne den wirt machen
+der apfel fällt nicht weit vom stamm
+ein ass im ärmel
+jemandem die daumen drücken
+die beleidigte leberwurst
+
+[wort]
+ein ohrwurm
+ein glückspilz
+ein pechvogel
+ein angsthase
+eine leseratte
+eine naschkatze
+ein drahtesel
+ein stubenhocker
+ein schmutzfink
+ein spaßvogel
+eine schlafmütze
+ein bücherwurm
+ein zankapfel
+kummerspeck
+ein morgenmuffel
+eine frostbeule
+ein hasenfuß
+ein faulpelz
+eine wasserratte
+ein dickkopf
+ein grünschnabel
+hans guck in die luft
+ein schreihals
+eine trantüte
+ein sauwetter
+ein katzensprung
+der katzenjammer
+ein hundewetter
+ein geizhals
+ein nachtschwärmer
+ein wolkenkratzer
+ein zungenbrecher
+ein ohrensessel
+im schneckentempo
+ein eselsohr
+ein löwenzahn
+ein seehund
+der innere schweinehund
+gänsehaut
+ein hamsterkauf
+ein bärenhunger
+mit einem affenzahn
+eine eselsbrücke
+ein schlitzohr
+ein brummschädel
+die schneckenpost
+
+[feeling]
+das sonntagabendgefühl
+der montagmorgen
+die vorfreude auf weihnachten
+heimweh
+fernweh
+lampenfieber
+torschlusspanik
+schadenfreude
+die angst vorm zahnarzt
+eine peinliche stille
+anfängerglück
+ein schlechtes gewissen
+gähnende langeweile
+das kribbeln vor dem urlaub
+der letzte schultag
+ein zuckerschock
+gute laune
+die freude über hitzefrei
+der erste schnee
+liebeskummer
+das mittagstief
+eine schreibblockade
+ein insiderwitz
+gruppenzwang
+eine glückssträhne
+die ewige warteschleife
+der sinn des lebens
+frühlingsgefühle
+die ruhe vor dem sturm
+ein gebrochenes herz mit pflaster
+der beste tag aller zeiten
+ein fauler sonntag
+ein termin der eine mail sein könnte
+die erleichterung nach der prüfung
+die sehnsucht nach dem meer
+die ungeduld im wartezimmer
+die gemütlichkeit
+weltschmerz
+die angst vor spinnen
+
+[moment]
+der moment wenn das eis runterfällt
+wenn das brot auf die butterseite fällt
+der moment wenn das wlan weg ist
+wenn der kuchen in sich zusammenfällt
+der moment wenn das licht ausgeht
+wenn man barfuß auf ein spielzeug tritt
+der moment wenn der luftballon platzt
+wenn der hund den tierarzt sieht
+wenn der bus vor der nase wegfährt
+wenn der zaubertrick schiefgeht
+die nachricht im falschen chat
+der moment wenn der fisch anbeißt
+wenn der wecker klingelt
+wenn die katze die vase anstupst
+wenn die seife aus der hand flutscht
+wenn der reißverschluss klemmt
+wenn das küken schlüpft
+wenn die schultüte reißt
+wenn der regenschirm umklappt
+wenn der aufzug stecken bleibt
+wenn die lehrerin im supermarkt steht
+der moment wenn der schneeball trifft
+wenn das popcorn anfängt zu ploppen
+wenn die musik plötzlich aufhört
+der moment wenn der fallschirm aufgeht
+wenn der vulkan aufwacht
+wenn der wackelzahn rausfällt
+wenn die welle die sandburg erwischt
+wenn die dominosteine fallen
+wenn die kaugummiblase platzt
+wenn jemand das ende vom film verrät
+wenn der roboter ein bewusstsein bekommt
+wenn der schiedsrichter pfeift
+wenn der farbeimer umkippt
+wenn das handy ins klo fällt
+wenn der pinguin ausrutscht
+der moment wenn die milch überkocht
+wenn der stuhl beim kippeln umfällt
+
+[secret]
+was der kühlschrank nachts macht
+das geheime leben einer socke
+wovon der toaster träumt
+die nachtschicht vom teddybär
+der staubsauger hat urlaub
+das doppelleben der quietscheente
+was der mond am wochenende macht
+der fluchtplan des einkaufswagens
+das geheime hobby des tackers
+das sofa sammelt kleingeld
+die sockensammlung der waschmaschine
+der ruhestand eines bleistifts
+eine uhr die mal pause machen will
+der sommerurlaub vom regenschirm
+die reise des verlorenen handschuhs
+was der spiegel wirklich denkt
+die geheimen treffen der leitkegel
+das versteck der fernbedienung
+der feierabend der gartenzwerge
+die rache des weckers
+die bandprobe der zahnbürsten
+die morgenroutine einer kaffeetasse
+die badewanne träumt vom meer
+der deckenventilator beim training
+der letzte wunsch einer kerze
+der buchclub im bücherregal
+der wasserkocher probt für die oper
+die kühlschrankmagnete tratschen
+die geheime party der stofftiere
+was die zahnfee mit den zähnen macht
+das tagebuch einer teekanne
+salz und pfeffer sind verliebt
+die ampelmännchen tanzen
+was der briefkasten heimlich liest
+
+[invented]
+ein wolkenbildhauer
+der feiertag des mittagsschlafs
+unterwasserschach
+die kissenschlacht wm
+ein sockensortierer
+die olympiade im versteckspielen
+ein pfützeninspektor
+das pfannkuchen weitwerfen
+ein regenbogenreparaturdienst
+ein drachensitter
+ein eichhörnchenfluglotse
+der welttag der kaktusumarmung
+ein luftpolsterfolientester
+ein traumlieferdienst
+ein berufsniesfänger
+der rückwärtsmarathon
+synchronschlafen
+die zahnfee für dinosaurier
+ein klempner für gespenster
+ein sternenpolierer
+ein friseur für giraffen
+das fest der verlorenen schlüssel
+unterwasserradrennen
+die wahl zur grummeligsten katze
+ein schneeflockendesigner
+ein vulkanschornsteinfeger
+die pfützenspringmeisterschaft
+eine wellenfaltfabrik
+der tag an dem alles kopfsteht
+mondbowling
+ein schlafliedsänger für eulen
+die schwerelose kaffeetafel
+das große resteessen
+ein butterbrotarchitekt
+ein fitnesstrainer für goldfische
+ein fahrstuhlmusikkomponist
+ein dirigent für hupkonzerte
+
+[contra]
+ein schüchternes feuerwerk
+ein furchterregendes häschen
+ein höflicher tornado
+ein winziger riese
+ein trauriger clown
+ein leises gewitter
+ein fauler gepard
+ein sanfter monstertruck
+ein kaltes lagerfeuer
+eine mutige maus in rüstung
+ein vegetarischer hai
+ein furchtloses huhn
+ein unordentlicher roboter
+ein verschlafener hahn
+ein rennwagen in zeitlupe
+ein gemütliches spukhaus
+eine grummelige sonnenblume
+eine fröhliche regenwolke
+ein ordentliches chaos
+ein bescheidener pfau
+ein wasserscheuer hai
+ein ritter mit nachtlicht
+eine kerze mit angst vorm auspusten
+ein kaktus der gern kuschelt
+ein vampir der knoblauch liebt
+ein gespenst das sich gruselt
+eine ameise beim bodybuilding
+ein schneemann der den sommer liebt
+ein fisch der nicht schwimmen kann
+eine schildkröte in eile
+ein elefant mit angst vor mäusen
+ein drache ohne feuer
+ein baby mit bart
+ein besen mit stauballergie
+ein wecker der verschläft
+ein sportliches faultier
+ein vulkan im winterschlaf
+ein superheld mit heuschnupfen
+der kleinste elefant der welt
+ein winziger könig auf riesigem thron
+eine unglückliche geburtstagstorte
+ein stummer papagei
+
+[view]
+ein butterbrot sieht dir beim essen zu
+die welt aus sicht einer ameise
+ein goldfisch beobachtet sein herrchen
+der zahnarzt aus sicht eines zahns
+der friseurbesuch aus sicht der haare
+ein geburtstag aus sicht der torte
+im inneren eines sparschweins
+der mond schaut auf die erde
+ein picknick aus der vogelperspektive
+ein baum sieht die jahreszeiten vergehen
+eine party vom boden aus
+eine spinne beobachtet den staubsauger
+ein regenwurm sieht den garten von unten
+im maul eines wals
+der kühlschrank beim mitternachtssnack
+ein tennisball im hundemaul
+eine karotte beobachtet einen hasen
+eine schneeflocke auf dem weg nach unten
+das fenster sieht dem gewitter zu
+die waschmaschine von innen
+ein schuh beim spaziergang im matsch
+eine pfütze sieht gummistiefel kommen
+ein bleistift beobachtet den radiergummi
+der spiegel am morgen
+ein briefkasten wartet auf post
+mäuschen spielen beim elternabend
+ein drachen sieht den park von oben
+ein fisch beäugt den köder
+der film aus sicht der popcorntüte
+ein luftballon fliegt von zuhause weg
+der torwart beim elfmeter
+die welt durch ein hamsterlaufrad
+die welt durch ein schlüsselloch
+unterm tisch beim familienessen
+das schwimmbad vom beckenboden aus
+
+[drama]
+der kampf um das letzte plätzchen
+zwei schnecken im wettrennen
+eine sandburg wird angegriffen
+der große streit um die fernbedienung
+ein goldfisch macht schluss
+eine möwe klaut pommes
+ein eichhörnchen überfällt die bank
+ein vordrängler an der eisdiele
+toaster gegen brötchen
+die katze und die gurke
+das rätsel der leeren keksdose
+ein duell am salatbuffet
+hinterhalt bei der schneeballschlacht
+das letzte stück pizza
+die wespe und der pflaumenkuchen
+zwei könige und ein stuhl
+ein hund versteckt die beweise
+die große flucht des hamsters
+die möwe und das fischbrötchen
+die kissenburg wird belagert
+ein papagei verrät geheimnisse
+der weihnachtsmann streikt
+ein sockenpuppenaufstand
+die ameisen und der zuckerwürfel
+entenstau auf der landstraße
+die spinne in der badewanne
+der bauer will dame werden
+ein dieb klaut den mond
+eine quietscheente allein auf see
+der preiskampf der limostände
+die kühlschranktür bleibt offen
+die fliege die nicht gehen will
+ein drache bewacht die süßigkeiten
+das letzte blatt am baum
+das schiff will aus der flasche
+wer kriegt die armlehne
+die handtuchschlacht am pool
+zwei autos und eine parklücke
+
+[title]
+der herr der zwiebelringe
+das phantom der kantine
+krieg der gartenzwerge
+die schöne und das brötchen
+in achtzig nickerchen um die welt
+zwanzigtausend meilen unter dem bett
+der hund aus dem wäschekorb
+fluch der spülmaschine
+die reise zum mittelpunkt des sofas
+der zauberer von ostfriesland
+das unsichtbare butterbrot
+die nacht der lebenden reste
+ein toaster kommt selten allein
+liebling ich habe die katze geschrumpft
+vom winde verdreht
+planet der schnecken
+der gute der böse und der matschige
+der alte mann und das meerschweinchen
+der graf von monte karotte
+die drei musketomaten
+der name der rosine
+die unendliche spülmaschine
+jäger des verlorenen pausenbrots
+das schweigen der lampen
+stolz und vollkornbrot
+die chroniken von bielefeld
+alice im wunderwaschsalon
+das dschungelkochbuch
+dornröschens schlummertaste
+der unheimliche schneeball
+die jagd auf den goldenen pfannenwender
+der fall des verschwundenen schnurrbarts
+das schlauchboot
+der zauberlehrling im baumarkt
+max und moritz beim finanzamt
+rotkäppchen und der lieferdienst
+hänsel und gretel auf diät
+die bremer stadtmusikanten im tonstudio
+schneewittchens neuer spiegel
+
+[animal]
+eine katze macht die steuererklärung
+eine giraffe mit halsschmerzen
+ein tintenfisch lernt stricken
+ein faultier beim speeddating
+ein igel beim friseur
+eine taube will bürgermeisterin werden
+ein bär quetscht sich in eine jeans
+ein hund hält einen vortrag
+ein eichhörnchen sucht seine nüsse
+ein lama beim passfoto
+eine ente in der fahrschule
+eine kuh beim yoga
+ein nashorn in der drehtür
+ein koala der nicht aufstehen will
+eine eule mit frühschicht
+eine spinne bindet sich die schuhe
+eine fledermaus hängt wäsche auf
+ein krebs der vorwärts läuft
+ein regenwurm macht liegestütze
+ein frosch dirigiert ein orchester
+eine robbe balanciert einen kuchen
+ein pinguin kauft einen frack
+eine schildkröte zieht um
+ein känguru mit unordentlichem beutel
+ein zebra am zebrastreifen
+eine mücke auf diät
+ein elch schmückt sein geweih
+ein papagei als komiker
+ein hund führt sein herrchen gassi
+ein pferd im schuhgeschäft
+ein hamster trainiert für olympia
+ein schwein im schlammbad
+ein biber baut ein hochhaus
+ein specht mit kopfschmerzen
+eine schlange strickt einen schal
+ein maulwurf mit brille
+ein dackel in lederhosen
+eine kuh mit sonnenbrand
+
+[food]
+eine eifersüchtige frikadelle
+eine suppe die zurückschlägt
+eine banane in verkleidung
+brokkoli im urlaub
+eine currywurst im liegestuhl
+eine brezel die sich entknotet
+ein spaghettiwasserfall
+ein wackelpudding beim erdbeben
+ein donut will ein bagel sein
+ein ei auf dem weg in die pfanne
+ein käse der nur aus löchern besteht
+ein zerfallender burger
+eine melone mit helm
+eine zitrone zieht ein saures gesicht
+popcorn beim gruselfilm
+eine dinnerparty für gemüse
+ein salat läuft davon
+ein muffin mit geheimrezept
+eine peperoni mit feueratem
+cornflakes beim synchronschwimmen
+eine gurke im wellnesshotel
+ein würstchen im schlafsack
+eine waffel als tennisschläger
+eine zwiebel bringt alle zum weinen
+ein einsamer rosenkohl
+die wahl in der obstschale
+ein schokohase in der sonne
+sushi beim wettrennen
+eine torte mit hundert kerzen
+nudeln flüchten aus dem topf
+eine ketchupflasche die nicht will
+ein knödel auf der rutsche
+sauerkraut mit sonnenbrille
+ein spiegelei beim sonnenbaden
+ein schlecht gelauntes brot
+ein schnitzel größer als der teller
+
+[place]
+ein hotel für superhelden in rente
+ein krankenhaus für kaputte regenschirme
+eine schule für babydrachen
+ein supermarkt unter wasser
+ein ballsaal voller seifenblasen
+ein museum für langweilige dinge
+ein restaurant mit katzen als kellner
+ein schloss aus käse
+ein spielplatz für großeltern
+ein fitnessstudio für faule
+ein baumhaus mit rolltreppe
+eine tankstelle für pferde
+ein iglu in der wüste
+ein zoo in dem tiere menschen besuchen
+ein parkplatz für fliegende teppiche
+ein flughafen für vögel
+ein friseursalon für schafe
+eine kur für müde roboter
+ein kino für fledermäuse
+eine bäckerei auf einer wolke
+ein kindergarten für monster
+das fundbüro des universums
+ein hochhaus aus kissen
+ein getränkeautomat auf dem gipfel
+ein taxistand im dschungel
+ein skigebiet auf einem vulkan
+ein garten auf dem dach eines busses
+eine pension für bienen
+ein büro im heißluftballon
+eine bücherei im zug
+ein hotel in einem kaktus
+eine kegelbahn für pinguine
+ein campingplatz auf dem mond
+eine jugendherberge für gespenster
+
+[gadget]
+ein hut der deine pflanzen gießt
+ein regenschirm für dein butterbrot
+eine selbstfahrende schubkarre
+ein rucksack mit beinen
+ein kissen mit wecker
+ein roboter der schlecht wäsche faltet
+eine gabel mit eingebautem ventilator
+eine singende zahnbürste
+eine zeitmaschine aus karton
+ein drehknopf für das wetter
+eine brille für die zukunft
+ein fahrrad für zehn personen
+ein helm mit scheibenwischern
+eine leiter bis zu den wolken
+schuhe mit sprungfedern
+eine brotdose mit alarmanlage
+eine antilangeweilemaschine
+ein vulkan im taschenformat
+eine waage die witze erzählt
+eine wolke im einmachglas
+ein föhn für katzen
+ein tarnumhang mit loch
+ein butterbrotkatapult
+ein spiegel der komplimente macht
+eine tür nach überall
+eine hängematte für nilpferde
+ein stimmungsring für hunde
+ein stift der hausaufgaben macht
+ein telefon mit kilometerlangem kabel
+eine teekanne mit periskop
+ein briefkasten der konfetti schießt
+eine nudelmaschine für spaghettieis
+ein sockenwiederfinder
+ein schlüssel der pfeift wenn man ruft
+
+[power]
+mit pflanzen reden können
+ein superheld der nur katzen rettet
+unsichtbar aber nur dienstags
+immer einen parkplatz finden
+ein superheld mit zu langem umhang
+alles in pudding verwandeln
+superschnell aber nur rückwärts
+fliegen einen zentimeter über dem boden
+röntgenblick nur für butterbrote
+superkräfte nur fürs gurkenglas
+ein hamster als treuer gehilfe
+ein schurke der nur linke schuhe klaut
+kapitän aufschieberitis
+glitzer niesen
+ein superheld wartet auf den bus
+ein superheld mit flugangst
+die zeit anhalten für ein nickerchen
+gedanken von hunden lesen
+tauben herbeirufen
+ein umhang auf der wäscheleine
+teleportieren aber immer in die küche
+ein gähnen das bösewichte umhaut
+eine superheldentruppe aus omas
+laseraugen die nur toast machen
+ein bösewicht der geburtstage hasst
+das fotoshooting des unsichtbaren
+ein dritter arm für snacks
+ein held auf dem tretroller
+supergehör in der schulkantine
+ein umhang aus gardinen
+eine superkraft die keiner bemerkt
+ein böser plan mit wachsmalstiften
+
+[then]
+ein höhlenmensch mit selfiestick
+ein pharao am autoschalter
+ein wikinger bestellt einen latte
+ein ritter im stau
+die allererste pizzalieferung
+ein dinosaurier lernt tippen
+ein höhlenmensch erfindet das eckige rad
+ein streitwagen mit plattfuß
+eine ritterburg mit wlan
+ein piratenschiff mit navi
+die mona lisa in der mittagspause
+ein cowboy auf dem elektroroller
+der erste biss in eine zitrone
+olympische spiele der steinzeit
+ein mammut am badestrand
+ein roboter aus der zukunft im museum
+ein zauberer mit laptop
+eine klingel an der zugbrücke
+ein samurai im supermarkt
+ein dinosaurier besucht sein skelett
+ein neandertaler beim barbier
+ein astronaut im mittelalter
+ein gladiator im schaumbad
+die erfindung der gabel
+ein hofnarr im meeting
+eine pyramide aus bauklötzen
+eine griechische statue beim joggen
+die erste ampel im wilden westen
+ein roboter im alten rom
+eine höhlenmalerei mit pizza
+ein zeitreisender verpasst den bus
+goethe mit kopfhörern
+ein ritter beim tüv
+
+[scene]
+opas erster videoanruf
+ein familienfoto im falschen moment
+ein kleinkind leitet die besprechung
+ein klassenfoto bei dem alle blinzeln
+die hochzeitstorte kippt
+zelten im dauerregen
+ein einkaufswagen der nur links fährt
+grillen im hagel
+eine ziege auf dem rücksitz
+ein hund im feinen restaurant
+die erste fahrstunde
+feueralarm im schlafanzug
+umzug mit klavier
+schrankaufbau ohne anleitung
+ein haarschnitt vom kleinkind
+der drucker frisst das zeugnis
+eine pyjamaparty ohne schlaf
+eine katze läuft über die tastatur
+schafe blockieren den feldweg
+papa tanzt auf dem schulfest
+ein waschbär auf dem hochzeitsfoto
+oma zockt alle ab
+stromausfall beim kindergeburtstag
+ein tourist mit riesiger landkarte
+die ersten schritte vom baby
+eine möwenbande am strand
+die schlange an der einzigen kasse
+die einkaufstüte reißt vor der haustür
+ein selfie mit einer wütenden gans
+die rolltreppe fährt falsch herum
+das zelt bricht nachts zusammen
+ausgesperrt im bademantel
+der nachbar mäht sonntags den rasen
+die bahn hat wieder verspätung
+vier mülltonnen und ein joghurtbecher

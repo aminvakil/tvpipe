@@ -1,8 +1,8 @@
 /**
- * Rule vectors shared with the Rust version (docs/multiscreen-design.md §4):
- * the Node rules are the reference. `node test/vectors.ts --bless` writes
- * `test/vectors/rules.txt` from `game/rules.ts`; `vectors.test.ts` and
- * the Rust tests (`src/rules.rs`) replay it.
+ * Rule vectors (once shared with a Rust host, now gone): the Node rules
+ * are the reference. `node test/vectors.ts --bless` writes
+ * `test/vectors/rules.txt` from `game/rules.ts`; `vectors.test.ts`
+ * replays it.
  *
  * Format: tvpipe's test vector files (blocks of `key = value` lines,
  * separated by blank lines, `#` comments). Every block has a `test`:
@@ -10,8 +10,9 @@
  * - `rng`: `seed`, `values` (the first outputs of `seeded(seed)` times
  *   2^32, so integers).
  * - `shuffle`: `seed`, `n`, `order` (`shuffle([0..n), seeded(seed))`).
- * - `title`: `input` (a JSON string), `clean` (`cleanTitle`), `display`
- *   (`displayTitle` of the cleaned input), `key` (`titleKey` of the input).
+ * - `title`: `input` (a JSON string), maybe `lang` (default `en`),
+ *   `clean` (`cleanTitle`), `display` (`displayTitle` of the cleaned
+ *   input), `key` (`titleKey(input, lang)`).
  * - `drawing`: `input` (JSON; `repeat = N` repeats its first stroke N
  *   times, `pad = N` appends N `1`s to its first stroke), then `output`
  *   (the normalised drawing; `input` when that is the input) or `error`
@@ -122,6 +123,25 @@ type Entries = [string, unknown][];
 function block(entries: Entries): string {
   return entries.map(([k, v]) => `${k} = ${typeof v === "string" && k !== "input" ? v : JSON.stringify(v)}`).join("\n");
 }
+
+/** German titles, compared the German way (`titleKey(…, "de")`). */
+const DE_TITLES = [
+  "Der Bär, der tanzt!",
+  "bär der tanzt",
+  "baer der tanzt",
+  "Ein Glückspilz",
+  "glueckspilz",
+  "\u201EDie Straße\u201C",
+  "strasse",
+  "STRASSE",
+  "eine Ente , die quakt",
+  "1,5 Liter Milch",
+  "Die Kuh vom Eis holen.",
+  "kuh vom eis holen",
+  "das",
+  "Wenn der Bus vor der Nase wegfährt…",
+  "ein Ka\u0308se",
+];
 
 const TITLES = [
   "A Nervous  Cactus!",
@@ -344,7 +364,7 @@ function pick<T>(r: () => number, xs: readonly T[]): T {
 function bless(): void {
   const out: string[] = [
     "# drawbluff's rules, written by `node test/vectors.ts --bless` from game/rules.ts",
-    "# (the reference); replayed by test/vectors.test.ts and src/rules.rs.",
+    "# (the reference); replayed by test/vectors.test.ts.",
   ];
   for (const seed of [0, 1, 7, 42, 0xdeadbeef, 0xffffffff]) {
     const r = seeded(seed);
@@ -357,6 +377,9 @@ function bless(): void {
   }
   for (const t of TITLES) {
     out.push(block([["test", "title"], ["input", t], ["clean", JSON.stringify(cleanTitle(t))], ["display", JSON.stringify(displayTitle(cleanTitle(t)))], ["key", JSON.stringify(titleKey(t))]]));
+  }
+  for (const t of DE_TITLES) {
+    out.push(block([["test", "title"], ["input", t], ["lang", "de"], ["clean", JSON.stringify(cleanTitle(t))], ["display", JSON.stringify(displayTitle(cleanTitle(t)))], ["key", JSON.stringify(titleKey(t, "de"))]]));
   }
   for (const d of DRAWINGS) {
     const b: Block = { line: 0, entries: d.map(([k, v]) => [k, k === "input" ? JSON.stringify(v) : String(v)]) };

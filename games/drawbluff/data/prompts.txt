@@ -1,15 +1,19 @@
-# drawbluff's prompts (written for drawbluff; also the source of decoy
-# lies), read by both hosts (game/prompts.ts, src/lib.rs).
+# drawbluff's prompts in English (written for drawbluff; also the
+# source of decoy lies), fetched by the host page (data/prompts.de.txt:
+# German, written for German speakers, not translated).
 #
 # Format: `[tag]` starts a structure, then one prompt per line; blank
 # lines and `#` comments are skipped. A round mixes the structures (no
-# structure twice among three prompts in a row, `deck` in game/rules.ts
-# and src/rules.rs), decoys come from the drawing's own structure first.
+# structure twice among three prompts in a row, `deck` in
+# game/rules.ts), decoys come from the drawing's own structure first. A
+# room deals no prompt twice until it dealt them all (`PromptDeck`).
 #
 # Every prompt is in its display form (lowercase, letters, spaces and
 # apostrophes, nothing at the end) and at most 40 characters, the
 # longest lie a phone takes (LIE_SOFT), so neither form nor length is a
-# tell. Drawable, family-friendly, our own.
+# tell. Drawable, family-friendly, our own; no two alike (`node
+# scripts/prompts.ts --near` lists near duplicates; test/prompts.test.ts
+# checks all of it).
 #
 # The structures:
 #   odd       odd combinations: a lonely lighthouse at a party
@@ -22,12 +26,19 @@
 #   view      an unusual point of view: the world seen by an ant
 #   drama     tiny dramas: the last cookie standoff
 #   title     famous-sounding invented titles: the phantom of the bakery
+#   animal    animals with human problems: a cat filing its taxes
+#   food      food with a life of its own: soup that fights back
+#   place     places that should not exist: a school for baby dragons
+#   gadget    inventions nobody needs: a hat that waters your plants
+#   power     useless superpowers: the power to sneeze glitter
+#   then      history gets mixed up: a caveman with a selfie stick
+#   scene     everyday scenes gone wrong: grandpa's first video call
 
 [odd]
 a lonely lighthouse at a party
 a vampire at the dentist
 a snowman in a sauna
-a penguin running a lemonade stand
+a penguin selling sunscreen
 a knight in a bouncy castle
 a ghost at a job interview
 a giraffe in a tiny car
@@ -47,9 +58,9 @@ an astronaut at a car wash
 a robot at a petting zoo
 a sumo wrestler on a tightrope
 a mummy at the beach
-a crocodile at a tea party
+a crocodile at the opera
 a wizard in a laundromat
-a submarine in a swimming pool
+a submarine in a fish tank
 a bear at a sushi bar
 a statue at a disco
 a scarecrow at a fashion show
@@ -65,8 +76,8 @@ a camel at the north pole
 a ninja at a baby shower
 a mime at a rock concert
 a gorilla at a piano recital
-a dinosaur at a job interview
-a tea party for bugs
+a dinosaur at a yoga class
+a spa for bugs
 a library for ghosts
 a dentist for crocodiles
 a trampoline for elephants
@@ -184,12 +195,12 @@ the moment the fish takes the bait
 the moment the alarm rings
 the moment the cat knocks it off
 the moment the soap slips
-the moment the chair breaks
+the moment the hammock gives way
 the moment the zipper gets stuck
 the moment the egg hatches
 the moment the pinata breaks
 the moment the umbrella flips
-the moment the elevator stops
+the moment the elevator doors open
 the moment you see your teacher shopping
 the moment the snowball hits
 the moment the popcorn starts popping
@@ -197,13 +208,13 @@ the moment the music stops
 the moment the parachute opens
 the moment the volcano wakes up
 the moment the tooth comes out
-the moment the kite gets stuck
+the moment the kite lifts you off
 the moment the sandcastle meets a wave
 the moment the dominoes fall
 the moment the gum bubble bursts
 the moment someone spoils the ending
 the moment the robot becomes self aware
-the moment the penguin slips
+the moment the penguin learns to fly
 the moment the referee blows the whistle
 the moment the paint can tips over
 
@@ -243,10 +254,14 @@ the bookshelf's book club
 the kettle's opera debut
 the fridge magnets gossiping
 a mouse with a big secret
-an iceberg with a secret
-the tooth fairy's day off
+the iceberg's hidden basement
+the tooth fairy's overtime
 a witch's broom getting a wash
 a smartphone addicted to people
+what the dishwasher dreams about
+the escalator's secret dance moves
+the lost keys' hideout
+the night life of museum statues
 
 [invented]
 a professional cloud sculptor
@@ -263,7 +278,7 @@ a full time dragon babysitter
 a squirrel traffic controller
 international hug a cactus day
 a lighthouse night guard
-a bubble wrap tester
+a professional pillow fluffer
 a dream delivery service
 a professional sneeze catcher
 the backwards running marathon
@@ -284,7 +299,7 @@ the day everything is upside down
 moon bowling
 a lullaby singer for owls
 the zero gravity tea party
-the national leftovers day
+the leftovers festival
 a sandwich architect
 a goldfish personal trainer
 a cloud catching contest
@@ -306,7 +321,7 @@ a fearless chicken
 a messy robot
 a sleepy rooster
 a slow motion race car
-a soft rock concert
+a silent drum solo
 a friendly haunted house
 a grumpy sunflower
 a happy rain cloud
@@ -340,14 +355,14 @@ the world seen by an ant
 a goldfish looking at its owner
 the dentist seen by a tooth
 a haircut seen by the hair
-the cake's view of a birthday
+a birthday through the cake's eyes
 a football's worst day
 inside a piggy bank
 the moon watching the earth
 a bird's view of a picnic
-a pillow's view of bedtime
+bedtime from the pillow's side
 a tree watching the seasons go by
-the floor's view of a dance party
+a dance party seen from the floor
 a spider watching a vacuum
 a worm's view of a garden
 inside a whale's mouth
@@ -355,7 +370,7 @@ the fridge's view of a midnight snack
 a ball's view of a dog
 a carrot watching a rabbit
 a snowflake's long fall
-the window's view of a storm
+the window watching a storm
 a sock's view of the washing machine
 a shoe's view of a muddy walk
 an umbrella's view of the rain
@@ -363,14 +378,20 @@ a pencil watching the eraser
 the mirror's view of the morning
 a mailbox waiting for mail
 a fly on the wall at dinner
-the moon's view of a sleepover
+the moon peeking at a sleepover
 a kite's view of the park
 a fish's view of the fisherman
-the popcorn's view of a movie
+a movie from inside the popcorn bucket
 a balloon floating away from home
 the ocean's view of the beach
-a candle's view of a cake
+a candle waiting to be blown out
 the goalkeeper's view of a penalty
+a bus stop watching people run late
+what a runaway balloon sees
+the bottom of a swimming pool looking up
+the world through a keyhole
+life inside a lava lamp
+under the table at a family dinner
 
 [drama]
 the last cookie standoff
@@ -380,10 +401,10 @@ the great remote control battle
 a goldfish breakup
 a pigeon stealing fries
 a squirrel bank robbery
-a queue cutter at the ice cream van
+a queue jumper at the bakery
 the toaster versus the bagel
 the cat and the cucumber
-the mystery of the empty cookie jar
+the cookie crumb detective
 a duel at the salad bar
 a snowball fight ambush
 the last slice of pizza
@@ -411,6 +432,11 @@ a dragon guarding a cookie jar
 the last leaf on the tree
 a ship escaping its bottle
 a ninja tripping over a cat
+a tug of war over the last pillow
+a chase through the supermarket
+a sandwich custody battle
+two dogs and one stick
+a staring contest with an owl
 
 [title]
 return of the lunch box
@@ -423,13 +449,13 @@ twenty thousand leagues under the bed
 the hound of the laundry basket
 pirates of the kitchen sink
 journey to the center of the sofa
-the wizard of ice cream
+the wizard of oats
 the invisible sandwich
 night of the living leftovers
 a tale of two toasters
 the incredible shrinking cat
 war of the garden gnomes
-the mystery of the missing moon
+the mystery of the missing moustache
 gone with the wind turbine
 planet of the snails
 the good the bad and the soggy
@@ -438,14 +464,271 @@ raiders of the lost snack
 the old man and the sea monster
 the count of monte carrot
 the fast and the fluffy
-the great cheese escape
+the cheese that got away
 pride and porridge
 the chronicles of the toaster
 alice in laundryland
 the jungle notebook
-sleeping beauty's alarm clock
+sleeping beauty's snooze button
 the abominable snowball
-a dragon's first day at school
+the lord of the onion rings
 the hunt for the golden spatula
 the case of the vanishing socks
 the secret diary of a teapot
+jurassic pork
+the silence of the lamps
+the empire strikes snack
+a midsummer night's cream
+the sound of muesli
+moby duck
+frankenstein's pet hamster
+
+[animal]
+a cat filing its taxes
+a giraffe with a sore throat
+an octopus learning to knit
+a sloth at a speed dating event
+a hedgehog getting a haircut
+a pigeon running for mayor
+a bear trying to fit into jeans
+a dog giving a business presentation
+a chicken that finally crossed the road
+a squirrel who forgot where the nuts are
+a llama posing for a passport photo
+a duck learning to drive
+a cow doing yoga
+a rhino stuck in a revolving door
+a koala that refuses to wake up
+an owl working the day shift
+a spider tying its shoes
+a bat hanging out the laundry
+a crab walking forwards
+a worm doing push ups
+a frog conducting an orchestra
+a seal balancing a teapot
+a penguin in a tuxedo shop
+a turtle moving house
+a kangaroo with a messy pocket
+a zebra at the crosswalk
+a polar bear on a sun lounger
+a mosquito on a diet
+a moose decorating its antlers
+a parrot doing stand up comedy
+a dog walking its owner
+a horse at the shoe store
+a hamster training for the olympics
+a pig at a mud spa
+a beaver building a skyscraper
+a woodpecker with a headache
+a snake knitting a very long scarf
+a giraffe at a limbo contest
+
+[food]
+a jealous meatball
+a pizza delivered by parachute
+soup that fights back
+a banana in disguise
+broccoli on vacation
+a sandwich taller than a house
+a spaghetti waterfall
+a wobbly tower of jelly
+a donut that wants to be a bagel
+an egg on its way to the frying pan
+a cheese that is mostly holes
+a burger falling apart
+a melon wearing a helmet
+a lemon pulling a sour face
+a nervous bag of popcorn
+a dinner party for vegetables
+a salad that ran away
+a muffin hiding a vegetable
+a pepper too hot to handle
+cereal swimming in milk
+a cucumber at the spa
+a hot dog in a sleeping bag
+a waffle used as a tennis racket
+a pretzel that came untied
+an onion making everyone cry
+a lonely brussels sprout
+a fruit bowl election
+a chocolate statue on a hot day
+a sushi conveyor belt race
+a cake with a hundred candles
+noodles escaping the pot
+a ketchup bottle that won't pour
+a peanut butter and jelly wedding
+a carrot with a tan
+a grumpy loaf of bread
+
+[place]
+a hotel for retired superheroes
+a hospital for broken umbrellas
+a school for baby dragons
+a supermarket under the sea
+a ballroom full of bubbles
+a museum of very boring things
+a restaurant run by cats
+a castle made of cheese
+a playground for grandparents
+a gym for lazy people
+a treehouse with an elevator
+a petrol station for horses
+an igloo in the desert
+a zoo where the animals visit people
+a parking lot for flying carpets
+an airport for birds
+a barber shop for sheep
+a post office run by snails
+a spa for tired robots
+a cinema for bats
+a bakery on a cloud
+a kindergarten for monsters
+the lost and found of the universe
+a skyscraper made of pillows
+a vending machine on a mountain top
+a taxi rank in the jungle
+a ski resort on a volcano
+a garden on the roof of a bus
+a bed and breakfast for bees
+an office in a hot air balloon
+a library on a train
+a hotel inside a cactus
+a bowling alley for penguins
+
+[gadget]
+a hat that waters your plants
+an umbrella for your sandwich
+a self driving wheelbarrow
+a backpack with legs
+a pillow with an alarm
+a robot that folds laundry badly
+a fork with a built in fan
+a toothbrush that sings while you brush
+a time machine made of cardboard
+a dial that changes the weather
+glasses for seeing tomorrow
+a bicycle for ten people
+a helmet with windshield wipers
+a ladder to the clouds
+shoes with springs
+a fridge with a burglar alarm
+an anti boredom machine
+a robot babysitter
+a pocket sized volcano
+a scale that tells jokes
+a cloud in a jar
+a hairdryer for cats
+an invisibility cloak with a hole
+a sandwich making catapult
+a mirror that compliments you
+a door to anywhere
+a hammock for two hippos
+a mood ring for your dog
+a pencil that does your homework
+a phone with a mile long cord
+a teapot with a periscope
+a mailbox that shoots confetti
+a hat with a built in umbrella
+
+[power]
+the power to talk to plants
+a superhero who only rescues kittens
+invisible but only on tuesdays
+the power to always find parking
+a superhero with a cape too long
+the power to turn things into pudding
+a speedster stuck in reverse
+flying an inch above the ground
+x ray vision that only sees sandwiches
+a hero who can find any lost key
+super strength for opening jars
+a sidekick who is a hamster
+a villain who steals only left shoes
+captain procrastination
+the power to sneeze glitter
+a superhero waiting for the bus
+a superhero who gets airsick
+freezing time to take a nap
+reading the minds of dogs
+the power to summon pigeons
+a cape drying on the washing line
+teleporting but always to the kitchen
+a yawn that knocks out a villain
+a team of superhero grandmothers
+laser eyes that only make toast
+a villain who hates birthdays
+an invisible superhero's photo shoot
+a third arm for carrying snacks
+a hero arriving on a scooter
+super hearing in a crowded cafeteria
+a cape made of curtains
+a superpower nobody notices
+an evil plan drawn in crayon
+
+[then]
+a caveman with a selfie stick
+a pharaoh at the drive through
+a viking ordering a latte
+a knight stuck in traffic
+the first ever pizza delivery
+a dinosaur learning to type
+a caveman inventing a square wheel
+a roman chariot with a flat tire
+a medieval castle with wifi
+a pirate ship with a sat nav
+the mona lisa on her lunch break
+a cowboy on an electric scooter
+the first person to try a lemon
+the stone age olympics
+a woolly mammoth on a sunny beach
+a robot from the future at a museum
+a wizard with a laptop
+a doorbell on a castle drawbridge
+a samurai in a supermarket
+a dinosaur visiting its own skeleton
+a neanderthal at the barber
+an astronaut in the middle ages
+a gladiator in a bubble bath
+the invention of the sandwich
+a court jester in a business meeting
+a pyramid built of sugar cubes
+an ancient statue at the gym
+the wild west's first traffic light
+a robot in ancient rome
+cave paintings of a pizza
+a time traveler missing the bus
+a castle with a moat full of soup
+
+[scene]
+grandpa's first video call
+a family photo ruined by a seagull
+a toddler running a meeting
+a school photo where everyone blinked
+a wedding cake disaster
+a camping trip in the rain
+a shopping cart that only turns left
+a picnic during a hailstorm
+a road trip with a goat in the back seat
+a dog at a fancy restaurant
+the first driving lesson
+a fire drill in pajamas
+moving day with a grand piano
+building furniture without instructions
+a haircut done by a toddler
+a printer eating important papers
+a sleepover where nobody sleeps
+a cat walking across a laptop
+sheep blocking a country road
+dad dancing at the school disco
+a squirrel photobombing a wedding
+grandma winning at video games
+pushing a broken bike up a hill
+a power cut at the birthday party
+a lost tourist with a huge map
+a baby's first steps
+a gang of seagulls at the beach
+the queue at the only open checkout
+a grocery bag that breaks at the door
+a selfie with a very angry goose
+an escalator going the wrong way
+a tent collapsing at night

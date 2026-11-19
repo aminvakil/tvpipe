@@ -7,13 +7,16 @@
  * screens only ever get views (docs/party-design.md §5).
  *
  * Views:
- * - `party.room` (every phone): `{ phase, round, rounds, players, spot?, spots?, deadline?, drawing?, artist?, minPlayers? }`
+ * - `party.room` (every phone): `{ phase, lang, round, rounds, players, spot?, spots?, deadline?, drawing?, artist?, minPlayers? }`
  * - `player.state` (one phone): `{ task, score, rank, of, … }`, `task` one of
  *   `lobby`, `wait` (a late joiner), `draw` (`prompt`, `deadline`, `done`),
  *   `lie` (`key`, `drawing`, `artist`, `liars`, `early`, `deadline`, `done`, `lie`),
  *   `artist` (`key`), `vote` (`key`, `options`, `deadline`, `done`, `choice`),
  *   `watch` (`note`, `result`), `scores`/`final`
- * - `party.screen` (the TV): `{ phase, … }` per phase, see each method.
+ * - `party.screen` (the TV): `{ phase, lang, … }` per phase, see each method.
+ *
+ * `lang` is the room's language (`en`, `de`): the prompts, the decoys,
+ * and what every phone and TV says (each page has its strings).
  */
 
 import { Emitter, LATE_JOIN, PartyError, type LateJoin, type Party, type Player } from "@tvpipe/party";
@@ -21,7 +24,6 @@ import { Emitter, LATE_JOIN, PartyError, type LateJoin, type Party, type Player 
 import {
   buildOptions,
   cleanTitle,
-  deck,
   decoyOrder,
   displayTitle,
   deal,
@@ -29,6 +31,7 @@ import {
   pickLiars,
   plan,
   POINTS,
+  PromptDeck,
   revealOrder,
   rotate,
   score,
@@ -38,6 +41,7 @@ import {
   titleKey,
   validateDrawing,
   type Drawing,
+  type Lang,
   type Option,
   type Plan,
   type Prompt,
@@ -91,8 +95,13 @@ export interface GameOptions {
   minPlayers?: number | undefined;
   timings?: Partial<Timings> | undefined;
   rng?: (() => number) | undefined;
-  /** The prompts (`data/prompts.txt` through `parsePrompts`); plain strings have no structure. */
-  prompts: readonly (string | Prompt)[];
+  /**
+   * The prompts (`data/prompts.txt` through `parsePrompts`; plain strings
+   * have no structure): for `lang`, or per language.
+   */
+  prompts: readonly (string | Prompt)[] | Partial<Record<Lang, readonly (string | Prompt)[]>>;
+  /** The room's language (default `en`; the host page's setting, see {@link Drawbluff.configure}). */
+  lang?: Lang | undefined;
   /**
    * Who may join during a game (the VIP can change it in the lobby):
    * `wait` (the default) from the next round, `open` from the next
@@ -112,6 +121,9 @@ export interface GameEvents {
   phase: [phase: string];
   end: [scores: ScoreLine[]];
 }
+
+/** What the game itself names, per language (the pages have their own strings). */
+const SOMEONE: Record<Lang, string> = { en: "someone", de: "jemand" };
 
 export type Phase = "lobby" | "draw" | "gallery" | "lie" | "vote" | "reveal" | "scores" | "final";
 
@@ -150,7 +162,11 @@ export class Drawbluff extends Emitter<GameEvents> {
   readonly minPlayers: number;
   timings: Timings;
   readonly #rng: () => number;
-  readonly #prompts: readonly Prompt[];
+  /** The prompts per language. */
+  readonly #prompts = new Map<Lang, readonly Prompt[]>();
+  /** The room's decks per language, kept from game to game (no prompt twice until all were dealt). */
+  readonly #decks = new Map<Lang, PromptDeck>();
+  #lang: Lang;
   /** Points per player id (players in the game; late joiners from their first round). */
   readonly scores = new Map<string, number>();
   /** Lies written so far this game, per player id (rotation). */
@@ -161,7 +177,8 @@ export class Drawbluff extends Emitter<GameEvents> {
   #phase: Phase = "lobby";
   #running = false;
   #abort = new AbortController();
-  #deck: Prompt[] = [];
+  /** This game's deck (the room's, in the game's language). */
+  #deck!: PromptDeck;
   #round = 0;
   /** The lies whose progress the TV shows (`liars`/`done` on the screen). */
   #onScreen: Lies | undefined;
@@ -179,8 +196,14 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.minPlayers = options.minPlayers ?? 3;
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
     this.#rng = options.rng ?? Math.random;
-    this.#prompts = options.prompts.map((p) => (typeof p === "string" ? { text: p, tag: "" } : p));
-    if (this.#prompts.length === 0) throw new Error("drawbluff: no prompts");
+    this.#lang = options.lang ?? "en";
+    const lists: Partial<Record<Lang, readonly (string | Prompt)[]>> = Array.isArray(options.prompts)
+      ? { [this.#lang]: options.prompts }
+      : (options.prompts as Partial<Record<Lang, readonly (string | Prompt)[]>>);
+    for (const [lang, list] of Object.entries(lists) as [Lang, readonly (string | Prompt)[]][]) {
+      if (list.length > 0) this.#prompts.set(lang, list.map((p) => (typeof p === "string" ? { text: p, tag: "" } : p)));
+    }
+    if (!this.#prompts.has(this.#lang)) throw new Error(`drawbluff: no prompts in ${this.#lang}`);
     if (options.lateJoin !== undefined) party.lateJoin = options.lateJoin;
   }
 
@@ -190,6 +213,16 @@ export class Drawbluff extends Emitter<GameEvents> {
 
   get running(): boolean {
     return this.#running;
+  }
+
+  /** The room's language. */
+  get lang(): Lang {
+    return this.#lang;
+  }
+
+  /** The languages there are prompts for. */
+  get langs(): Lang[] {
+    return [...this.#prompts.keys()];
   }
 
   /** Shows the lobby and waits for the VIP to start. */
@@ -238,11 +271,20 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.#lobby();
   }
 
-  /** Changes the rounds or the timers before a game (the lobby shows the rounds). */
-  configure(o: { rounds?: number | undefined; timings?: Partial<Timings> | undefined }): void {
+  /**
+   * Changes the rounds, the timers or the language before a game (the
+   * lobby shows the rounds; every phone and TV follows the language).
+   */
+  configure(o: { rounds?: number | undefined; timings?: Partial<Timings> | undefined; lang?: Lang | undefined }): void {
     if (this.#running) throw new PartyError("running", "Not during a game");
+    if (o.lang !== undefined && !this.#prompts.has(o.lang)) throw new PartyError("bad-lang", `No prompts in ${o.lang}`);
     if (o.rounds !== undefined) this.rounds = Math.max(1, Math.min(5, Math.round(o.rounds)));
     if (o.timings) this.timings = { ...DEFAULT_TIMINGS, ...o.timings };
+    if (o.lang !== undefined && o.lang !== this.#lang) {
+      this.#lang = o.lang;
+      this.party.room.set({ lang: o.lang });
+      this.party.screen.set({ lang: o.lang });
+    }
     if (this.#phase === "lobby") this.party.room.set({ rounds: this.rounds });
   }
 
@@ -274,7 +316,7 @@ export class Drawbluff extends Emitter<GameEvents> {
 
   /** The TV's view of a phase, with the newcomers. */
   #screen(fields: Record<string, unknown>): void {
-    this.party.screen.replace({ ...fields, ...this.#joinedView() });
+    this.party.screen.replace({ ...fields, lang: this.#lang, ...this.#joinedView() });
   }
 
   /**
@@ -300,8 +342,8 @@ export class Drawbluff extends Emitter<GameEvents> {
   #lobby(): void {
     const p = this.party;
     this.#setPhase("lobby");
-    p.room.replace({ phase: "lobby", minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, rounds: this.rounds, lateJoin: p.lateJoin });
-    p.screen.replace({ phase: "lobby", minPlayers: this.minPlayers, maxPlayers: p.maxPlayers });
+    p.room.replace({ phase: "lobby", lang: this.#lang, minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, rounds: this.rounds, lateJoin: p.lateJoin });
+    p.screen.replace({ phase: "lobby", lang: this.#lang, minPlayers: this.minPlayers, maxPlayers: p.maxPlayers });
     for (const pl of p.players) pl.state.replace({ task: "lobby" });
   }
 
@@ -314,7 +356,9 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.#lied.clear();
     this.#spotted.clear();
     this.#fresh.clear();
-    this.#deck = deck(this.#prompts, this.#rng);
+    let deck = this.#decks.get(this.#lang);
+    if (!deck) this.#decks.set(this.#lang, (deck = new PromptDeck(this.#prompts.get(this.#lang)!, this.#rng)));
+    this.#deck = deck;
     try {
       for (let round = 1; round <= this.rounds; round++) {
         this.#round = round;
@@ -352,13 +396,14 @@ export class Drawbluff extends Emitter<GameEvents> {
   }
 
   #room(fields: Record<string, unknown>): void {
-    this.party.room.replace({ round: this.#round, rounds: this.rounds, players: this.#inGame().length, ...fields });
+    this.party.room.replace({ lang: this.#lang, round: this.#round, rounds: this.rounds, players: this.#inGame().length, ...fields });
   }
 
   async #draw(round: number, players: Player[]): Promise<Entry[]> {
     const party = this.party;
     this.#setPhase("draw");
-    const prompts = new Map(players.map((p) => [p, this.#deck.pop() ?? { text: "anything you like", tag: "" }]));
+    const hand = this.#deck.deal(players.length);
+    const prompts = new Map(players.map((p, i) => [p, hand[i]!]));
     const deadline = this.#deadline(this.timings.draw);
     this.#room({ phase: "draw", deadline });
     this.#screen({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
@@ -459,8 +504,8 @@ export class Drawbluff extends Emitter<GameEvents> {
           // Kept as typed; shown and compared in the display form.
           const text = cleanTitle(typeof d === "object" && d !== null ? (d as { text?: unknown }).text : d);
           if (!displayTitle(text)) throw new PartyError("empty", "Write a title");
-          if (titleKey(text) === titleKey(spot.prompt)) throw new PartyError("truth", "That's the real title! Write a lie instead.");
-          if (!titleKey(text)) throw new PartyError("empty", "Write a title with letters");
+          if (titleKey(text, this.#lang) === titleKey(spot.prompt, this.#lang)) throw new PartyError("truth", "That's the real title! Write a lie instead.");
+          if (!titleKey(text, this.#lang)) throw new PartyError("empty", "Write a title with letters");
           const ok = party.moderate(text, "lie", pl);
           if (ok === false) throw new PartyError("refused", "Try another one");
           return cleanTitle(ok);
@@ -552,13 +597,18 @@ export class Drawbluff extends Emitter<GameEvents> {
     const spot = lies.spot;
     const artist = spot.artist;
     const art = { id: artist.id, name: artist.name };
+    const lang = this.#lang;
+    const truthKey = titleKey(spot.prompt, lang);
     const options = buildOptions(
       spot.prompt,
       new Map([...(await lies.done)].map(([p, t]) => [p.id, t])),
-      decoyOrder(shuffle(this.#deck.filter((t) => titleKey(t.text) !== titleKey(spot.prompt)), this.#rng), spot.tag).map((t) => t.text),
+      decoyOrder(shuffle(this.#deck.left.filter((t) => titleKey(t.text, lang) !== truthKey), this.#rng), spot.tag).map((t) => t.text),
       this.#rng,
       Math.min(4, lies.liars.length + 1),
+      lang,
     );
+    // A decoy shown is not dealt as a prompt later.
+    this.#deck.discard(options.filter((o) => o.decoy).map((o) => o.text));
     // With `open`, newcomers vote from here (never in a vote that runs).
     if (party.lateJoin === "open") this.#dealIn(true);
     this.#votesLeft = Math.max(0, this.#votesLeft - 1);
@@ -639,7 +689,7 @@ export class Drawbluff extends Emitter<GameEvents> {
   ): Promise<void> {
     const party = this.party;
     this.#setPhase("reveal");
-    const name = (id: string) => party.player(id)?.name ?? "someone";
+    const name = (id: string) => party.player(id)?.name ?? SOMEONE[this.#lang];
     const items = revealOrder(options, scoring.voters).map((o) => {
       const who = scoring.voters.get(o.id) ?? [];
       const seen = scoring.seen.get(o.id) ?? 0;
@@ -688,7 +738,7 @@ export class Drawbluff extends Emitter<GameEvents> {
     const choice = votes.get(p.id);
     const picked = options.find((o) => o.id === choice && (scoring.voters.get(o.id) ?? []).includes(p.id));
     const out: Record<string, unknown> = { kind: picked ? (picked.truth ? "found" : "fooled") : "none", points };
-    if (picked && !picked.truth) out["by"] = picked.decoy ? [] : picked.authors.map((a) => this.party.player(a)?.name ?? "someone");
+    if (picked && !picked.truth) out["by"] = picked.decoy ? [] : picked.authors.map((a) => this.party.player(a)?.name ?? SOMEONE[this.#lang]);
     if (lie) {
       out["lie"] = lie.text;
       out["fooledCount"] = fooled;
@@ -750,8 +800,8 @@ export class Drawbluff extends Emitter<GameEvents> {
     const party = this.party;
     this.#setPhase("final");
     const table = this.#table();
-    party.room.replace({ phase: "final", minPlayers: this.minPlayers, lateJoin: party.lateJoin });
-    party.screen.replace({ phase: "final", scores: table.slice(0, BOARD_LINES), total: table.length });
+    party.room.replace({ phase: "final", lang: this.#lang, minPlayers: this.minPlayers, lateJoin: party.lateJoin });
+    party.screen.replace({ phase: "final", lang: this.#lang, scores: table.slice(0, BOARD_LINES), total: table.length });
     for (const p of party.players) p.state.replace({ task: "final", ...this.#rank(this.scores.has(p.id) ? p : undefined) });
     this.emit("end", table);
     return table;

@@ -3,8 +3,7 @@ import { test } from "node:test";
 
 import { PartyError } from "@tvpipe/party";
 
-import { PROMPT_LIST, PROMPTS } from "./prompts.ts";
-import { buildOptions, cleanTitle, deal, displayTitle, LIE_SOFT, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
+import { buildOptions, cleanTitle, deal, displayTitle, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
 
 test("titles compare without case, accents, punctuation and a leading article", () => {
   assert.equal(titleKey("A Nervous  Cactus!"), titleKey("nervous cactus"));
@@ -12,7 +11,6 @@ test("titles compare without case, accents, punctuation and a leading article", 
   assert.notEqual(titleKey("a cactus"), titleKey("a cactuses"));
   assert.equal(cleanTitle("  hi\u0000 there  "), "hi there");
   assert.equal(cleanTitle("x".repeat(80)).length, 48);
-  assert.equal(new Set(PROMPTS.map(titleKey)).size, PROMPTS.length, "prompts are distinct");
 });
 
 test("drawings: limits, clamping, refusals", () => {
@@ -133,19 +131,22 @@ test("titles are shown alike, so formatting gives the truth away nowhere", () =>
   assert.equal(displayTitle('"A Cat!"'), "a cat");
   assert.equal(displayTitle("\u2018tis   the \u201Cseason\u201D..."), "'tis the \"season");
   assert.equal(titleKey("a cat"), titleKey("A Cat."));
-  // The prompts are already in that form, and no longer than a phone lets you type a lie.
-  for (const p of PROMPTS) {
-    assert.equal(displayTitle(p), p, p);
-    assert.ok([...p].length <= LIE_SOFT, p);
-    assert.match(p, /^[a-z' ]+$/, p);
-  }
-  // Several hundred, every structure with enough prompts to mix.
-  assert.ok(PROMPT_LIST.length >= 300, String(PROMPT_LIST.length));
-  for (const tag of ["odd", "idiom", "feeling", "moment", "secret", "invented", "contra", "view", "drama", "title"]) {
-    const n = PROMPT_LIST.filter((p) => p.tag === tag).length;
-    assert.ok(n >= 30, `${tag}: ${n}`);
-  }
-  assert.ok(PROMPT_LIST.every((p) => p.tag !== ""));
   const opts = buildOptions("A Haunted Toaster", new Map([["b", "A SPOOKY toaster!!"]]), [], seeded(1), 2);
   assert.deepEqual(opts.map((o) => o.text).sort(), ["a haunted toaster", "a spooky toaster"]);
+});
+
+test("German titles: „quotes“, commas, umlauts, ß and articles", () => {
+  // The prompts have no commas; a relative clause typed properly has one.
+  assert.equal(displayTitle("\u201EDer Bär, der tanzt!\u201C"), "der bär der tanzt");
+  assert.equal(displayTitle("1,5 Liter"), "1,5 liter");
+  assert.equal(titleKey("Der Bär", "de"), titleKey("baer", "de"));
+  assert.equal(titleKey("STRASSE", "de"), titleKey("die Straße", "de"));
+  assert.equal(titleKey("Ein Glückspilz", "de"), titleKey("glueckspilz", "de"));
+  assert.notEqual(titleKey("bär", "de"), titleKey("bar", "de"));
+  // English keeps its own rules: "die" is no article there.
+  assert.notEqual(titleKey("die hard"), titleKey("hard"));
+  assert.equal(titleKey("café"), titleKey("cafe"));
+  // A lie equal to the German truth is no option; equal lies merge.
+  const opts = buildOptions("der bär der tanzt", new Map([["a", "Der Baer, der tanzt"], ["b", "ein Hund, der tanzt"], ["c", "Hund der tanzt!"]]), [], seeded(1), 2, "de");
+  assert.deepEqual(opts.map((o) => [o.text, o.authors]).sort(), [["der bär der tanzt", []], ["ein hund der tanzt", ["b", "c"]]]);
 });

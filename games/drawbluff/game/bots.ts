@@ -1,13 +1,13 @@
 /**
  * Fake players: clients that play drawbluff by themselves (scribbles,
- * silly lies, random votes). For the tests (in Node), and for trying the
+ * silly lies in the room's language, random votes). For the tests (in Node), and for trying the
  * game alone: the host page's "Add a bot" runs them in the window,
  * connected through tvpipe like a phone.
  */
 
 import { memoryStorage, PartyClient, type WebSocketFactory } from "@tvpipe/party/client";
 
-import type { Drawing } from "./rules.ts";
+import { pickLang, type Drawing, type Lang } from "./rules.ts";
 
 export interface BotOptions {
   /** The WebSocket URL (`ws://127.0.0.1:PORT/_tvpipe/ws`). */
@@ -26,18 +26,33 @@ export interface BotOptions {
   silent?: boolean;
 }
 
-const LIES = [
-  "a sad potato",
-  "my uncle on monday",
-  "a confused banana",
-  "the cat's revenge",
-  "a dancing lamp",
-  "abstract art",
-  "a sneaky pancake",
-  "a happy accident",
-  "the evil teapot",
-  "a very tired frog",
-];
+/** The bots' lies per language (the room's: `room.lang`). */
+export const LIES: Record<Lang, readonly string[]> = {
+  en: [
+    "a sad potato",
+    "my uncle on monday",
+    "a confused banana",
+    "the cat's revenge",
+    "a dancing lamp",
+    "abstract art",
+    "a sneaky pancake",
+    "a happy accident",
+    "the evil teapot",
+    "a very tired frog",
+  ],
+  de: [
+    "eine traurige kartoffel",
+    "mein onkel am montag",
+    "eine verwirrte banane",
+    "die rache der katze",
+    "eine tanzende stehlampe",
+    "moderne kunst",
+    "ein hinterhältiger pfannkuchen",
+    "ein glücklicher zufall",
+    "die böse teekanne",
+    "ein sehr müder frosch",
+  ],
+};
 
 /** A recognisable doodle: a face, a house or a sun, in a random spot. */
 export function doodle(rng: () => number): Drawing {
@@ -120,6 +135,8 @@ export class Bot {
     switch (me.task) {
       case "lobby":
       case "final": {
+        // A next game reuses the keys (`1.1`, …): answer them again.
+        if (me.task === "final") this.#handled.clear();
         const vip = (view["roster"] ?? []).find((r: { id: string }) => r.id === c.you?.id)?.vip;
         const ready = (view["roster"] ?? []).filter((r: { connected: boolean }) => r.connected).length;
         if (this.#o.autoStart && vip && me.task === "lobby" && ready >= (room.minPlayers ?? 3)) {
@@ -132,7 +149,8 @@ export class Bot {
         return;
       case "lie":
         if (!me.done) {
-          const base = LIES[Math.floor(this.#rng() * LIES.length)]!;
+          const lies = LIES[pickLang(room.lang)];
+          const base = lies[Math.floor(this.#rng() * lies.length)]!;
           // Now and then the same idea as another bot (merged lies).
           const lie = { text: this.#rng() < 0.3 ? base : `${base} ${this.name}` };
           this.#once(`lie:${turn}`, () => c.act("lie", lie));

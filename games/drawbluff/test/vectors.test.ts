@@ -26,6 +26,7 @@ import {
   spread,
   titleKey,
   validateDrawing,
+  type Lang,
   type Option,
   type Prompt,
 } from "../game/rules.ts";
@@ -53,7 +54,7 @@ test("the shared rule vectors (test/vectors/rules.txt)", () => {
       case "title":
         assert.equal(cleanTitle(json("input")), json("clean"), at);
         assert.equal(displayTitle(cleanTitle(json("input"))), json("display"), at);
-        assert.equal(titleKey(json("input")), json("key"), at);
+        assert.equal(titleKey(json("input"), has(b, "lang") ? (get(b, "lang") as Lang) : undefined), json("key"), at);
         break;
       case "drawing": {
         const input = drawingInput(b);

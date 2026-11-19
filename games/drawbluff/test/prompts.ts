@@ -1,13 +1,27 @@
 /**
- * The prompts (`data/prompts.txt`, by structure: `[tag]` sections) for
- * the tests in Node; the host page fetches the same file.
+ * The prompts (`data/prompts.txt`, `data/prompts.de.txt`, by structure:
+ * `[tag]` sections) for the tests in Node; the host page fetches the
+ * same files.
  */
 
 import { readFileSync } from "node:fs";
 
-import { parsePrompts, type Prompt } from "../game/rules.ts";
+import { parsePrompts, type Lang, type Prompt } from "../game/rules.ts";
 
-export const PROMPT_LIST: readonly Prompt[] = parsePrompts(readFileSync(new URL("../data/prompts.txt", import.meta.url), "utf8"));
+/** A language's prompts file. */
+export const PROMPT_FILE: Record<Lang, URL> = {
+  en: new URL("../data/prompts.txt", import.meta.url),
+  de: new URL("../data/prompts.de.txt", import.meta.url),
+};
 
-/** The prompts' texts. */
+/** The prompts per language. */
+export const PROMPTS_BY_LANG: Record<Lang, readonly Prompt[]> = {
+  en: parsePrompts(readFileSync(PROMPT_FILE.en, "utf8")),
+  de: parsePrompts(readFileSync(PROMPT_FILE.de, "utf8")),
+};
+
+/** The English prompts. */
+export const PROMPT_LIST: readonly Prompt[] = PROMPTS_BY_LANG.en;
+
+/** The English prompts' texts. */
 export const PROMPTS: readonly string[] = PROMPT_LIST.map((p) => p.text);
