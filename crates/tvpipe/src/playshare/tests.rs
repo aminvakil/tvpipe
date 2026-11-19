@@ -976,6 +976,59 @@ fn host_says_goodbye_before_the_end() {
     );
 }
 
+#[test]
+fn lan_listener() {
+    // A LAN listener on loopback (no network, no firewall prompt): its
+    // own exact Host and Origin only.
+    crate::util::timer::raise_resolution();
+    let bundle = Bundle::open(&fixture("game")).unwrap();
+    let opts = Options {
+        tunnel: TunnelChoice::Off,
+        lan: Some(Some("127.0.0.1".parse().unwrap())),
+        ..Options::default()
+    };
+    let log = Arc::new(Mutex::new(Log::default()));
+    let running = Running::start(
+        bundle,
+        Box::new(Fake {
+            log,
+            fail_cast: false,
+        }),
+        &opts,
+        Stop::new(),
+    )
+    .unwrap();
+    let hub = running.hub.clone();
+    let lan = hub.ports.get().unwrap().lan.unwrap();
+    let info = hub.info();
+    let phone = info.get("phone").unwrap();
+    assert_eq!(phone.get("mode").and_then(Value::as_str), Some("lan"));
+    assert_eq!(
+        phone.get("url").and_then(Value::as_str),
+        Some(format!("http://{lan}/").as_str())
+    );
+    let r = get(lan.port(), "/?r=AB", &lan.to_string(), "");
+    assert!(r.contains("Location: /phone/index.html?r=AB"), "{r}");
+    assert!(
+        get(lan.port(), "/", &format!("localhost:{}", lan.port()), "").starts_with("HTTP/1.1 421")
+    );
+    assert!(get(lan.port(), "/_tvpipe/launcher/", &lan.to_string(), "").starts_with("HTTP/1.1 404"));
+    let mut host = api_of(&hub);
+    call(&mut host, "relay.attach", Value::object());
+    let origin = format!("http://{lan}");
+    let _p = ws(lan.port(), "/_tvpipe/ws", &[("Origin", origin.as_str())]).unwrap();
+    let open = host_control(&mut host, "open");
+    assert_eq!(open.get("via").and_then(Value::as_str), Some("lan"));
+    let e = refused(ws(
+        lan.port(),
+        "/_tvpipe/ws",
+        &[("Origin", "http://127.0.0.1:1")],
+    ));
+    assert!(e.to_string().contains("403"), "{e}");
+    drop(host);
+    running.end();
+}
+
 // ---------------------------------------------------------------------
 // One connection
 

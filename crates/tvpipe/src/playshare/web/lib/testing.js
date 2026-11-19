@@ -91,9 +91,10 @@ class FakeSocket {
         if (this.readyState !== 1)
             return;
         const host = this.#host;
+        const copy = typeof data === "string" ? data : data.slice();
         later(() => {
             if (host && !host.closed)
-                host.onmessage?.(data);
+                host.onmessage?.(copy);
         });
     }
     close(code = 1000, reason = "") {
@@ -161,6 +162,19 @@ export class MemoryRelay {
     /** Connections open now. */
     get size() {
         return this.#conns.size;
+    }
+    /** The host's side of every open connection, oldest first. */
+    connections() {
+        return this.#conns;
+    }
+    /** What tvpipe reports when a client's backlog crosses 64 KiB. */
+    setBusy(conn, busy) {
+        const c = conn;
+        if (!this.#conns.has(c) || c.busy === busy)
+            return;
+        c.busy = busy;
+        if (!busy)
+            later(() => c.ondrain?.());
     }
     /** What tvpipe does at the end: `closing`, then every client closed with 4011. */
     async end(graceMs = 50) {
