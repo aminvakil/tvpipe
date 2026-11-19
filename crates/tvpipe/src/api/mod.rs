@@ -4,6 +4,7 @@
 mod options;
 mod session;
 pub(crate) mod stream;
+mod tunnel;
 
 use std::collections::BTreeMap;
 use std::sync::mpsc;
@@ -14,6 +15,7 @@ use std::time::{Duration, Instant};
 pub use options::{Input, Options, PixelFormat, PlayerOptions, TunnelProvider};
 pub use session::{ReceiverInfo, Session, SessionState, Stopper};
 pub use stream::{AudioWriter, ConfigFormat, Frame, FrameBuffer, Stream, Written, H264};
+pub use tunnel::{QrCode, Tunnel};
 
 use crate::error::{Error, Result};
 use crate::events::{Event, Paired, PinRequest, Unpaired};

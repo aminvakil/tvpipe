@@ -37,6 +37,8 @@ mod ctx;
 mod error;
 pub mod events;
 mod media;
+// Reachable only through `__web`, which is not public API.
+#[allow(missing_docs)]
 mod net;
 // Reachable only through `__cli`, which is not public API.
 #[allow(missing_docs)]
@@ -55,7 +57,8 @@ pub mod recipes;
 pub use api::{
     discover, discover_with, play, preview, share, stream, test_pattern, AudioWriter, ConfigFormat,
     Discovery, Frame, FrameBuffer, Input, Options, PairingState, PixelFormat, PlayerOptions,
-    ReceiverInfo, Session, SessionState, Stopper, Stream, TunnelProvider, Written, H264,
+    QrCode, ReceiverInfo, Session, SessionState, Stopper, Stream, Tunnel, TunnelProvider, Written,
+    H264,
 };
 #[cfg(feature = "airplay")]
 pub use api::{pair, pair_with, unpair, Pairing};
@@ -147,4 +150,18 @@ pub mod __cli {
     pub mod slrw {
         pub use crate::media::slrw::*;
     }
+}
+
+/// What `tvpipe-party` needs from the internals (its HTTP server,
+/// WebSocket, JSON, interfaces). Not part of the public API: the party
+/// crate pins this crate's exact version (docs/multiscreen-design.md
+/// §1.1).
+#[doc(hidden)]
+#[allow(missing_docs)]
+pub mod __web {
+    pub use crate::codec::json;
+    pub use crate::net::{base64, http, iface};
+    #[cfg(feature = "player")]
+    pub use crate::net::{httpd, websocket};
+    pub use crate::util::qr;
 }

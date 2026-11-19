@@ -57,7 +57,7 @@ Changes inside tvpipe for this: `net::httpd` binds a LAN address on
 request (today loopback only, by design: an explicit
 `Bind::Lan(addr)` with its own access rule, §3.2), its connection cap
 (32) becomes a parameter (a party needs 64 + headroom), and
-`net::tunnel::Provider` gains `Auto` (Cloudflare, OpenTunnel on 429;
+the public `Tunnel` gains `start_auto` (Cloudflare, else OpenTunnel;
 the Node library does this today).
 
 ### 1.2 Threads, not async
@@ -647,7 +647,7 @@ warnings`, `cargo test --workspace`, and `npm test` in `npm/party` and
 `games/drawbluff` where touched), never pushed.
 
 1. **tvpipe groundwork** (small, no new behaviour for the CLI): public
-   `tvpipe::qr` and `tvpipe::Tunnel` (+ `Provider::Auto`) as planned in
+   `tvpipe::qr` and `tvpipe::Tunnel` (+ `Tunnel::start_auto`) and `tvpipe::QrCode` as planned in
    party-design §3; `#[doc(hidden)] pub mod __web` (http, httpd,
    websocket, access, iface, json); `httpd` with an explicit LAN bind and
    a configurable connection cap; the access rule's LAN case. Tests for

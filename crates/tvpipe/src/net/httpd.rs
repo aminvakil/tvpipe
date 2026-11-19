@@ -4,9 +4,11 @@
 //! `net::http` framing (keep-alive) and asks the handler for a [`Reply`]:
 //! a response, or a response followed by handing the socket over (the
 //! WebSocket upgrade), in which case the connection thread becomes the
-//! upgraded connection's thread. Only loopback addresses can be bound:
-//! nothing here is meant to face a network (a `--tunnel` reaches it from
-//! loopback too; the pages' own checks decide, `browser::access`).
+//! upgraded connection's thread. Only loopback addresses can be bound
+//! unless [`Config::lan`] says otherwise (the party server's LAN mode,
+//! docs/multiscreen-design.md §3.2): tvpipe's own pages never face a
+//! network (a `--tunnel` reaches them from loopback too; the pages' own
+//! checks decide, `browser::access`).
 //!
 //! Sources: RFC 9112.
 
@@ -19,7 +21,7 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::net::http::{self, Conn, Request, Response, Version};
 
-/// Connections served at once; more are closed right away.
+/// Connections served at once by default; more are closed right away.
 const MAX_CONNECTIONS: usize = 32;
 /// An idle keep-alive connection (or a slow request) is closed after this.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -69,6 +71,29 @@ pub fn error_response(status: u16, reason: &str) -> Response {
     )
 }
 
+/// How a [`Server`] runs.
+#[derive(Clone, Copy, Debug)]
+pub struct Config {
+    /// Connections served at once; more are closed right away.
+    pub max_connections: usize,
+    /// The largest request body.
+    pub max_body: usize,
+    /// Allow a non-loopback unicast address (one interface; the
+    /// unspecified address is always refused). The handler must then check
+    /// `Host` and `Origin` for that address itself.
+    pub lan: bool,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            max_connections: MAX_CONNECTIONS,
+            max_body: 1 << 20,
+            lan: false,
+        }
+    }
+}
+
 pub struct Server {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
@@ -78,7 +103,13 @@ pub struct Server {
 impl Server {
     /// Binds `addr` (loopback only; port 0 picks one) and serves `handler`.
     pub fn bind(addr: SocketAddr, handler: Handler) -> Result<Server> {
-        if !addr.ip().is_loopback() {
+        Server::bind_with(addr, handler, Config::default())
+    }
+
+    /// [`bind`](Server::bind) with a [`Config`].
+    pub fn bind_with(addr: SocketAddr, handler: Handler, config: Config) -> Result<Server> {
+        let ip = addr.ip();
+        if !ip.is_loopback() && !(config.lan && !ip.is_unspecified() && !ip.is_multicast()) {
             return Err(Error::usage(format!(
                 "httpd: refusing to listen on non-loopback {addr}"
             )));
@@ -95,7 +126,7 @@ impl Server {
         let st = stop.clone();
         let thread = std::thread::Builder::new()
             .name("httpd".into())
-            .spawn(move || accept_loop(listener, handler, st))
+            .spawn(move || accept_loop(listener, handler, st, config))
             .map_err(|e| Error::io("httpd: spawn", e))?;
         Ok(Server {
             addr,
@@ -123,7 +154,7 @@ impl Drop for Server {
     }
 }
 
-fn accept_loop(listener: TcpListener, handler: Handler, stop: Arc<AtomicBool>) {
+fn accept_loop(listener: TcpListener, handler: Handler, stop: Arc<AtomicBool>, config: Config) {
     let active = Arc::new(AtomicUsize::new(0));
     while !stop.load(Ordering::SeqCst) {
         let (tcp, peer) = match listener.accept() {
@@ -138,7 +169,7 @@ fn accept_loop(listener: TcpListener, handler: Handler, stop: Arc<AtomicBool>) {
                 continue;
             }
         };
-        if active.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+        if active.load(Ordering::SeqCst) >= config.max_connections {
             debug!("httpd: too many connections; closing {peer}");
             continue;
         }
@@ -147,7 +178,7 @@ fn accept_loop(listener: TcpListener, handler: Handler, stop: Arc<AtomicBool>) {
         let spawned = std::thread::Builder::new()
             .name("httpd-conn".into())
             .spawn(move || {
-                serve(tcp, peer, &h);
+                serve(tcp, peer, &h, config.max_body);
                 a.fetch_sub(1, Ordering::SeqCst);
             });
         if let Err(e) = spawned {
@@ -157,7 +188,7 @@ fn accept_loop(listener: TcpListener, handler: Handler, stop: Arc<AtomicBool>) {
     }
 }
 
-fn serve(tcp: TcpStream, peer: SocketAddr, handler: &Handler) {
+fn serve(tcp: TcpStream, peer: SocketAddr, handler: &Handler, max_body: usize) {
     PEER.with(|p| p.set(Some(peer)));
     // Accepted sockets may inherit the listener's non-blocking mode.
     if tcp.set_nonblocking(false).is_err() || tcp.set_read_timeout(Some(IDLE_TIMEOUT)).is_err() {
@@ -168,7 +199,7 @@ fn serve(tcp: TcpStream, peer: SocketAddr, handler: &Handler) {
     let mut conn = Conn::with_limits(
         tcp,
         http::Limits {
-            max_body: 1 << 20,
+            max_body,
             ..http::Limits::default()
         },
     );
@@ -275,6 +306,45 @@ mod tests {
     #[test]
     fn loopback_only() {
         let handler: Handler = Arc::new(|_: &Request| Reply::Response(error_response(404, "x")));
-        assert!(Server::bind("0.0.0.0:0".parse().unwrap(), handler).is_err());
+        assert!(Server::bind("0.0.0.0:0".parse().unwrap(), handler.clone()).is_err());
+        let lan = Config {
+            lan: true,
+            ..Config::default()
+        };
+        // The unspecified address stays refused even for LAN servers.
+        assert!(Server::bind_with("0.0.0.0:0".parse().unwrap(), handler.clone(), lan).is_err());
+        assert!(Server::bind_with("[::]:0".parse().unwrap(), handler.clone(), lan).is_err());
+        // A LAN server may still bind loopback.
+        assert!(Server::bind_with("127.0.0.1:0".parse().unwrap(), handler, lan).is_ok());
+    }
+
+    #[test]
+    fn connection_cap() {
+        let handler: Handler = Arc::new(|_: &Request| {
+            Reply::Response(response(200, "OK", "text/plain", b"ok".to_vec()))
+        });
+        let config = Config {
+            max_connections: 1,
+            ..Config::default()
+        };
+        let srv = Server::bind_with("127.0.0.1:0".parse().unwrap(), handler, config).unwrap();
+        let addr = srv.local_addr();
+        // The first connection stays open (keep-alive) and holds the slot.
+        let mut first = TcpStream::connect(addr).unwrap();
+        first
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        first
+            .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            .unwrap();
+        let mut buf = [0u8; 256];
+        let n = first.read(&mut buf).unwrap();
+        assert!(buf[..n].starts_with(b"HTTP/1.1 200 OK"));
+        // The second is closed without an answer.
+        let r = get(
+            addr,
+            "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        assert!(r.is_empty(), "{r}");
     }
 }
