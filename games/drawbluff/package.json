@@ -1,0 +1,27 @@
+{
+  "name": "drawbluff",
+  "private": true,
+  "version": "0.1.2",
+  "description": "A Drawful-style party game on tvpipe: draw your prompt, fake the others' titles, find the real one",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node main.ts",
+    "check": "tsc -p tsconfig.json",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "@tvpipe/party": "file:../../npm/party",
+    "@tvpipe/sdk": "file:../../npm/tvpipe"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "~5.9.3"
+  }
+}

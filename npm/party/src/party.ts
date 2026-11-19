@@ -234,6 +234,8 @@ export interface CollectOptions<T> {
   validate?: ((data: Json, player: Player) => T) | undefined;
   /** Whether a player may answer again, replacing the first answer (default false). */
   replace?: boolean | undefined;
+  /** The phone's result for an accepted answer (default `null`). */
+  reply?: ((value: T, player: Player) => unknown) | undefined;
   /** Called after each accepted answer. */
   onAnswer?: ((player: Player, value: T, answers: ReadonlyMap<Player, T>) => void) | undefined;
   /** With `until`: stop waiting for players who are away (default: they may come back until the deadline). */
@@ -440,7 +442,7 @@ export class Party extends EventEmitter<PartyEvents> {
         answers.set(sender, value);
         options.onAnswer?.(sender, value, answers);
         queueMicrotask(check);
-        return null;
+        return options.reply ? options.reply(value, sender) : null;
       });
       this.on("away", check);
       this.on("leave", onLeave);

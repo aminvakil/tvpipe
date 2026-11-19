@@ -1,0 +1,165 @@
+/**
+ * Fake players: browser clients without a browser that play drawbluff
+ * by themselves (scribbles, silly lies, random votes). For the tests and
+ * for trying the game alone (`node main.ts --bots 3`).
+ */
+
+import { memoryStorage, PartyClient } from "@tvpipe/party/client";
+
+import type { Drawing } from "./rules.ts";
+
+export interface BotOptions {
+  /** The WebSocket URL (`ws://127.0.0.1:PORT/party/ws`). */
+  url: string;
+  room: string;
+  key: string;
+  name: string;
+  rng?: () => number;
+  /** Start the game when VIP and enough players are there. */
+  autoStart?: boolean;
+  /** Delay before answering, ms (default 0–300 random). */
+  think?: () => number;
+  /** Never answer (to test deadlines). */
+  silent?: boolean;
+  /** "Lie for me" instead of writing. */
+  autoLie?: boolean;
+}
+
+const LIES = [
+  "a sad potato",
+  "my uncle on monday",
+  "a confused banana",
+  "the cat's revenge",
+  "a dancing lamp",
+  "abstract art",
+  "a sneaky pancake",
+  "a happy accident",
+  "the evil teapot",
+  "a very tired frog",
+];
+
+/** A recognisable doodle: a face, a house or a sun, in a random spot. */
+export function doodle(rng: () => number): Drawing {
+  const cx = 300 + Math.floor(rng() * 400);
+  const cy = 300 + Math.floor(rng() * 400);
+  const r = 120 + Math.floor(rng() * 80);
+  const circle = (x: number, y: number, rad: number, color: number, width: number) => {
+    const s = [color, width];
+    for (let i = 0; i <= 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      s.push(Math.round(x + Math.cos(a) * rad), Math.round(y + Math.sin(a) * rad));
+    }
+    return s;
+  };
+  const kind = Math.floor(rng() * 3);
+  if (kind === 0) {
+    return {
+      strokes: [
+        circle(cx, cy, r, 0, 14),
+        circle(cx - r / 3, cy - r / 4, 12, 0, 18),
+        circle(cx + r / 3, cy - r / 4, 12, 0, 18),
+        [2, 14, cx - r / 2, cy + r / 4, cx - r / 4, cy + r / 2, cx + r / 4, cy + r / 2, cx + r / 2, cy + r / 4],
+      ].map((s) => s.map(Math.round)),
+    };
+  }
+  if (kind === 1) {
+    return {
+      strokes: [
+        [6, 16, cx - r, cy, cx - r, cy + r, cx + r, cy + r, cx + r, cy, cx - r, cy],
+        [2, 16, cx - r - 30, cy, cx, cy - r, cx + r + 30, cy],
+        [3, 14, cx - 25, cy + r, cx - 25, cy + r / 3, cx + 25, cy + r / 3, cx + 25, cy + r],
+      ].map((s) => s.map(Math.round)),
+    };
+  }
+  const rays: number[][] = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    rays.push([3, 12, cx + Math.cos(a) * (r + 20), cy + Math.sin(a) * (r + 20), cx + Math.cos(a) * (r + 90), cy + Math.sin(a) * (r + 90)]);
+  }
+  return { strokes: [circle(cx, cy, r, 4, 30), ...rays].map((s) => s.map((v) => Math.max(0, Math.min(1000, Math.round(v))))) };
+}
+
+export class Bot {
+  readonly client: PartyClient;
+  readonly name: string;
+  /** The last error the host answered with. */
+  errors: string[] = [];
+  readonly #o: BotOptions;
+  readonly #rng: () => number;
+  #handled = new Set<string>();
+
+  constructor(o: BotOptions) {
+    this.#o = o;
+    this.name = o.name;
+    this.#rng = o.rng ?? Math.random;
+    this.client = new PartyClient({ url: o.url, room: o.room, key: o.key, storage: memoryStorage() });
+    this.client.on("view", (view) => this.#onView(view));
+  }
+
+  async join(): Promise<void> {
+    await this.client.join(this.name);
+  }
+
+  #once(key: string, fn: () => Promise<unknown>): void {
+    if (this.#handled.has(key)) return;
+    this.#handled.add(key);
+    const delay = this.#o.think ? this.#o.think() : this.#rng() * 300;
+    setTimeout(() => {
+      fn().catch((e: { code?: string }) => this.errors.push(e.code ?? String(e)));
+    }, delay);
+  }
+
+  #onView(view: Record<string, any>): void {
+    if (this.#o.silent) return;
+    const me = view["me"] ?? {};
+    const room = view["room"] ?? {};
+    const c = this.client;
+    const turn = `${room.round}:${room.deadline ?? ""}:${room.artist?.id ?? ""}`;
+    switch (me.task) {
+      case "lobby":
+      case "final": {
+        const vip = (view["roster"] ?? []).find((r: { id: string }) => r.id === c.you?.id)?.vip;
+        const ready = (view["roster"] ?? []).filter((r: { connected: boolean }) => r.connected).length;
+        if (this.#o.autoStart && vip && me.task === "lobby" && ready >= (room.minPlayers ?? 3)) {
+          this.#once(`start:${ready}`, () => c.act("start"));
+        }
+        return;
+      }
+      case "draw":
+        if (!me.done) this.#once(`draw:${turn}`, () => c.act("draw", doodle(this.#rng)));
+        return;
+      case "lie":
+        if (!me.done) {
+          const lie = this.#o.autoLie ? { auto: true } : { text: `${LIES[Math.floor(this.#rng() * LIES.length)]} ${this.name}` };
+          this.#once(`lie:${turn}`, () => c.act("lie", lie));
+        }
+        return;
+      case "vote":
+        if (!me.done && Array.isArray(me.options) && me.options.length > 0) {
+          const opts = me.options as { id: string; text: string }[];
+          const pick = opts[Math.floor(this.#rng() * opts.length)]!;
+          this.#once(`vote:${turn}`, () => c.act("vote", { option: pick.id }));
+        }
+        return;
+    }
+  }
+
+  close(): void {
+    this.client.close();
+  }
+}
+
+/** `n` bots joined to a party; the first starts the game when `autoStart`. */
+export async function bots(
+  n: number,
+  o: Omit<BotOptions, "name"> & { names?: string[] },
+): Promise<Bot[]> {
+  const names = o.names ?? ["Ada", "Bea", "Cy", "Dot", "Eli", "Fay", "Gus", "Hal"];
+  const out: Bot[] = [];
+  for (let i = 0; i < n; i++) {
+    const b = new Bot({ ...o, name: names[i % names.length]! + (i >= names.length ? String(i) : ""), autoStart: o.autoStart && i === 0 });
+    await b.join();
+    out.push(b);
+  }
+  return out;
+}
