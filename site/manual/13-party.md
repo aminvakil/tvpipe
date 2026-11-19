@@ -74,6 +74,10 @@ $ tvpipe playshare .
 $ npm run zip && tvpipe playshare drawbluff.zip
 ```
 
-Its window shows the room code and the QR code, the TVs, the players, the number of rounds, the timers and whether latecomers join at the next round, at the next drawing, or not at all, and a preview of the TV. **Add a bot** adds fake players, to try it alone. Each round deals prompts of different kinds: odd pairs, idioms taken literally, feelings, "the moment…", the secret lives of things and more.
+Its window shows the room code and the QR code, the TVs, the players, the number of rounds, the timers and whether latecomers join at the next round, at the next drawing, or not at all, and a preview of the TV. **Add a bot** adds fake players, to try it alone.
+
+drawbluff speaks English and German. Pick the language on the host page, which starts with your browser's, and every phone and the TV follow. A phone can switch for itself in the lobby.
+
+Each language has its own prompts, written for it rather than translated: 665 in English, 698 in German. They range from odd pairs, idioms taken literally and useless superpowers to history gone wrong, and in German also compounds taken literally („ein glückspilz“). A room never deals the same prompt twice until it has used them all.
 
 The design is in [docs/playshare-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/playshare-design.md), the protocol between phones and the game in [docs/party-protocol.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/party-protocol.md).
