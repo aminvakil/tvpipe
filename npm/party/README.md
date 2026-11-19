@@ -110,6 +110,34 @@ manifest's `players.max`), `lateJoin`, `moderate`, `limits`, `grace`,
 and `closing` events. A game's own launcher uses these, then
 `select()`s and navigates to the host page.
 
+## Surfaces: canvases on TVs
+
+A canvas can go to the TVs without tvpipe's own browser capturing a
+page: the library encodes it with WebCodecs here and tvpipe streams the
+H.264 (docs/playshare-design.md §17). Cheaper, as fast or faster, in any
+browser with WebCodecs, and one surface per TV gives every TV its own
+picture.
+
+```js
+const tv = await tvpipe.surface({ canvas, fps: 30, audio: { context, node } });
+function draw() { render(ctx); tv.frame(); requestAnimationFrame(draw); }
+```
+
+In a worker (keeps going while the window is hidden; `requestAnimationFrame`
+does not):
+
+```js
+const info = await tvpipe.openSurface({ width: 1280, height: 720, fps: 30, to: ["Kitchen"] });
+worker.postMessage({ canvas: canvas.transferControlToOffscreen(), info }, [canvas]);
+// in the worker: const enc = new SurfaceEncoder(info, canvas); … draw; enc.frame(true) on a timer
+```
+
+`SurfaceEncoder`: `frame(force?)`, `pushAudio(pcm, ptsUs)`, `close()`,
+events `status`, `stats` (`fps`, `kbps`, `lagMs` to tvpipe, `encodeMs`),
+`end`, `error`; `captureAudio(context, node, channels, onPcm)` taps Web
+Audio. A DOM TV page can be drawn into a canvas with Chrome's
+HTML-in-Canvas (drawbluff's "TV picture: drawn here").
+
 ## Client API
 
 `PartyClient.fromLocation()` or `new PartyClient({ url, room, key, role,

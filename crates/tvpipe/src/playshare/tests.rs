@@ -251,7 +251,73 @@ impl Cast for FakeCast {
     }
 }
 
+#[derive(Default)]
+struct SurfaceLog {
+    configs: usize,
+    frames: Vec<(Duration, bool)>,
+    audio: usize,
+    stopped: bool,
+}
+
+struct FakeSurface {
+    log: Arc<Mutex<SurfaceLog>>,
+    key: bool,
+    t0: Instant,
+}
+
+impl super::backend::SurfaceSink for FakeSurface {
+    fn config(&mut self, _data: &[u8], _annex_b: bool) -> crate::error::Result<()> {
+        self.log.lock().unwrap().configs += 1;
+        Ok(())
+    }
+    fn video(
+        &mut self,
+        _au: &[u8],
+        pts: Duration,
+        key: bool,
+        _a: bool,
+    ) -> crate::error::Result<bool> {
+        let mut log = self.log.lock().unwrap();
+        log.frames.push((pts, key));
+        // A receiver that wants an IDR after the first frame.
+        if log.frames.len() == 1 {
+            self.key = true;
+        }
+        Ok(true)
+    }
+    fn audio(&mut self, pcm: &[i16], _pts: Duration) -> crate::error::Result<()> {
+        self.log.lock().unwrap().audio += pcm.len();
+        Ok(())
+    }
+    fn keyframe_wanted(&mut self) -> bool {
+        std::mem::take(&mut self.key)
+    }
+    fn elapsed(&self) -> Duration {
+        self.t0.elapsed()
+    }
+    fn status(&mut self) -> Value {
+        Value::object().with("state", "streaming")
+    }
+    fn stop(self: Box<Self>) {
+        self.log.lock().unwrap().stopped = true;
+    }
+}
+
+static SURFACE_LOG: std::sync::LazyLock<Arc<Mutex<SurfaceLog>>> =
+    std::sync::LazyLock::new(Arc::default);
+
 impl Backend for Fake {
+    fn surface(
+        &self,
+        _to: &[String],
+        _spec: super::backend::SurfaceSpec,
+    ) -> crate::error::Result<Box<dyn super::backend::SurfaceSink>> {
+        Ok(Box::new(FakeSurface {
+            log: SURFACE_LOG.clone(),
+            key: false,
+            t0: Instant::now(),
+        }))
+    }
     fn discover(&self) -> crate::error::Result<Box<dyn Discover>> {
         Ok(Box::new(FakeDiscover))
     }
@@ -982,6 +1048,86 @@ fn host_says_goodbye_before_the_end() {
         "{:?}",
         t0.elapsed()
     );
+}
+
+#[test]
+fn surfaces() {
+    let s = Setup::new("game");
+    let mut w = api(&s);
+    let r = call(
+        &mut w,
+        "surface.open",
+        Value::object()
+            .with("width", 1281u64)
+            .with("height", 720u64)
+            .with("audio", true)
+            .with("to", vec!["browser"]),
+    );
+    let v = r.get("value").unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(v.get("width").and_then(Value::as_u64), Some(1280));
+    let path = v.get("path").and_then(Value::as_str).unwrap().to_owned();
+    let id = v.get("id").and_then(Value::as_u64).unwrap();
+    // Needs the token, and an open surface.
+    assert!(ws(s.local(), &path, &[]).is_err());
+    assert!(ws(
+        s.local(),
+        &format!("/_tvpipe/surface?id=99&t={}", s.hub.token),
+        &[]
+    )
+    .is_err());
+    assert!(ws(s.public(), &format!("{path}&t={}", s.hub.token), &[]).is_err());
+    let (mut rx, tx) = ws(s.local(), &format!("{path}&t={}", s.hub.token), &[]).unwrap();
+    let rec = |kind: u8, pts: u64, payload: &[u8]| {
+        let mut b = vec![kind];
+        b.extend_from_slice(&pts.to_le_bytes());
+        b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        b.extend_from_slice(payload);
+        b
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64;
+    tx.send_binary(&rec(4, now, &[0, 1, 2, 3])).unwrap();
+    tx.send_binary(&rec(3, now, &[1, 9, 9])).unwrap();
+    tx.send_binary(&rec(3, now + 33_333, &[0, 9])).unwrap();
+    tx.send_binary(&rec(2, now + 10_000, &[0; 1920])).unwrap();
+    // The fake asks for a keyframe once; the status comes too.
+    let mut got = (false, false);
+    while !(got.0 && got.1) {
+        let m = next_json(&mut rx);
+        match m.get("t").and_then(Value::as_str) {
+            Some("keyframe") => got.0 = true,
+            Some("status") => got.1 = true,
+            _ => {}
+        }
+    }
+    loop {
+        let m = next_json(&mut rx);
+        if m.get("t").and_then(Value::as_str) == Some("stats") {
+            assert_eq!(
+                m.get("fps").and_then(Value::as_f64).map(|f| f > 0.0),
+                Some(true)
+            );
+            break;
+        }
+    }
+    {
+        let log = SURFACE_LOG.lock().unwrap();
+        assert_eq!(log.configs, 1);
+        // On the stream's clock: the second one stamped 33 ms after the first.
+        let (a, b) = (log.frames[0], log.frames[1]);
+        assert!(a.1 && !b.1);
+        let d = b.0.as_micros() as i64 - a.0.as_micros() as i64;
+        assert!((20_000..=40_000).contains(&d), "{d}");
+        assert_eq!(log.audio, 960);
+    }
+    // A bad record closes the socket.
+    tx.send_binary(&[3, 0, 0]).unwrap();
+    assert_eq!(close_code(&mut rx), 1002);
+    let r = call(&mut w, "surface.close", Value::object().with("id", id));
+    assert_eq!(r.get("ok").and_then(Value::as_bool), Some(true), "{r}");
+    assert!(SURFACE_LOG.lock().unwrap().stopped);
 }
 
 #[test]

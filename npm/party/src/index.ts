@@ -65,3 +65,14 @@ export {
   type WebSocketLike,
 } from "./client.ts";
 export { memoryRelay, MemoryRelay } from "./testing.ts";
+export {
+  SurfaceEncoder,
+  captureAudio,
+  slrwRecord,
+  wallMicros,
+  type CanvasSource,
+  type EncoderOptions,
+  type SurfaceInfo,
+  type SurfaceStats,
+  type SurfaceStatus,
+} from "./surface.ts";

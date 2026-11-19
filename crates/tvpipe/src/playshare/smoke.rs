@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::backend::{Backend, Cast, Discover, Pair};
+use super::backend::{Backend, Cast, Discover, Pair, SurfaceSink, SurfaceSpec};
 use super::check::{Level, Problem};
 use super::{Bundle, Hub, Options, Running, TunnelChoice};
 use crate::browser::launch::{find_browser, Browser, Engine, LaunchOptions, Profile};
@@ -120,7 +120,34 @@ impl Cast for Recorded {
     fn stop(self: Box<Self>) {}
 }
 
+/// A surface's frames, taken and dropped.
+struct Swallowed(Instant);
+impl SurfaceSink for Swallowed {
+    fn config(&mut self, _data: &[u8], _annex_b: bool) -> Result<()> {
+        Ok(())
+    }
+    fn video(&mut self, _au: &[u8], _pts: Duration, _key: bool, _annex_b: bool) -> Result<bool> {
+        Ok(true)
+    }
+    fn audio(&mut self, _pcm: &[i16], _pts: Duration) -> Result<()> {
+        Ok(())
+    }
+    fn keyframe_wanted(&mut self) -> bool {
+        false
+    }
+    fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+    fn status(&mut self) -> Value {
+        Recorded.status()
+    }
+    fn stop(self: Box<Self>) {}
+}
+
 impl Backend for Stand {
+    fn surface(&self, _to: &[String], _spec: SurfaceSpec) -> Result<Box<dyn SurfaceSink>> {
+        Ok(Box::new(Swallowed(Instant::now())))
+    }
     fn discover(&self) -> Result<Box<dyn Discover>> {
         Ok(Box::new(NoDiscover))
     }

@@ -12,6 +12,7 @@
 import { Emitter } from "./emitter.ts";
 import { Party, type PartyOptions } from "./party.ts";
 import { TvpipeRelay } from "./relay.ts";
+import { captureAudio, SurfaceEncoder, type CanvasSource, type EncoderOptions, type SurfaceInfo } from "./surface.ts";
 
 export interface Pages {
   host: string;
@@ -89,6 +90,8 @@ export interface TvpipeEvents {
   closing: [];
   /** Another page took the relay over. */
   detached: [];
+  /** A surface's state (`id` and the status). */
+  surface: [status: CastStatus & { id: number }];
   /** The API socket closed. */
   close: [];
 }
@@ -198,6 +201,9 @@ export class Tvpipe extends Emitter<TvpipeEvents> {
         case "detached":
           this.emit("detached");
           return;
+        case "surface":
+          this.emit("surface", data);
+          return;
       }
       return;
     }
@@ -259,6 +265,59 @@ export class Tvpipe extends Emitter<TvpipeEvents> {
   /** A QR code made by tvpipe: `size` modules, `rows` of "0"/"1". */
   qr(text: string): Promise<{ size: number; rows: string[] }> {
     return this.call("qr", { text });
+  }
+
+  /**
+   * Opens a surface: tvpipe streams what an encoder sends to `to`
+   * (default: the selection). A worker can connect a `SurfaceEncoder`
+   * with the answer.
+   */
+  openSurface(opts: {
+    width: number;
+    height: number;
+    fps?: number | undefined;
+    to?: string[] | undefined;
+    audio?: boolean | undefined;
+    bitrate?: number | undefined;
+  }): Promise<SurfaceInfo> {
+    const params: Record<string, unknown> = { width: opts.width, height: opts.height, fps: opts.fps ?? 30 };
+    if (opts.to) params["to"] = opts.to;
+    if (opts.audio) params["audio"] = true;
+    if (opts.bitrate) params["bitrate"] = opts.bitrate;
+    return this.call("surface.open", params);
+  }
+
+  async closeSurface(id: number): Promise<void> {
+    await this.call("surface.close", { id });
+  }
+
+  /**
+   * A canvas on TVs without a browser in between
+   * (docs/playshare-design.md §17): opens a surface of the canvas's size
+   * and encodes it here. `audio`: a Web Audio node whose sound goes along.
+   */
+  async surface(opts: EncoderOptions & {
+    canvas: CanvasSource;
+    fps?: number | undefined;
+    to?: string[] | undefined;
+    audio?: { context: AudioContext; node: AudioNode } | undefined;
+  }): Promise<SurfaceEncoder> {
+    const info = await this.openSurface({
+      width: opts.canvas.width,
+      height: opts.canvas.height,
+      fps: opts.fps,
+      to: opts.to,
+      audio: !!opts.audio,
+      bitrate: opts.bitrate,
+    });
+    const enc = new SurfaceEncoder(info, opts.canvas, opts);
+    if (opts.audio && info.audio) {
+      const stop = await captureAudio(opts.audio.context, opts.audio.node, info.audio.channels, (pcm, pts) => enc.pushAudio(pcm, pts));
+      enc.on("end", stop);
+    }
+    enc.on("end", () => void this.closeSurface(info.id).catch(() => {}));
+    await enc.ready;
+    return enc;
   }
 
   /** Ends playshare (the TVs stop, phones are told). */

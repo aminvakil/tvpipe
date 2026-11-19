@@ -31,11 +31,64 @@ pub trait Cast: Send {
     fn stop(self: Box<Self>);
 }
 
+/// What a surface streams (docs/playshare-design.md §17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SurfaceSpec {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    /// PCM: sample rate and channels.
+    pub audio: Option<(u32, u8)>,
+    pub bitrate_kbps: Option<u32>,
+}
+
+/// One surface's session: the page's H.264 and PCM in, receivers out
+/// (the program's-own-H.264 path of [`Stream`](crate::api::Stream)).
+pub trait SurfaceSink: Send {
+    /// The decoder configuration (avcC, or Annex B parameter sets).
+    fn config(&mut self, data: &[u8], annex_b: bool) -> Result<()>;
+    /// One access unit; false when it was dropped.
+    fn video(
+        &mut self,
+        au: &[u8],
+        pts: std::time::Duration,
+        key: bool,
+        annex_b: bool,
+    ) -> Result<bool>;
+    /// Interleaved s16 PCM.
+    fn audio(&mut self, pcm: &[i16], pts: std::time::Duration) -> Result<()>;
+    /// Whether a receiver wants an IDR (since the last call).
+    fn keyframe_wanted(&mut self) -> bool;
+    /// The stream's clock (what pts are measured on).
+    fn elapsed(&self) -> std::time::Duration;
+    /// `{state: starting|streaming|failed|stopped, receivers, player?}`.
+    fn status(&mut self) -> Value;
+    fn stop(self: Box<Self>);
+}
+
 pub trait Backend: Send + Sync {
     fn discover(&self) -> Result<Box<dyn Discover>>;
     fn pair(&self, device: &str) -> Result<Box<dyn Pair>>;
     /// Casts the page at `url` (on the local origin) to `to`.
     fn cast(&self, url: &str, to: &[String], size: Option<(u32, u32)>) -> Result<Box<dyn Cast>>;
+    /// A session for a surface's encoded frames.
+    fn surface(&self, to: &[String], spec: SurfaceSpec) -> Result<Box<dyn SurfaceSink>>;
+}
+
+/// Receivers as the status objects show them.
+fn receivers_value(list: &[crate::api::ReceiverInfo]) -> Value {
+    Value::array(
+        list.iter()
+            .map(|r| {
+                Value::object()
+                    .with("name", r.name.as_str())
+                    .with_opt("protocol", r.protocol.map(|p| p.as_str()))
+                    .with("state", r.state.as_str())
+                    .with_opt("error", r.error.as_deref())
+                    .with_opt("code", r.code.as_deref())
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// The API's view of a receiver.
@@ -122,21 +175,9 @@ impl Cast for RealCast {
             _ if self.error.is_some() => "failed",
             _ => "stopped",
         };
-        let receivers: Vec<Value> = s
-            .receivers()
-            .iter()
-            .map(|r| {
-                Value::object()
-                    .with("name", r.name.as_str())
-                    .with_opt("protocol", r.protocol.map(|p| p.as_str()))
-                    .with("state", r.state.as_str())
-                    .with_opt("error", r.error.as_deref())
-                    .with_opt("code", r.code.as_deref())
-            })
-            .collect();
         Value::object()
             .with("state", state)
-            .with("receivers", Value::array(receivers))
+            .with("receivers", receivers_value(&s.receivers()))
             .with_opt("player", s.player_url())
             .with_opt("error", self.error.as_deref())
     }
@@ -147,7 +188,91 @@ impl Cast for RealCast {
     }
 }
 
+struct RealSurface {
+    stream: crate::api::Stream,
+    error: Option<String>,
+}
+
+impl SurfaceSink for RealSurface {
+    fn config(&mut self, data: &[u8], annex_b: bool) -> Result<()> {
+        let f = if annex_b {
+            crate::api::ConfigFormat::AnnexB
+        } else {
+            crate::api::ConfigFormat::Avcc
+        };
+        self.stream.write_h264_config(data, f)
+    }
+
+    fn video(
+        &mut self,
+        au: &[u8],
+        pts: std::time::Duration,
+        key: bool,
+        annex_b: bool,
+    ) -> Result<bool> {
+        let w = self
+            .stream
+            .write_h264(au, crate::api::H264::new(pts, key, annex_b))?;
+        Ok(matches!(w, crate::api::Written::Queued))
+    }
+
+    fn audio(&mut self, pcm: &[i16], pts: std::time::Duration) -> Result<()> {
+        self.stream.write_audio(pcm, pts)
+    }
+
+    fn keyframe_wanted(&mut self) -> bool {
+        self.stream.take_keyframe_request()
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        self.stream.elapsed()
+    }
+
+    fn status(&mut self) -> Value {
+        use crate::api::SessionState;
+        for e in self.stream.poll_events() {
+            if let crate::events::Event::Error(info) = e {
+                self.error = Some(info.message.clone());
+            }
+        }
+        let state = match self.stream.state() {
+            SessionState::Connecting => "starting",
+            SessionState::Streaming => "streaming",
+            _ if self.error.is_some() => "failed",
+            _ => "stopped",
+        };
+        Value::object()
+            .with("state", state)
+            .with("receivers", receivers_value(&self.stream.receivers()))
+            .with_opt("player", self.stream.player_url())
+            .with_opt("error", self.error.as_deref())
+    }
+
+    fn stop(self: Box<Self>) {
+        let _ = self.stream.stop();
+    }
+}
+
 impl Backend for Real {
+    fn surface(&self, to: &[String], spec: SurfaceSpec) -> Result<Box<dyn SurfaceSink>> {
+        let mut opts = crate::api::Options::new()
+            .storage(self.storage.clone())
+            .h264(spec.width, spec.height, spec.fps);
+        for t in to {
+            opts = opts.to(t.as_str());
+        }
+        if let Some((rate, ch)) = spec.audio {
+            opts = opts.audio(rate, ch);
+        }
+        if let Some(k) = spec.bitrate_kbps {
+            opts = opts.bitrate_kbps(k);
+        }
+        Ok(Box::new(RealSurface {
+            stream: crate::api::Stream::start(opts)?,
+            error: None,
+        }))
+    }
+
     fn discover(&self) -> Result<Box<dyn Discover>> {
         let opts = crate::api::Options::new().storage(self.storage.clone());
         Ok(Box::new(RealDiscover(crate::api::Discovery::start(&opts)?)))

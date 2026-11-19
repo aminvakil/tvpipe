@@ -11,6 +11,7 @@
 import { Emitter } from "./emitter.js";
 import { Party } from "./party.js";
 import { TvpipeRelay } from "./relay.js";
+import { captureAudio, SurfaceEncoder } from "./surface.js";
 /** A refused call. */
 export class TvpipeError extends Error {
     code;
@@ -109,6 +110,9 @@ export class Tvpipe extends Emitter {
                 case "detached":
                     this.emit("detached");
                     return;
+                case "surface":
+                    this.emit("surface", data);
+                    return;
             }
             return;
         }
@@ -161,6 +165,47 @@ export class Tvpipe extends Emitter {
     /** A QR code made by tvpipe: `size` modules, `rows` of "0"/"1". */
     qr(text) {
         return this.call("qr", { text });
+    }
+    /**
+     * Opens a surface: tvpipe streams what an encoder sends to `to`
+     * (default: the selection). A worker can connect a `SurfaceEncoder`
+     * with the answer.
+     */
+    openSurface(opts) {
+        const params = { width: opts.width, height: opts.height, fps: opts.fps ?? 30 };
+        if (opts.to)
+            params["to"] = opts.to;
+        if (opts.audio)
+            params["audio"] = true;
+        if (opts.bitrate)
+            params["bitrate"] = opts.bitrate;
+        return this.call("surface.open", params);
+    }
+    async closeSurface(id) {
+        await this.call("surface.close", { id });
+    }
+    /**
+     * A canvas on TVs without a browser in between
+     * (docs/playshare-design.md §17): opens a surface of the canvas's size
+     * and encodes it here. `audio`: a Web Audio node whose sound goes along.
+     */
+    async surface(opts) {
+        const info = await this.openSurface({
+            width: opts.canvas.width,
+            height: opts.canvas.height,
+            fps: opts.fps,
+            to: opts.to,
+            audio: !!opts.audio,
+            bitrate: opts.bitrate,
+        });
+        const enc = new SurfaceEncoder(info, opts.canvas, opts);
+        if (opts.audio && info.audio) {
+            const stop = await captureAudio(opts.audio.context, opts.audio.node, info.audio.channels, (pcm, pts) => enc.pushAudio(pcm, pts));
+            enc.on("end", stop);
+        }
+        enc.on("end", () => void this.closeSurface(info.id).catch(() => { }));
+        await enc.ready;
+        return enc;
     }
     /** Ends playshare (the TVs stop, phones are told). */
     async quit() {

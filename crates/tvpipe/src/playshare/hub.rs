@@ -117,8 +117,9 @@ pub struct Hub {
     pub peers: RwLock<Option<PeerLookup>>,
     pub stop: Stop,
     pub version: &'static str,
-    backend: Box<dyn Backend>,
+    pub(super) backend: Box<dyn Backend>,
     st: Mutex<St>,
+    pub(super) surfaces: Mutex<super::surface::Surfaces>,
 }
 
 /// `{"t":"event","type":…,"data":…}`.
@@ -182,6 +183,7 @@ impl Hub {
             stop,
             version: env!("CARGO_PKG_VERSION"),
             backend,
+            surfaces: Mutex::default(),
             st: Mutex::new(St {
                 next_conn: 0,
                 next_api: 0,
@@ -504,7 +506,7 @@ impl Hub {
                 let n = msg.get("n").cloned().unwrap_or(Value::Null);
                 let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
                 let params = msg.get("params").cloned().unwrap_or_else(Value::object);
-                if method == "cast.start" {
+                if method == "cast.start" || method == "surface.open" {
                     // Starting a cast takes seconds: not on the reader.
                     let (hub, out, method) = (self.clone(), out.clone(), method.to_owned());
                     let _ = std::thread::Builder::new()
@@ -655,6 +657,17 @@ impl Hub {
                     .with("mode", mode)
                     .with("local", self.local_origin()))
             }
+            "surface.open" => {
+                let selection = self.lock().selection.clone();
+                self.surface_open(params, selection)
+            }
+            "surface.close" => {
+                let id = params
+                    .get("id")
+                    .and_then(Value::as_u32)
+                    .ok_or_else(|| Error::usage("surface.close: id"))?;
+                self.surface_close(id)
+            }
             "quit" => {
                 info!("playshare: the page asked to quit");
                 self.stop.request();
@@ -797,6 +810,8 @@ impl Hub {
         for e in &events {
             self.broadcast(&st, e);
         }
+        drop(st);
+        self.surfaces_tick();
     }
 
     /// With no window of our own: no API socket for this long ends the run.
@@ -841,6 +856,7 @@ impl Hub {
             info!("playshare: stopping the cast");
             c.stop();
         }
+        self.surfaces_stop_all();
         let st = self.lock();
         for a in st.apis.values() {
             a.out.close(1001, "ended");

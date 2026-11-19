@@ -215,7 +215,13 @@ impl Hub {
                     return httpd::error_response(403, "Forbidden");
                 }
                 let port = self.ports.get().map(|p| p.local).unwrap_or(0);
-                let mut r = redirect(302, &self.launcher_path());
+                // `next`: a page of this origin instead of the launcher
+                // (tests, a browser opened by hand).
+                let next = query_param(query, "next")
+                    .and_then(percent_decode)
+                    .filter(|n| n.starts_with('/') && !n.starts_with("//") && !n.contains('\\'))
+                    .unwrap_or_else(|| self.launcher_path());
+                let mut r = redirect(302, &next);
                 r.headers.add(
                     "Set-Cookie",
                     format!(
@@ -286,7 +292,8 @@ impl Hub {
         let refuse =
             |status: u16, reason: &str| Reply::Response(httpd::error_response(status, reason));
         let api = path == "/_tvpipe/api";
-        if !(path == "/_tvpipe/ws" || (api && l == Listener::Local)) {
+        let surface = path == "/_tvpipe/surface" && l == Listener::Local;
+        if !(path == "/_tvpipe/ws" || surface || (api && l == Listener::Local)) {
             return refuse(404, "Not Found");
         }
         if !self.origin_ok(req, l) {
@@ -296,14 +303,28 @@ impl Hub {
             );
             return refuse(403, "Forbidden");
         }
-        if api && !self.token_ok(req, query) {
+        if (api || surface) && !self.token_ok(req, query) {
             return refuse(403, "Forbidden");
         }
+        let surface_id = if surface {
+            match query_param(query, "id").and_then(|i| i.parse::<u32>().ok()) {
+                Some(id) if self.surface_exists(id) => Some(id),
+                _ => return refuse(404, "Not Found"),
+            }
+        } else {
+            None
+        };
         let resp = match websocket::server_response(req) {
             Ok(r) => r,
             Err(e) => return refuse(400, &format!("Bad Request: {}", e.message())),
         };
         let hub = self.clone();
+        if let Some(id) = surface_id {
+            return Reply::Upgrade(
+                resp,
+                Box::new(move |tcp, rest| hub.run_surface(tcp, rest, id)),
+            );
+        }
         if api {
             return Reply::Upgrade(resp, Box::new(move |tcp, rest| hub.run_api(tcp, rest)));
         }
