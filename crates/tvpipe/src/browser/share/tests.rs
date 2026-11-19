@@ -645,6 +645,11 @@ fn page_server_checks_token_and_host() {
     let (st, body) = http_get(addr, &format!("/{query}"), &host);
     assert_eq!(st, 200);
     assert!(body.contains("tvpipe share") && body.contains("/capture.js"));
+    assert!(body.contains("href=\"/ui.css\""));
+    // tvpipe's look, without the token like the fonts.
+    let (st, body) = http_get(addr, "/ui.css", &host);
+    assert_eq!(st, 200);
+    assert!(body.contains("Content-Type: text/css") && body.contains("url(fonts/michroma.woff2)"));
     let (st, body) = http_get(addr, "/capture.js", &format!("localhost:{port}"));
     assert_eq!(st, 200);
     assert!(body.contains("tvpipeCapture"));

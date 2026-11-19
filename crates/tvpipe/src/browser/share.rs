@@ -118,7 +118,8 @@ impl Shared {
     }
 
     fn handle(self: &Arc<Self>, req: &Request) -> Reply {
-        let (via, path, token_ok) = match self.access.check(req, &["/capture.js", "/favicon.ico"]) {
+        let free = ["/capture.js", "/favicon.ico", "/ui.css"];
+        let (via, path, token_ok) = match self.access.check(req, &free) {
             Ok(c) => (c.via, c.path, c.token_ok),
             Err(r) => return Reply::Response(r),
         };
@@ -134,6 +135,12 @@ impl Shared {
                 "No Content",
                 "image/x-icon",
                 Vec::new(),
+            )),
+            "/ui.css" => Reply::Response(httpd::response(
+                200,
+                "OK",
+                "text/css; charset=utf-8",
+                fonts::UI_CSS.as_bytes().to_vec(),
             )),
             p if p.starts_with("/fonts/") => fonts::reply(p),
             _ if !token_ok => Reply::Response(httpd::error_response(
