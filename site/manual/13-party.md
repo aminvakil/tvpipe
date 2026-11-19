@@ -27,6 +27,8 @@ $ tvpipe game play drawbluff.zip       # or a zip of one
 3. Everyone scans the QR code and plays on their phone. Phones that lose the connection (a locked screen, a tunnel hiccup) come back on their own.
 4. Close the window (or press Ctrl-C in the terminal) to end it: the TVs leave the game, the phones say the room closed.
 
+![The start window: a game, its TVs to pick, and the Start buttons](shots/game-launcher.png "The start window of `tvpipe game play`, with drawbluff.")
+
 :::aside How phones get in
 By default through a public link: OpenTunnel, which tvpipe sets up once and reuses, with Cloudflare when OpenTunnel fails. `--lan` serves phones on the same Wi-Fi instead.
 :::

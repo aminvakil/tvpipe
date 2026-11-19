@@ -3,7 +3,7 @@ title: Commands and options
 summary: Every command, and the options they share.
 group: Reference
 spec:
-  Commands: `play`, `preview`; `share`, `debug pattern`
+  Commands: `play`, `preview`; `share`, `screen`
 ---
 
 Every command lists all of its options with `--help`.
@@ -20,10 +20,7 @@ Every command lists all of its options with `--help`.
 | `preview` | Plays in a browser tab. See [Playing to a browser](browser.md). |
 | `game play` | Plays a party game: a web app on the TV, phones join with a QR code. See [Party games](party.md). |
 | `game new`, `game check`, `game pack` | Starts a party game, checks it, or packs it into a zip. See [Making party games](making-games.md). |
-| `debug pattern` | Sends a test pattern. See [Latency](latency.md). |
-| `debug pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |
-| `debug tunnel` | Puts a server on this computer on a public link. See [Public links](links.md#s3). |
-| `debug qr` | Prints a QR code, `--svg` or `--rows` for programs. |
+| `debug` | `pattern`, `pipeline`, `tunnel`, `qr`. See [Debug commands](debug-commands.md). |
 
 ## Streaming
 

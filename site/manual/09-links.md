@@ -44,18 +44,7 @@ Programs that use `--machine` or the [Node SDK](node.md) have no terminal to ask
 
 ## Any web app
 
-:::aside QR codes
-`tvpipe debug qr TEXT` prints any link as a QR code, `--svg` as an SVG file.
-:::
-
-`tvpipe debug tunnel PORT` puts a server of your own on a public link, for example a web app on port 8080. It runs until you stop it.
-
-```sh
-$ tvpipe debug tunnel 8080
-$ tvpipe debug tunnel 8080 --tunnel=opentunnel
-```
-
-Your server answers everything that comes in, so it decides who may do what.
+`tvpipe debug tunnel PORT` puts a server of your own on a public link, and `tvpipe debug qr` prints QR codes. See [Debug commands](debug-commands.md).
 
 [Party games](party.md) do not need this: `tvpipe game play` starts its own link for the phones, OpenTunnel, else Cloudflare, reusing the last quick tunnel.
 

@@ -1,13 +1,12 @@
 ---
 title: ffmpeg and encoding
-summary: When tvpipe needs ffmpeg, and checking an input.
+summary: When tvpipe needs ffmpeg.
 group: Development
 spec:
-  Command: `debug pipeline`
   Flag: `-v`
 ---
 
-For development: which inputs go through ffmpeg, and how to check what tvpipe reads.
+For development: which inputs go through ffmpeg.
 
 ## When ffmpeg runs
 
@@ -26,8 +25,4 @@ A file is sent unchanged when it is an MP4, MOV or MKV with H.264 video, without
 
 ## Checking an input
 
-`debug pipeline` reads an input without a receiver and prints every frame. `--raw` shows what ffmpeg delivers before tvpipe’s settings.
-
-```sh
-$ tvpipe debug pipeline movie.mp4
-```
+`tvpipe debug pipeline INPUT` reads an input without a receiver and prints every frame. See [Debug commands](debug-commands.md).

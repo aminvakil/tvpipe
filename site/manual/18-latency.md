@@ -11,13 +11,7 @@ For development: how far the TV runs behind the source, and how to measure it.
 
 ## The test pattern
 
-:::aside Built in
-The pattern needs no ffmpeg.
-:::
-
-```sh
-$ tvpipe debug pattern --to TV
-```
+`tvpipe debug pattern --to TV` streams it. Its options are on [Debug commands](debug-commands.md).
 
 ![The test pattern: colour bars, a UTC clock, frame number and media time](shots/test-pattern.png "Colour bars, the UTC time at which the frame was made, the frame number and the media time. A square flashes and a beep sounds once a second."){.crt}
 

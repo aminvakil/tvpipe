@@ -10,6 +10,9 @@
 //   player-stats.png   the same with the statistics overlay (S)
 //   share-page.png     the share page before sharing, light
 //   share-page.dark.png  the same, dark (the site shows the one matching its theme)
+//   game-launcher.png, game-launcher.dark.png
+//                      tvpipe game play's start window with games/drawbluff
+//                      (built), with made-up receivers instead of the network's
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,16 +33,18 @@ const children = [];
 process.on("exit", () => children.forEach(c => c.kill()));
 
 // Starts a tvpipe command and resolves with the http://127.0.0.1 URL it logs.
-function start(args) {
+function start(args, pattern = /http:\/\/127\.0\.0\.1:\d+\/\?t=[0-9a-f]+/) {
   return new Promise((resolve, reject) => {
-    const child = spawn(tvpipe, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(tvpipe, args, { stdio: ["ignore", "pipe", "pipe"], cwd: join(here, "..") });
     children.push(child);
     let log = "";
-    child.stderr.on("data", d => {
+    const seen = d => {
       log += d;
-      const m = log.match(/http:\/\/127\.0\.0\.1:\d+\/\?t=[0-9a-f]+/);
+      const m = log.match(pattern);
       if (m) resolve(m[0]);
-    });
+    };
+    child.stderr.on("data", seen);
+    if (child.stdout) child.stdout.on("data", seen);
     child.on("exit", code => reject(new Error(`tvpipe ${args.join(" ")} exited (${code}):\n${log}`)));
   });
 }
@@ -88,4 +93,31 @@ const share = await start(["share", "--to", "browser", "--port", "0"]);
 const page = { wait: 2500, width: 960, height: 470, scale: 2 };
 await browser.shot(share, "share-page.png", page);
 await browser.shot(share, "share-page.dark.png", { ...page, scheme: "dark" });
+
+// The party game launcher. The receivers are replaced by made-up ones, so the
+// picture does not show (or depend on) the network it was taken on.
+const launcher = await start(["game", "play", "games/drawbluff", "--window=none", "--no-tunnel"],
+  /http:\/\/127\.0\.0\.1:\d+\/_tvpipe\/start\?t=[0-9a-f]+/);
+const fakeTvs = `(() => {
+  const tvs = [["Living Room", "AppleTV6,2", "AirPlay", false], ["Kitchen", "Chromecast", "Cast", false],
+               ["Bedroom", "AppleTV14,1", "AirPlay", true]];
+  const list = document.getElementById("devices");
+  list.querySelectorAll("li.device:not([data-name=browser])").forEach(li => li.remove());
+  for (const [name, model, tag, pair] of tvs) {
+    const li = document.createElement("li");
+    li.className = "device";
+    li.innerHTML = '<input type="checkbox"><div class="grow"><div class="name"></div><div class="meta"></div></div>' +
+      '<div class="end"><span class="tag"></span>' + (pair ? '<button class="btn small">Pair</button>' : "") + "</div>";
+    li.querySelector(".name").textContent = name;
+    li.querySelector(".meta").textContent = model;
+    li.querySelector(".tag").textContent = tag;
+    li.querySelector("input").checked = name === "Living Room";
+    list.append(li);
+  }
+  document.getElementById("state").textContent = "3 TVs found";
+  for (const b of document.querySelectorAll("button")) if (b.textContent.trim() === "Start") b.disabled = false;
+})()`;
+const game = { wait: 5000, width: 1100, height: 640, scale: 2, js: fakeTvs };
+await browser.shot(launcher, "game-launcher.png", game);
+await browser.shot(launcher, "game-launcher.dark.png", { ...game, scheme: "dark" });
 process.exit(0);
