@@ -413,6 +413,17 @@ impl Party {
         &self.core.code
     }
 
+    /// The key phones join with (in the join link's fragment): for
+    /// clients the game runs itself, such as bots.
+    pub fn join_key(&self) -> &str {
+        &self.core.join_key
+    }
+
+    /// The most players ([`PartyOptions::max_players`]).
+    pub fn max_players(&self) -> usize {
+        self.core.max_players
+    }
+
     /// The port on 127.0.0.1.
     pub fn port(&self) -> u16 {
         self.server.local_addr().port()

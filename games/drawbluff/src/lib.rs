@@ -3,6 +3,8 @@
 //! The same rules, prompts and phone UI as the Node version in this
 //! directory (`game/`, `main.ts`), which is the protocol reference.
 
+pub mod bots;
+pub mod game;
 pub mod rules;
 
 /// The prompts to draw (`data/prompts.txt`, shared with the Node version;
