@@ -34,9 +34,9 @@ jobs:
       - run: cargo test --workspace
       # Without the LGPL FairPlay crate (the library's default later on).
       - if: runner.os == 'Linux'
-        run: cargo clippy --all-targets --no-default-features -- -D warnings
+        run: cargo clippy -p tvpipe --all-targets --no-default-features -- -D warnings
       - if: runner.os == 'Linux'
-        run: cargo test --no-default-features
+        run: cargo test -p tvpipe --no-default-features
 
   msrv:
     runs-on: ubuntu-latest

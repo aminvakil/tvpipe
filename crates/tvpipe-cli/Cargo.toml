@@ -1,0 +1,20 @@
+[package]
+name = "tvpipe-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Low-latency mirroring of video and audio to AirPlay and Google Cast receivers (the tvpipe command)"
+# The source; the built binary includes tvpipe-fairplay (LGPL-3.0-or-later)
+# and is distributed under its terms.
+license = "Apache-2.0"
+
+[[bin]]
+name = "tvpipe"
+path = "src/main.rs"
+
+[dependencies]
+argument = "0.1"
+tvpipe = { path = "../tvpipe", version = "0.1.2", features = ["fairplay"] }

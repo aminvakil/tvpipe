@@ -1,0 +1,22 @@
+[package]
+name = "tvpipe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Stream video and audio to AirPlay and Google Cast receivers and browser tabs, in process"
+license = "Apache-2.0"
+
+[features]
+default = ["fairplay"]
+# FairPlay SAP for AirPlay (the LGPL-3.0-or-later tvpipe-fairplay crate).
+# Without it, AirPlay runs the HAP profile without FairPlay; receivers that
+# need it fail with `fairplay-required`.
+fairplay = ["dep:tvpipe-fairplay"]
+
+[dependencies]
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tvpipe-fairplay = { path = "../tvpipe-fairplay", version = "0.1.2", optional = true }

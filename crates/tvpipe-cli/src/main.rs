@@ -7,7 +7,6 @@
 extern crate tvpipe;
 
 mod cli;
-#[path = "util/interrupt.rs"]
 mod interrupt;
 mod machine;
 
