@@ -553,7 +553,8 @@ What changed against the design while building it:
   variant) and `qr [--svg | --rows] TEXT` (plain stdout; refused with
   `--machine`, whose stdout is events). No `qr` event: the SDK runs
   `tvpipe qr --rows` once per code. Internal: `Command::Tunnel`/`Qr`,
-  `Qr::rows`/`to_svg`, doc-hidden `__cli` re-exports.
+  `Qr::rows`/`to_svg`, doc-hidden `__cli` re-exports. The `tunnel`
+  event has no `host` field (§3.1): the SDK takes it from `url`.
 - **Join throttling** counts only failed `hello`s (wrong key, unknown
   room, garbage), 20 per address and minute: a living room's phones share
   one public address (Cloudflare's `cf-connecting-ip`), and through

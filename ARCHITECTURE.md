@@ -13,6 +13,9 @@ detail lives in `docs/`:
 - [`cross-platform.md`](docs/cross-platform.md): what was checked on which
   OS.
 - [`meet.md`](docs/meet.md): presenting into video calls.
+- [`party-design.md`](docs/party-design.md): party games played with
+  phones (`@tvpipe/party`, `tvpipe tunnel PORT`, `tvpipe qr`, the demo
+  game `games/drawbluff`).
 - [`screen.md`](docs/screen.md): sharing a screen or a window with
   sound (`tvpipe screen`): Chrome's capture per OS, the ffmpeg fallback,
   native APIs assessed.
