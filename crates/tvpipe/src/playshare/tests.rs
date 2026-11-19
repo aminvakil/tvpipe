@@ -116,6 +116,8 @@ fn check_bundle(b: &Bundle) {
 fn bundle_folder_and_zip() {
     check_bundle(&Bundle::open(&fixture("game")).unwrap());
     check_bundle(&Bundle::open(&fixture("game.zip")).unwrap());
+    // As Finder zips a folder: __MACOSX/ and .DS_Store beside it.
+    check_bundle(&Bundle::open(&fixture("finder.zip")).unwrap());
     // A missing entry page is an error naming it.
     let dir = scratch("missing-page");
     std::fs::write(

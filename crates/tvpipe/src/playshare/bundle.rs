@@ -378,13 +378,16 @@ impl Bundle {
     pub fn from_zip(data: &[u8], origin: &Path) -> Result<Bundle> {
         let entries = zip::read(data, zip::Limits::default())
             .map_err(|e| Error::usage(format!("{}: {e}", origin.display())))?;
-        // tvpipe.json at the root, or in the one top-level folder.
+        // tvpipe.json at the root, or in the one top-level folder. What
+        // archivers add beside it does not count: Finder's `__MACOSX/` and
+        // hidden names (`.DS_Store`); they are never served anyway.
         let prefix = if entries.iter().any(|e| e.name == MANIFEST) {
             String::new()
         } else {
             let tops: std::collections::BTreeSet<&str> = entries
                 .iter()
                 .map(|e| e.name.split('/').next().unwrap_or(""))
+                .filter(|t| !t.starts_with('.') && *t != "__MACOSX")
                 .collect();
             match tops.iter().next() {
                 Some(t)
