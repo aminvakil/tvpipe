@@ -41,6 +41,13 @@ share: show it on the receivers? [y/N] y
 share: remote share: latency 300 ms
 ```
 
+When stderr is a terminal, the public link is followed by its QR code
+(`src/util/qr.rs`: byte mode, level M or L, half blocks, black on white
+from the 256-color palette), so a phone can open it from the screen;
+`--no-qr` or `TVPIPE_NO_QR=1` turns it off, `--machine` never draws it.
+The local `http://127.0.0.1` links get none: another device cannot open
+them.
+
 With `--machine` a `tunnel` event carries the link (`docs/machine.md`);
 the Node SDK has `tunnel` options and `session.publicUrl`. In machine mode
 there is no terminal to ask on: remote shares need `--yes`.

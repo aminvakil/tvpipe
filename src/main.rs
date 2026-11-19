@@ -75,6 +75,15 @@ fn main() -> ExitCode {
         cli::Command::Share(_) | cli::Command::Screen(_) => (true, false),
         _ => (false, false),
     };
+    // A person at a terminal gets the public links as QR codes too, after
+    // the log line naming them (`--no-qr`, `TVPIPE_NO_QR`).
+    if session && !global.machine && util::qr::wanted(global.no_qr) {
+        ctx.events = events::Events::to(|e| {
+            if let events::Event::Tunnel(t) = e {
+                util::qr::print(&t.url);
+            }
+        });
+    }
     if session {
         if util::interrupt::install() {
             util::interrupt::link(ctx.stop.clone());

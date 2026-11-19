@@ -87,6 +87,10 @@ come in that way. A remote share shows up only after you answer `y` in the
 terminal (`--yes` skips the question), and its link lets people in for 60
 minutes (`--tunnel-ttl`). Details: [`docs/tunnels.md`](docs/tunnels.md).
 
+In a terminal, tvpipe also draws the public link as a QR code, so a phone
+can open it by scanning the screen (`--no-qr` or `TVPIPE_NO_QR=1` turns
+that off; never with `--machine`).
+
 ## Manual
 
 | Page | Covers |

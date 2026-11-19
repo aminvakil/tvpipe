@@ -67,6 +67,7 @@ enum PlayArg {
     NewToken,
     Tunnel,
     TunnelTtl,
+    NoQr,
     Input,
 }
 
@@ -85,6 +86,7 @@ enum ShareArg {
     NewToken,
     Tunnel,
     TunnelTtl,
+    NoQr,
     Yes,
     Profile,
     Visible,
@@ -114,6 +116,7 @@ enum ScreenArg {
     NewToken,
     Tunnel,
     TunnelTtl,
+    NoQr,
 }
 
 #[derive(Copy, Clone)]
@@ -231,6 +234,13 @@ const fn new_token<A>(id: A) -> Opt<A> {
     Opt::new(id)
         .long("new-token")
         .help("Change the browser player page's URL token (--to browser; old URLs stop working)")
+}
+
+/// `--no-qr`: no QR codes of the public links (`util::qr`).
+const fn no_qr<A>(id: A) -> Opt<A> {
+    Opt::new(id)
+        .long("no-qr")
+        .help("With --tunnel: do not draw the public link as a QR code (also TVPIPE_NO_QR=1)")
 }
 
 /// `--tunnel[=PROVIDER]` (docs/tunnels.md).
@@ -381,6 +391,7 @@ macro_rules! play_opts {
                 PlayArg::TunnelTtl,
                 "With --tunnel: let new viewers in for MIN minutes only (default: no limit)",
             ),
+            no_qr(PlayArg::NoQr),
         ]
     };
 }
@@ -464,6 +475,7 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
             ShareArg::TunnelTtl,
             "With --tunnel: the link lets people in for MIN minutes (default 60; 0: no limit)",
         ),
+        no_qr(ShareArg::NoQr),
         Opt::new(ShareArg::Yes)
             .long("yes")
             .short('y')
@@ -559,6 +571,7 @@ static SCREEN: Cli<ScreenArg> = Cli::new("screen")
             ScreenArg::TunnelTtl,
             "With --tunnel: let new viewers in for MIN minutes only (default: no limit)",
         ),
+        no_qr(ScreenArg::NoQr),
     ])
     .after_help(
         "tvpipe starts a Chromium-based browser of its own (a separate profile, a small\n\
@@ -592,6 +605,8 @@ pub struct Global {
     pub debug: bool,
     /// `--machine`: the machine interface (`crate::machine`).
     pub machine: bool,
+    /// `--no-qr` (a subcommand's option): no QR codes of public links.
+    pub no_qr: bool,
 }
 
 /// Where the media comes from.
@@ -872,28 +887,25 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
             Top::Pair => return Ok((g, parse_pair(p.subcommand(&PAIR))?)),
             Top::Unpair => return Ok((g, parse_unpair(p.subcommand(&UNPAIR))?)),
             Top::Play => {
-                return Ok((
-                    g,
-                    Command::Play(parse_play(p.subcommand(&PLAY), Mode::Play)?),
-                ))
+                let o = parse_play(p.subcommand(&PLAY), Mode::Play, &mut g)?;
+                return Ok((g, Command::Play(o)));
             }
             Top::TestPattern => {
-                return Ok((
-                    g,
-                    Command::TestPattern(parse_play(
-                        p.subcommand(&TEST_PATTERN),
-                        Mode::TestPattern,
-                    )?),
-                ))
+                let o = parse_play(p.subcommand(&TEST_PATTERN), Mode::TestPattern, &mut g)?;
+                return Ok((g, Command::TestPattern(o)));
             }
             Top::Preview => {
-                return Ok((
-                    g,
-                    Command::Play(parse_play(p.subcommand(&PREVIEW), Mode::Preview)?),
-                ))
+                let o = parse_play(p.subcommand(&PREVIEW), Mode::Preview, &mut g)?;
+                return Ok((g, Command::Play(o)));
             }
-            Top::Share => return Ok((g, parse_share(p.subcommand(&SHARE))?)),
-            Top::Screen => return Ok((g, parse_screen(p.subcommand(&SCREEN))?)),
+            Top::Share => {
+                let cmd = parse_share(p.subcommand(&SHARE), &mut g)?;
+                return Ok((g, cmd));
+            }
+            Top::Screen => {
+                let cmd = parse_screen(p.subcommand(&SCREEN), &mut g)?;
+                return Ok((g, cmd));
+            }
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -974,7 +986,7 @@ enum Mode {
     Preview,
 }
 
-fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> {
+fn parse_play(mut p: Parser<PlayArg>, mode: Mode, g: &mut Global) -> Result<PlayOptions, Error> {
     let test_pattern = mode == Mode::TestPattern;
     let mut o = PlayOptions {
         to: Vec::new(),
@@ -1029,6 +1041,7 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
             PlayArg::NewToken => o.browser.new_token = true,
             PlayArg::Tunnel => o.browser.tunnel = tunnel_value(&mut p)?,
             PlayArg::TunnelTtl => o.browser.tunnel_ttl = tunnel_ttl_value(&mut p)?,
+            PlayArg::NoQr => g.no_qr = true,
             PlayArg::Input => input = Some(input_from(p.raw_value()?)),
         }
     }
@@ -1064,7 +1077,7 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
     Ok(o)
 }
 
-fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
+fn parse_share(mut p: Parser<ShareArg>, g: &mut Global) -> Result<Command, Error> {
     let mut o = ShareOptions {
         reconnect: DEFAULT_RECONNECT,
         ..ShareOptions::default()
@@ -1087,6 +1100,7 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
             ShareArg::NewToken => o.player.new_token = true,
             ShareArg::Tunnel => o.tunnel = tunnel_value(&mut p)?,
             ShareArg::TunnelTtl => ttl = Some(tunnel_ttl_value(&mut p)?),
+            ShareArg::NoQr => g.no_qr = true,
             ShareArg::Yes => o.yes = true,
             ShareArg::Profile => page.profile = Some(p.value()?),
             ShareArg::Visible => page.visible = true,
@@ -1138,7 +1152,7 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
     Ok(Command::Share(o))
 }
 
-fn parse_screen(mut p: Parser<ScreenArg>) -> Result<Command, Error> {
+fn parse_screen(mut p: Parser<ScreenArg>, g: &mut Global) -> Result<Command, Error> {
     let mut o = ScreenOptions {
         share: ShareOptions {
             reconnect: DEFAULT_RECONNECT,
@@ -1163,6 +1177,7 @@ fn parse_screen(mut p: Parser<ScreenArg>) -> Result<Command, Error> {
             ScreenArg::NewToken => s.player.new_token = true,
             ScreenArg::Tunnel => s.player.tunnel = tunnel_value(&mut p)?,
             ScreenArg::TunnelTtl => s.player.tunnel_ttl = tunnel_ttl_value(&mut p)?,
+            ScreenArg::NoQr => g.no_qr = true,
             ScreenArg::Display => {
                 targets += 1;
                 let v: String = p.value()?;
@@ -1734,6 +1749,22 @@ mod tests {
         assert_eq!(cmd.name(), "play");
         let (g, _) = parse_from(&["discover"]).unwrap();
         assert!(!g.machine);
+    }
+
+    #[test]
+    fn no_qr_flag() {
+        for args in [
+            &["preview", "--no-qr"][..],
+            &["play", "--to", "browser", "--tunnel", "--no-qr", "x.mp4"],
+            &["test-pattern", "--to", "tv", "--no-qr"],
+            &["share", "--to", "tv", "--tunnel", "--no-qr"],
+            &["screen", "--to", "tv", "--no-qr"],
+        ] {
+            let (g, _) = parse_from(args).unwrap();
+            assert!(g.no_qr, "{args:?}");
+        }
+        let (g, _) = parse_from(&["share", "--to", "tv", "--tunnel"]).unwrap();
+        assert!(!g.no_qr);
     }
 
     #[test]
