@@ -269,15 +269,15 @@ stream.rs` built the same way (2.74 MB alone; a hello world is 0.30 MB).
 |---|---|---|---|
 | Model | sans-IO: `handle_read`, `poll_write`, `poll_event`, `poll_timeout` | async over `rtc`; `runtime-tokio` (default) or `runtime-smol` | sans-IO: `handle_input`, `poll_output` |
 | Crypto backend | **`ring`** (default) or `aws-lc-rs`, or a provider of our own (`RTCCryptoProvider` trait) | forwards to `rtc` | `aws-lc-rs` (default), `rust-crypto`, `openssl`, `apple-crypto` (needs a Swift toolchain via `swift-rs`; did not resolve here), `wincrypto`; **no ring** |
-| C code / toolchain | none beyond `ring`'s (already ours) | same | `aws-lc-sys` (C, CMake-free but a C compiler, and NASM questions on Windows) **even with `rust-crypto`**: `str0m-rust-crypto` enables `dimpl/rcgen`, which enables `aws-lc-rs` |
-| Crates in the tree (normal deps, unique) | 148 (incl. `ring`, `rustls`, `serde`, `serde_json`, `url` + `idna` + 15 ICU crates, `rkyv`, `nix`, `uuid`, `x509-parser`, `rcgen`, `socket2`) | 177 (+ `tokio`, `mio`, `futures`, `async-*`, `parking_lot`, `quinn-udp`) | 107 (incl. `aws-lc-rs`/`aws-lc-sys`, RustCrypto, `serde`, `tracing`, `rcgen`) |
+| C code / toolchain | none beyond `ring`'s (already ours) | same | `aws-lc-sys` (C: a C compiler on every platform, build-time questions on Windows) **even with `rust-crypto`**: `str0m-rust-crypto` enables `dimpl/rcgen`, which enables `aws-lc-rs` |
+| Crates in the tree (normal deps, unique) | 148 (incl. `ring`, `rustls`, `serde`, `serde_json`, `url` + `idna` with ~20 ICU support crates, `rkyv`, `nix`, `uuid`, `x509-parser`, `rcgen`, `socket2`) | 177 (+ `tokio`, `mio`, `futures`, `async-*`, `parking_lot`, `quinn-udp`) | 107 (incl. `aws-lc-rs`/`aws-lc-sys`, RustCrypto, `serde`, `tracing`, `rcgen`) |
 | Binary, alone | 2.94 MB | 3.87 MB | 4.62 MB |
 | Binary, on top of tvpipe | **4.83 MB (+2.09 MB)**; shares `ring`/`rustls` | not built (≈ alone + tvpipe − shared) | 6.99 MB (+4.25 MB) |
 | Clean release build | 33 s | 43 s | 75 s (aws-lc) |
 | License | MIT/Apache-2.0 | MIT/Apache-2.0 | MIT |
 | MSRV | 1.89 | 1.89 (edition 2024) | 1.89 |
 | ICE-lite | yes (`SettingEngine::with_lite`) | yes | yes |
-| Maturity | the sans-IO rewrite of webrtc-rs (Pion lineage), young in this form; changelog shows active work (pluggable crypto providers, conformance suite) | as `rtc` plus the async layer | sans-IO from the start, several years old, used in production SFUs; frequent breaking minor releases (0.25 lists five) |
+| Maturity | the sans-IO rewrite of webrtc-rs (Pion lineage), young in this form; changelog shows active work (pluggable crypto providers, conformance suite) | as `rtc` plus the async layer | sans-IO from the start, several years old, used in production; frequent breaking minor releases (0.25 lists five) |
 
 Readings:
 
@@ -289,7 +289,7 @@ Readings:
   `rustls` (rcgen for the self-signed DTLS certificate). Its weight is
   elsewhere: 140-odd extra crates of which most are glue (`url`/ICU via
   ICE URLs, `serde_json` for SDP init objects, `rkyv` in DTLS, `nix` for
-  interfaces). That is a real change to the "ring + rustls, nothing
+  socket options). That is a real change to the "ring + rustls, nothing
   else" policy and needs the owner's yes (§9); the feature gate keeps it
   out of games that do not ask for it, and out of `tvpipe` entirely.
 - `str0m` is the more battle-tested sans-IO stack, but on our
