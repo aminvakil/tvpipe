@@ -36,9 +36,10 @@ if you downloaded an archive with a browser, run
 
 ## License
 
-tvpipe's source is Apache-2.0, except `src/airplay/fairplay/`, a port of
+tvpipe's source is Apache-2.0, except the FairPlay crate
+`crates/tvpipe-fairplay/`, a port of
 [doubletake](https://github.com/omarroth/doubletake) under
-LGPL-3.0-or-later. These binaries include that module, so **the binaries
+LGPL-3.0-or-later. These binaries include that crate, so **the binaries
 are distributed under the terms of LGPL-3.0-or-later**. The corresponding
 source is this release's tag, `v{{version}}` (also attached below as
 source archives).

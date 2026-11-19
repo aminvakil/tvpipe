@@ -74,6 +74,7 @@ With several receivers one that fails does not end the session.
 | `ffmpeg-missing` | the input needs ffmpeg and there is none |
 | `pin-missing` | `pair` asked for a PIN and stdin ended |
 | `bad-input` | stdin is not valid SLRW |
+| `fairplay-required` | an AirPlay receiver needs FairPlay and this build has none (programs using the Rust library without its `fairplay` feature; the released binary always has it) |
 
 A `receiver` event with `failed` carries the same `code` (e.g. one of
 several receivers needs pairing).

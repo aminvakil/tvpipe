@@ -130,11 +130,11 @@ per-OS status are in [`docs/`](docs/), and the website's sources in
 
 ## License
 
-`tvpipe`'s source is Apache-2.0 ([`LICENSE`](LICENSE)), except
-`src/airplay/fairplay/`, a port of
-[doubletake](https://github.com/omarroth/doubletake) under
-LGPL-3.0-or-later. While that module is included, the distributed binary is
-under LGPL-3.0-or-later terms.
+`tvpipe`'s source is Apache-2.0 ([`LICENSE`](LICENSE)), except the
+FairPlay crate [`crates/tvpipe-fairplay/`](crates/tvpipe-fairplay/), a port
+of [doubletake](https://github.com/omarroth/doubletake) under
+LGPL-3.0-or-later, which is only built with the `fairplay` feature. The
+distributed binary includes it, so it is under LGPL-3.0-or-later terms.
 
 The root certificates in `src/net/roots/` (for the `--tunnel` service's
 HTTPS) are Mozilla's list from the CCADB, under CDLA-Permissive-2.0 (see

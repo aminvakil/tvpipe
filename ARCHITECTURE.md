@@ -319,8 +319,9 @@ The sender is built from a clean-room spec, plus pyatv (MIT) for pairing.
     implements `Read + Write`, so the RTSP code runs on it unchanged.
   - Credentials live in a small text file (`credentials.txt`, see
     [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/)).
-- **FairPlay** is an **LGPL port of doubletake**, isolated behind a tiny
-  API so it can be replaced later.
+- **FairPlay** is an **LGPL port of doubletake** in its own crate
+  (`tvpipe-fairplay`, the `fairplay` feature), isolated behind a tiny API
+  so it can be replaced later.
 - **Session setup** runs everything up to the audio SETUP while connecting,
   so the canvas is known before encoding starts. The video SETUP happens at
   stream start. The Apple TV tolerates the gap between them.
@@ -417,14 +418,21 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
 
 ## Licensing and Clean Room
 
-- **Licenses.** `tvpipe` is Apache-2.0, except the FairPlay module
-  (LGPL-3.0-or-later). While that module is included, the binary is
-  distributed under LGPL terms.
-- **FairPlay** is a port of doubletake's SAP implementation in
-  `src/airplay/fairplay/` (LGPL-3.0-or-later SPDX headers and attribution
-  in every file), behind a small API (`FpSession`: `m1`, `m3`,
-  `check_m4`, `wrap_key`, plus the stream-key derivation) so a clean-room
-  version can replace it. Nothing outside that directory may copy from it.
+- **Licenses.** `tvpipe` is Apache-2.0, except the FairPlay crate
+  (LGPL-3.0-or-later), which only the opt-in `fairplay` feature pulls in.
+  The released binary includes it and is distributed under LGPL terms.
+- **FairPlay** is a port of doubletake's SAP implementation in its own
+  crate, `crates/tvpipe-fairplay/` (LGPL-3.0-or-later SPDX headers and
+  attribution in every file; `src/aes.rs` is a copy of our Apache-2.0
+  AES), bytes in, bytes out (`FpSession`: `m1`, `m3`, `check_m4`,
+  `wrap_key`) so a clean-room version can replace it. The `/fp-setup`
+  requests (`airplay/session.rs`) and the stream-key derivation
+  (`airplay/keys.rs`) are written from the spec. Nothing outside that
+  crate may copy from it.
+- **Without FairPlay** (the feature off), a receiver offering it with the
+  HAP profile gets the §5.3 placeholders (what the Apple TV accepts); the
+  legacy profile, or a receiver refusing the session after FairPlay was
+  skipped, fails with `fairplay-required`.
 - **Tainted sources.** doubletake, UxPlay, playfair and their derivatives
   are read only by a dirty-room spec writer and by the FairPlay porter.
   The spec is [`docs/airplay-mirroring.md`](docs/airplay-mirroring.md).
