@@ -38,10 +38,6 @@ use crate::browser::player::{BrowserSink, PlayerOptions};
 use crate::browser::protocol::{CaptureInfo, PageConfig, SharePlan};
 use crate::browser::share::{ShareInputOptions, ShareServer};
 use crate::cast::{self, CastOptions};
-use crate::cli::{
-    BrowserOptions, Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size,
-    BROWSER_TARGET,
-};
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
 use crate::events::{
@@ -55,6 +51,10 @@ use crate::media::input::{
     self, EncodedOptions, FfmpegInput, Input, PassthroughInput, SlrwEncodedInput,
 };
 use crate::media::{passthrough, rawin};
+use crate::opts::{
+    BrowserOptions, Command, InputSpec, PlayOptions, RawAudioSpec, ShareOptions, Size,
+    BROWSER_TARGET,
+};
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioPlan, Capabilities, EncodePlan, Encoder, Sink,
     TrackKind, VideoCodec, VideoPlan,

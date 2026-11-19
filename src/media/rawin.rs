@@ -21,10 +21,10 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::cli::{RawAudioSpec, RawVideoSpec};
 use crate::error::{Error, Result};
 use crate::media::ffmpeg::{RawAudioInput, RawVideoInput, Source};
 use crate::media::slrw::{Kind, SlrwReader};
+use crate::opts::{RawAudioSpec, RawVideoSpec};
 
 /// Video frames queued per connection before new ones are dropped.
 const VIDEO_QUEUE: usize = 3;
@@ -384,8 +384,8 @@ fn pump<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Size;
     use crate::media::slrw;
+    use crate::opts::Size;
     use crate::util::ratio::Ratio;
 
     fn specs() -> (RawVideoSpec, RawAudioSpec) {

@@ -13,8 +13,8 @@ use std::any::Any;
 use super::*;
 use crate::browser::launch;
 use crate::browser::screen::{ScreenBrowser, ScreenOptions as BrowserScreen};
-use crate::cli::{ScreenEngine, ScreenOptions, ScreenTarget};
 use crate::media::screencap;
+use crate::opts::{ScreenEngine, ScreenOptions, ScreenTarget};
 
 /// The ffmpeg engine's output size without `--size` (the screen is fitted
 /// inside, keeping its shape).
@@ -29,7 +29,7 @@ pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
         .share
         .to
         .iter()
-        .any(|t| t.eq_ignore_ascii_case(crate::cli::BROWSER_TARGET));
+        .any(|t| t.eq_ignore_ascii_case(crate::opts::BROWSER_TARGET));
     if to_player && !opts.share.no_audio {
         warn!(
             "screen: a --to browser tab on this computer plays the sound it gets, which is \

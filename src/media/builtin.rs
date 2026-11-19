@@ -27,7 +27,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::cli::{RawAudioSpec, RawVideoSpec, Size};
 use crate::error::{Error, Result};
 use crate::media::convert::{self, ColorSpec, PixelFormat, Yuv420Frame};
 use crate::media::h264enc;
@@ -37,6 +36,7 @@ use crate::media::input::{
 use crate::media::rawin;
 use crate::media::slrw::{self, Kind, Packet, SlrwReader};
 use crate::media::source::StreamInfo;
+use crate::opts::{RawAudioSpec, RawVideoSpec, Size};
 use crate::types::{AudioFamily, EncodedFrame};
 use crate::util::ratio::Ratio;
 

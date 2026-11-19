@@ -31,7 +31,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::cli::{PlayOptions, RawAudioSpec, RawVideoSpec};
 use crate::error::{Error, Result};
 use crate::log::Level;
 use crate::media::clock::MediaClock;
@@ -41,6 +40,7 @@ use crate::media::passthrough::{self, CheckOptions, FileInfo, FileSource, PassPl
 use crate::media::rawin::{self, Forwarder, RawInput};
 use crate::media::slrw::{self, Kind, Packet, SlrwReader};
 use crate::media::source::{MediaReader, StreamInfo};
+use crate::opts::{PlayOptions, RawAudioSpec, RawVideoSpec};
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioInfo, Capabilities, EncodePlan, EncodedFrame,
     Encoder, TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
@@ -1403,7 +1403,7 @@ impl Input for SlrwEncodedInput {
 /// The paths a file input could be passed through from (`play FILE`).
 pub fn passthrough_candidate(opts: &PlayOptions) -> Option<PathBuf> {
     match &opts.input {
-        crate::cli::InputSpec::Path(p) => {
+        crate::opts::InputSpec::Path(p) => {
             let p = Path::new(p);
             passthrough::container_of(p).map(|_| p.to_owned())
         }
@@ -1414,8 +1414,8 @@ pub fn passthrough_candidate(opts: &PlayOptions) -> Option<PathBuf> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::cli::Size;
     use crate::media::passthrough::tests::{caps, fixture};
+    use crate::opts::Size;
     use crate::util::ratio::Ratio;
 
     fn never() -> crate::util::stop::Stop {
@@ -1590,7 +1590,7 @@ pub(crate) mod tests {
             raw_video: None,
             raw_audio: None,
             ffmpeg: None,
-            input: crate::cli::InputSpec::Path(fixture("bf0.mp4").into()),
+            input: crate::opts::InputSpec::Path(fixture("bf0.mp4").into()),
         }
     }
 

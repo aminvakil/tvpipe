@@ -16,8 +16,8 @@
 //! x11grab, pulse) and filter documentation (ddagrab, hwdownload);
 //! PulseAudio's special source names (`@DEFAULT_MONITOR@`).
 
-use crate::cli::ScreenTarget;
 use crate::error::{Error, Result};
+use crate::opts::ScreenTarget;
 
 /// ffmpeg's input arguments and what the user should know about them.
 #[derive(Debug, Clone, PartialEq, Eq)]

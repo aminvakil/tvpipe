@@ -29,7 +29,6 @@ use std::time::{Duration, Instant};
 use crate::browser::access::{Access, Via};
 use crate::browser::fonts;
 use crate::browser::protocol::{self, CaptureInfo, PageConfig, PageMsg, Remote, SharePlan};
-use crate::cli::{RawAudioSpec, RawVideoSpec};
 use crate::codec::json::Value;
 use crate::error::{Error, ErrorKind, Result};
 use crate::media::h264;
@@ -43,6 +42,7 @@ use crate::net::http::Request;
 use crate::net::httpd::{self, Reply};
 use crate::net::tunnel::{self, Tunnel};
 use crate::net::websocket::{self, close_code, Message, Role, Sender};
+use crate::opts::{RawAudioSpec, RawVideoSpec};
 use crate::types::{AudioFamily, EncodedFrame};
 
 pub const PAGE_HTML: &str = include_str!("share.html");
@@ -566,7 +566,7 @@ impl ShareServer {
             }
         };
         let video = RawVideoSpec {
-            size: crate::cli::Size {
+            size: crate::opts::Size {
                 width: plan.width,
                 height: plan.height,
             },

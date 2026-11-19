@@ -39,10 +39,10 @@ use std::time::{Duration, Instant};
 use crate::browser::headless::{self, START_JS};
 use crate::browser::launch::{Browser, Engine, LaunchOptions, Profile, ScreenLaunch};
 use crate::browser::share::{ShareHandle, ShareServer};
-use crate::cli::ScreenTarget;
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
 use crate::media::input::Stop;
+use crate::opts::ScreenTarget;
 
 /// The browser window while it starts (CSS pixels).
 const WINDOW: (u32, u32) = (520, 340);

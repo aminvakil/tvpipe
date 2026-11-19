@@ -19,6 +19,7 @@ mod events;
 mod machine;
 mod media;
 mod net;
+mod opts;
 mod session;
 mod storage;
 mod types;

@@ -13,8 +13,8 @@ use crate::airplay::fake_mirror::{Behaviour, FakeMirror};
 use crate::airplay::session::MirrorOptions;
 use crate::browser::share::tests::{spawn_page, PageScript, PageSeen};
 use crate::cast::fake_receiver::{FakeReceiver, Options as CastFake};
-use crate::cli::PageOptions;
 use crate::codec::json::Value;
+use crate::opts::PageOptions;
 
 fn browse_opts(to: Vec<String>) -> ShareOptions {
     ShareOptions {

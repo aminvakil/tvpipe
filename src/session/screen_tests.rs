@@ -187,8 +187,8 @@ fn chrome_captures_the_screen() {
         return;
     };
     let target = match what.strip_prefix("window:") {
-        Some(t) => crate::cli::ScreenTarget::Window(t.into()),
-        None => crate::cli::ScreenTarget::Display(1),
+        Some(t) => crate::opts::ScreenTarget::Window(t.into()),
+        None => crate::opts::ScreenTarget::Display(1),
     };
     let bin = crate::browser::launch::find_browser(None).unwrap();
     let rx = FakeReceiver::spawn(CastFake::default());

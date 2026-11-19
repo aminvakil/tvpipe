@@ -25,11 +25,11 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::time::Instant;
 
-use crate::cli::{InputSpec, PipelineOptions};
 use crate::error::{Error, Result};
 use crate::log::Level;
 use crate::media::ffmpeg::{self, Output, Process, Source};
 use crate::media::source::MediaReader;
+use crate::opts::{InputSpec, PipelineOptions};
 use crate::types::{
     AudioCodec, AudioFamily, AudioPlan, EncodePlan, Encoder, TrackKind, VideoCodec, VideoPlan,
 };
