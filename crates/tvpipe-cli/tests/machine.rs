@@ -386,3 +386,40 @@ fn malformed_stdin_is_an_error() {
     let err = rest.last().unwrap();
     assert!(err.contains("\"code\":\"bad-input\""), "{err}");
 }
+
+#[test]
+fn qr_rows_and_svg_on_stdout() {
+    let out = Command::new(env!("CARGO_BIN_EXE_tvpipe"))
+        .args(["qr", "--rows", "tvpipe"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    let rows: Vec<&str> = text.lines().collect();
+    assert_eq!(rows.len(), 21);
+    assert!(rows
+        .iter()
+        .all(|r| r.len() == 21 && r.bytes().all(|b| b == b'0' || b == b'1')));
+    assert!(rows[0].starts_with("1111111"));
+    let out = Command::new(env!("CARGO_BIN_EXE_tvpipe"))
+        .args(["qr", "--svg", "tvpipe"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8(out.stdout).unwrap().starts_with("<svg "));
+    // Too long for any QR code: an error, not a panic.
+    let out = Command::new(env!("CARGO_BIN_EXE_tvpipe"))
+        .args(["qr", "--rows", &"x".repeat(3000)])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // stdout belongs to events with --machine.
+    let mut t = Tvpipe::spawn("qr", &["qr", "--rows", "tvpipe"]);
+    t.close_stdin();
+    let (code, rest) = t.finish();
+    assert_eq!(code, 1);
+    assert!(rest.iter().all(|l| l.starts_with("{\"type\":")), "{rest:?}");
+    assert!(
+        rest.iter().any(|l| l.contains("\"type\":\"error\"")),
+        "{rest:?}"
+    );
+}

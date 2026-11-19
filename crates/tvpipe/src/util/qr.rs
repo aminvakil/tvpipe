@@ -93,6 +93,47 @@ impl Qr {
     }
 }
 
+impl Qr {
+    /// One line per module row, `1` dark and `0` light (`tvpipe qr --rows`).
+    pub fn rows(&self) -> Vec<String> {
+        (0..self.size)
+            .map(|y| {
+                (0..self.size)
+                    .map(|x| if self.dark(x, y) { '1' } else { '0' })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A standalone SVG document: one module per user unit, `quiet`
+    /// light modules around the symbol, each row's dark runs as one path
+    /// segment (`tvpipe qr --svg`; scale it with CSS or `width`).
+    pub fn to_svg(&self, quiet: usize) -> String {
+        let side = self.size + 2 * quiet;
+        let mut d = String::new();
+        for y in 0..self.size {
+            let mut x = 0;
+            while x < self.size {
+                if !self.dark(x, y) {
+                    x += 1;
+                    continue;
+                }
+                let start = x;
+                while x < self.size && self.dark(x, y) {
+                    x += 1;
+                }
+                let w = x - start;
+                d.push_str(&format!("M{} {}h{w}v1h-{w}z", start + quiet, y + quiet));
+            }
+        }
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {side} {side}\" \
+             shape-rendering=\"crispEdges\"><rect width=\"{side}\" height=\"{side}\" \
+             fill=\"#fff\"/><path d=\"{d}\" fill=\"#000\"/></svg>\n"
+        )
+    }
+}
+
 /// `data` in byte mode at level M, else L, at the smallest version up to
 /// `max_version` that fits (`None`: too long).
 pub fn encode(data: &[u8], max_version: u8) -> Option<Qr> {
@@ -719,6 +760,31 @@ mod tests {
         assert_eq!(format_bits(Ecl::M, 5), 0b100_0000_1100_1110);
         // 7.10: version 7 -> 000111110010010100.
         assert_eq!(version_bits(7), 0b00_0111_1100_1001_0100);
+    }
+
+    #[test]
+    fn rows_and_svg() {
+        let qr = encode(b"tvpipe", MAX_VERSION).unwrap();
+        let rows = qr.rows();
+        assert_eq!(rows.len(), 21);
+        // The finder pattern's top row and the timing pattern.
+        assert!(rows[0].starts_with("1111111"));
+        assert_eq!(&rows[6][8..13], "10101");
+        let svg = qr.to_svg(4);
+        assert!(svg.starts_with(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 29 29\" shape-rendering=\"crispEdges\">"
+        ));
+        // The first dark run: the top finder row, 7 modules, inside the quiet zone.
+        assert!(svg.contains("<path d=\"M4 4h7v1h-7z"), "{svg}");
+        // Every dark module is covered by exactly one run.
+        let runs: usize = svg
+            .split('h')
+            .skip(1)
+            .step_by(2)
+            .filter_map(|r| r.split('v').next()?.parse::<usize>().ok())
+            .sum();
+        let dark = rows.iter().map(|r| r.matches('1').count()).sum::<usize>();
+        assert_eq!(runs, dark);
     }
 
     #[test]

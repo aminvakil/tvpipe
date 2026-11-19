@@ -63,6 +63,10 @@ name = tunnel to the share page
 type = tunnel
 json = {"type":"tunnel","page":"share","provider":"opentunnel","url":"https://abc.opentunnel.example/?t=def"}
 
+name = tunnel to a port
+type = tunnel
+json = {"type":"tunnel","page":"port","provider":"cloudflare","url":"https://words-words-words.trycloudflare.com/"}
+
 name = share-page
 type = share-page
 json = {"type":"share-page","url":"http://127.0.0.1:52345/?t=0123"}

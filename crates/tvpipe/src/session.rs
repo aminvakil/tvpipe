@@ -74,9 +74,11 @@ use crate::util::ratio::Ratio;
 pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
     let cmd_name = cmd.name();
     match cmd {
-        Command::Discover { .. } | Command::Pair { .. } | Command::Unpair { .. } => {
-            Err(Error::usage(format!("{} is not a session", cmd_name)))
-        }
+        Command::Discover { .. }
+        | Command::Pair { .. }
+        | Command::Unpair { .. }
+        | Command::Tunnel { .. }
+        | Command::Qr { .. } => Err(Error::usage(format!("{} is not a session", cmd_name))),
         Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
         #[cfg(feature = "headless")]
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),

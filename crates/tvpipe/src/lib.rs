@@ -110,8 +110,20 @@ pub mod __cli {
         let list = crate::codec::json::Value::array(devices.iter().map(|d| d.to_value()));
         format!("{list:#}\n")
     }
+    pub use crate::net::tunnel::{start as start_tunnel, Tunnel};
     pub use crate::session::{run, GameIo};
     pub use crate::util::stop::Stop;
+
+    /// The `tunnel` event of `tunnel PORT` (the event's fields are not
+    /// constructible outside the library).
+    pub fn port_tunnel_event(provider: crate::__cli::opts::Provider, url: String) -> crate::Event {
+        crate::Event::Tunnel(crate::events::TunnelEvent {
+            page: crate::events::TunnelPage::Port,
+            name: None,
+            provider: provider.name().to_owned(),
+            url,
+        })
+    }
     pub mod qr {
         pub use crate::util::qr::*;
     }

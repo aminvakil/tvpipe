@@ -71,7 +71,8 @@ export interface SharePageEvent {
 /** `tunnel` (or `player.tunnel`): the public link works. */
 export interface TunnelEvent {
   type: "tunnel";
-  page: "player" | "share";
+  /** `port`: `tunnel()`, any server on a loopback port. */
+  page: "player" | "share" | "port";
   /** The player's name (`page: "player"`). */
   name?: string;
   provider: TunnelProvider;

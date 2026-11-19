@@ -270,6 +270,27 @@ pub enum Command {
     Share(ShareOptions),
     Screen(ScreenOptions),
     DebugPipeline(PipelineOptions),
+    /// `tunnel PORT`: a public link for any server on 127.0.0.1:PORT.
+    Tunnel {
+        port: u16,
+        provider: Provider,
+    },
+    /// `qr TEXT`: a QR code on stdout.
+    Qr {
+        text: String,
+        format: QrFormat,
+    },
+}
+
+/// How `qr` prints the code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QrFormat {
+    /// Half blocks for a terminal.
+    Terminal,
+    /// An SVG document.
+    Svg,
+    /// One line of `0`/`1` per module row (for programs).
+    Rows,
 }
 
 impl Command {
@@ -284,6 +305,8 @@ impl Command {
             Command::Share(_) => "share",
             Command::Screen(_) => "screen",
             Command::DebugPipeline(_) => "debug-pipeline",
+            Command::Tunnel { .. } => "tunnel",
+            Command::Qr { .. } => "qr",
         }
     }
 }

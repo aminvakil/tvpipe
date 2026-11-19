@@ -20,7 +20,23 @@ enum Top {
     Preview,
     Share,
     Screen,
+    Tunnel,
+    Qr,
     DebugPipeline,
+}
+
+#[derive(Copy, Clone)]
+enum TunnelArg {
+    Tunnel,
+    NoQr,
+    Port,
+}
+
+#[derive(Copy, Clone)]
+enum QrArg {
+    Svg,
+    Rows,
+    Text,
 }
 
 #[derive(Copy, Clone)]
@@ -148,6 +164,8 @@ static CLI: Cli<Top> = Cli::new("tvpipe")
         Cmd::new(Top::Preview, &PREVIEW),
         Cmd::new(Top::Share, &SHARE),
         Cmd::new(Top::Screen, &SCREEN),
+        Cmd::new(Top::Tunnel, &TUNNEL),
+        Cmd::new(Top::Qr, &QR),
         Cmd::new(Top::DebugPipeline, &DEBUG_PIPELINE),
     ]);
 
@@ -176,6 +194,37 @@ static PAIR: Cli<PairArg> = Cli::new("pair")
 static UNPAIR: Cli<UnpairArg> = Cli::new("unpair")
     .about("Forget the pairing with a receiver")
     .args(&[Pos::new(UnpairArg::Target, "NAME|ADDR").help("Receiver name or address")]);
+
+static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
+    .about("Put a server on this computer (127.0.0.1:PORT) on a public https link")
+    .usage("PORT [--tunnel=PROVIDER] [--no-qr]")
+    .opts(&[
+        tunnel(
+            TunnelArg::Tunnel,
+            "Who carries the link: cloudflare (the default) or opentunnel",
+        ),
+        no_qr(TunnelArg::NoQr),
+    ])
+    .args(&[Pos::new(TunnelArg::Port, "PORT").help("The port of a server on 127.0.0.1")])
+    .after_help(
+        "The tunnel only carries requests: the server decides who may do what. Requests \
+         arrive with the public name as Host (check it, and Origin for WebSockets). The link \
+         works until tvpipe stops (Ctrl-C, q, or with --machine the stop command or stdin \
+         closing). docs/tunnels.md",
+    );
+
+static QR: Cli<QrArg> = Cli::new("qr")
+    .about("Print a QR code of a text or link")
+    .usage("[--svg | --rows] TEXT")
+    .opts(&[
+        Opt::new(QrArg::Svg)
+            .long("svg")
+            .help("An SVG document instead of terminal art"),
+        Opt::new(QrArg::Rows)
+            .long("rows")
+            .help("One line of 0 (light) and 1 (dark) per module row, for programs"),
+    ])
+    .args(&[Pos::new(QrArg::Text, "TEXT").help("What the code says (UTF-8, byte mode)")]);
 
 const fn to<A>(id: A) -> Opt<A> {
     Opt::new(id)
@@ -639,6 +688,11 @@ fn parse_top(mut p: Parser<Top>) -> Result<(Global, Command), Error> {
                 let cmd = parse_screen(p.subcommand(&SCREEN), &mut g)?;
                 return Ok((g, cmd));
             }
+            Top::Tunnel => {
+                let cmd = parse_tunnel(p.subcommand(&TUNNEL), &mut g)?;
+                return Ok((g, cmd));
+            }
+            Top::Qr => return Ok((g, parse_qr(p.subcommand(&QR))?)),
             Top::DebugPipeline => return Ok((g, parse_pipeline(p.subcommand(&DEBUG_PIPELINE))?)),
         }
     }
@@ -686,6 +740,44 @@ fn parse_unpair(mut p: Parser<UnpairArg>) -> Result<Command, Error> {
         }
     }
     Ok(Command::Unpair { target })
+}
+
+fn parse_tunnel(mut p: Parser<TunnelArg>, g: &mut Global) -> Result<Command, Error> {
+    let mut port = None;
+    let mut provider = Provider::default();
+    while let Some(arg) = p.param()? {
+        match arg {
+            TunnelArg::Tunnel => provider = tunnel_value(&mut p)?.unwrap_or_default(),
+            TunnelArg::NoQr => g.no_qr = true,
+            TunnelArg::Port => {
+                let v: String = p.value()?;
+                port = match v.parse::<u16>() {
+                    Ok(n) if n > 0 => Some(n),
+                    _ => return Err(p.error(format!("PORT: a port number, not {v:?}"))),
+                };
+            }
+        }
+    }
+    let Some(port) = port else {
+        return Err(p.error("tunnel needs the PORT of a server on 127.0.0.1"));
+    };
+    Ok(Command::Tunnel { port, provider })
+}
+
+fn parse_qr(mut p: Parser<QrArg>) -> Result<Command, Error> {
+    let mut format = QrFormat::Terminal;
+    let mut text = None;
+    while let Some(arg) = p.param()? {
+        match arg {
+            QrArg::Svg => format = QrFormat::Svg,
+            QrArg::Rows => format = QrFormat::Rows,
+            QrArg::Text => text = Some(p.value::<String>()?),
+        }
+    }
+    let Some(text) = text else {
+        return Err(p.error("qr needs the TEXT to encode"));
+    };
+    Ok(Command::Qr { text, format })
 }
 
 /// Collects everything after a literal `--` as ffmpeg input args.
@@ -1092,6 +1184,40 @@ mod tests {
         };
         assert_eq!(o.encoder, Encoder::Builtin);
         assert_eq!(o.input, InputSpec::TestPattern);
+    }
+
+    #[test]
+    fn tunnel_and_qr() {
+        let Ok((g, Command::Tunnel { port, provider })) = parse_from(&["tunnel", "8080"]) else {
+            panic!()
+        };
+        assert_eq!(
+            (port, provider, g.no_qr),
+            (8080, Provider::Cloudflare, false)
+        );
+        let Ok((g, Command::Tunnel { port, provider })) =
+            parse_from(&["tunnel", "--tunnel=opentunnel", "--no-qr", "9"])
+        else {
+            panic!()
+        };
+        assert_eq!((port, provider, g.no_qr), (9, Provider::OpenTunnel, true));
+        for bad in [
+            &["tunnel"][..],
+            &["tunnel", "0"],
+            &["tunnel", "70000"],
+            &["tunnel", "--tunnel=nope", "1"],
+        ] {
+            assert!(parse_from(bad).is_err(), "{bad:?}");
+        }
+        let Ok((_, Command::Qr { text, format })) = parse_from(&["qr", "--svg", "hi"]) else {
+            panic!()
+        };
+        assert_eq!((text.as_str(), format), ("hi", QrFormat::Svg));
+        let Ok((_, Command::Qr { format, .. })) = parse_from(&["qr", "hi"]) else {
+            panic!()
+        };
+        assert_eq!(format, QrFormat::Terminal);
+        assert!(parse_from(&["qr"]).is_err());
     }
 
     #[test]

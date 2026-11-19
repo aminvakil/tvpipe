@@ -15,7 +15,7 @@ use tvpipe::log;
 
 use std::process::ExitCode;
 
-use tvpipe::__cli::opts::{Command, InputSpec};
+use tvpipe::__cli::opts::{Command, InputSpec, Provider, QrFormat};
 use tvpipe::{Device, Storage};
 
 fn main() -> ExitCode {
@@ -60,7 +60,7 @@ fn main() -> ExitCode {
     // themselves; pair reads its PIN from stdin).
     let (session, reads_stdin) = match &command {
         Command::Play(o) | Command::TestPattern(o) => (true, o.input == InputSpec::Stdin),
-        Command::Share(_) | Command::Screen(_) => (true, false),
+        Command::Share(_) | Command::Screen(_) | Command::Tunnel { .. } => (true, false),
         _ => (false, false),
     };
     // A person at a terminal gets the public links as QR codes too, after
@@ -174,6 +174,32 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
             }
             Ok(())
         }
+        Command::Tunnel { port, provider } => tunnel(port, provider, &ctx),
+        Command::Qr { .. } if global.machine => Err(error::Error::usage(
+            "qr writes the code to stdout: run it without --machine",
+        )),
+        Command::Qr { text, format } => {
+            let max = match format {
+                QrFormat::Terminal => tvpipe::__cli::qr::TERMINAL_MAX_VERSION,
+                _ => tvpipe::__cli::qr::MAX_VERSION,
+            };
+            let Some(qr) = tvpipe::__cli::qr::encode(text.as_bytes(), max) else {
+                return Err(error::Error::usage(format!(
+                    "qr: {} bytes do not fit a QR code{}",
+                    text.len(),
+                    if format == QrFormat::Terminal {
+                        " for the terminal (try --svg)"
+                    } else {
+                        ""
+                    }
+                )));
+            };
+            print(&match format {
+                QrFormat::Terminal => tvpipe::__cli::qr::render_terminal(&text).unwrap_or_default(),
+                QrFormat::Svg => qr.to_svg(4),
+                QrFormat::Rows => qr.rows().join("\n") + "\n",
+            })
+        }
         command => {
             let io = tvpipe::__cli::GameIo {
                 // With --machine, the stdin router hands SLRW over and
@@ -191,6 +217,29 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
                 .map(|_| ())
         }
     }
+}
+
+/// `tunnel PORT`: a public link for 127.0.0.1:PORT until a stop request
+/// (Ctrl-C, `q`, the machine interface's `stop` or stdin closing).
+fn tunnel(port: u16, provider: Provider, ctx: &tvpipe::__cli::Ctx) -> error::Result<()> {
+    use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    if TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_err() {
+        warn!("tunnel: nothing answers on 127.0.0.1:{port} yet; visitors get errors until it does");
+    }
+    let stop = ctx.stop.clone();
+    let t = tvpipe::__cli::start_tunnel(port, provider, &|| stop.requested())?;
+    let url = format!("https://{}/", t.host());
+    info!(
+        "tunnel: {url} leads to http://127.0.0.1:{port} ({}; the link is new every run)",
+        t.name()
+    );
+    ctx.events
+        .emit(tvpipe::__cli::port_tunnel_event(provider, url));
+    while !ctx.stop.wait(std::time::Duration::from_secs(3600)) {}
+    info!("tunnel: closed");
+    drop(t);
+    Ok(())
 }
 
 /// Writes to stdout; a closed pipe (`| head`) is not an error.

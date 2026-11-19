@@ -220,6 +220,15 @@ fn examples() -> Vec<(&'static str, Event)> {
             }),
         ),
         (
+            "tunnel to a port",
+            Event::Tunnel(TunnelEvent {
+                page: TunnelPage::Port,
+                name: None,
+                provider: s("cloudflare"),
+                url: s("https://words-words-words.trycloudflare.com/"),
+            }),
+        ),
+        (
             "share-page",
             Event::SharePage(SharePageEvent {
                 url: s("http://127.0.0.1:52345/?t=0123"),

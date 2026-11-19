@@ -129,6 +129,8 @@ wire_enum!(
         Player = "player",
         /// The share page.
         Share = "share",
+        /// Any program's server on a loopback port (`tvpipe tunnel PORT`).
+        Port = "port",
     }
 );
 

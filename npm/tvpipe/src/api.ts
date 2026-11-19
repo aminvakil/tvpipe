@@ -337,7 +337,7 @@ async function start<S extends Session>(
   }
 }
 
-async function startOnce<S extends Session>(
+export async function startOnce<S extends Session>(
   options: CommonOptions,
   args: string[],
   make: (proc: TvpipeProcess) => S,

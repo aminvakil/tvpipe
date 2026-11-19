@@ -30,6 +30,7 @@ export {
   type Encoder,
   type Input,
 } from "./api.ts";
+export { tunnel, qr, QrCode, TunnelSession, type TunnelOptions } from "./tunnel.ts";
 export { resolveBinary, platformPackage, PLATFORMS, BINARY_ENV, type Platform, type BinaryOptions } from "./binary.ts";
 export type { CanvasLike, Context2DLike, ImageDataLike } from "./canvas.ts";
 export { TvpipeError, type TvpipeErrorCode, type TvpipeErrorOptions } from "./errors.ts";
