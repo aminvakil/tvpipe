@@ -145,6 +145,8 @@ pub struct PlayOptions {
     pub raw_audio: Option<RawAudioSpec>,
     pub ffmpeg: Option<PathBuf>,
     pub input: InputSpec,
+    /// Threads of the built-in encoder (0: automatic).
+    pub threads: usize,
 }
 
 /// The `--to` that names the browser receiver (`--to browser`).

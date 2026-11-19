@@ -33,6 +33,7 @@ pub trait Tunnel: Send {
 
 /// Who carries the link (`--tunnel[=PROVIDER]`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Provider {
     /// A Cloudflare quick tunnel (`net::cftunnel`): no setup, Cloudflare
     /// ends TLS.
@@ -43,6 +44,7 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// `cloudflare` (`cf`) or `opentunnel` (`ot`).
     pub fn parse(s: &str) -> Option<Provider> {
         match s.trim().to_ascii_lowercase().as_str() {
             "cloudflare" | "cf" | "trycloudflare" => Some(Provider::Cloudflare),
@@ -51,6 +53,7 @@ impl Provider {
         }
     }
 
+    /// The provider's name (`cloudflare`, `opentunnel`).
     pub fn name(self) -> &'static str {
         match self {
             Provider::Cloudflare => "cloudflare",

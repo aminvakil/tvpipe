@@ -169,6 +169,7 @@ fn screen_ffmpeg(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
             raw_audio: None,
             ffmpeg: opts.ffmpeg,
             input: InputSpec::FfmpegArgs(input.args.into_iter().map(OsString::from).collect()),
+            threads: 0,
         },
         ctx,
     )

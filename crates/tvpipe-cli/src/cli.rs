@@ -722,6 +722,7 @@ enum Mode {
 fn parse_play(mut p: Parser<PlayArg>, mode: Mode, g: &mut Global) -> Result<PlayOptions, Error> {
     let test_pattern = mode == Mode::TestPattern;
     let mut o = PlayOptions {
+        threads: 0,
         to: Vec::new(),
         reconnect: DEFAULT_RECONNECT,
         browser: BrowserOptions::default(),

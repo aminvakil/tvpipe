@@ -62,6 +62,7 @@ macro_rules! wire_enum {
         $(#[$m])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[non_exhaustive]
+        #[allow(missing_docs)]
         pub enum $name { $($(#[$vm])* $v),+ }
 
         impl $name {
@@ -176,12 +177,16 @@ wire_enum!(
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Hello {
+    /// The machine protocol version (1).
     pub protocol: u32,
+    /// tvpipe's version.
     pub version: String,
+    /// The command (`play` also for `preview`, `test-pattern`, …).
     pub command: String,
 }
 
 impl Hello {
+    /// A `hello` event.
     pub fn new(protocol: u32, version: impl Into<String>, command: impl Into<String>) -> Hello {
         Hello {
             protocol,
@@ -195,9 +200,11 @@ impl Hello {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ReceiverEvent {
+    /// The receiver, as given (`--to`) or as discovered.
     pub name: String,
     /// Known on `connected`, and on `failed` while connecting.
     pub protocol: Option<Protocol>,
+    /// What happened.
     pub state: ReceiverState,
     /// What went wrong (`failed`, `lost`, `gave-up`).
     pub error: Option<String>,
@@ -226,6 +233,7 @@ impl ReceiverEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PlayerEvent {
+    /// The receiver (`browser`).
     pub name: String,
     /// Open it in a browser to watch.
     pub url: String,
@@ -235,8 +243,11 @@ pub struct PlayerEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ViewerEvent {
+    /// The receiver (`browser`).
     pub name: String,
+    /// The tab, numbered from 1 per receiver.
     pub tab: u64,
+    /// Connected or left.
     pub state: ViewerState,
     /// It came over the public link.
     pub public: bool,
@@ -246,6 +257,7 @@ pub struct ViewerEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TunnelEvent {
+    /// The page it leads to.
     pub page: TunnelPage,
     /// The player's name (`page` = player).
     pub name: Option<String>,
@@ -259,6 +271,7 @@ pub struct TunnelEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SharePageEvent {
+    /// The page; open it and press Share.
     pub url: String,
 }
 
@@ -268,8 +281,11 @@ pub struct SharePageEvent {
 pub struct CaptureEvent {
     /// `monitor`, `window` or `browser`, if the browser says.
     pub surface: Option<String>,
+    /// What the browser calls it (a screen or window title), if it says.
     pub label: Option<String>,
+    /// The capture's width.
     pub width: u32,
+    /// The capture's height.
     pub height: u32,
     /// Whether the capture has sound.
     pub audio: bool,
@@ -279,6 +295,7 @@ pub struct CaptureEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ConnectedEvent {
+    /// The receivers that connected, by name.
     pub receivers: Vec<String>,
 }
 
@@ -288,8 +305,11 @@ pub struct ConnectedEvent {
 pub struct VideoStarted {
     /// `h264`.
     pub codec: String,
+    /// Encoded width.
     pub width: u32,
+    /// Encoded height.
     pub height: u32,
+    /// Frames per second.
     pub fps: f64,
 }
 
@@ -299,7 +319,9 @@ pub struct VideoStarted {
 pub struct AudioStarted {
     /// `alac`, `aac-lc`, `opus`, `pcm-s16le`, …
     pub codec: String,
+    /// Samples per second.
     pub sample_rate: u32,
+    /// Channels.
     pub channels: u8,
 }
 
@@ -307,8 +329,11 @@ pub struct AudioStarted {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Started {
+    /// Where the frames come from.
     pub route: Route,
+    /// The video.
     pub video: VideoStarted,
+    /// One audio track per receiver family.
     pub audio: Vec<AudioStarted>,
     /// The playout delay every receiver presents frames with.
     pub latency_ms: u32,
@@ -318,6 +343,7 @@ pub struct Started {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ReceiverStats {
+    /// The receiver.
     pub name: String,
     /// Frames handed to the receiver's sink.
     pub pushed: u64,
@@ -333,9 +359,13 @@ pub struct ReceiverStats {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Stats {
+    /// Time since streaming started.
     pub elapsed_ms: u64,
+    /// Video frames sent so far.
     pub video_frames: u64,
+    /// Audio frames sent so far.
     pub audio_frames: u64,
+    /// Per receiver.
     pub receivers: Vec<ReceiverStats>,
 }
 
@@ -343,6 +373,7 @@ pub struct Stats {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct DevicesEvent {
+    /// What was found.
     pub devices: Vec<crate::net::discover::DeviceInfo>,
 }
 
@@ -360,7 +391,9 @@ pub struct PinRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Paired {
+    /// The receiver.
     pub name: String,
+    /// Its model, if it said.
     pub model: Option<String>,
     /// The credentials file, when the storage is a directory.
     pub file: Option<String>,
@@ -370,7 +403,9 @@ pub struct Paired {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Unpaired {
+    /// The receiver.
     pub name: String,
+    /// Its pairing identifier.
     pub id: String,
 }
 
@@ -378,8 +413,11 @@ pub struct Unpaired {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ReceiverEndInfo {
+    /// Its counters.
     pub stats: ReceiverStats,
+    /// How it ended.
     pub end: ReceiverEnd,
+    /// What went wrong (`failed`).
     pub error: Option<String>,
 }
 
@@ -387,12 +425,14 @@ pub struct ReceiverEndInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EndInfo {
+    /// Why.
     pub reason: EndReason,
     /// Per receiver (sessions only; `None` for commands without a stream).
     pub receivers: Option<Vec<ReceiverEndInfo>>,
 }
 
 impl EndInfo {
+    /// An end without per-receiver details.
     pub fn new(reason: EndReason) -> EndInfo {
         EndInfo {
             reason,
@@ -409,6 +449,7 @@ pub struct ErrorInfo {
     pub kind: String,
     /// A stable code (`pairing-required`, …), where the case is known.
     pub code: Option<String>,
+    /// What went wrong, for people.
     pub message: String,
     /// The receiver the error is about.
     pub device: Option<String>,
@@ -748,6 +789,7 @@ impl Events {
         self.0.is_some()
     }
 
+    /// Sends an event.
     pub fn emit(&self, e: Event) {
         if let Some(f) = &self.0 {
             f(e);

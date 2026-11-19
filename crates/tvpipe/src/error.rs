@@ -14,6 +14,7 @@ use std::fmt;
 
 /// What went wrong, coarsely. Used for exit codes and retry decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// An I/O operation failed (sockets, files, pipes).
     Io,
@@ -61,6 +62,7 @@ impl ErrorKind {
         }
     }
 
+    /// The kind in words (`"I/O error"`).
     pub fn as_str(self) -> &'static str {
         match self {
             ErrorKind::Io => "I/O error",
@@ -79,7 +81,11 @@ impl ErrorKind {
     }
 }
 
-/// The crate-wide error.
+/// What went wrong: a [`kind`](Error::kind), a message for people, a
+/// stable [`code`](Error::code) where the case is known
+/// (`pairing-required`, `no-receiver`, `fairplay-required`,
+/// `feature-disabled`, … as in docs/machine.md) and the
+/// [`device`](Error::device) it is about.
 pub struct Error {
     kind: ErrorKind,
     msg: Cow<'static, str>,
@@ -91,9 +97,11 @@ pub struct Error {
     device: Option<String>,
 }
 
+/// A `Result` with tvpipe's [`Error`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl Error {
+    #[doc(hidden)]
     pub fn new(kind: ErrorKind, msg: impl Into<Cow<'static, str>>) -> Error {
         Error {
             kind,
@@ -104,12 +112,14 @@ impl Error {
         }
     }
 
+    #[doc(hidden)]
     /// Sets the stable machine-interface code.
     pub fn with_code(mut self, code: &'static str) -> Error {
         self.code = Some(code);
         self
     }
 
+    #[doc(hidden)]
     /// Names the receiver the error is about.
     pub fn with_device(mut self, device: impl Into<String>) -> Error {
         self.device = Some(device.into());
@@ -126,40 +136,61 @@ impl Error {
         self.device.as_deref()
     }
 
+    /// A copy without the underlying cause (whose type is not `Clone`);
+    /// the message, kind, code and device are kept.
+    pub fn clone_lossy(&self) -> Error {
+        Error {
+            kind: self.kind,
+            msg: Cow::Owned(self.to_string()),
+            source: None,
+            code: self.code,
+            device: self.device.clone(),
+        }
+    }
+
+    #[doc(hidden)]
     /// Attaches an underlying cause.
     pub fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Error {
         self.source = Some(Box::new(source));
         self
     }
 
+    /// What kind of failure it is.
     pub fn kind(&self) -> ErrorKind {
         self.kind
     }
 
+    /// The message, without the underlying cause.
     pub fn message(&self) -> &str {
         &self.msg
     }
 
+    #[doc(hidden)]
     pub fn malformed(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Malformed, msg)
     }
 
+    #[doc(hidden)]
     pub fn protocol(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Protocol, msg)
     }
 
+    #[doc(hidden)]
     pub fn crypto(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Crypto, msg)
     }
 
+    #[doc(hidden)]
     pub fn auth(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Auth, msg)
     }
 
+    #[doc(hidden)]
     pub fn unsupported(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Unsupported, msg)
     }
 
+    #[doc(hidden)]
     /// `what` needs a crate feature this build does not have (code
     /// `feature-disabled`).
     pub fn feature(feature: &str, what: &str) -> Error {
@@ -169,30 +200,37 @@ impl Error {
         .with_code("feature-disabled")
     }
 
+    #[doc(hidden)]
     pub fn timeout(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Timeout, msg)
     }
 
+    #[doc(hidden)]
     pub fn not_found(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::NotFound, msg)
     }
 
+    #[doc(hidden)]
     pub fn closed(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Closed, msg)
     }
 
+    #[doc(hidden)]
     pub fn process(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Process, msg)
     }
 
+    #[doc(hidden)]
     pub fn usage(msg: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Usage, msg)
     }
 
+    #[doc(hidden)]
     pub fn unimplemented(what: impl Into<Cow<'static, str>>) -> Error {
         Error::new(ErrorKind::Unimplemented, what)
     }
 
+    #[doc(hidden)]
     /// Wraps an I/O error with context, e.g. `Error::io("connect to TV", e)`.
     pub fn io(context: impl Into<Cow<'static, str>>, err: std::io::Error) -> Error {
         let kind = match err.kind() {

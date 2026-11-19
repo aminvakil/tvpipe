@@ -283,7 +283,7 @@ pub fn pair(
     pin: Option<&str>,
     ctx: &Ctx,
     get_pin: &mut dyn FnMut(&PinRequest) -> Result<String>,
-) -> Result<()> {
+) -> Result<Paired> {
     let target = resolve(target)?;
     let mut store = Store::open(&ctx.storage)?;
     let label = target.label();
@@ -306,41 +306,29 @@ pub fn pair(
     // full /info over the encrypted channel.
     let mut control = connect_with(target.addr, &store.identity, Auth::Verified(record))?;
     let info = get_info(&mut control.client)?;
-    let caps = info.capabilities();
-    if ctx.events.active() {
-        ctx.events.emit(Event::Paired(Paired {
-            name: label,
-            model: info.model.clone(),
-            file: store.file().map(|f| f.display().to_string()),
-        }));
-        return Ok(());
-    }
-    println!(
-        "Paired with {} ({}), display {}x{}@{}",
-        label,
-        info.model.as_deref().unwrap_or("unknown model"),
-        caps.max_width,
-        caps.max_height,
-        caps.max_fps
-    );
-    Ok(())
+    let paired = Paired {
+        name: label,
+        model: info.model.clone(),
+        file: store.file().map(|f| f.display().to_string()),
+    };
+    ctx.events.emit(Event::Paired(paired.clone()));
+    Ok(paired)
 }
 
 /// The `unpair` command body: forgets the stored pairing.
-pub fn unpair(target: &str, ctx: &Ctx) -> Result<()> {
+pub fn unpair(target: &str, ctx: &Ctx) -> Result<Vec<Unpaired>> {
     let mut store = Store::open(&ctx.storage)?;
     let removed = forget(&mut store, target, resolve)?;
+    let mut out = Vec::new();
     for r in &removed {
-        if ctx.events.active() {
-            ctx.events.emit(Event::Unpaired(Unpaired {
-                name: r.name.clone(),
-                id: r.id_display(),
-            }));
-        } else {
-            println!("Forgot pairing with {} ({})", r.name, r.id_display());
-        }
+        let u = Unpaired {
+            name: r.name.clone(),
+            id: r.id_display(),
+        };
+        ctx.events.emit(Event::Unpaired(u.clone()));
+        out.push(u);
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Removes the pairings for `target` from `store` and saves it. Looks the

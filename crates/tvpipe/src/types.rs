@@ -140,6 +140,7 @@ pub fn aspect_of(w: u32, h: u32) -> Option<(u32, u32)> {
 
 /// Which encoder makes the video: one of ffmpeg's, or our own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Encoder {
     /// Probe `ffmpeg -encoders` and pick the best available (the built-in
     /// encoder when raw input has no ffmpeg).
@@ -148,11 +149,17 @@ pub enum Encoder {
     /// `media::h264enc` in-process (raw SLRW input and the test pattern;
     /// ARCHITECTURE.md). Never handed to ffmpeg.
     Builtin,
+    /// ffmpeg's libx264.
     X264,
+    /// ffmpeg's h264_videotoolbox (macOS).
     VideoToolbox,
+    /// ffmpeg's h264_nvenc (NVIDIA).
     Nvenc,
+    /// ffmpeg's h264_qsv (Intel).
     Qsv,
+    /// ffmpeg's h264_vaapi (Linux).
     Vaapi,
+    /// ffmpeg's h264_mf (Windows).
     MediaFoundation,
 }
 

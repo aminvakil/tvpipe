@@ -33,6 +33,7 @@ use std::io::{self, Read, Write};
 /// here.
 pub const ENCODED_PIX_FMT: &str = "h264";
 
+/// The four bytes a stream starts with.
 pub const MAGIC: &[u8; 4] = b"SLRW";
 /// Largest payload accepted (an 8K RGBA frame is 133 MB).
 pub const MAX_PAYLOAD: u32 = 256 << 20;
@@ -41,21 +42,28 @@ pub const MAX_H264_PAYLOAD: u32 = 64 << 20;
 /// Largest decoder configuration.
 pub const MAX_CONFIG_PAYLOAD: u32 = 1 << 20;
 
-/// `h264` flags.
+/// `h264` flag: an IDR picture.
 pub const H264_KEYFRAME: u8 = 0x01;
+/// `h264` flag: start codes (else 4-byte lengths).
 pub const H264_ANNEX_B: u8 = 0x02;
-/// `h264-config` formats.
+/// `h264-config` format: an `avcC` record.
 pub const CONFIG_AVCC: u8 = 0;
+/// `h264-config` format: Annex B SPS and PPS.
 pub const CONFIG_ANNEX_B: u8 = 1;
 /// `control` flags.
 pub const CONTROL_KEYFRAME_REQUESTS: u32 = 0x01;
 /// The line written to stdout for a keyframe request.
 pub const KEYFRAME_REQUEST_LINE: &[u8] = b"keyframe\n";
 
+/// A record's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Kind {
+    /// The end of the stream.
     End,
+    /// One raw frame.
     Video,
+    /// Interleaved PCM.
     Audio,
     /// Encoded H.264 access unit.
     H264,
@@ -66,6 +74,7 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// The byte on the wire.
     pub fn code(self) -> u8 {
         match self {
             Kind::End => 0,
@@ -77,6 +86,7 @@ impl Kind {
         }
     }
 
+    /// The kind of a byte on the wire.
     pub fn from_code(c: u8) -> Option<Kind> {
         Some(match c {
             0 => Kind::End,
@@ -124,9 +134,13 @@ pub fn write_control(w: &mut impl Write, flags: u32) -> io::Result<()> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// One record.
 pub struct Packet {
+    /// The record's kind.
     pub kind: Kind,
+    /// Its time in microseconds.
     pub pts_us: u64,
+    /// Its payload.
     pub payload: Vec<u8>,
 }
 
@@ -164,6 +178,7 @@ pub struct SlrwReader<R> {
 }
 
 impl<R: Read> SlrwReader<R> {
+    /// A reader of `inner` (which starts with the magic).
     pub fn new(inner: R) -> SlrwReader<R> {
         SlrwReader {
             inner,
@@ -174,6 +189,7 @@ impl<R: Read> SlrwReader<R> {
         }
     }
 
+    /// Refuses larger video and audio payloads.
     pub fn with_limits(mut self, max_video: u32, max_audio: u32) -> SlrwReader<R> {
         self.max_video = max_video.min(MAX_PAYLOAD);
         self.max_audio = max_audio.min(MAX_PAYLOAD);

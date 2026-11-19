@@ -1603,6 +1603,7 @@ pub(crate) mod tests {
 
     fn play_opts() -> PlayOptions {
         PlayOptions {
+            threads: 0,
             to: vec!["tv".into()],
             reconnect: std::time::Duration::ZERO,
             browser: Default::default(),

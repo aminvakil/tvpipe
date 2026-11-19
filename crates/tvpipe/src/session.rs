@@ -72,17 +72,11 @@ use crate::types::{
 use crate::util::ratio::Ratio;
 
 pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
+    let cmd_name = cmd.name();
     match cmd {
-        Command::Discover {
-            timeout,
-            json,
-            interfaces,
-        } => crate::net::discover::run(timeout, json, &interfaces, ctx),
-        Command::Pair { .. } => Err(Error::usage("pair is not a session")),
-        #[cfg(feature = "airplay")]
-        Command::Unpair { target } => crate::airplay::pair::unpair(&target, ctx),
-        #[cfg(not(feature = "airplay"))]
-        Command::Unpair { .. } => Err(Error::feature("airplay", "unpair")),
+        Command::Discover { .. } | Command::Pair { .. } | Command::Unpair { .. } => {
+            Err(Error::usage(format!("{} is not a session", cmd_name)))
+        }
         Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
         #[cfg(feature = "headless")]
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),
@@ -1251,7 +1245,7 @@ fn play_rejoin(
                         video_out: out,
                         audio: opts.raw_audio.clone().filter(|_| audio),
                         audio_families: families,
-                        threads: 0,
+                        threads: opts.threads.min(u32::MAX as usize) as u32,
                     },
                     stop.clone(),
                 )?
@@ -2501,6 +2495,7 @@ mod tests {
 
     pub(super) fn opts() -> PlayOptions {
         PlayOptions {
+            threads: 0,
             to: vec!["tv".into()],
             reconnect: Duration::ZERO,
             browser: Default::default(),
@@ -2649,6 +2644,7 @@ mod tests {
 
     fn file_opts(bin: std::path::PathBuf, path: std::path::PathBuf, to: String) -> PlayOptions {
         PlayOptions {
+            threads: 0,
             to: vec![to],
             latency_ms: Some(100),
             ffmpeg: Some(bin),
@@ -2830,6 +2826,7 @@ mod tests {
         chunks.push_back((Duration::from_millis(1000), end));
         let rx = FakeReceiver::spawn(Options::default());
         let o = PlayOptions {
+            threads: 0,
             to: vec![rx.addr.to_string()],
             latency_ms: Some(100),
             ffmpeg: Some(NO_FFMPEG.into()),
@@ -3041,6 +3038,7 @@ mod tests {
 
     fn raw_opts(to: String, rate: u32) -> PlayOptions {
         PlayOptions {
+            threads: 0,
             to: vec![to],
             latency_ms: Some(100),
             ffmpeg: Some(NO_FFMPEG.into()),
@@ -3188,6 +3186,7 @@ mod tests {
             fake_connector(None, Some(20), &tally, t, c, m)
         };
         let o = PlayOptions {
+            threads: 0,
             to: vec![rx.addr.to_string()],
             latency_ms: Some(100),
             size: Some(Size {
@@ -3267,6 +3266,7 @@ mod tests {
             fake_connector(Some(&fake), Some(15), &tally, t, c, m)
         };
         let o = PlayOptions {
+            threads: 0,
             to: vec![format!("airplay:{}", fake.addr)],
             latency_ms: Some(100),
             ffmpeg: Some(NO_FFMPEG.into()),
@@ -3439,6 +3439,7 @@ mod tests {
     #[test]
     fn airplay_target_connect_failure() {
         let o = PlayOptions {
+            threads: 0,
             to: vec!["airplay:127.0.0.1:1".into()],
             ffmpeg: crate::media::ffmpeg::tests::real_ffmpeg().map(|(b, _)| b),
             ..opts()

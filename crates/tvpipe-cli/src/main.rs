@@ -15,6 +15,9 @@ use tvpipe::log;
 
 use std::process::ExitCode;
 
+use tvpipe::__cli::opts::{Command, InputSpec};
+use tvpipe::{Device, Storage};
+
 fn main() -> ExitCode {
     let (global, command) = cli::parse_env();
     let level = if global.debug {
@@ -44,23 +47,20 @@ fn main() -> ExitCode {
     };
     // Only fails when installed twice, which main does not.
     let _ = installed;
+    // The CLI shares one config directory with every run (and with
+    // programs that use Storage::cli()).
     let mut ctx = tvpipe::__cli::Ctx::new();
+    ctx.storage = Storage::cli();
     if global.machine {
         ctx.events = machine::events();
         machine::hello(command.name());
         machine::start_router(ctx.stop.clone());
     }
-    // Fine-grained timed waits for pacing (Windows; `util::timer`).
-    tvpipe::__cli::raise_resolution();
     // Ctrl-C and `q` stop sessions (not discover/pair, which end by
     // themselves; pair reads its PIN from stdin).
     let (session, reads_stdin) = match &command {
-        tvpipe::__cli::opts::Command::Play(o) | tvpipe::__cli::opts::Command::TestPattern(o) => {
-            (true, o.input == tvpipe::__cli::opts::InputSpec::Stdin)
-        }
-        tvpipe::__cli::opts::Command::Share(_) | tvpipe::__cli::opts::Command::Screen(_) => {
-            (true, false)
-        }
+        Command::Play(o) | Command::TestPattern(o) => (true, o.input == InputSpec::Stdin),
+        Command::Share(_) | Command::Screen(_) => (true, false),
         _ => (false, false),
     };
     // A person at a terminal gets the public links as QR codes too, after
@@ -83,30 +83,15 @@ fn main() -> ExitCode {
             interrupt::watch_stdin(ctx.stop.clone());
         }
     }
-    let io = tvpipe::__cli::GameIo {
-        // With --machine, the stdin router hands SLRW over and keyframe
-        // requests become events.
-        stdin: machine::stdin_reader(),
-        stdout: if global.machine {
-            Box::new(machine::KeyframeEvents::new(ctx.events.clone()))
-        } else {
-            Box::new(std::io::stdout())
-        },
-        approve: Box::new(approve_in_terminal),
-    };
-    let rv = match command {
-        tvpipe::__cli::opts::Command::Pair { target, pin } => {
-            tvpipe::__cli::pair(&target, pin.as_deref(), &ctx, &mut |req| prompt_pin(req))
-        }
-        command => tvpipe::__cli::run(command, &ctx, io),
-    };
+    let stop = ctx.stop.clone();
+    let rv = run(command, ctx, &global);
     // A stream the machine interface refused is the command's error.
     let rv = match (rv, machine::failure()) {
         (_, Some(e)) => Err(e),
         // After a stop request (`q`, the machine interface's `stop` or
         // stdin closing) an error is its consequence, e.g. a receiver
         // that was still connecting.
-        (Err(e), None) if ctx.stop.requested() && !interrupt::signalled() => {
+        (Err(e), None) if stop.requested() && !interrupt::signalled() => {
             debug!("after the stop request: {e}");
             Ok(())
         }
@@ -124,13 +109,15 @@ fn main() -> ExitCode {
     if interrupt::signalled() {
         match rv {
             Err(err) => report(&err),
-            Ok(()) => machine::end_if_unsent(events::EndReason::Stopped),
+            Ok(()) if global.machine => machine::end_if_unsent(events::EndReason::Stopped),
+            Ok(()) => {}
         }
         return ExitCode::from(130);
     }
     match rv {
+        Ok(()) if !global.machine => ExitCode::SUCCESS,
         Ok(()) => {
-            machine::end_if_unsent(if ctx.stop.requested() {
+            machine::end_if_unsent(if stop.requested() {
                 events::EndReason::Stopped
             } else {
                 events::EndReason::Done
@@ -142,6 +129,137 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Runs one command: discovery and pairing through the library's
+/// functions, everything else as a library session.
+fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error::Result<()> {
+    match command {
+        Command::Discover {
+            timeout,
+            json,
+            interfaces,
+        } => {
+            let devices = tvpipe::__cli::discover(timeout, &interfaces, &ctx.storage)?;
+            if global.machine {
+                machine::emit(&tvpipe::__cli::devices_event(devices));
+                return Ok(());
+            }
+            print(&if json {
+                tvpipe::__cli::devices_json(&devices)
+            } else {
+                table(&devices)
+            })
+        }
+        Command::Pair { target, pin } => {
+            let p = tvpipe::__cli::pair(&target, pin.as_deref(), &ctx, &mut prompt_pin)?;
+            if !global.machine {
+                print(&format!(
+                    "Paired with {} ({})\n",
+                    p.name,
+                    p.model.as_deref().unwrap_or("unknown model")
+                ))?;
+            }
+            Ok(())
+        }
+        Command::Unpair { target } => {
+            let options = tvpipe::Options::new().storage(ctx.storage.clone());
+            let removed = tvpipe::unpair(&target, &options)?;
+            for u in removed {
+                if global.machine {
+                    machine::emit(&events::Event::Unpaired(u));
+                } else {
+                    print(&format!("Forgot pairing with {} ({})\n", u.name, u.id))?;
+                }
+            }
+            Ok(())
+        }
+        command => {
+            let io = tvpipe::__cli::GameIo {
+                // With --machine, the stdin router hands SLRW over and
+                // keyframe requests become events.
+                stdin: machine::stdin_reader(),
+                stdout: if global.machine {
+                    Box::new(machine::KeyframeEvents::new(ctx.events.clone()))
+                } else {
+                    Box::new(std::io::stdout())
+                },
+                approve: Box::new(approve_in_terminal),
+            };
+            tvpipe::__cli::spawn(command, ctx, io, None)?
+                .wait()
+                .map(|_| ())
+        }
+    }
+}
+
+/// Writes to stdout; a closed pipe (`| head`) is not an error.
+fn print(text: &str) -> error::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        r => r.map_err(|e| error::Error::io("write the output", e)),
+    }
+}
+
+/// `discover`'s table: one receiver per line.
+fn table(devices: &[Device]) -> String {
+    if devices.is_empty() {
+        return "no receivers found\n".to_owned();
+    }
+    let protocols = |d: &Device| {
+        let mut p = Vec::new();
+        if let Some(a) = &d.airplay {
+            p.push(if a.mirroring {
+                "airplay(mirror)"
+            } else {
+                "airplay"
+            });
+        }
+        if d.raop.is_some() {
+            p.push("raop");
+        }
+        if let Some(c) = &d.cast {
+            p.push(if c.video { "cast(video)" } else { "cast" });
+        }
+        p.join(",")
+    };
+    let rows: Vec<[String; 4]> = devices
+        .iter()
+        .map(|d| {
+            [
+                d.name.clone(),
+                d.addresses
+                    .first()
+                    .map(|a| a.to_string())
+                    .unwrap_or_default(),
+                protocols(d),
+                d.model.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    let header = ["NAME", "ADDRESS", "PROTOCOLS", "MODEL"].map(str::to_owned);
+    let mut widths = [0usize; 4];
+    for row in std::iter::once(&header).chain(&rows) {
+        for (w, cell) in widths.iter_mut().zip(row) {
+            *w = (*w).max(cell.chars().count());
+        }
+    }
+    let mut out = String::new();
+    for row in std::iter::once(&header).chain(&rows) {
+        let mut line = String::new();
+        for (i, cell) in row.iter().enumerate() {
+            line.push_str(cell);
+            if i + 1 < row.len() {
+                let pad = widths[i] - cell.chars().count() + 2;
+                line.extend(std::iter::repeat_n(' ', pad));
+            }
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
 }
 
 /// Reads the PIN from stdin after prompting on stderr; with `--machine`,

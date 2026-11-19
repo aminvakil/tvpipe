@@ -50,42 +50,6 @@ fn browse(
     mdns::browse(&opts, done)
 }
 
-/// The `discover` command body.
-pub fn run(
-    timeout: Duration,
-    json: bool,
-    interfaces: &[Ipv4Addr],
-    ctx: &crate::ctx::Ctx,
-) -> Result<()> {
-    let devices = discover(timeout, interfaces)?;
-    let store = stored_pairings(&ctx.storage);
-    if ctx.events.active() {
-        ctx.events
-            .emit(crate::events::Event::Devices(crate::events::DevicesEvent {
-                devices: devices
-                    .iter()
-                    .map(|d| DeviceInfo::new(d, store.as_ref()))
-                    .collect(),
-            }));
-        return Ok(());
-    }
-    let out = if json {
-        to_json_with(&devices, store.as_ref())
-    } else {
-        to_table(&devices)
-    };
-    use std::io::Write;
-    let mut stdout = std::io::stdout().lock();
-    match stdout
-        .write_all(out.as_bytes())
-        .and_then(|()| stdout.flush())
-    {
-        // A closed pipe (`| head`) is not an error worth reporting.
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-        r => r.map_err(|e| crate::error::Error::io("write discover output", e)),
-    }
-}
-
 fn protocols(d: &Device) -> String {
     let mut p = Vec::new();
     if d.airplay.is_some() {
@@ -184,8 +148,11 @@ fn is_paired(d: &Device, store: &Store) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DeviceInfo {
+    /// The name it advertises (the Cast friendly name, else the AirPlay name).
     pub name: String,
+    /// Its IPv4 addresses.
     pub addresses: Vec<IpAddr>,
+    /// Its model (`AppleTV6,2`, `Chromecast`), if it says.
     pub model: Option<String>,
     /// The `_airplay._tcp` service.
     pub airplay: Option<AirPlayService>,
@@ -201,7 +168,9 @@ pub struct DeviceInfo {
 pub struct Endpoint {
     /// The mDNS instance name.
     pub instance: String,
+    /// The mDNS host name.
     pub host: String,
+    /// The service port.
     pub port: u16,
     /// `ip:port`.
     pub address: String,
@@ -211,13 +180,19 @@ pub struct Endpoint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AirPlayService {
+    /// Where it is reached.
     pub endpoint: Endpoint,
+    /// The model, from the TXT record.
     pub model: Option<String>,
+    /// The AirPlay source version.
     pub srcvers: Option<String>,
+    /// The OS version.
     pub osvers: Option<String>,
+    /// The device id (a MAC address).
     pub deviceid: Option<String>,
     /// The feature bits, as advertised (`0xLOW,0xHIGH`).
     pub features: Option<String>,
+    /// The status flags, as advertised (hex).
     pub flags: Option<String>,
     /// The receiver's public key (hex).
     pub pk: Option<String>,
@@ -235,11 +210,17 @@ pub struct AirPlayService {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CastService {
+    /// Where it is reached.
     pub endpoint: Endpoint,
+    /// The name its owner gave it.
     pub friendly_name: Option<String>,
+    /// The model name.
     pub model: Option<String>,
+    /// The device UUID (hex).
     pub id: Option<String>,
+    /// The capability bits.
     pub capabilities: Option<u64>,
+    /// The status text of the running app, if any.
     pub status: Option<String>,
     /// Plays video (not an audio-only speaker).
     pub video: bool,
@@ -290,6 +271,30 @@ impl DeviceInfo {
                 }
             }),
         }
+    }
+
+    /// The device as `tvpipe discover --json` prints it.
+    pub fn to_json(&self) -> String {
+        self.to_value().to_json()
+    }
+
+    /// Reads a `tvpipe discover --json` object.
+    pub fn from_json(text: &str) -> Result<DeviceInfo> {
+        DeviceInfo::from_value(&Value::parse(text)?)
+    }
+
+    /// Whether it plays video over AirPlay (screen mirroring) or Cast.
+    pub fn plays_video(&self) -> bool {
+        self.airplay.as_ref().is_some_and(|a| a.mirroring)
+            || self.cast.as_ref().is_some_and(|c| c.video)
+    }
+
+    /// Whether the storage has a pairing for it (AirPlay), if known.
+    pub fn paired(&self) -> Option<bool> {
+        self.airplay
+            .as_ref()
+            .or(self.raop.as_ref())
+            .and_then(|a| a.paired)
     }
 
     /// The `discover --json` object.

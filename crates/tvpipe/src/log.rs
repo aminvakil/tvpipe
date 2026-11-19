@@ -17,10 +17,15 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Level {
+    /// Something failed.
     Error = 1,
+    /// Something is off, but the session goes on.
     Warn = 2,
+    /// What a person running a session wants to know.
     Info = 3,
+    /// Details for finding problems.
     Debug = 4,
+    /// Everything (per packet).
     Trace = 5,
 }
 
@@ -28,9 +33,11 @@ pub enum Level {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Record {
+    /// How important it is.
     pub level: Level,
     /// The module that logged it, without the crate name (`airplay::sink`).
     pub module: String,
+    /// The line.
     pub message: String,
 }
 
