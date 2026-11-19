@@ -1,6 +1,8 @@
 # Party games on tvpipe (design)
 
-Status: proposal (phase A), waiting for the owner's go. Goal: Jackbox-style
+Status: implemented (`npm/party`, `games/drawbluff`, `tvpipe tunnel`,
+`tvpipe qr`); the decisions and what changed while building are in §13.
+Goal: Jackbox-style
 party games: the TV shows the game and a QR code, everyone joins with
 their phone's browser over a public link, the game runs on the computer
 that drives the TV. Two demonstrations of one Drawful-style game
@@ -10,7 +12,7 @@ as a **video** the game renders, and as a **web page** tvpipe casts.
 Contents: 1. the split, 2. where the message bus lives, 3. what tvpipe
 adds, 4. `@tvpipe/party`, 5. the protocol, 6. security and abuse, 7. the
 main screen on the TV, 8. latency, 9. a game author's view, 10.
-drawbluff, 11. tests, 12. plan and open questions.
+drawbluff, 11. tests, 12. plan and open questions, 13. as built.
 
 ## 1. The split
 
@@ -194,18 +196,19 @@ Server → client:
 | `t` | Fields |
 |---|---|
 | `welcome` | `v`, `room` (`code`), `you` (`id`, `name`, `role`, `vip`, `resume`, `lastAct`), `now` (server clock, ms), `view` (the full state), `rev` |
-| `state` | `rev`, `set` (a nested object merged into the view: objects merge, everything else replaces, `null` included), `del` (key paths removed) |
+| `state` | `rev`, `set` (a nested object merged into the view: objects merge, everything else replaces, `null` included), `del` (key paths removed); or `full` (the whole view, the answer to `resync`) |
 | `ack` | `id`, `ok`, `result` or `error` (`code`, `message`) |
 | `msg` | `type`, `data`: transient (a sound cue, a toast); not replayed |
 | `pong` | `c`, `now` |
-| `bye` | `reason` (`kicked`, `replaced`, `room-closed`, `locked`, `full`, `bad-key`, `no-room`, `name-taken`, `rate-limited`, `slow`, `protocol`), then a close |
+| `bye` | `reason` (`kicked`, `replaced`, `room-closed`, `locked`, `full`, `bad-key`, `no-room`, `no-player` (a resume token nobody has, and no name), `name-taken`, `name-invalid`, `rate-limited`, `slow`, `protocol`), optional `message`, then a close |
 
-Close codes: 4000 + a reason (`4003` bad key, `4004` no room, `4008`
+Close codes: 4000 + a reason (`4002` protocol, `4003` bad key, `4004`
+no room, `4005` no player, `4006` name taken, `4007` name invalid, `4008`
 rate limited, `4009` replaced, `4010` kicked, `4011` room closed, `4013`
 slow, `4029` full or locked). The client reconnects on everything else
 (network loss, 1001, 1006, 1012, 4013) with backoff 0.25 s doubling to
-5 s plus jitter, and never after kicked, replaced, bad key, no room or
-locked.
+5 s plus jitter, and at once when the page becomes visible again; never
+after a `bye` other than `slow`.
 
 ### State sync: views, not events
 
@@ -533,3 +536,52 @@ Questions for the owner:
 4. `@tvpipe/party` versioned in lockstep with tvpipe and released by
    `release.yml`, or on its own (it speaks to tvpipe only through the
    SDK)?
+
+## 13. As built
+
+Decided with the lead (for the owner, 2026-11-19): the bus lives in
+`@tvpipe/party` (§2 B); tvpipe adds only `tunnel PORT` and `qr TEXT`
+(+ the SDK's `tunnel()`/`qr()`; a public Rust `tvpipe::Tunnel`/`qr` API
+later); `@napi-rs/canvas` only as an optional dependency of drawbluff;
+`@tvpipe/party` versioned with the crate (0.2.0; CI and the release job
+check it; publishing waits).
+
+What changed against the design while building it:
+
+- **tvpipe**: `tunnel PORT [--tunnel=PROVIDER] [--no-qr]` (event
+  `tunnel` with `page: "port"`; `TunnelPage::Port` is a new, non-breaking
+  variant) and `qr [--svg | --rows] TEXT` (plain stdout; refused with
+  `--machine`, whose stdout is events). No `qr` event: the SDK runs
+  `tvpipe qr --rows` once per code. Internal: `Command::Tunnel`/`Qr`,
+  `Qr::rows`/`to_svg`, doc-hidden `__cli` re-exports.
+- **Join throttling** counts only failed `hello`s (wrong key, unknown
+  room, garbage), 20 per address and minute: a living room's phones share
+  one public address (Cloudflare's `cf-connecting-ip`), and through
+  OpenTunnel every visitor is 127.0.0.1, so counting every join would
+  lock out a party. Joins are bounded by `maxPlayers`, sockets by 64.
+- **`rate-limited` is final** for the client: a client that floods would
+  flood again after reconnecting (its pending actions all at once).
+- **`collect`** waits, with a deadline, also for players who are away
+  (they may come back before it: a phone whose screen locked while
+  drawing); `skipAway` stops waiting for them; `reply` makes the
+  acknowledgement's result (drawbluff answers "Lie for me" with the lie).
+- **Screens' actions** are deduplicated per connection only (screens have
+  no lasting identity).
+- **The repository's binary**: drawbluff and the live scripts use
+  `target/release/tvpipe` (or `debug`) when `TVPIPE_BINARY` is unset.
+
+Measurements (2026-11-19, Vienna, macOS 26, release build, the client on
+the same Mac as the host, so each number crosses the internet twice):
+
+| | Cloudflare | OpenTunnel |
+|---|---|---|
+| `createParty` to a working link | 6.6–7.2 s | 0.2 s (identity made before) |
+| `act` round trip through the link (100, `test/live-rtt.ts`) | median 16.5–17.1 ms, p95 19.7 ms, max 26 ms | median 43 ms, p95 47 ms, max 54 ms |
+
+Live checks (`games/drawbluff/test/live/play.ts`): a whole game with two
+bots and a phone in headless Chrome (joining, drawing with touch events,
+a lie, a vote), the TV in tvpipe's browser player, for the web screen and
+the video screen, locally and with the phone on the public Cloudflare
+link; screenshots of the TV and the phone in every phase matched. Not yet
+checked: a real TV (Apple TV, Chromecast) and a real phone scanning the
+QR code from a TV.

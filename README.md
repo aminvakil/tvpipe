@@ -117,6 +117,7 @@ that off; never with `--machine`).
 | [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
 | [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
 | [From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/) | the `tvpipe` crate |
+| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `@tvpipe/party`: games played with phones, the TV as the main screen |
 | [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
