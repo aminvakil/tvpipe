@@ -22,6 +22,7 @@ tvpipe has no configuration file. It keeps two files and reads a few environment
 |---|---|
 | `credentials.txt` | Apple TV pairings. Keep it private. |
 | `player-token` | The secret part of the player page address. |
+| `opentunnel/` | This computer's OpenTunnel tunnel and certificate, made on the first `--tunnel=opentunnel`. Keep it private. |
 
 ## Environment variables
 
@@ -30,3 +31,6 @@ tvpipe has no configuration file. It keeps two files and reads a few environment
 | `TVPIPE_CONFIG_DIR` | The config directory. |
 | `TVPIPE_FFMPEG` | The ffmpeg to use. |
 | `TVPIPE_BROWSER` | The browser for `share URL`. |
+| `TVPIPE_OPENTUNNEL_API` | A self-hosted OpenTunnel service. |
+| `TVPIPE_OPENTUNNEL_DIR` | Another directory for the `opentunnel/` files. |
+| `SSL_CERT_FILE` | More certificates to trust when connecting to OpenTunnel, for example behind a company proxy. |

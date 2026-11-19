@@ -19,7 +19,8 @@ here; see "Syntax" below.
 
 Syntax
 ------
-Front matter between `---` lines, `key: value` per line. `spec:` takes
+Front matter between `---` lines, `key: value` per line. `aliases:` names
+old slugs of a page (space separated) that redirect to it. `spec:` takes
 indented `Key: value` lines for the box under the section number; `;`
 splits a value into several lines.
 
@@ -538,6 +539,16 @@ def build(out):
         crumb = f'Section {page["num"]}<span>{html.escape(page["title"])}</span>'
         title = ("" if i == 0 else page["title"] + " · ") + "tvpipe operations manual"
         write(out, page["dir"], layout(title, crumb, body, ctx.root, "manual"))
+
+    # Old addresses of merged pages (front matter `aliases: share`) send
+    # visitors to the page that has the content now.
+    for page in pages:
+        for alias in page.get("aliases", "").split():
+            here = f"manual/{alias}/"
+            to = html.escape(rel(here, page["dir"]))
+            write(out, here, f'<!doctype html><meta charset="utf-8"><title>{html.escape(page["title"])}</title>'
+                             f'<meta http-equiv="refresh" content="0; url={to}"><link rel="canonical" href="{to}">'
+                             f'<p><a href="{to}">{html.escape(page["title"])}</a></p>')
 
     meta, lines = read_md(SITE / "index.md")
     ctx = Ctx("", None, pages)

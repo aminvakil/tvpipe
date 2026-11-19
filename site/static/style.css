@@ -160,7 +160,7 @@ main { min-width: 0; }
 .ph .lede code { font-size: .8em; }
 .spec { margin: 16px 0 18px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; font-size: 12px; }
 /* long values in the narrow margin column wrap instead of running into the text */
-.row > .meta code { white-space: normal; overflow-wrap: anywhere; }
+.row > .meta code { display: inline-block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .spec dt { color: var(--ink-3); }
 .spec dd { margin: 0; color: var(--ink); }
 

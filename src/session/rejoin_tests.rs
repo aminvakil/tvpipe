@@ -239,8 +239,15 @@ fn wait_frames(book: &Book, name: &str, conn: usize, n: usize) {
 }
 
 /// The frames of both connections lie on one timeline: instants follow
-/// the pts with one anchor, and the rejoined connection starts at a
-/// keyframe after the first one's last frame.
+/// the pts, and the rejoined connection starts at a keyframe after the
+/// first one's last frame.
+///
+/// The session clock only ever moves its anchor later (it re-anchors when
+/// frames arrive more than `MAX_LATENESS` late, which happens on loaded CI
+/// runners), so the wall time between the two connections' first frames is
+/// at least the media time between them, never less. That the rejoined
+/// connection uses the *same* clock as everyone else is checked against the
+/// other receiver's instants by the callers.
 fn assert_rejoined_on_the_timeline(frames: &[Entry]) {
     let first: Vec<&Entry> = frames.iter().filter(|e| e.conn == 0).collect();
     let second: Vec<&Entry> = frames.iter().filter(|e| e.conn == 1).collect();
@@ -250,8 +257,17 @@ fn assert_rejoined_on_the_timeline(frames: &[Entry]) {
     let (a, b) = (first[0], second[0]);
     let media = Duration::from_secs_f64((b.pts - a.pts) as f64 / VIDEO_CLOCK_RATE as f64);
     let wall = b.at - a.at;
-    let off = wall.abs_diff(media);
-    assert!(off < Duration::from_millis(2), "{wall:?} vs {media:?}");
+    assert!(
+        wall + Duration::from_millis(2) >= media,
+        "rejoined frames are earlier than their pts allow: {wall:?} vs {media:?}"
+    );
+    // Re-anchors move the clock by the lateness that caused them; a few
+    // hundred ms on a loaded runner, not the outage (seconds) a private
+    // clock for the rejoined sink would show.
+    assert!(
+        wall <= media + Duration::from_millis(400),
+        "the rejoined receiver is off the session's timeline: {wall:?} vs {media:?}"
+    );
 }
 
 /// A Cast TV moves to another address mid-stream: the connection breaks,

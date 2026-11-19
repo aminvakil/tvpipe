@@ -63,6 +63,18 @@ await session.stop();
 - **When your program dies.** If it exits or crashes, tvpipe notices and stops by itself.
 - **Errors.** Every error is a `TvpipeError` with a readable message and a stable `code`, such as `pairing-required` or `ffmpeg-missing`.
 
+## Public links
+
+```js
+const p = await preview("movie.mp4", { player: { tunnel: true } });
+console.log(p.publicUrl); // anyone with it can watch
+
+const s = await share({ to: "TV", tunnel: "opentunnel", yes: true });
+console.log(s.publicUrl); // someone elsewhere opens it and shares to the TV
+```
+
+`tunnel: true` uses Cloudflare, `"opentunnel"` OpenTunnel, as `--tunnel` does. `session.publicUrl` is the link. A session has no terminal to ask in, so remote shares need `yes: true`. See [Public links](links.md).
+
 ## Pairing
 
 ```js
