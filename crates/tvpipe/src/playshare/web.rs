@@ -55,3 +55,67 @@ pub fn get(path: &str) -> Option<Cow<'static, [u8]>> {
         .find(|f| f.path == path)
         .map(|f| Cow::Borrowed(f.bytes))
 }
+
+/// tvpipe's logo as an SVG `<symbol id="logo">` (the share page's).
+const LOGO: &str = include_str!("../browser/logo.svg");
+
+pub(crate) fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// An error page in tvpipe's look (`/_tvpipe/ui.css`), for a browser
+/// that navigated somewhere tvpipe refuses: the status in the status
+/// column, a heading and a line of text (plain text, escaped here).
+pub fn error_page(status: u16, reason: &str, game: &str, heading: &str, text: &str) -> Vec<u8> {
+    let e = html_escape;
+    format!(
+        concat!(
+            "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n",
+            "<title>{status} {reason} · tvpipe</title>\n",
+            "<link rel=\"stylesheet\" href=\"/_tvpipe/ui.css\">\n</head>\n<body>\n{logo}",
+            "<header class=\"top\">\n",
+            "  <div class=\"mark\"><svg viewBox=\"0 0 560 520\" aria-hidden=\"true\"><use href=\"#logo\"/></svg><span>tv<b>pipe</b></span></div>\n",
+            "  <div class=\"pair\">tvpipe<span>Playshare</span></div>\n",
+            "  <div class=\"pair\">Game<span>{game}</span></div>\n",
+            "</header>\n<main>\n  <section class=\"row ph\">\n",
+            "    <div class=\"meta\"><span class=\"lbl\">Status</span><span class=\"state bad\">{status} {reason}</span></div>\n",
+            "    <div class=\"body\">\n      <h1>{heading}</h1>\n      <p class=\"lead\">{text}</p>\n    </div>\n",
+            "  </section>\n</main>\n</body>\n</html>\n"
+        ),
+        status = status,
+        reason = e(reason),
+        logo = LOGO,
+        game = e(game),
+        heading = e(heading),
+        text = e(text),
+    )
+    .into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_pages_escape_what_they_show() {
+        let page = error_page(
+            404,
+            "Not Found",
+            "Tom & <Jerry>",
+            "Nothing \"here\"",
+            "a < b",
+        );
+        let page = String::from_utf8(page).unwrap();
+        assert!(
+            page.contains("<span>Tom &amp; &lt;Jerry&gt;</span>"),
+            "{page}"
+        );
+        assert!(page.contains("<h1>Nothing &quot;here&quot;</h1>"), "{page}");
+        assert!(page.contains("<p class=\"lead\">a &lt; b</p>"), "{page}");
+        assert!(page.contains("<symbol id=\"logo\""), "{page}");
+    }
+}

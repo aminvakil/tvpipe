@@ -172,13 +172,6 @@ pub fn name_for(dir: &str) -> String {
     }
 }
 
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 /// Writes the starter game into `dir` (new, or empty but for hidden
 /// files); returns the files written.
 pub fn init(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -210,7 +203,7 @@ pub fn init(dir: &Path) -> Result<Vec<PathBuf>> {
     for (rel, text) in TEMPLATE {
         let title = match *rel {
             "tvpipe.json" => json_title.to_owned(),
-            r if r.ends_with(".html") => html_escape(&title),
+            r if r.ends_with(".html") => super::web::html_escape(&title),
             _ => title.clone(),
         };
         let text = text

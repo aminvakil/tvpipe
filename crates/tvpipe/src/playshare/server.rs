@@ -187,7 +187,45 @@ impl Hub {
             r.headers.add("Allow", "GET, HEAD");
             return Reply::Response(r);
         }
-        Reply::Response(self.get(req, l, path, query))
+        let r = self.get(req, l, path, query);
+        Reply::Response(self.for_browser(req, l, r))
+    }
+
+    /// An error a browser navigated to becomes a page in tvpipe's look
+    /// (scripts, `fetch` and tools keep the plain text).
+    fn for_browser(&self, req: &Request, l: Listener, mut r: Response) -> Response {
+        let navigation = req
+            .headers
+            .get("accept")
+            .is_some_and(|a| a.contains("text/html"));
+        if r.status < 400 || !navigation {
+            return r;
+        }
+        let (heading, text) = match (r.status, l) {
+            (403, Listener::Local) => (
+                "Open the link tvpipe printed",
+                "This browser has no key to the game yet: open the link tvpipe printed in the terminal, or use the window it opened.",
+            ),
+            (404, Listener::Local) => (
+                "Nothing here",
+                "The game has no page at this address. The link tvpipe printed opens the game.",
+            ),
+            (404, _) => (
+                "Nothing here",
+                "The game has no page at this address. To join, scan the QR code on the TV again.",
+            ),
+            _ => ("tvpipe refused this", "Open the game with the link tvpipe printed or the QR code on the TV."),
+        };
+        let reason = r.reason.split(':').next().unwrap_or("").to_owned();
+        r.headers.set("Content-Type", "text/html; charset=utf-8");
+        r.body = web::error_page(
+            r.status,
+            &reason,
+            &self.bundle.manifest.title,
+            heading,
+            text,
+        );
+        r
     }
 
     fn get(&self, req: &Request, l: Listener, path: &str, query: &str) -> Response {

@@ -530,6 +530,14 @@ fn local_listener_rules() {
     assert!(get(s.local(), "/host.html", "evil.example:80", "").starts_with("HTTP/1.1 421"));
     // `/` without the cookie, a wrong token, the right one.
     assert!(get(s.local(), "/", &host, "").starts_with("HTTP/1.1 403"));
+    // A browser gets a page in tvpipe's look.
+    let html = "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n";
+    let r = get(s.local(), "/", &host, html);
+    assert!(r.starts_with("HTTP/1.1 403"), "{r}");
+    assert!(r.contains("Content-Type: text/html; charset=utf-8"), "{r}");
+    assert!(r.contains("<h1>Open the link tvpipe printed</h1>"), "{r}");
+    assert!(r.contains("href=\"/_tvpipe/ui.css\""), "{r}");
+    assert!(r.contains("403 Forbidden</span>"), "{r}");
     assert!(get(s.local(), "/_tvpipe/start?t=nope", &host, "").starts_with("HTTP/1.1 403"));
     let r = get(
         s.local(),
@@ -617,6 +625,9 @@ fn public_listener_rules() {
     assert!(get(s.public(), "/phone/app.js", &host, "").contains("export const x"));
     assert!(get(s.public(), "/_tvpipe/lib/client.js", &host, "").starts_with("HTTP/1.1 200"));
     assert!(get(s.public(), "/_tvpipe/ui.css", &host, "").starts_with("HTTP/1.1 200"));
+    let r = get(s.public(), "/nope.html", &host, "Accept: text/html\r\n");
+    assert!(r.starts_with("HTTP/1.1 404"), "{r}");
+    assert!(r.contains("scan the QR code on the TV again"), "{r}");
     // Local-only things are not there.
     assert!(get(s.public(), "/_tvpipe/launcher/", &host, "").starts_with("HTTP/1.1 404"));
     assert!(get(
