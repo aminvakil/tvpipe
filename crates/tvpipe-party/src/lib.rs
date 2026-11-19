@@ -42,6 +42,8 @@ mod server;
 mod sync;
 #[cfg(test)]
 mod testutil;
+#[cfg(feature = "deser")]
+mod typed;
 mod value;
 
 use std::net::{Ipv4Addr, SocketAddr};
@@ -59,6 +61,8 @@ pub use party::{
     Source, State, PROTOCOL,
 };
 pub use server::DEFAULT_CSP;
+#[cfg(feature = "deser")]
+pub use typed::{from_value, to_value};
 pub use value::{Number, Object, Value};
 
 use limits::WindowCounter;

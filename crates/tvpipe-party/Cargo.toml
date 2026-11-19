@@ -17,9 +17,14 @@ include = ["/Cargo.toml", "/README.md", "/src/", "/web/", "/tests/"]
 default = ["tunnel"]
 # Public links for phones (Cloudflare quick tunnels, OpenTunnel).
 tunnel = ["tvpipe/tunnel"]
+# Game-defined message types with the `deser` crate (docs/multiscreen-design.md §10.1;
+# needs Rust 1.88, deser's minimum).
+deser = ["dep:deser", "deser/derive", "dep:deser-json"]
 
 [dependencies]
 # The exact version: tvpipe-party uses tvpipe's hidden `__web` module
 # (docs/multiscreen-design.md §1.1).
 tvpipe = { path = "../tvpipe", version = "=0.2.0", default-features = false, features = ["player"] }
 ring = "0.17"
+deser = { version = "0.10", optional = true, default-features = false, features = ["std"] }
+deser-json = { version = "0.10", optional = true, default-features = false, features = ["std"] }

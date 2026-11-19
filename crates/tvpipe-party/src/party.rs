@@ -1,7 +1,7 @@
 //! One party: its players and screens, their views, actions and messages
-//! (docs/party-design.md §5). The game owns the [`Party`] and drives it
-//! from its own loop: [`Party::poll`] (or [`Party::wait`]) returns what
-//! happened, [`Party::flush`] sends what changed.
+//! (docs/party-design.md §5). The game owns the [`Party`](crate::Party) and drives it
+//! from its own loop: [`Party::poll`](crate::Party::poll) (or [`Party::wait`](crate::Party::wait)) returns what
+//! happened, [`Party::flush`](crate::Party::flush) sends what changed.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -197,7 +197,7 @@ impl From<&PlayerId> for Value {
 
 /// A piece of state the host sets and clients see: the room (every
 /// player), the screen (screens), a player's own (`me`). Changes made
-/// before a [`Party::flush`] go out as one diff.
+/// before a [`Party::flush`](crate::Party::flush) go out as one diff.
 #[derive(Debug, Clone, Default)]
 pub struct State {
     value: Object,
@@ -329,8 +329,8 @@ pub enum Source {
     Screen(String),
 }
 
-/// An action from a phone or a screen. Answer it with [`Party::reply`]
-/// before the next [`Party::flush`]; one left unanswered is refused as
+/// An action from a phone or a screen. Answer it with [`Party::reply`](crate::Party::reply)
+/// before the next [`Party::flush`](crate::Party::flush); one left unanswered is refused as
 /// `unknown-action` (the game has no handler for it).
 #[derive(Debug)]
 #[must_use = "an action needs a reply (Party::reply)"]
@@ -367,7 +367,7 @@ impl Action {
     }
 }
 
-/// What happened, from [`Party::poll`].
+/// What happened, from [`Party::poll`](crate::Party::poll).
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event {
@@ -412,7 +412,7 @@ pub enum Moderation {
     Refuse,
 }
 
-/// Checks names (and whatever the game passes to [`Party::moderate`]):
+/// Checks names (and whatever the game passes to [`Party::moderate`](crate::Party::moderate)):
 /// the text and its kind (`name`, or the game's).
 pub type Moderate = Box<dyn Fn(&str, &str) -> Moderation + Send>;
 
@@ -486,7 +486,7 @@ struct PendingAck {
 pub(crate) type Joins = Arc<Mutex<WindowCounter>>;
 
 /// The screen view for another thread (a renderer): updated by
-/// [`Party::flush`].
+/// [`Party::flush`](crate::Party::flush).
 #[derive(Clone, Debug)]
 pub struct ScreenWatch(Arc<Mutex<(u64, Arc<Value>)>>);
 
@@ -499,7 +499,7 @@ impl ScreenWatch {
     }
 }
 
-/// The party state without I/O: owned by [`Party`](crate::Party).
+/// The party state without I/O: owned by [`Party`](crate::Party)(crate::Party).
 pub(crate) struct Core {
     pub code: String,
     pub join_key: String,

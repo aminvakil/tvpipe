@@ -54,10 +54,17 @@ jobs:
             cargo clippy -p tvpipe --no-default-features --features "$f" -- -D warnings
             echo "::endgroup::"
           done
+      - name: The party crate's features
+        run: |
+          cargo clippy -p tvpipe-party --no-default-features --all-targets -- -D warnings
+          cargo clippy -p tvpipe-party --all-features --all-targets -- -D warnings
+          cargo test -p tvpipe-party --all-features
       - name: Documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc -p tvpipe --no-deps --all-features
+        run: |
+          cargo doc -p tvpipe --no-deps --all-features
+          cargo doc -p tvpipe-party --no-deps --all-features
       # The library's own license field is LGPL-free, and so is its default
       # dependency tree, while `fairplay` really pulls the LGPL crate in.
       - name: License check
