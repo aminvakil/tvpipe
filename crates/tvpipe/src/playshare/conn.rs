@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 
 use crate::net::websocket::{self, Message, Role};
 
-/// The writer pings this often when nothing else is sent; the reader's
-/// timeout.
+/// The reader's timeout: a period without a byte from the peer.
 pub(crate) const PING_EVERY: Duration = Duration::from_secs(15);
+/// The writer pings this often (whatever else it sends), so a live peer's
+/// pong always comes within the reader's timeout.
+const PING_INTERVAL: Duration = Duration::from_millis(7500);
 /// Silent periods (not even a pong) after which the connection is dead.
 const DEAD_AFTER: u32 = 3;
 /// After our close frame, how long the peer has to answer.
@@ -299,10 +301,19 @@ pub(crate) fn run(
 }
 
 fn write_loop(out: &Out, tx: &websocket::Sender<TcpStream>, shutdown: Option<TcpStream>) {
+    // A ping every PING_EVERY even while data flows: the reader counts
+    // silence from the peer, and a peer that only receives answers pings.
+    let mut last_ping = Instant::now();
     loop {
+        if last_ping.elapsed() >= PING_INTERVAL {
+            last_ping = Instant::now();
+            if tx.ping(b"").is_err() {
+                return;
+            }
+        }
         let (item, drained) = {
             let mut st = out.0.lock();
-            let deadline = Instant::now() + PING_EVERY;
+            let deadline = last_ping + PING_INTERVAL;
             while st.queue.is_empty() && !st.done {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -335,7 +346,7 @@ fn write_loop(out: &Out, tx: &websocket::Sender<TcpStream>, shutdown: Option<Tcp
             out.0.report();
         }
         let ok = match item {
-            None => tx.ping(b"").is_ok(),
+            None => continue,
             Some(Item::Text(t)) => tx.send_text(&t).is_ok(),
             Some(Item::Binary(b)) => tx.send_binary(&b).is_ok(),
             Some(Item::Close(code, reason)) => {
