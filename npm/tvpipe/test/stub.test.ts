@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { discover, pair, play, testPattern, TvpipeError } from "../src/index.ts";
+import { discover, pair, play, share, testPattern, TvpipeError } from "../src/index.ts";
 import { stubBinary } from "./helpers.ts";
 
 const unix = process.platform !== "win32";
@@ -179,4 +179,23 @@ test("a binary speaking another protocol is refused", { skip: !unix }, async () 
     testPattern({ binary, to: "browser" }),
     (e: unknown) => e instanceof TvpipeError && e.code === "protocol-mismatch" && /9\.9\.9/.test(e.message),
   );
+});
+
+test("share with a public link resolves once the link works", { skip: !unix }, async () => {
+  const { binary, dir } = stubBinary(`
+    state.calls = (state.calls || []).concat([args]);
+    save();
+    emit({ type: "share-page", url: "http://127.0.0.1:1/?t=x" });
+    emit({ type: "tunnel", page: "share", provider: "opentunnel", url: "https://r.example/?t=y" });
+    await nextCommand();
+    emit({ type: "end", reason: "stopped", receivers: [] });
+    finish(0);
+  `);
+  const s = await share({ binary, to: "TV", tunnel: "opentunnel", yes: true });
+  assert.equal(s.shareUrl, "http://127.0.0.1:1/?t=x");
+  assert.equal(s.publicUrl, "https://r.example/?t=y");
+  await s.stop();
+  const args = (JSON.parse(readFileSync(join(dir, "state.json"), "utf8")) as { calls: string[][] }).calls[0]!;
+  assert.ok(args.includes("--tunnel=opentunnel") && args.includes("--yes"), String(args));
+  await assert.rejects(share("https://x.example", { binary, to: "TV", tunnel: true }), TvpipeError);
 });

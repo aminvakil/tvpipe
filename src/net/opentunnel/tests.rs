@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicU32;
 use super::*;
 use crate::net::http::Response;
 use crate::net::httpd::{self, Reply};
+use rustls::RootCertStore;
 
 const DOMAIN: &str = "opentunnel.test";
 const ID: &str = "tvtest";

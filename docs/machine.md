@@ -37,8 +37,9 @@ broke), by an `error`.
 | `log` | each log line at the active level (`-v`: debug, `--debug`: trace) | `level` (`error`, `warn`, `info`, `debug`, `trace`), `module`, `message` |
 | `receiver` | a receiver changes state | `name`, `protocol` (`cast`, `airplay`, `browser`; on `connected`/`failed` while connecting), `state`, `error` and `code` (with `failed`, `lost`, `gave-up`) |
 | `player` | a `--to browser` page listens | `name`, `url` |
-| `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`) |
+| `viewer` | a tab connects to or leaves the page | `name`, `tab` (number), `state` (`connected`, `disconnected`), `public` (it came over the tunnel) |
 | `share-page` | `share` without URL listens | `url` (open it, press Share) |
+| `tunnel` | `--tunnel`: the public link works | `page` (`player`, `share`), `name` (the player's), `provider` (`cloudflare`, `opentunnel`), `url` (with its token) |
 | `capture` | `share`, `share URL` or `screen`: the browser started sharing | `surface` (`monitor`, `window`, `browser`), `label`, `width`, `height` (the capture's), `audio` (it has sound) |
 | `connected` | the receivers are connected; the input opens next (SLRW is read from here on) | `receivers` (names) |
 | `started` | the input is open and the receivers started | `route` (`passthrough`, `ffmpeg`, `builtin`, `encoded`, `browser`), `video` (`codec`, `width`, `height`, `fps`), `audio` (list of `codec`, `sample_rate`, `channels`), `latency_ms` |
@@ -50,6 +51,10 @@ broke), by an `error`.
 | `unpaired` | `unpair` forgot a pairing | `name`, `id` |
 | `end` | the command is over | `reason` (`eof`, `stopped`, `receivers-gone`, `error`; `done` for commands without a stream); with a stream also `receivers` (`name`, `end`: `stopped`/`ended`/`failed`, `error`, the stats fields) |
 | `error` | the command failed | `kind`, `code` (optional), `message`, `device` (optional) |
+
+`share --tunnel` asks on the terminal before a remote share reaches the
+receivers; in machine mode there is no terminal, so remote shares are
+refused unless `--yes` is given.
 
 Receiver states: `connected`, `failed` (could not resolve, connect or
 start, or failed mid-stream), `lost` (connection lost, reconnecting with

@@ -412,8 +412,13 @@ impl ShareServer {
     /// Also serves the page on a public URL (docs/tunnels.md) that lets
     /// people in for `ttl`, and returns it: anyone who has it can ask to
     /// share to the receivers.
-    pub fn expose(&mut self, ttl: Option<Duration>, stop: &dyn Fn() -> bool) -> Result<String> {
-        let t = tunnel::start(self.shared.access.port(), stop)?;
+    pub fn expose(
+        &mut self,
+        provider: tunnel::Provider,
+        ttl: Option<Duration>,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<String> {
+        let t = tunnel::start(self.shared.access.port(), provider, stop)?;
         let url = self.publish(t.host(), ttl, t.peer_lookup())?;
         self.tunnel = Some(t);
         Ok(url)

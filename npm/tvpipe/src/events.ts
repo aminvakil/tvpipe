@@ -59,12 +59,28 @@ export interface ViewerEvent {
   name: string;
   tab: number;
   state: "connected" | "disconnected";
+  /** It came over the public link. */
+  public?: boolean;
 }
 
 export interface SharePageEvent {
   type: "share-page";
   url: string;
 }
+
+/** `tunnel` (or `player.tunnel`): the public link works. */
+export interface TunnelEvent {
+  type: "tunnel";
+  page: "player" | "share";
+  /** The player's name (`page: "player"`). */
+  name?: string;
+  provider: TunnelProvider;
+  /** The link, with its token. */
+  url: string;
+}
+
+/** Who carries a public link: Cloudflare (the default) or OpenTunnel. */
+export type TunnelProvider = "cloudflare" | "opentunnel";
 
 export interface ConnectedEvent {
   type: "connected";
@@ -159,6 +175,7 @@ export type TvpipeEvent =
   | PlayerEvent
   | ViewerEvent
   | SharePageEvent
+  | TunnelEvent
   | ConnectedEvent
   | StartedEvent
   | KeyframeEvent

@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 
 import { resolveBinary, type BinaryOptions } from "./binary.ts";
 import { TvpipeError } from "./errors.ts";
-import type { DevicesEvent, RawDevice, StartedEvent, TvpipeEvent } from "./events.ts";
+import type { DevicesEvent, RawDevice, StartedEvent, TunnelProvider, TvpipeEvent } from "./events.ts";
 import { TvpipeProcess, type ProcessOptions } from "./process.ts";
 import { Session, type SessionOptions } from "./session.ts";
 import { StreamSession, type AudioSpec, type VideoSpec } from "./stream.ts";
@@ -189,6 +189,23 @@ export interface PlayerOptions {
   waitForViewer?: boolean | undefined;
   /** A new URL token (old URLs stop working). */
   newToken?: boolean | undefined;
+  /**
+   * Also on a public https link for people elsewhere (`session.publicUrl`):
+   * `true` is Cloudflare, or name the provider. `play`/`preview`/`testPattern` only.
+   */
+  tunnel?: boolean | TunnelProvider | undefined;
+  /** With `tunnel`: new viewers get in for this many minutes only. */
+  tunnelTtl?: number | undefined;
+}
+
+function tunnelArgs(tunnel: boolean | TunnelProvider | undefined, ttl: number | undefined): string[] {
+  if (!tunnel) {
+    if (ttl !== undefined) throw new TvpipeError("invalid-argument", "`tunnelTtl` needs `tunnel`");
+    return [];
+  }
+  const args = [tunnel === true ? "--tunnel" : `--tunnel=${tunnel}`];
+  if (ttl !== undefined) args.push("--tunnel-ttl", String(ttl));
+  return args;
 }
 
 export interface CommonOptions extends ProcessOptions, SessionOptions {
@@ -272,6 +289,7 @@ function commonArgs(to: string[], o: CommonOptions): string[] {
     if (p.open) args.push("--open");
     if (p.waitForViewer) args.push("--wait-for-viewer");
     if (p.newToken) args.push("--new-token");
+    args.push(...tunnelArgs(p.tunnel, p.tunnelTtl));
   } else if (o.player) {
     throw new TvpipeError("invalid-argument", "`player` options need a \"browser\" receiver in `to`");
   }
@@ -402,6 +420,19 @@ export interface ShareOptions extends CommonOptions {
   reload?: number | undefined;
   /** With URL: the Chromium-based browser to run (default: `$TVPIPE_BROWSER`, Chrome, Edge, …). */
   browser?: string | undefined;
+  /**
+   * Without URL: also put the share page on a public https link
+   * (`session.publicUrl`; resolves once it works): someone elsewhere can
+   * share their screen. `true` is Cloudflare, or name the provider.
+   */
+  tunnel?: boolean | TunnelProvider | undefined;
+  /** With `tunnel`: the link lets people in for this many minutes (default 60, 0: no limit). */
+  tunnelTtl?: number | undefined;
+  /**
+   * With `tunnel`: show remote shares without asking. Required for them to
+   * show at all: tvpipe asks on a terminal, which an SDK session has not.
+   */
+  yes?: boolean | undefined;
 }
 
 /**
@@ -415,8 +446,16 @@ export function share(a: string | URL | ShareOptions, b?: ShareOptions): Promise
   const url = typeof a === "string" || a instanceof URL ? String(a) : undefined;
   const options = (url === undefined ? a : b) as ShareOptions;
   const build = (to: string[]) => {
+    if (options.player?.tunnel) {
+      throw new TvpipeError("invalid-argument", "`share` puts the share page on a link (`tunnel`), not the player");
+    }
     const args = ["share", ...commonArgs(to, options)];
     if (options.open) args.push("--open");
+    if (url !== undefined && options.tunnel) {
+      throw new TvpipeError("invalid-argument", "`tunnel` is for `share()` without URL");
+    }
+    args.push(...tunnelArgs(options.tunnel, options.tunnelTtl));
+    if (options.yes) args.push("--yes");
     if (url !== undefined) {
       if (options.visible) args.push("--visible");
       if (options.profile) args.push("--profile", options.profile);
@@ -430,7 +469,7 @@ export function share(a: string | URL | ShareOptions, b?: ShareOptions): Promise
     options,
     build,
     (proc) => new Session(proc, options),
-    url === undefined ? (ev) => ev.type === "share-page" : isStarted,
+    url !== undefined ? isStarted : options.tunnel ? (ev) => ev.type === "tunnel" : (ev) => ev.type === "share-page",
   );
 }
 

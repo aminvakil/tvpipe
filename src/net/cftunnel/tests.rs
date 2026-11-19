@@ -310,7 +310,7 @@ fn live_quick_tunnel() {
         t0.elapsed()
     );
     let get = |path: &str| -> Result<Response> {
-        let (conn, tcp) = dial(&host, 443, &host, API_ROOTS)?;
+        let (conn, tcp) = dial(&host, 443, &host, crate::net::roots::store())?;
         let req = Request::new("GET", path, Version::Http11)
             .header("Host", host.clone())
             .header("Connection", "close");

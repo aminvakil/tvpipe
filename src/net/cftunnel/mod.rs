@@ -69,7 +69,6 @@ const API_HOST: &str = "api.trycloudflare.com";
 const EDGE_HOSTS: [&str; 2] = ["region1.v2.argotunnel.com", "region2.v2.argotunnel.com"];
 const EDGE_PORT: u16 = 7844;
 const EDGE_SNI: &str = "h2.cftunnel.com";
-const API_ROOTS: &str = include_str!("api_roots.pem");
 const EDGE_CA: &str = include_str!("edge_ca.pem");
 const UPGRADE: &str = "cf-cloudflared-proxy-connection-upgrade";
 /// One of trycloudflare.com's name servers.
@@ -95,9 +94,10 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 // ---------------------------------------------------------------------------
 // TLS
 
-fn tls_config(pem: &str, http: bool) -> Result<Arc<rustls::ClientConfig>> {
+/// Cloudflare's origin CA, which signs the edge's certificate.
+fn edge_roots() -> Result<RootCertStore> {
     let mut roots = RootCertStore::empty();
-    for block in pem.split("-----BEGIN CERTIFICATE-----").skip(1) {
+    for block in EDGE_CA.split("-----BEGIN CERTIFICATE-----").skip(1) {
         let b64: String = block
             .split("-----END")
             .next()
@@ -108,6 +108,10 @@ fn tls_config(pem: &str, http: bool) -> Result<Arc<rustls::ClientConfig>> {
             .add(CertificateDer::from(base64::decode(&b64)?))
             .map_err(|e| Error::crypto(format!("tunnel: root: {e}")))?;
     }
+    Ok(roots)
+}
+
+fn tls_config(roots: RootCertStore, http: bool) -> Result<Arc<rustls::ClientConfig>> {
     let mut cfg = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -122,7 +126,12 @@ fn tls_config(pem: &str, http: bool) -> Result<Arc<rustls::ClientConfig>> {
 }
 
 /// TCP to `host:port`, then a TLS handshake for `sni`.
-fn dial(host: &str, port: u16, sni: &str, pem: &str) -> Result<(ClientConnection, TcpStream)> {
+fn dial(
+    host: &str,
+    port: u16,
+    sni: &str,
+    roots: RootCertStore,
+) -> Result<(ClientConnection, TcpStream)> {
     let mut last = None;
     let addrs = (host, port)
         .to_socket_addrs()
@@ -147,7 +156,7 @@ fn dial(host: &str, port: u16, sni: &str, pem: &str) -> Result<(ClientConnection
         .map_err(|e| Error::io("tunnel: socket", e))?;
     let name = ServerName::try_from(sni.to_owned())
         .map_err(|_| Error::usage(format!("tunnel: bad host {sni}")))?;
-    let mut conn = ClientConnection::new(tls_config(pem, port == 443)?, name)
+    let mut conn = ClientConnection::new(tls_config(roots, port == 443)?, name)
         .map_err(|e| Error::crypto(format!("tunnel: TLS: {e}")))?;
     while conn.is_handshaking() {
         conn.complete_io(&mut tcp)
@@ -277,7 +286,7 @@ fn parse_credentials(body: &str) -> Result<Credentials> {
 /// Asks trycloudflare.com for a new quick tunnel (HTTP/1.0: the answer
 /// is not chunked and ends with the connection).
 fn provision() -> Result<Credentials> {
-    let (conn, tcp) = dial(API_HOST, 443, API_HOST, API_ROOTS)?;
+    let (conn, tcp) = dial(API_HOST, 443, API_HOST, super::roots::store())?;
     let mut tls = StreamOwned::new(conn, tcp);
     let req = format!(
         "POST /tunnel HTTP/1.0\r\nHost: {API_HOST}\r\nUser-Agent: tvpipe/{}\r\n\
@@ -619,7 +628,7 @@ fn dispatch(inner: &Arc<Inner>, attempt: u8) -> impl FnMut(Arc<Stream>, Vec<Head
 /// One connection to the edge, until it ends.
 fn connect(inner: &Arc<Inner>, attempt: u8) -> Result<()> {
     let host = EDGE_HOSTS[usize::from(attempt) % 2];
-    let (conn, sock) = dial(host, EDGE_PORT, EDGE_SNI, EDGE_CA)?;
+    let (conn, sock) = dial(host, EDGE_PORT, EDGE_SNI, edge_roots()?)?;
     debug!("tunnel: connected to {host}");
     // Reads wake up every second (keepalive, stop); writes may block a while.
     sock.set_read_timeout(Some(Duration::from_secs(1)))

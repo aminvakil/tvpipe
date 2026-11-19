@@ -31,16 +31,41 @@ pub trait Tunnel: Send {
     }
 }
 
-/// Starts a tunnel to `127.0.0.1:port`; returns once its URL works.
-/// `stop` aborts a slow first setup (Ctrl-C). A Cloudflare quick tunnel;
-/// `TVPIPE_TUNNEL=opentunnel` picks OpenTunnel.
-pub fn start(port: u16, stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
-    if std::env::var("TVPIPE_TUNNEL").as_deref() == Ok("opentunnel") {
-        return Ok(Box::new(crate::net::opentunnel::OpenTunnel::start(
-            port, stop,
-        )?));
+/// Who carries the link (`--tunnel[=PROVIDER]`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Provider {
+    /// A Cloudflare quick tunnel (`net::cftunnel`): no setup, Cloudflare
+    /// ends TLS.
+    #[default]
+    Cloudflare,
+    /// OpenTunnel (`net::opentunnel`): TLS ends here.
+    OpenTunnel,
+}
+
+impl Provider {
+    pub fn parse(s: &str) -> Option<Provider> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "cloudflare" | "cf" | "trycloudflare" => Some(Provider::Cloudflare),
+            "opentunnel" | "ot" => Some(Provider::OpenTunnel),
+            _ => None,
+        }
     }
-    Ok(Box::new(crate::net::cftunnel::Tunnel::start(port, stop)?))
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Cloudflare => "cloudflare",
+            Provider::OpenTunnel => "opentunnel",
+        }
+    }
+}
+
+/// Starts a tunnel to `127.0.0.1:port`; returns once its URL works.
+/// `stop` aborts a slow first setup (Ctrl-C).
+pub fn start(port: u16, provider: Provider, stop: &dyn Fn() -> bool) -> Result<Box<dyn Tunnel>> {
+    Ok(match provider {
+        Provider::Cloudflare => Box::new(crate::net::cftunnel::Tunnel::start(port, stop)?),
+        Provider::OpenTunnel => Box::new(crate::net::opentunnel::OpenTunnel::start(port, stop)?),
+    })
 }
 
 impl Tunnel for crate::net::opentunnel::OpenTunnel {

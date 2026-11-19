@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use argument::{Cli, Cmd, Error, Opt, Parser, Pos, ValueHint};
 
+use crate::net::tunnel::Provider;
 use crate::types::Encoder;
 use crate::util::ratio::Ratio;
 
@@ -111,6 +112,8 @@ enum ScreenArg {
     Open,
     WaitForViewer,
     NewToken,
+    Tunnel,
+    TunnelTtl,
 }
 
 #[derive(Copy, Clone)]
@@ -230,13 +233,42 @@ const fn new_token<A>(id: A) -> Opt<A> {
         .help("Change the browser player page's URL token (--to browser; old URLs stop working)")
 }
 
-/// `--tunnel` (docs/tunnels.md).
+/// `--tunnel[=PROVIDER]` (docs/tunnels.md).
 const fn tunnel<A>(id: A, help: &'static str) -> Opt<A> {
-    Opt::new(id).long("tunnel").help(help)
+    Opt::new(id)
+        .long("tunnel")
+        .optional_value("PROVIDER")
+        .help(help)
+}
+
+/// The provider `--tunnel[=PROVIDER]` names (none: the default).
+fn tunnel_value<A: Copy + 'static>(p: &mut Parser<A>) -> Result<Option<Provider>, Error> {
+    match p.optional_value::<String>()? {
+        None => Ok(Some(Provider::default())),
+        Some(v) => match Provider::parse(&v) {
+            Some(provider) => Ok(Some(provider)),
+            None => Err(p.error("--tunnel=PROVIDER: cloudflare (the default) or opentunnel")),
+        },
+    }
 }
 
 const fn tunnel_ttl<A>(id: A, help: &'static str) -> Opt<A> {
     Opt::new(id).long("tunnel-ttl").value("MIN").help(help)
+}
+
+/// `--tunnel opentunnel` makes `opentunnel` the input: say how to write it.
+fn tunnel_typo<A: Copy + 'static>(
+    p: &Parser<A>,
+    tunnel: Option<Provider>,
+    arg: Option<&str>,
+) -> Result<(), Error> {
+    match arg.and_then(Provider::parse) {
+        Some(provider) if tunnel.is_some() => Err(p.error(format!(
+            "write --tunnel={} (the provider is attached with '=')",
+            provider.name()
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// The share page's public link lets people in for this long by default.
@@ -343,7 +375,7 @@ macro_rules! play_opts {
             new_token(PlayArg::NewToken),
             tunnel(
                 PlayArg::Tunnel,
-                "Also put the browser player page on a public https URL: anyone with the link can watch",
+                "Also put the browser player page on a public https URL: anyone with the link can watch (PROVIDER: cloudflare, the default, or opentunnel)",
             ),
             tunnel_ttl(
                 PlayArg::TunnelTtl,
@@ -426,7 +458,7 @@ static SHARE: Cli<ShareArg> = Cli::new("share")
         new_token(ShareArg::NewToken),
         tunnel(
             ShareArg::Tunnel,
-            "Also put the share page on a public https URL: someone with the link can ask to share their screen to the receivers (you confirm each)",
+            "Also put the share page on a public https URL: someone with the link can ask to share their screen to the receivers, you confirm each (PROVIDER: cloudflare, the default, or opentunnel)",
         ),
         tunnel_ttl(
             ShareArg::TunnelTtl,
@@ -519,6 +551,14 @@ static SCREEN: Cli<ScreenArg> = Cli::new("screen")
         player_open(ScreenArg::Open),
         wait_for_viewer(ScreenArg::WaitForViewer),
         new_token(ScreenArg::NewToken),
+        tunnel(
+            ScreenArg::Tunnel,
+            "Also put the browser player page on a public https URL: anyone with the link can watch (PROVIDER: cloudflare, the default, or opentunnel)",
+        ),
+        tunnel_ttl(
+            ScreenArg::TunnelTtl,
+            "With --tunnel: let new viewers in for MIN minutes only (default: no limit)",
+        ),
     ])
     .after_help(
         "tvpipe starts a Chromium-based browser of its own (a separate profile, a small\n\
@@ -684,8 +724,8 @@ pub struct BrowserOptions {
     pub wait_for_viewer: bool,
     /// Rotate the page's persistent token.
     pub new_token: bool,
-    /// Also serve the page on a public URL (`--tunnel`).
-    pub tunnel: bool,
+    /// Also serve the page on a public URL (`--tunnel[=PROVIDER]`).
+    pub tunnel: Option<Provider>,
     /// `--tunnel-ttl` (`None`: no expiry).
     pub tunnel_ttl: Option<Duration>,
 }
@@ -705,8 +745,9 @@ pub struct ShareOptions {
     pub open: bool,
     /// For `--to browser` receivers (`open` is the field above).
     pub player: BrowserOptions,
-    /// Also serve the share page on a public URL (`--tunnel`; not with URL).
-    pub tunnel: bool,
+    /// Also serve the share page on a public URL (`--tunnel[=PROVIDER]`;
+    /// not with URL).
+    pub tunnel: Option<Provider>,
     /// How long the public link lets people in (`--tunnel-ttl`, default
     /// [`SHARE_TUNNEL_TTL`]; `None`: no expiry).
     pub tunnel_ttl: Option<Duration>,
@@ -986,7 +1027,7 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
             PlayArg::Open => o.browser.open = true,
             PlayArg::WaitForViewer => o.browser.wait_for_viewer = true,
             PlayArg::NewToken => o.browser.new_token = true,
-            PlayArg::Tunnel => o.browser.tunnel = true,
+            PlayArg::Tunnel => o.browser.tunnel = tunnel_value(&mut p)?,
             PlayArg::TunnelTtl => o.browser.tunnel_ttl = tunnel_ttl_value(&mut p)?,
             PlayArg::Input => input = Some(input_from(p.raw_value()?)),
         }
@@ -994,8 +1035,11 @@ fn parse_play(mut p: Parser<PlayArg>, mode: Mode) -> Result<PlayOptions, Error> 
     if mode == Mode::Preview {
         o.to = vec![BROWSER_TARGET.to_owned()];
     }
-    if o.browser.tunnel_ttl.is_some() && !o.browser.tunnel {
+    if o.browser.tunnel_ttl.is_some() && o.browser.tunnel.is_none() {
         return Err(p.error("--tunnel-ttl is for --tunnel"));
+    }
+    if let Some(InputSpec::Path(i)) = &input {
+        tunnel_typo(&p, o.browser.tunnel, i.to_str())?;
     }
     if o.to.is_empty() {
         return Err(p.error("at least one --to NAME|ADDR is required"));
@@ -1041,7 +1085,7 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
             ShareArg::Port => o.player.port = Some(p.value()?),
             ShareArg::WaitForViewer => o.player.wait_for_viewer = true,
             ShareArg::NewToken => o.player.new_token = true,
-            ShareArg::Tunnel => o.tunnel = true,
+            ShareArg::Tunnel => o.tunnel = tunnel_value(&mut p)?,
             ShareArg::TunnelTtl => ttl = Some(tunnel_ttl_value(&mut p)?),
             ShareArg::Yes => o.yes = true,
             ShareArg::Profile => page.profile = Some(p.value()?),
@@ -1064,12 +1108,13 @@ fn parse_share(mut p: Parser<ShareArg>) -> Result<Command, Error> {
     if !browser && o.player != BrowserOptions::default() {
         return Err(p.error(PLAYER_ONLY));
     }
-    if (ttl.is_some() || o.yes) && !o.tunnel {
+    tunnel_typo(&p, o.tunnel, url.as_deref())?;
+    if (ttl.is_some() || o.yes) && o.tunnel.is_none() {
         return Err(p.error("--tunnel-ttl and --yes are for --tunnel"));
     }
     o.tunnel_ttl = ttl.unwrap_or(Some(SHARE_TUNNEL_TTL));
     match url {
-        Some(_) if o.tunnel => {
+        Some(_) if o.tunnel.is_some() => {
             return Err(p.error(
                 "--tunnel serves the share page (without URL) to others; with URL tvpipe's own browser shares",
             ));
@@ -1116,6 +1161,8 @@ fn parse_screen(mut p: Parser<ScreenArg>) -> Result<Command, Error> {
             ScreenArg::Port => s.player.port = Some(p.value()?),
             ScreenArg::WaitForViewer => s.player.wait_for_viewer = true,
             ScreenArg::NewToken => s.player.new_token = true,
+            ScreenArg::Tunnel => s.player.tunnel = tunnel_value(&mut p)?,
+            ScreenArg::TunnelTtl => s.player.tunnel_ttl = tunnel_ttl_value(&mut p)?,
             ScreenArg::Display => {
                 targets += 1;
                 let v: String = p.value()?;
@@ -1157,6 +1204,9 @@ fn parse_screen(mut p: Parser<ScreenArg>) -> Result<Command, Error> {
     }
     if targets > 1 {
         return Err(p.error("give one of --display, --window and --pick"));
+    }
+    if o.share.player.tunnel_ttl.is_some() && o.share.player.tunnel.is_none() {
+        return Err(p.error("--tunnel-ttl is for --tunnel"));
     }
     let browser_opts = BrowserOptions {
         open: o.share.open,
@@ -1322,7 +1372,12 @@ mod tests {
         // --tunnel exposes the share page; not with URL.
         let (_, cmd) = parse_from(&["share", "--to", "TV", "--tunnel"]).unwrap();
         let Command::Share(o) = cmd else { panic!() };
-        assert!(o.tunnel && !o.player.tunnel && !o.yes);
+        assert_eq!(o.tunnel, Some(Provider::Cloudflare));
+        assert!(o.player.tunnel.is_none() && !o.yes);
+        let (_, cmd) = parse_from(&["share", "--to", "TV", "--tunnel=opentunnel"]).unwrap();
+        let Command::Share(o) = cmd else { panic!() };
+        assert_eq!(o.tunnel, Some(Provider::OpenTunnel));
+        assert!(parse_from(&["share", "--to", "TV", "--tunnel=ngrok"]).is_err());
         assert_eq!(o.tunnel_ttl, Some(SHARE_TUNNEL_TTL));
         assert!(parse_from(&["share", "https://x", "--to", "TV", "--tunnel"]).is_err());
         let share = |args: &[&str]| match parse_from(args).unwrap().1 {
@@ -1453,7 +1508,7 @@ mod tests {
                 open: false,
                 wait_for_viewer: true,
                 new_token: true,
-                tunnel: false,
+                tunnel: None,
                 tunnel_ttl: None,
             }
         );
@@ -1517,7 +1572,7 @@ mod tests {
             open: true,
             wait_for_viewer: true,
             new_token: true,
-            tunnel: false,
+            tunnel: None,
             tunnel_ttl: None,
         };
         let opts = [
@@ -1642,7 +1697,25 @@ mod tests {
         assert!(parse_from(&["play", "--to", "tv", "--open", "x.mkv"]).is_err());
         assert!(parse_from(&["test-pattern", "--to", "tv", "--port", "1"]).is_err());
         assert!(play(&["preview", "--new-token"]).browser.new_token);
-        assert!(play(&["preview", "--tunnel"]).browser.tunnel);
+        assert_eq!(
+            play(&["preview", "--tunnel"]).browser.tunnel,
+            Some(Provider::Cloudflare)
+        );
+        assert_eq!(
+            play(&["preview", "--tunnel=cloudflare"]).browser.tunnel,
+            Some(Provider::Cloudflare)
+        );
+        assert_eq!(
+            play(&["preview", "--tunnel=OpenTunnel"]).browser.tunnel,
+            Some(Provider::OpenTunnel)
+        );
+        // The value is attached: a separate word is the input.
+        assert_eq!(
+            play(&["preview", "--tunnel", "x.mkv"]).input,
+            InputSpec::Path("x.mkv".into())
+        );
+        assert!(parse_from(&["preview", "--tunnel", "opentunnel"]).is_err());
+        assert!(parse_from(&["share", "--to", "TV", "--tunnel", "opentunnel"]).is_err());
         assert_eq!(play(&["preview", "--tunnel"]).browser.tunnel_ttl, None);
         assert_eq!(
             play(&["preview", "--tunnel", "--tunnel-ttl", "1.5"])

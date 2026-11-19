@@ -114,7 +114,7 @@ pub struct PlayerOptions {
     /// Offer audio.
     pub audio: bool,
     /// Also serve the page on a public URL (`--tunnel`, docs/tunnels.md).
-    pub tunnel: bool,
+    pub tunnel: Option<tunnel::Provider>,
     /// The public link lets new viewers in for this long (`--tunnel-ttl`).
     pub tunnel_ttl: Option<Duration>,
 }
@@ -129,7 +129,7 @@ impl Default for PlayerOptions {
             wait_for_viewer: false,
             latency_ms: 100,
             audio: true,
-            tunnel: false,
+            tunnel: None,
             tunnel_ttl: None,
         }
     }
@@ -743,9 +743,9 @@ impl BrowserSink {
                 warn!("{}: --open: {e}", opts.name);
             }
         }
-        let tunnel = if opts.tunnel {
+        let tunnel = if let Some(provider) = opts.tunnel {
             info!("{}: starting a public tunnel", opts.name);
-            let t = tunnel::start(port, &stop)?;
+            let t = tunnel::start(port, provider, &stop)?;
             let token = shared
                 .access
                 .publish(t.host(), opts.tunnel_ttl, t.peer_lookup())?;
@@ -761,6 +761,14 @@ impl BrowserSink {
                 opts.tunnel_ttl
                     .map(|d| format!(", and lets new viewers in for {} min", d.as_secs() / 60))
                     .unwrap_or_default()
+            );
+            let public = format!("https://{}/?t={token}&delay={delay}", t.host());
+            crate::machine::emit(
+                crate::machine::event("tunnel")
+                    .with("page", "player")
+                    .with("name", opts.name.as_str())
+                    .with("provider", provider.name())
+                    .with("url", public.as_str()),
             );
             Some(t)
         } else {

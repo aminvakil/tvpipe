@@ -50,7 +50,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
-use rustls::{ClientConnection, RootCertStore, ServerConnection, StreamOwned};
+use rustls::{ClientConnection, ServerConnection, StreamOwned};
 
 use crate::codec::json::Value;
 use crate::crypto::ring::EcdsaP256;
@@ -68,14 +68,8 @@ pub const API_ENV: &str = "TVPIPE_OPENTUNNEL_API";
 /// Overrides the identity directory (default: `opentunnel/` in the config
 /// directory).
 pub const DIR_ENV: &str = "TVPIPE_OPENTUNNEL_DIR";
-/// Mozilla's root list (CCADB, CDLA-Permissive-2.0) as trust anchors
-/// (subject, public key, name constraints): `roots/mozilla.rs`, generated
-/// from `roots/mozilla.pem` (a third of its size).
-mod roots {
-    /// Subject, subjectPublicKeyInfo, nameConstraints (DER).
-    type Anchor = (&'static [u8], &'static [u8], Option<&'static [u8]>);
-    include!("roots/mozilla.rs");
-}
+/// Mozilla's root list (`net::roots`).
+use super::roots;
 const TIMEOUT: Duration = Duration::from_secs(15);
 const ISSUE_TIMEOUT: Duration = Duration::from_secs(180);
 /// How often the reader wakes up (heartbeat, stop).
@@ -275,16 +269,7 @@ impl Service {
     }
 
     fn client_config(&self) -> Result<Arc<rustls::ClientConfig>> {
-        let mut roots = RootCertStore {
-            roots: roots::ROOTS
-                .iter()
-                .map(|(subject, spki, nc)| rustls::pki_types::TrustAnchor {
-                    subject: (*subject).into(),
-                    subject_public_key_info: (*spki).into(),
-                    name_constraints: nc.map(Into::into),
-                })
-                .collect(),
-        };
+        let mut roots = roots::store();
         roots.add_parsable_certificates(self.extra_roots.iter().cloned().map(CertificateDer::from));
         let mut cfg = rustls::ClientConfig::builder_with_provider(provider())
             .with_safe_default_protocol_versions()

@@ -135,6 +135,24 @@ await session.done;   // resolves when the session ends, rejects if it fails
 If your program exits or crashes, tvpipe notices that its stdin closed.
 It stops the TVs cleanly and exits.
 
+## Public links
+
+```js
+const p = await preview("movie.mp4", { player: { tunnel: true } });
+console.log(p.publicUrl); // https://….trycloudflare.com/?t=…: anyone with it can watch
+
+const s = await share({ to: "TV", tunnel: "opentunnel", yes: true });
+console.log(s.publicUrl); // someone elsewhere opens it and shares their screen to the TV
+```
+
+`tunnel: true` uses a Cloudflare quick tunnel, `"opentunnel"` OpenTunnel
+(TLS ends in tvpipe). The link is new every session; `tunnelTtl` limits
+how long it lets people in (minutes). The command line asks on the
+terminal before a remote share reaches the TV; a session has no terminal,
+so pass `yes: true` or remote shares are refused. The `tunnel` event and
+`viewer` events (`public: true`) tell you what happens. Details:
+[docs/tunnels.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/tunnels.md).
+
 ## Apple TV pairing
 
 Some AirPlay receivers show a PIN the first time:
@@ -186,7 +204,8 @@ All options are optional.
 | `size`, `fps`, `bitrate` | output limits (`"1280x720"`, frames per second, kbit/s) |
 | `audio: false` | video only |
 | `reconnect` | seconds to reconnect a lost receiver (0: off) |
-| `player` | the browser page: `{ port, open, waitForViewer, newToken }`; the port defaults to any free one |
+| `player` | the browser page: `{ port, open, waitForViewer, newToken, tunnel, tunnelTtl }`; the port defaults to any free one |
+| `tunnel`, `tunnelTtl`, `yes` | `share()` without URL: the share page on a public link (above) |
 | `onPin` | pair receivers that need it |
 | `signal`, `stopTimeout` | stop on abort; how long `stop()` waits before killing tvpipe |
 | `logs` | mirror tvpipe's log to stderr (`true` or a level) or a function |

@@ -1420,9 +1420,9 @@ fn share_rejoin(
             }
         }
     }
-    if opts.tunnel && kind == ShareKind::Page {
+    if let (Some(provider), ShareKind::Page) = (opts.tunnel, kind) {
         info!("share: starting a public tunnel");
-        let url = server.expose(opts.tunnel_ttl, &stop)?;
+        let url = server.expose(provider, opts.tunnel_ttl, &stop)?;
         info!(
             "share: someone with {url} can ask to share their screen to the receivers \
              (the link is new every run{}; you confirm each share here{})",
@@ -1430,6 +1430,12 @@ fn share_rejoin(
                 .map(|d| format!(" and lets people in for {} min", d.as_secs() / 60))
                 .unwrap_or_default(),
             if opts.yes { ", unless --yes" } else { "" }
+        );
+        crate::machine::emit(
+            crate::machine::event("tunnel")
+                .with("page", "share")
+                .with("provider", provider.name())
+                .with("url", url.as_str()),
         );
     }
     let fail = |server: &mut ShareServer, e: Error| {

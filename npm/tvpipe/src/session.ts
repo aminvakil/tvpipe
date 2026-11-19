@@ -15,6 +15,7 @@ import type {
   ReceiverProtocol,
   ReceiverState,
   SharePageEvent,
+  TunnelEvent,
   StartedEvent,
   StatsEvent,
   TvpipeEvent,
@@ -47,6 +48,7 @@ export interface SessionEvents {
   viewer: [ViewerEvent];
   player: [PlayerEvent];
   "share-page": [SharePageEvent];
+  tunnel: [TunnelEvent];
   connected: [ConnectedEvent];
   started: [StartedEvent];
   stats: [StatsEvent];
@@ -77,6 +79,8 @@ export class Session extends EventEmitter<SessionEvents> implements AsyncDisposa
   playerUrl: string | undefined;
   /** `share()` without URL: the page to open and share from. */
   shareUrl: string | undefined;
+  /** With `tunnel`: the public https link (the player's or the share page's). */
+  publicUrl: string | undefined;
   /** The plan, once streaming started. */
   info: StartedInfo | undefined;
   /** The latest statistics (every second while streaming). */
@@ -151,6 +155,10 @@ export class Session extends EventEmitter<SessionEvents> implements AsyncDisposa
       case "share-page":
         this.shareUrl = ev.url;
         this.emit("share-page", ev);
+        break;
+      case "tunnel":
+        this.publicUrl ??= ev.url;
+        this.emit("tunnel", ev);
         break;
       case "viewer":
         this.emit("viewer", ev);
