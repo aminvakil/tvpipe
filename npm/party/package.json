@@ -1,0 +1,55 @@
+{
+  "name": "@tvpipe/party",
+  "version": "0.1.2",
+  "description": "Party games on tvpipe: rooms, players, reconnects and state sync between a game host and phone browsers, with the main screen on a TV",
+  "keywords": ["party-game", "jackbox", "websocket", "airplay", "chromecast", "tvpipe"],
+  "homepage": "https://mitsuhiko.github.io/tvpipe/",
+  "bugs": "https://github.com/mitsuhiko/tvpipe/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mitsuhiko/tvpipe.git",
+    "directory": "npm/party"
+  },
+  "license": "Apache-2.0",
+  "author": "Armin Ronacher",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./client/party-client.d.ts",
+      "default": "./client/party-client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "client",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && tsc -p tsconfig.client.json",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@tvpipe/sdk": "0.1.2"
+  },
+  "peerDependenciesMeta": {
+    "@tvpipe/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@tvpipe/sdk": "file:../tvpipe",
+    "@types/node": "^22.19.0",
+    "typescript": "~5.9.3"
+  }
+}
