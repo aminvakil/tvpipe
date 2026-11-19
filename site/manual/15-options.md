@@ -20,6 +20,7 @@ Every command lists all of its options with `--help`.
 | `preview` | Plays in a browser tab. See [Playing to a browser](browser.md). |
 | `test-pattern` | Sends a test pattern. See [Latency](latency.md). |
 | `playshare` | Plays a party game: a web app on the TV, phones join with a QR code. See [Party games](party.md). |
+| `bundle` | Checks a party game, packs it into a zip, or starts a new one. See [Making party games](making-games.md). |
 | `tunnel` | Puts a server on this computer on a public link. See [Public links](links.md#s3). |
 | `qr` | Prints a QR code, `--svg` or `--rows` for programs. |
 | `debug-pipeline` | Reads an input without a receiver. See [ffmpeg and encoding](encoding.md). |

@@ -88,7 +88,8 @@ def inline(text, ctx):
 # ---------------------------------------------------------------- code
 
 # Build-time syntax highlighting: a token regex per language, the first
-# alternative that matches wins. Classes: k keyword, s string, n number or
+# alternative that matches wins. Languages: shell and PowerShell, Rust,
+# JavaScript and TypeScript, JSON. Classes: k keyword, s string, n number or
 # type, c comment, f flag, v variable, p prompt, o output, x command.
 
 def _rules(*rules):
@@ -114,7 +115,13 @@ SHELL = _rules(
     ("v", r"\$\{[^}\n]*\}|\$env:\w+|\$\w+|\b[A-Z][A-Z0-9_]*(?==)"),
     ("f", r"(?<![\w-])--?[A-Za-z][\w-]*"),
 )
-LANGS = {"rust": RUST, "js": JS, "javascript": JS, "ts": JS, "typescript": JS,
+JSON = _rules(
+    ("v", r'"(?:\\.|[^"\\\n])*"(?=\s*:)'),
+    ("s", r'"(?:\\.|[^"\\\n])*"'),
+    ("k", r"\b(?:true|false|null)\b"),
+    ("n", r"-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b"),
+)
+LANGS = {"json": JSON, "rust": RUST, "js": JS, "javascript": JS, "ts": JS, "typescript": JS,
          "sh": SHELL, "shell": SHELL, "console": SHELL, "powershell": SHELL}
 PROMPTS = ("$ ", "PS> ")
 

@@ -52,61 +52,9 @@ tvpipe serves the game, casts its TV page and passes the phones' messages on. Th
 - Its **TV page** runs in a browser tvpipe starts in the background. tvpipe streams that tab, picture and sound, to the TVs, as with [A web page on the TV](web-page.md).
 - Its **phone page** loads over the public link. Every phone's connection ends in tvpipe, which hands it to the host page.
 
-## Writing a game
+## Making a game
 
-A game is three pages and a manifest:
-
-```json
-{
-  "name": "quiz",
-  "pages": { "host": "host.html", "tv": "tv.html", "phone": "phone.html" },
-  "players": { "min": 2, "max": 12 }
-}
-```
-
-The pages load the `@tvpipe/party` library from tvpipe itself (`/_tvpipe/lib/`), so a game needs no build step and no server. The host page:
-
-```js
-import { Tvpipe, PartyError } from "/_tvpipe/lib/index.js";
-
-const tvpipe = await Tvpipe.connect();
-const party = await tvpipe.party();     // the room, its link and QR code
-await party.cast();                     // the TV page on the TVs picked at the start
-
-party.screen.set({ phase: "lobby" });
-party.handle("start", async (data, player) => {
-  if (!player.vip) throw new PartyError("not-vip", "Only the VIP can start");
-  const deadline = party.now() + 60_000;
-  party.room.set({ phase: "answer", deadline });
-  const answers = await party.collect("answer", { until: deadline });
-  party.screen.set({ phase: "results", answers: [...answers.values()] });
-});
-```
-
-The phone page:
-
-```js
-import { PartyClient } from "/_tvpipe/lib/client.js";
-
-const party = PartyClient.fromLocation();
-party.on("view", (view) => render(view));
-await party.join("Ann");
-await party.act("answer", { text: "a nervous cactus" });
-```
-
-The TV page uses the same client. Its view also has the join link and its QR code (`qrSvg(view.join.qr)` draws it).
-
-The game never sends events to phones. It sets what each phone shows: `party.room` for every player, `player.state` for one player, and `party.screen` for the TV. A phone that comes back after its screen was locked gets everything it missed. Actions survive a dropped connection and are applied once.
-
-For a stick or a tilt, `party.input(data)` on the phone sends continuous input: never answered, the latest wins. The host gets it as the `input` event.
-
-Joining mid-game is the game's choice. While `party.inProgress` is set, `party.lateJoin` decides what happens to a new name: `"closed"` refuses it (players who were already in still come back), while `"wait"` (the default) and `"open"` let it in as a waiting player (`player.waiting`). The game deals them in with `party.activate(player)` when it wants. The TV page sees the setting in `join.lateJoin`, so it can say "join anytime" under the QR code.
-
-A game may also bring its own start page instead of tvpipe's (`"launcher"` in `pages`), with the same `Tvpipe` calls: the TVs, pairing, then on to the host page. Games written in TypeScript can use the npm package for its types and for tests: `memoryRelay()` connects a host and fake phones in one process.
-
-```sh
-$ npm install --save-dev @tvpipe/party
-```
+A game is a small web app: a host page with the rules, a TV page, a phone page and a `tvpipe.json` that names them. [Making party games](making-games.md) covers writing one, checking it and packing it into a zip.
 
 ## Safety
 
