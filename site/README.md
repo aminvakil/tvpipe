@@ -14,7 +14,7 @@ python3 -m http.server -d site/_out    # look at it
 | `manual/NN-slug.md` | one manual section per file, numbered by its prefix, built to `manual/slug/index.html` |
 | `templates/layout.html` | the page shell: header, logo symbol, scripts |
 | `static/` | `style.css`, `site.js` (theme switch, navigation without reloads, CRT figure), the logo |
-| `../src/browser/fonts/` | the fonts, shared with tvpipe's share page (OFL-1.1, `LICENSES/OFL-1.1-fonts.txt`) |
+| `../crates/tvpipe/src/browser/fonts/` | the fonts, shared with tvpipe's share page (OFL-1.1, `LICENSES/OFL-1.1-fonts.txt`) |
 | `static/install.sh`, `static/install.ps1` | the installers, also copied to the site's root (`/install.sh`, `/install.ps1`) |
 | `shots/` | screenshots, made by `node site/screenshots.mjs` |
 | `build.py` | the generator: standard-library Python, its Markdown subset is described at the top |

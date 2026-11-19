@@ -150,9 +150,9 @@ in another on the same user-defined bridge network.
 
 ## Platform differences handled in the code
 
-- Ctrl-C: `src/util/interrupt.rs`.
-- Timer resolution: `src/util/timer.rs`, Windows only.
-- Config directory: `src/airplay/credentials.rs` (`%APPDATA%\tvpipe`).
+- Ctrl-C: `crates/tvpipe-cli/src/interrupt.rs`.
+- Timer resolution: `crates/tvpipe/src/util/timer.rs`, Windows only.
+- Config directory: `crates/tvpipe/src/storage.rs` (`%APPDATA%\tvpipe`).
 - `ffmpeg.exe`/`ffprobe.exe`: `std::env::consts::EXE_SUFFIX` in
   `media::ffmpeg::find_in_path`.
 - Windows UDP reads fail with `ConnectionReset` after an ICMP port

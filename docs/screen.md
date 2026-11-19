@@ -15,7 +15,7 @@ picker cannot be answered by switches) whose page captures with
 encodes with WebCodecs (hardware) into the existing share pipeline. No OS
 API in tvpipe. **ffmpeg** is the fallback (`--engine ffmpeg`, or when no
 such browser is installed), with per-OS input arguments built as strings
-(`src/media/screencap.rs`). Native capture APIs were assessed and not
+(`crates/tvpipe/src/media/screencap.rs`). Native capture APIs were assessed and not
 taken (they break the platform-neutral rule; see the end).
 
 ```sh

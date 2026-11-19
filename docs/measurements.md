@@ -50,7 +50,7 @@ TVPIPE_PT_KIND=bframes TVPIPE_PT_ORDER=dts \
     cargo test media::input::experiments -- --ignored --nocapture
 ```
 
-(`src/media/input.rs`, `mod experiments`: 1280x720@30 x264 files made by
+(`crates/tvpipe/src/media/input.rs`, `mod experiments`: 1280x720@30 x264 files made by
 ffmpeg, sent unchanged through `cast::StreamingSink`, frames paced in
 decode order; the verdict comes from the receiver's log.)
 

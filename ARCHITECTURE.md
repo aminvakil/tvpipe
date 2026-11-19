@@ -240,7 +240,7 @@ ending the session, or a sink failing mid-stream for another reason than
 a lost connection, removes that sink; the session ends when every
 receiver is gone.
 
-**Reconnecting** (`--reconnect SECS`, default 120 s, `src/session/rejoin.rs`).
+**Reconnecting** (`--reconnect SECS`, default 120 s, `crates/tvpipe/src/session/rejoin.rs`).
 A sink whose connection is lost (an `Io`, `Closed` or `Timeout` error
 from `push`) keeps its place in the fanout: its frames are dropped while
 a worker thread connects again with backoff (1 s, doubling to 30 s)
@@ -381,7 +381,7 @@ attribution.
 Everything is platform-neutral except these, each with no crate and every
 `unsafe` block carrying a SAFETY comment:
 
-- **Ctrl-C** (`src/util/interrupt.rs`). Ctrl-C must send TEARDOWN or STOP,
+- **Ctrl-C** (`crates/tvpipe-cli/src/interrupt.rs`). Ctrl-C must send TEARDOWN or STOP,
   or the TV stays in mirroring mode. std cannot install a signal handler,
   and ffmpeg (in our process group) dies from the same signal, so the
   fallback "tear down on ffmpeg's EOF" does not work either. It uses the C
@@ -394,7 +394,7 @@ Everything is platform-neutral except these, each with no crate and every
   only (only when stdin is a terminal, not SLRW). On a stop the session
   does not drain: every sink's `stop()` runs and ffmpeg is killed and
   reaped. Ctrl-C/SIGTERM exits with 130, `q` with 0.
-- **Windows timer resolution** (`src/util/timer.rs`). Windows ends timed
+- **Windows timer resolution** (`crates/tvpipe/src/util/timer.rs`). Windows ends timed
   waits on the 15.6 ms system tick, which made Cast pacing bursty.
   `timeBeginPeriod(1)` (winmm, once per process, no `timeEndPeriod`: since
   Windows 10 2004 it ends with the process) is called from `main`,
@@ -403,8 +403,8 @@ Everything is platform-neutral except these, each with no crate and every
 - **Paths:** `cfg(target_os)` for the config directory and for the
   well-known browser install paths (Chromium-based and Firefox) and the
   browsers' own profile directories, which `tvpipe share URL --profile` refuses
-  (`src/browser/platform.rs`).
-- **Starting `tvpipe screen`'s browser on macOS** (`src/browser/platform.rs`,
+  (`crates/tvpipe/src/browser/platform.rs`).
+- **Starting `tvpipe screen`'s browser on macOS** (`crates/tvpipe/src/browser/platform.rs`,
   `own_app_command`): through `open -n -g -a APP --args ...` instead of
   as a child. macOS gives screen and system-audio recording to the
   "responsible" app; as tvpipe's child the browser counts as the
@@ -423,7 +423,7 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
   The released binary includes it and is distributed under LGPL terms.
 - **FairPlay** is a port of doubletake's SAP implementation in its own
   crate, `crates/tvpipe-fairplay/` (LGPL-3.0-or-later SPDX headers and
-  attribution in every file; `src/aes.rs` is a copy of our Apache-2.0
+  attribution in every file; `src/aes.rs` there is a copy of our Apache-2.0
   AES), bytes in, bytes out (`FpSession`: `m1`, `m3`, `check_m4`,
   `wrap_key`) so a clean-room version can replace it. The `/fp-setup`
   requests (`airplay/session.rs`) and the stream-key derivation
@@ -468,12 +468,12 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
 
 ## Code Conventions
 
-- **Core types** in `src/types.rs` (`EncodedFrame`, `VideoInfo`,
+- **Core types** in `crates/tvpipe/src/types.rs` (`EncodedFrame`, `VideoInfo`,
   `AudioInfo`, `Capabilities`, `Encoder`, the plans, `Sink`, …) are
   shared by every module. Changing anything public there goes through the
   lead; adding helper methods is fine.
 - **Errors:** one crate-wide `Error { kind, msg, source }` with
-  `ErrorKind` and `Result<T>` (`src/error.rs`). Modules may use private
+  `ErrorKind` and `Result<T>` (`crates/tvpipe/src/error.rs`). Modules may use private
   error enums but convert at their public boundary. Malformed input is
   `ErrorKind::Malformed` with the format name as prefix (`"dns: ..."`).
   Data from the network or from ffmpeg never panics.
@@ -483,10 +483,10 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
 - **Video payloads** are AVCC (4-byte length prefixes) everywhere inside
   tvpipe; Cast converts to Annex B at the edge.
 - **Test vectors** are `key = value` blocks (blank-line separated, `#`
-  comments, indented continuation lines) under `tests/vectors/<module>/`
-  (`util::vectors`); binary fixtures under `tests/fixtures/<module>/`.
+  comments, indented continuation lines) under `crates/tvpipe/tests/vectors/<module>/`
+  (`util::vectors`); binary fixtures under `crates/tvpipe/tests/fixtures/<module>/`.
 - **Logging** uses the `error!`/`warn!`/`info!`/`debug!`/`trace!` macros
-  from `src/log.rs`; `play` writes nothing but SLRW keyframe requests to
+  from `crates/tvpipe/src/log.rs`; `play` writes nothing but SLRW keyframe requests to
   stdout.
 - **Naming:** the project was called streamlib before it became tvpipe.
   An existing `…/streamlib` config directory is moved over once on first

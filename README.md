@@ -140,11 +140,11 @@ of [doubletake](https://github.com/omarroth/doubletake) under
 LGPL-3.0-or-later, which is only built with the `fairplay` feature. The
 distributed binary includes it, so it is under LGPL-3.0-or-later terms.
 
-The root certificates in `src/net/roots/` (for the `--tunnel` service's
+The root certificates in `crates/tvpipe/src/net/roots/` (for the `--tunnel` service's
 HTTPS) are Mozilla's list from the CCADB, under CDLA-Permissive-2.0 (see
 [`LICENSES/CDLA-Permissive-2.0-ccadb.txt`](LICENSES/CDLA-Permissive-2.0-ccadb.txt)).
 
-Some H.264 encoder tables (`src/media/h264enc/tables.rs`) are transcribed
+Some H.264 encoder tables (`crates/tvpipe/src/media/h264enc/tables.rs`) are transcribed
 from [openh264](https://github.com/cisco/openh264) (BSD-2-Clause), and the
-fonts in `src/browser/fonts/` (also used by the website) are under the SIL
+fonts in `crates/tvpipe/src/browser/fonts/` (also used by the website) are under the SIL
 Open Font License 1.1. The license texts are in [`LICENSES/`](LICENSES).

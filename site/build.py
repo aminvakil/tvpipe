@@ -8,7 +8,7 @@ Sources:
   site/manual/NN-*.md    the manual, one section per file, in file order
   site/static/           CSS, JS and the logo, copied as is; install.sh and
                          install.ps1 are also copied to the site's root
-  src/browser/fonts/     the fonts (shared with tvpipe's share page)
+  crates/tvpipe/src/browser/fonts/  the fonts (shared with tvpipe's share page)
   site/shots/            screenshots (site/screenshots.mjs makes them)
 Output: site/_out/ (static files, serve the directory). Every page is a
 directory with an index.html (manual/receivers/index.html), and links
@@ -509,7 +509,7 @@ def build(out):
     out.mkdir(parents=True)
     shutil.copytree(SITE / "static", out / "static")
     # The fonts are the ones compiled into tvpipe for its share page.
-    shutil.copytree(SITE.parent / "src" / "browser" / "fonts", out / "static" / "fonts")
+    shutil.copytree(SITE.parent / "crates" / "tvpipe" / "src" / "browser" / "fonts", out / "static" / "fonts")
     # The installers live at the root, for the one-liners:
     # curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
     for name in INSTALLERS:

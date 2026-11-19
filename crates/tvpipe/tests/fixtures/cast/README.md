@@ -2,7 +2,7 @@
 
 - `test-cert.der`, `test-key.pk8.der`: a throwaway self-signed P-256
   certificate and its PKCS#8 key for the in-test fake Cast receiver
-  (`src/cast/testing.rs`). Not a secret. Generated with OpenSSL 3:
+  (`crates/tvpipe/src/cast/testing.rs`). Not a secret. Generated with OpenSSL 3:
 
   ```sh
   openssl ecparam -name prime256v1 -genkey -noout -out key.pem

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Regenerates tests/vectors/h264/reorder.txt: SPS NAL units with and
+# Regenerates crates/tvpipe/tests/vectors/h264/reorder.txt: SPS NAL units with and
 # without VUI bitstream_restriction (and with HRD parameters before it),
 # and the values ffmpeg's trace_headers reports for them. Requires ffmpeg
 # and python3.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/tests/vectors/h264/reorder.txt"
+out="$root/crates/tvpipe/tests/vectors/h264/reorder.txt"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

@@ -19,7 +19,7 @@ is shared:
 | Who can read the traffic | Cloudflare (it ends TLS) | nobody but tvpipe and the viewer (TLS ends in tvpipe) |
 | Protocol | cloudflared's, undocumented (HTTP/2 + Cap'n Proto RPC), ported from its source | documented, with test vectors |
 | Operator | Cloudflare; no uptime promise for quick tunnels | one small operator (Anomaly), on Fly.io; self-hostable |
-| Code | `src/net/cftunnel/` | `src/net/opentunnel.rs`, `src/net/roots/` |
+| Code | `crates/tvpipe/src/net/cftunnel/` | `crates/tvpipe/src/net/opentunnel.rs`, `crates/tvpipe/src/net/roots/` |
 
 The value is attached (`--tunnel=opentunnel`): a separate word would be
 the command's input. Cloudflare is the default because it needs no state
@@ -42,7 +42,7 @@ share: remote share: latency 300 ms
 ```
 
 When stderr is a terminal, the public link is followed by its QR code
-(`src/util/qr.rs`: byte mode, level M or L, half blocks, black on white
+(`crates/tvpipe/src/util/qr.rs`: byte mode, level M or L, half blocks, black on white
 from the 256-color palette), so a phone can open it from the screen;
 `--no-qr` or `TVPIPE_NO_QR=1` turns it off, `--machine` never draws it.
 The local `http://127.0.0.1` links get none: another device cannot open
@@ -52,7 +52,7 @@ With `--machine` a `tunnel` event carries the link (`docs/machine.md`);
 the Node SDK has `tunnel` options and `session.publicUrl`. In machine mode
 there is no terminal to ask on: remote shares need `--yes`.
 
-## Access rules (`src/browser/access.rs`, provider-neutral)
+## Access rules (`crates/tvpipe/src/browser/access.rs`, provider-neutral)
 
 The page servers still bind `127.0.0.1` only; the tunnel client connects
 to them from loopback like everything else, so the decision is made on
@@ -113,7 +113,7 @@ the shared parts (they share rustls' client-side verification and the
 Mozilla roots), +617 KB over main without `--tunnel` (5,119,528 B
 stripped).
 
-## Cloudflare Quick Tunnels (`src/net/cftunnel/`)
+## Cloudflare Quick Tunnels (`crates/tvpipe/src/net/cftunnel/`)
 
 ### How it works
 
@@ -124,7 +124,7 @@ Ported from cloudflared 2026.11.1 (Apache-2.0,
    body) answers `{success, result: {id, hostname, account_tag, secret}}`:
    an ordinary tunnel's credentials plus its hostname
    (`cmd/cloudflared/tunnel/quick_tunnel.go`). The service's certificate is
-   checked against Mozilla's root list (`src/net/roots/`, shared with
+   checked against Mozilla's root list (`crates/tvpipe/src/net/roots/`, shared with
    OpenTunnel).
 2. **Edge.** TLS to `region1.v2.argotunnel.com:7844` (`region2` on every
    other attempt; the SRV record `_v2-origintunneld._tcp.argotunnel.com`
@@ -187,7 +187,7 @@ the internet twice. Edge locations vie02/vie07.
 
 | | |
 |---|---|
-| Code | `src/net/cftunnel/`: 2870 lines of Rust, 2067 without tests, 1713 without tests, comments and blank lines (HTTP/2 461, HPACK 226, Cap'n Proto 334, the rest 692); the edge CA (20 lines of PEM) |
+| Code | `crates/tvpipe/src/net/cftunnel/`: 2870 lines of Rust, 2067 without tests, 1713 without tests, comments and blank lines (HTTP/2 461, HPACK 226, Cap'n Proto 334, the rest 692); the edge CA (20 lines of PEM) |
 | Binary | release over the provider-neutral commit, alone: +223 KB with `strip -x`, +218 KB with `CARGO_PROFILE_RELEASE_STRIP=symbols` (`__text` +149 KB); rustls' certificate-chain verification (webpki) is a good part of it, new to tvpipe then |
 | Setup | process start to first successful HTTPS GET through the link: 6.66, 6.69, 6.71, 7.19, 8.88 s, **median 6.7 s**. Of that, `api.trycloudflare.com` takes 4.3-5.5 s to answer; connecting and registering 0.35-0.45 s; DNS 0.5-3 s |
 | WebSocket | 100 pings (the player's JSON ping/pong): median 12 ms, p95 72-82 ms, 11-15 % above 30 ms. cloudflared 2026.11.1 over the same path, `--protocol http2` and `quic`, measured the same (median 11-13 ms, p95 72-80 ms): the spikes are Cloudflare's |
@@ -264,7 +264,7 @@ self-hostable) is a *blind TLS* relay:
   512 KiB buffered per connection and 4 MiB per bridge at the relay.
   No uptime promise; one operator.
 
-### The client (`src/net/opentunnel.rs`)
+### The client (`crates/tvpipe/src/net/opentunnel.rs`)
 
 - **Identity** in the config directory, `opentunnel/` (the OpenTunnel
   CLI's layout, so it can share it; files 0600): `tunnel.json` (id,
@@ -298,7 +298,7 @@ self-hostable) is a *blind TLS* relay:
 - **Trust:** the API and bridge (`opentunnel.xyz`, behind Cloudflare,
   whose edge certificates come from several public CAs) are checked
   against Mozilla's root list, the same source as the webpki-roots crate:
-  `src/net/roots/mozilla.pem` from the CCADB (CDLA-Permissive-2.0,
+  `crates/tvpipe/src/net/roots/mozilla.pem` from the CCADB (CDLA-Permissive-2.0,
   `LICENSES/`), compiled in as trust anchors only (`roots/mozilla.rs`,
   subject + key + name constraints: 33 KB in the binary instead of
   165 KB), refreshed by `scripts/update-roots.sh` (a test fails if the
@@ -310,7 +310,7 @@ self-hostable) is a *blind TLS* relay:
 - **Self-hosted service:** `TVPIPE_OPENTUNNEL_API=https://HOST[:PORT]`
   (tunnels are then `ID.HOST`); `TVPIPE_OPENTUNNEL_DIR` moves the
   identity.
-- **Tests** (`src/net/opentunnel/tests.rs`): a fake relay on loopback
+- **Tests** (`crates/tvpipe/src/net/opentunnel/tests.rs`): a fake relay on loopback
   (the API, the bridge, visitors with real TLS against a test CA):
   provisioning, visitors end to end, the visitor's address, reconnects
   after a dropped bridge, `drain` and a silent relay under the same
@@ -328,7 +328,7 @@ twice), Chrome 157 headless.
 
 | | |
 |---|---|
-| Provider client | `src/net/opentunnel.rs` 1457 lines (1221 without blank and comment lines), its tests 724, `net/tunnel.rs` 54; the roots: `roots/mozilla.rs` (generated, 150 KB of byte strings) and `mozilla.pem` (its source, not compiled in) |
+| Provider client | `crates/tvpipe/src/net/opentunnel.rs` 1457 lines (1221 without blank and comment lines), its tests 724, `net/tunnel.rs` 54; the roots: `roots/mozilla.rs` (generated, 150 KB of byte strings) and `mozilla.pem` (its source, not compiled in) |
 | Binary (stripped, `strip -x`, vs main 4,266,904 B) | provider-neutral parts +49 KB; OpenTunnel +425 KB (rustls's server side ~105 KB and webpki path validation ~31 KB are new to the binary, the roots ~33 KB, the client and its generics the rest); together +474 KB |
 | Setup, cold (new tunnel and certificate) | 15.5 s to the URL, 15.8 s to the first successful GET |
 | Setup, warm (n=5) | URL after 0.12-0.23 s (median 0.18), first GET 0.27-0.46 s (median 0.34) |

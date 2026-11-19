@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates tests/vectors/h264/sps.txt from ffmpeg-encoded streams.
+# Regenerates crates/tvpipe/tests/vectors/h264/sps.txt from ffmpeg-encoded streams.
 #
 # Each block holds the first SPS and PPS NAL (Annex B start codes stripped,
 # emulation prevention bytes kept) and the values ffprobe reports for the
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/tests/vectors/h264/sps.txt"
+out="$root/crates/tvpipe/tests/vectors/h264/sps.txt"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

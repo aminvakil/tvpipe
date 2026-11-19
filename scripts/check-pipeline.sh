@@ -7,7 +7,7 @@
 # Matroska muxer, so this checks the muxer settings and our demuxer.
 # Then it runs the encoding pipeline on the same files and checks frame
 # counts, keyframe spacing and monotonic timestamps, and SLRW game input
-# end to end with examples/slrw-gen.
+# end to end with crates/tvpipe/examples/slrw-gen.
 #
 # Usage: scripts/check-pipeline.sh [path/to/tvpipe]
 # Requires ffmpeg, ffprobe and python3.

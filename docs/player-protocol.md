@@ -3,7 +3,7 @@
 `--to browser` is a receiver like a TV: tvpipe serves a player page and
 streams to it over a WebSocket; the page decodes and presents on tvpipe's
 shared timeline (`ARCHITECTURE.md`, "Several Receivers"). `tvpipe preview` is `play --to browser`.
-Code: `src/browser/player.rs` (server and sink), `player.html`,
+Code: `crates/tvpipe/src/browser/player.rs` (server and sink), `player.html`,
 `player.js` (the page). Version 1. Using it:
 [Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/).
 
@@ -24,7 +24,7 @@ The share page's rules ([`share-protocol.md`](share-protocol.md)), with one more
     screen, while the player only shows what tvpipe streams anyway, so
     a lasting token there is the better trade.
 - `GET /?t=TOKEN`: the page. `GET /player.js`: the script (static, no
-  token). `GET /fonts/NAME.woff2`: the page's fonts (`src/browser/fonts/`,
+  token). `GET /fonts/NAME.woff2`: the page's fonts (`crates/tvpipe/src/browser/fonts/`,
   static, no token). `GET /ws?t=TOKEN`: the WebSocket (RFC 6455, no
   extensions).
 - Every request needs a `Host` of `127.0.0.1:PORT`, `localhost:PORT` or
@@ -145,7 +145,7 @@ plays the samples) at `pts_us + latency`.
 
 Measured with `preview` of the built-in test pattern, 1280x720@30, on
 macOS 26 (Apple Silicon), `cargo test --release` opt-in tests in
-`src/session/player_tests.rs`:
+`crates/tvpipe/src/session/player_tests.rs`:
 
 | | Chrome 157 (headless) | Safari 26 | Firefox 160 (headless) |
 |---|---|---|---|

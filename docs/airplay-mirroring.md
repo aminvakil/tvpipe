@@ -4,7 +4,7 @@ Status: draft by the S2 spec writer (dirty room), 2026-11-18, awaiting
 review. Audience: the clean implementer of `airplay/{mirror,audio,timing,
 sink}.rs` (W7). Everything here is a wire fact or a behavioural rule; there
 is no reference code. Byte-exact examples are in
-`tests/vectors/airplay-mirror/*.txt` (index in §12).
+`crates/tvpipe/tests/vectors/airplay-mirror/*.txt` (index in §12).
 
 Confidence tags used below:
 
@@ -214,7 +214,7 @@ makes SETUP #1 hang). Prefer PTP.
 ### 2.6 Display size (the receiver's canvas)
 
 The initial `/info` of current Apple TVs has no `displays` [HW] (see
-`tests/fixtures/airplay/`). The display list appears only once a media
+`crates/tvpipe/tests/fixtures/airplay/`). The display list appears only once a media
 session exists. Sources, in order of preference:
 
 1. The `info` dict inside the SETUP #1 response, if the request carried
@@ -1294,7 +1294,7 @@ FairPlay skipped (§2.2, §13).
 
 ## 12. Test vectors
 
-`tests/vectors/airplay-mirror/`:
+`crates/tvpipe/tests/vectors/airplay-mirror/`:
 
 | File | Contents |
 |---|---|

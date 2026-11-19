@@ -12,8 +12,8 @@ The same record framing is used on the WebSockets of the share page
 ([`share-protocol.md`](share-protocol.md)) and the browser player
 ([`player-protocol.md`](player-protocol.md)).
 
-Code: `src/media/slrw.rs` (the format, shared with `examples/slrw-gen.rs`),
-`src/media/input.rs` (encoded mode), `src/media/builtin.rs` (raw mode with
+Code: `crates/tvpipe/src/media/slrw.rs` (the format, shared with `crates/tvpipe/examples/slrw-gen.rs`),
+`crates/tvpipe/src/media/input.rs` (encoded mode), `crates/tvpipe/src/media/builtin.rs` (raw mode with
 the built-in encoders). `cargo run --example slrw-gen` is a working
 producer for both modes.
 

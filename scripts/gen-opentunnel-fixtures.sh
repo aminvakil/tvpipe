@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Regenerates src/net/testdata/opentunnel/: a test CA and a tunnel
+# Regenerates crates/tvpipe/src/net/testdata/opentunnel/: a test CA and a tunnel
 # certificate for tvtest.opentunnel.test and *.tvtest.opentunnel.test
 # (P-256, valid until 2126), for the fake relay tests in net::opentunnel.
 # Requires openssl (LibreSSL or OpenSSL).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-dir="$root/src/net/testdata/opentunnel"
+dir="$root/crates/tvpipe/src/net/testdata/opentunnel"
 mkdir -p "$dir"
 cd "$dir"
 tmp="$(mktemp -d)"

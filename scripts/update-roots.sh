@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates src/net/roots/mozilla.pem (and mozilla.rs from it): the root certificates Mozilla
+# Regenerates crates/tvpipe/src/net/roots/mozilla.pem (and mozilla.rs from it): the root certificates Mozilla
 # trusts for websites, from the CCADB (Common CA Database) report, which
 # is published under CDLA-Permissive-2.0
 # (LICENSES/CDLA-Permissive-2.0-ccadb.txt). The same source as the
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/src/net/roots/mozilla.pem"
+out="$root/crates/tvpipe/src/net/roots/mozilla.pem"
 url="https://ccadb.my.salesforce-sites.com/mozilla/IncludedRootsPEMTxt?TrustBitsInclude=Websites"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT

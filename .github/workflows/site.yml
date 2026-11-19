@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "site/**"
-      - "src/browser/fonts/**"
+      - "crates/tvpipe/src/browser/fonts/**"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 

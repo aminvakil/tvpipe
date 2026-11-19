@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates tests/fixtures/media/*.{mp4,mov} and tests/vectors/mp4/*.txt.
+# Regenerates crates/tvpipe/tests/fixtures/media/*.{mp4,mov} and crates/tvpipe/tests/vectors/mp4/*.txt.
 #
 # The vectors hold what ffprobe reports for each fixture: per stream the
 # codec, time base and parameters, and per packet (in file order) stream
@@ -8,8 +8,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-fix="$root/tests/fixtures/media"
-vec="$root/tests/vectors/mp4"
+fix="$root/crates/tvpipe/tests/fixtures/media"
+vec="$root/crates/tvpipe/tests/vectors/mp4"
 mkdir -p "$fix" "$vec"
 
 ff=(ffmpeg -hide_banner -loglevel error -y)
@@ -45,7 +45,7 @@ for f in bf0.mp4 bframes.mp4 frag.mp4 alac.mov pcm.mov hevc.mp4; do
     echo "# streams: 'index,codec,width,height,time_base' (video) or
 #   'index,codec,sample_rate,channels,time_base' (audio) per stream."
     echo "# packets: 'stream pts dts duration flags size' per packet, ';'-separated,"
-    echo "# in file order, from ffprobe -show_packets on tests/fixtures/media/$f."
+    echo "# in file order, from ffprobe -show_packets on crates/tvpipe/tests/fixtures/media/$f."
     echo
     echo "name = $name"
     echo "file = $f"

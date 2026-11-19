@@ -1,6 +1,6 @@
 # Share page protocol (`tvpipe share`)
 
-The protocol between tvpipe and a capture script (`src/browser/capture.js`)
+The protocol between tvpipe and a capture script (`crates/tvpipe/src/browser/capture.js`)
 running in a browser: tvpipe's share page (`tvpipe share`), the page
 tvpipe's own browser shows and injects the script into (`tvpipe share URL`),
 or the capture page tvpipe's own browser opens to capture the desktop
@@ -18,7 +18,7 @@ Version 1. Using them: [Sharing the screen](https://mitsuhiko.github.io/tvpipe/m
   page of `tvpipe screen` (`screen.html`: `capture.js` and a status line;
   tvpipe starts the capture in it). `GET /capture.js`: the capture script
   (static, no token). `GET /fonts/NAME.woff2`: the page's fonts
-  (`src/browser/fonts/`, static, no token). `GET /ws?t=TOKEN`: the
+  (`crates/tvpipe/src/browser/fonts/`, static, no token). `GET /ws?t=TOKEN`: the
   WebSocket (RFC 6455, no extensions, no subprotocol). Every request
   needs a `Host` of `127.0.0.1:PORT`, `localhost:PORT` or `[::1]:PORT`
   (421 otherwise: DNS rebinding), the page and the socket need the token
@@ -242,7 +242,7 @@ c.stop(reason);
 CDP `Runtime.evaluate` with `userGesture: true` plus Chrome's
 auto-accept flags in the headless mode).
 
-`tvpipe share URL` evaluates `capture.js` and then `src/browser/headless.js`
+`tvpipe share URL` evaluates `capture.js` and then `crates/tvpipe/src/browser/headless.js`
 in the page after every navigation. That one is called with the WebSocket
 URL and connect options (default: `preferCurrentTab`,
 `selfBrowserSurface: 'include'`, no local audio; `tvpipe screen` passes
@@ -259,8 +259,8 @@ and grants every origin Chrome's Local Network Access permission
 a `blob:` one fails there.
 
 **Firefox** (`--browser firefox`, or the only browser installed) is
-driven over WebDriver BiDi (`src/browser/bidi.rs`,
-`src/browser/headless/firefox.rs`); Firefox no longer has the DevTools
+driven over WebDriver BiDi (`crates/tvpipe/src/browser/bidi.rs`,
+`crates/tvpipe/src/browser/headless/firefox.rs`); Firefox no longer has the DevTools
 protocol. Its getDisplayMedia cannot share the current tab, but the
 older getUserMedia sources still exist behind preferences tvpipe's
 profile sets (`launch::FIREFOX_PREFS`): `{video: {mediaSource:

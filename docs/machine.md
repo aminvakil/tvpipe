@@ -2,10 +2,10 @@
 
 For programs that drive tvpipe: the Node SDK (`@tvpipe/sdk`, source in `npm/tvpipe`), and anything
 else that can spawn a process and read lines. Protocol version **1**.
-Code: `src/machine.rs`, the events at their sources (`session.rs`,
+Code: `crates/tvpipe-cli/src/machine.rs`, the events at their sources (`session.rs`,
 `session/rejoin.rs`, `media/fanout.rs`, `browser/player.rs`,
-`airplay/pair.rs`, `net/discover.rs`). Tests: `src/machine/tests.rs`,
-`tests/machine.rs` (the real binary).
+`airplay/pair.rs`, `net/discover.rs`). Tests: `crates/tvpipe-cli/src/machine/tests.rs`,
+`crates/tvpipe-cli/tests/machine.rs` (the real binary).
 
 ```sh
 tvpipe --machine test-pattern --to browser --port 0
