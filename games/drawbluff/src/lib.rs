@@ -10,13 +10,8 @@ pub mod screen;
 pub mod sound;
 pub mod tv;
 
-/// The prompts to draw (`data/prompts.txt`, shared with the Node version;
-/// also the source of decoy lies).
-pub fn prompts() -> Vec<String> {
-    include_str!("../data/prompts.txt")
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
+/// The prompts to draw, by structure (`data/prompts.txt`, shared with the
+/// Node version; also the source of decoy lies).
+pub fn prompts() -> Vec<rules::Prompt> {
+    rules::parse_prompts(include_str!("../data/prompts.txt"))
 }

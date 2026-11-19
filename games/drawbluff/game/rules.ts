@@ -16,7 +16,7 @@ export interface Drawing {
 export const GRID = 1000;
 export const MAX_STROKES = 300;
 export const MAX_POINTS = 12_000;
-export const MAX_TITLE = 40;
+export const MAX_TITLE = 48;
 
 /** Checks and normalises a drawing from a phone (throws `PartyError("bad-drawing")`). */
 export function validateDrawing(data: unknown): Drawing {
@@ -48,11 +48,11 @@ export function cleanTitle(text: unknown): string {
 }
 
 /**
- * The longest lie a phone lets you type: about the longest prompt
+ * The longest lie a phone lets you type: the longest prompt
  * (`data/prompts.txt` stays within it), so a long title is no tell. The
  * host accepts up to {@link MAX_TITLE}.
  */
-export const LIE_SOFT = 32;
+export const LIE_SOFT = 40;
 
 /**
  * A title as the TV and the phones show it, the truth and the lies alike,
@@ -312,6 +312,79 @@ export function revealOrder(options: readonly Option[], voters: ReadonlyMap<stri
   const lies = options.filter((o) => !o.truth && (voters.get(o.id)?.length ?? 0) > 0);
   lies.sort((a, b) => (voters.get(a.id)!.length - voters.get(b.id)!.length));
   return [...lies, ...options.filter((o) => o.truth)];
+}
+
+// ---------------------------------------------------------------------------
+// Prompts (docs/drawbluff-scale.md "Prompts")
+
+/** A prompt to draw and its structure (`odd`, `idiom`, `moment`, …; "" for none). */
+export interface Prompt {
+  text: string;
+  tag: string;
+}
+
+/**
+ * Reads `data/prompts.txt`: `[tag]` starts a structure, then one prompt
+ * per line (trimmed); blank lines and `#` comments are skipped; prompts
+ * before any `[tag]` have the tag "".
+ */
+export function parsePrompts(text: string): Prompt[] {
+  const out: Prompt[] = [];
+  let tag = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const m = /^\[([a-z]+)\]$/.exec(line);
+    if (m) tag = m[1]!;
+    else out.push({ text: line, tag });
+  }
+  return out;
+}
+
+/** Prompts in a row among which a structure appears at most once, when it can. */
+export const SPREAD = 3;
+
+/**
+ * Reorders `items` so that no tag comes twice among `window` in a row
+ * where the rest allows it: each next item is the first one left whose
+ * tag is not among the last `window - 1` taken, else not among the last
+ * `window - 2`, …, else simply the first one left. Deterministic (shuffle
+ * first for a random order); a stable no-op when every tag differs.
+ */
+export function spread<T>(items: readonly T[], tag: (item: T) => string, window = SPREAD): T[] {
+  const rest = [...items];
+  const out: T[] = [];
+  const tags: string[] = [];
+  while (rest.length > 0) {
+    let at = 0;
+    for (let w = Math.max(0, window - 1); w > 0; w--) {
+      const recent = tags.slice(-w);
+      const i = rest.findIndex((x) => !recent.includes(tag(x)));
+      if (i >= 0) {
+        at = i;
+        break;
+      }
+    }
+    const [item] = rest.splice(at, 1);
+    out.push(item!);
+    tags.push(tag(item!));
+  }
+  return out;
+}
+
+/**
+ * A game's deck: the prompts shuffled, then spread by structure
+ * ({@link spread}), reversed, so that `pop()` deals them in the spread
+ * order (a round's prompts, one per player in join order, mix the
+ * structures).
+ */
+export function deck(prompts: readonly Prompt[], rng: () => number): Prompt[] {
+  return spread(shuffle(prompts, rng), (p) => p.tag).reverse();
+}
+
+/** Decoys for a drawing: the spares of its own structure first, each part in its order. */
+export function decoyOrder(spares: readonly Prompt[], tag: string): Prompt[] {
+  return [...spares.filter((p) => p.tag === tag), ...spares.filter((p) => p.tag !== tag)];
 }
 
 /** A seeded generator (mulberry32) for tests and replays. */

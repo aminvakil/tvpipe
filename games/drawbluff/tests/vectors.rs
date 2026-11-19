@@ -2,8 +2,9 @@
 //! --bless` from `game/rules.ts`, the reference) against `src/rules.rs`.
 
 use drawbluff::rules::{
-    build_options, clean_title, deal, display_title, options_for, pick_liars, plan, reveal_order,
-    rotate, score, share, shuffle, title_key, validate_drawing, Rng, PHONE_LIES,
+    build_options, clean_title, deal, deck, decoy_order, display_title, options_for, parse_prompts,
+    pick_liars, plan, reveal_order, rotate, score, share, shuffle, spread, title_key,
+    validate_drawing, Prompt, Rng, PHONE_LIES,
 };
 use tvpipe_party::Value;
 
@@ -285,11 +286,48 @@ fn rules_vectors() {
                     .collect();
                 assert_eq!(reveal, strings(&b.json("reveal")), "{at}");
             }
+            "prompts" => {
+                let input = b.json("input");
+                let got = tagged(&parse_prompts(input.as_str().unwrap()));
+                assert_eq!(got, b.json("parsed"), "{at}");
+            }
+            "spread" => {
+                let tags = strings(&b.json("tags"));
+                let items: Vec<usize> = (0..tags.len()).collect();
+                let got = spread(items, |i| tags[*i].clone(), b.num("window") as usize);
+                let want: Vec<usize> = b
+                    .json("order")
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_u64().unwrap() as usize)
+                    .collect();
+                assert_eq!(got, want, "{at}");
+            }
+            "deck" => {
+                let prompts = match b.str("prompts") {
+                    "file" => drawbluff::prompts(),
+                    _ => prompts(&b.json("prompts")),
+                };
+                let mut d = deck(&prompts, &mut Rng::new(b.num("seed") as u32));
+                let want = strings(&b.json("dealt"));
+                let got: Vec<String> = want.iter().map(|_| d.pop().unwrap().text).collect();
+                assert_eq!(got, want, "{at}");
+            }
+            "decoys" => {
+                let spares = prompts(&b.json("spares"));
+                let got: Vec<String> = decoy_order(&spares, b.str("tag"))
+                    .into_iter()
+                    .map(|p| p.text)
+                    .collect();
+                assert_eq!(got, strings(&b.json("order")), "{at}");
+            }
             other => panic!("{at}: unknown test {other}"),
         }
     }
     for kind in [
         "rng", "shuffle", "title", "drawing", "plan", "share", "liars", "rotate", "turn",
+        "prompts", "spread", "deck", "decoys",
     ] {
         assert!(
             seen.get(kind).copied().unwrap_or(0) > 0,
@@ -298,10 +336,42 @@ fn rules_vectors() {
     }
 }
 
+/// `[[tag, text], …]` as prompts.
+fn prompts(v: &Value) -> Vec<Prompt> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|p| Prompt {
+            tag: p[0].as_str().unwrap().to_owned(),
+            text: p[1].as_str().unwrap().to_owned(),
+        })
+        .collect()
+}
+
+/// Prompts as `[[tag, text], …]`.
+fn tagged(prompts: &[Prompt]) -> Value {
+    Value::Array(
+        prompts
+            .iter()
+            .map(|p| Value::from(vec![p.tag.clone(), p.text.clone()]))
+            .collect(),
+    )
+}
+
 #[test]
 fn prompts_are_distinct() {
-    let prompts = drawbluff::prompts();
-    assert!(prompts.len() > 100);
+    let all = drawbluff::prompts();
+    assert!(all.len() >= 300, "{}", all.len());
+    // Every structure is there, each with enough prompts to mix.
+    for tag in [
+        "odd", "idiom", "feeling", "moment", "secret", "invented", "contra", "view", "drama",
+        "title",
+    ] {
+        let n = all.iter().filter(|p| p.tag == tag).count();
+        assert!(n >= 30, "{tag}: {n}");
+    }
+    assert!(all.iter().all(|p| !p.tag.is_empty()));
+    let prompts: Vec<String> = all.into_iter().map(|p| p.text).collect();
     for p in &prompts {
         // Shown as they are, no longer than a lie may be typed, no tells.
         assert_eq!(&display_title(p), p);

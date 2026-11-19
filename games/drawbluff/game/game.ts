@@ -20,10 +20,12 @@ import { EventEmitter } from "node:events";
 
 import { LATE_JOIN, PartyError, type LateJoin, type Party, type Player } from "@tvpipe/party";
 
-import { PROMPTS } from "./prompts.ts";
+import { PROMPT_LIST } from "./prompts.ts";
 import {
   buildOptions,
   cleanTitle,
+  deck,
+  decoyOrder,
   displayTitle,
   deal,
   PHONE_LIES,
@@ -35,11 +37,13 @@ import {
   score,
   share,
   shuffle,
+  spread,
   titleKey,
   validateDrawing,
   type Drawing,
   type Option,
   type Plan,
+  type Prompt,
 } from "./rules.ts";
 
 export interface Timings {
@@ -90,7 +94,8 @@ export interface GameOptions {
   minPlayers?: number | undefined;
   timings?: Partial<Timings> | undefined;
   rng?: (() => number) | undefined;
-  prompts?: readonly string[] | undefined;
+  /** The prompts (default `data/prompts.txt`); plain strings have no structure. */
+  prompts?: readonly (string | Prompt)[] | undefined;
   /**
    * Who may join during a game (the VIP can change it in the lobby):
    * `wait` (the default) from the next round, `open` from the next
@@ -117,6 +122,8 @@ export type Phase = "lobby" | "draw" | "gallery" | "lie" | "vote" | "reveal" | "
 interface Entry {
   artist: Player;
   prompt: string;
+  /** The prompt's structure. */
+  tag: string;
   drawing: Drawing;
 }
 
@@ -146,7 +153,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
   readonly minPlayers: number;
   readonly timings: Timings;
   readonly #rng: () => number;
-  readonly #prompts: readonly string[];
+  readonly #prompts: readonly Prompt[];
   /** Points per player id (players in the game; late joiners from their first round). */
   readonly scores = new Map<string, number>();
   /** Lies written so far this game, per player id (rotation). */
@@ -157,7 +164,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
   #phase: Phase = "lobby";
   #running = false;
   #abort = new AbortController();
-  #deck: string[] = [];
+  #deck: Prompt[] = [];
   #round = 0;
   /** The lies whose progress the TV shows (`liars`/`done` on the screen). */
   #onScreen: Lies | undefined;
@@ -175,7 +182,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     this.minPlayers = options.minPlayers ?? 3;
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
     this.#rng = options.rng ?? Math.random;
-    this.#prompts = options.prompts ?? PROMPTS;
+    this.#prompts = (options.prompts ?? PROMPT_LIST).map((p) => (typeof p === "string" ? { text: p, tag: "" } : p));
     if (options.lateJoin !== undefined) party.lateJoin = options.lateJoin;
   }
 
@@ -301,7 +308,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     this.#lied.clear();
     this.#spotted.clear();
     this.#fresh.clear();
-    this.#deck = shuffle(this.#prompts, this.#rng);
+    this.#deck = deck(this.#prompts, this.#rng);
     try {
       for (let round = 1; round <= this.rounds; round++) {
         this.#round = round;
@@ -345,11 +352,11 @@ export class Drawbluff extends EventEmitter<GameEvents> {
   async #draw(round: number, players: Player[]): Promise<Entry[]> {
     const party = this.party;
     this.#setPhase("draw");
-    const prompts = new Map(players.map((p) => [p, this.#deck.pop() ?? "anything you like"]));
+    const prompts = new Map(players.map((p) => [p, this.#deck.pop() ?? { text: "anything you like", tag: "" }]));
     const deadline = this.#deadline(this.timings.draw);
     this.#room({ phase: "draw", deadline });
     this.#screen({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
-    for (const [p, prompt] of prompts) p.state.replace({ task: "draw", prompt: displayTitle(prompt), deadline, done: false, ...this.#rank(p) });
+    for (const [p, prompt] of prompts) p.state.replace({ task: "draw", prompt: displayTitle(prompt.text), deadline, done: false, ...this.#rank(p) });
     for (const p of party.players) if (!prompts.has(p)) p.state.replace(this.#waitState(p));
     const got = await party.collect<Drawing>("draw", {
       from: players,
@@ -361,7 +368,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
         party.screen.set({ done: [...answers.keys()].map((x) => x.id) });
       },
     });
-    return [...got].map(([artist, drawing]) => ({ artist, prompt: prompts.get(artist)!, drawing }));
+    return [...got].map(([artist, drawing]) => ({ artist, prompt: prompts.get(artist)!.text, tag: prompts.get(artist)!.tag, drawing }));
   }
 
   /** The round's spotlights (and the gallery of the other drawings). */
@@ -380,7 +387,11 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const chosen = rotate(ids, key, p.spotlights, this.#rng);
     this.#fresh.clear();
     this.#votesLeft = chosen.length;
-    const spots = chosen.map((id) => byId.get(id)!);
+    // Spotlights in a row mix the structures too.
+    const spots = spread(
+      chosen.map((id) => byId.get(id)!),
+      (e) => e.tag,
+    );
     for (const s of spots) this.#spotted.set(s.artist.id, (this.#spotted.get(s.artist.id) ?? 0) + 1);
     const gallery = live.filter((e) => !chosen.includes(e.artist.id));
     // The first spotlight's liars start now (during the gallery, if any).
@@ -538,7 +549,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const options = buildOptions(
       spot.prompt,
       new Map([...(await lies.done)].map(([p, t]) => [p.id, t])),
-      shuffle(this.#deck.filter((t) => titleKey(t) !== titleKey(spot.prompt)), this.#rng),
+      decoyOrder(shuffle(this.#deck.filter((t) => titleKey(t.text) !== titleKey(spot.prompt)), this.#rng), spot.tag).map((t) => t.text),
       this.#rng,
       Math.min(4, lies.liars.length + 1),
     );

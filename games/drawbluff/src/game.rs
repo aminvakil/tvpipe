@@ -43,8 +43,8 @@ use tvpipe_party::{
 
 use crate::rules::{
     build_options, clean_title, deal, display_title, pick_liars, plan, reveal_order, rotate, score,
-    share, shuffle, title_key, validate_drawing, Choice, Drawing, Plan, Rng, Scoring, PHONE_LIES,
-    POINTS_ARTIST, POINTS_FOOLED, POINTS_GUESS,
+    share, shuffle, spread, title_key, validate_drawing, Choice, Drawing, Plan, Prompt, Rng,
+    Scoring, PHONE_LIES, POINTS_ARTIST, POINTS_FOOLED, POINTS_GUESS, SPREAD,
 };
 
 /// Newcomers the TV names ("+ Anna"); more: a count.
@@ -121,7 +121,7 @@ pub struct GameOptions {
     /// A seed for the shuffles (tests); random by default.
     pub seed: Option<u32>,
     /// The prompts (default [`crate::prompts`]).
-    pub prompts: Vec<String>,
+    pub prompts: Vec<Prompt>,
     /// Who may join during a game (the VIP can change it in the lobby):
     /// `Wait` from the next round, `Open` from the next drawing, `Closed`
     /// not at all; `None` leaves the party's setting (docs/drawbluff-scale.md §9).
@@ -170,6 +170,8 @@ pub enum GameEvent {
 struct Entry {
     artist: PlayerId,
     prompt: String,
+    /// The prompt's structure.
+    tag: String,
     drawing: Drawing,
 }
 
@@ -197,7 +199,7 @@ struct Tally {
 enum Phase {
     Lobby,
     Draw {
-        prompts: Vec<(PlayerId, String)>,
+        prompts: Vec<(PlayerId, Prompt)>,
         collect: Collect<Drawing>,
     },
     Gallery {
@@ -245,7 +247,7 @@ impl Phase {
 struct Table {
     o: GameOptions,
     rng: Rng,
-    deck: Vec<String>,
+    deck: Vec<Prompt>,
     /// Points per player in this game (players who left keep theirs;
     /// late joiners from their first round).
     scores: Vec<(PlayerId, i64)>,
@@ -666,7 +668,8 @@ impl Drawbluff {
                         let prompt = prompts.iter().find(|(p, _)| *p == artist)?.1.clone();
                         Some(Entry {
                             artist,
-                            prompt,
+                            prompt: prompt.text,
+                            tag: prompt.tag,
                             drawing,
                         })
                     })
@@ -720,7 +723,7 @@ impl Drawbluff {
         t.spotted.clear();
         t.fresh.clear();
         t.lies = None;
-        t.deck = shuffle(&t.o.prompts, &mut t.rng);
+        t.deck = crate::rules::deck(&t.o.prompts, &mut t.rng);
         t.round = 1;
         self.draw(party);
     }
@@ -741,10 +744,13 @@ impl Drawbluff {
         t.tally.clear();
         t.lies = None;
         let players = t.in_game(party);
-        let prompts: Vec<(PlayerId, String)> = players
+        let prompts: Vec<(PlayerId, Prompt)> = players
             .iter()
             .map(|p| {
-                let prompt = t.deck.pop().unwrap_or_else(|| "anything you like".into());
+                let prompt = t
+                    .deck
+                    .pop()
+                    .unwrap_or_else(|| Prompt::plain("anything you like"));
                 (p.clone(), prompt)
             })
             .collect();
@@ -763,7 +769,7 @@ impl Drawbluff {
             }),
         );
         for (p, prompt) in &prompts {
-            let state = json!({ "task": "draw", "prompt": display_title(prompt), "deadline": deadline, "done": false });
+            let state = json!({ "task": "draw", "prompt": display_title(&prompt.text), "deadline": deadline, "done": false });
             let state = t.with_rank(party, Some(p), state);
             set_state(party, p, state);
         }
@@ -805,10 +811,12 @@ impl Drawbluff {
         let chosen = rotate(&pool, key, t.plan.spotlights, &mut t.rng);
         t.fresh.clear();
         t.votes_left = chosen.len();
-        t.spots = chosen
+        // Spotlights in a row mix the structures too.
+        let spots: Vec<Entry> = chosen
             .iter()
             .filter_map(|id| live.iter().find(|e| e.artist.as_str() == id).cloned())
             .collect();
+        t.spots = spread(spots, |e| e.tag.clone(), SPREAD);
         for s in &t.spots {
             *t.spotted.entry(s.artist.clone()).or_default() += 1;
         }
@@ -973,6 +981,10 @@ impl Drawbluff {
             .collect();
         let spares = t.spares(&spot.prompt);
         let spares = shuffle(&spares, &mut t.rng);
+        let spares: Vec<String> = crate::rules::decoy_order(&spares, &spot.tag)
+            .into_iter()
+            .map(|p| p.text)
+            .collect();
         let min = 4.min(lies.liars.len() + 1);
         let options = build_options(&spot.prompt, &lied, &spares, &mut t.rng, min);
         if let Some(next) = t.spots.get(index + 1) {
@@ -1524,11 +1536,11 @@ impl Table {
     }
 
     /// Prompts nobody drew that are not this one: the decoys.
-    fn spares(&self, prompt: &str) -> Vec<String> {
+    fn spares(&self, prompt: &str) -> Vec<Prompt> {
         let key = title_key(prompt);
         self.deck
             .iter()
-            .filter(|t| title_key(t) != key)
+            .filter(|t| title_key(&t.text) != key)
             .cloned()
             .collect()
     }

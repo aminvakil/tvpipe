@@ -29,6 +29,15 @@
  *   gives), `shown` (`deal(options, voting, PHONE_LIES,
  *   seeded(dealSeed))`), `points`, `voters`, `seen` (`score`), `reveal`
  *   (the ids in `revealOrder`).
+ * - `prompts`: `input` (a JSON string: a prompts file), `parsed`
+ *   (`[tag, text]` of `parsePrompts`).
+ * - `spread`: `tags` (one per item), `window`, then `order` (the item
+ *   indices `spread` gives).
+ * - `deck`: `prompts` (`[tag, text]`, or `file` for data/prompts.txt),
+ *   `seed`, then `dealt` (the texts `deck(…, seeded(seed))` deals with
+ *   `pop()`, the first 40 at most).
+ * - `decoys`: `spares` (`[tag, text]`), `tag`, then `order` (the texts
+ *   of `decoyOrder`).
  */
 
 import { writeFileSync } from "node:fs";
@@ -37,13 +46,16 @@ import { fileURLToPath } from "node:url";
 import { PartyError } from "@tvpipe/party";
 
 import { doodle } from "../game/bots.ts";
-import { PROMPTS } from "../game/prompts.ts";
+import { PROMPT_LIST, PROMPTS } from "../game/prompts.ts";
 import {
   buildOptions,
   cleanTitle,
   deal,
+  deck,
+  decoyOrder,
   displayTitle,
   optionsFor,
+  parsePrompts,
   PHONE_LIES,
   pickLiars,
   plan,
@@ -53,8 +65,10 @@ import {
   seeded,
   share,
   shuffle,
+  spread,
   titleKey,
   validateDrawing,
+  type Prompt,
 } from "../game/rules.ts";
 
 export const RULES = fileURLToPath(new URL("./vectors/rules.txt", import.meta.url));
@@ -295,6 +309,35 @@ function rotateBlock(seed: number): Entries {
   ];
 }
 
+const PROMPT_FILES = [
+  "# a comment\n\n[odd]\na snail in a hurry\n  a lonely sock  \n\n[moment]\nthe moment the toast falls\n",
+  "before any tag\n[idiom]\n# inside\nraining cats and dogs\n[view]\n[drama]\nthe last cookie\n",
+  "",
+  "[Odd]\n[odd ]\nnot a [tag]\n",
+];
+
+const SPREADS: [string[], number][] = [
+  [["a", "a", "a", "b", "b", "b", "c", "c", "c"], 3],
+  [["a", "a", "a", "b", "b", "b", "c", "c", "c"], 2],
+  [["m", "m", "m", "m", "x"], 3],
+  [["a", "b", "c", "d"], 3],
+  [["a", "a", "b"], 1],
+  [["a", "a", "b", "b", "a", "c", "c", "a", "", ""], 3],
+  [[], 3],
+];
+
+function deckBlock(source: string, prompts: readonly Prompt[], seed: number): Entries {
+  const d = deck(prompts, seeded(seed));
+  const dealt: string[] = [];
+  while (d.length > 0 && dealt.length < 40) dealt.push(d.pop()!.text);
+  return [
+    ["test", "deck"],
+    ["prompts", source],
+    ["seed", String(seed)],
+    ["dealt", JSON.stringify(dealt)],
+  ];
+}
+
 function pick<T>(r: () => number, xs: readonly T[]): T {
   return xs[Math.floor(r() * xs.length)]!;
 }
@@ -320,8 +363,11 @@ export function bigScreens(): Record<string, unknown> {
   const artist = { id: "p4", name: roster[3]!.name };
   const liars = ["p4", "p9", "p17", "p23", "p30", "p41", "p48"];
   const voters = ids.filter((id) => id !== "p4" && !liars.includes(id));
-  const gallery = Array.from({ length: 8 }, (_, i) => ({ id: ids[10 + i]!, name: roster[10 + i]!.name, prompt: PROMPTS[i * 7]!, drawing: doodle(seeded(100 + i)) }));
-  const options = ["a haunted toaster", "a sad potato", "the cat's revenge", "my uncle on monday", "a very tired frog", "abstract art", "a sneaky pancake", "a convincing lie that is rather long indeed"].map((text, i) => ({ id: `o${i + 1}`, text }));
+  // The longest prompts (40 characters, as long as a lie may be): the layouts must hold them.
+  const longest = [...PROMPTS].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const gallery = Array.from({ length: 8 }, (_, i) => ({ id: ids[10 + i]!, name: roster[10 + i]!.name, prompt: i % 2 === 0 ? longest[i]! : PROMPTS[i * 7]!, drawing: doodle(seeded(100 + i)) }));
+  const long40 = "the moment you see your teacher shopping";
+  const options = ["the moment the referee blows the whistle", "a sad potato", "the cat's revenge", long40, "the fridge's view of a midnight snack", "abstract art", "a sneaky pancake", "the moment the robot becomes self aware"].map((text, i) => ({ id: `o${i + 1}`, text }));
   const names = (n: number) => voters.slice(0, n).map((id) => roster.find((p) => p.id === id)!.name);
   const item = (id: string, text: string, n: number, seen: number, o: Record<string, unknown> = {}) => ({
     id, text, truth: false, decoy: false, authors: [roster[(n * 7) % 50]!.name], voters: names(Math.min(n, 6)), count: n, seen,
@@ -357,10 +403,10 @@ export function bigScreens(): Record<string, unknown> {
           item("o4", "my uncle on monday", 2, 31, { authors: ["Maximiliane-Josephine", "Quinn2"] }),
           item("o5", "a very tired frog", 3, 31, { same: true, authors: ["Bea", "Lou"] }),
           item("o6", "abstract art", 4, 29, { decoy: true, authors: [] }),
-          item("o7", "a sneaky pancake", 6, 29),
-          item("o8", "a convincing lie that is rather long indeed", 9, 30),
+          item("o7", "the fridge's view of a midnight snack", 6, 29),
+          item("o8", long40, 9, 30, { authors: ["Maximiliane-Josephine", "Quinn2", "Bea"] }),
           item("o3", "the cat's revenge", 14, 31),
-          { id: "o1", text: "a haunted toaster", truth: true, decoy: false, authors: [], voters: names(6), count: 11, seen: 43, points: 2000, artistPoints: 2 * share(11, 1000, 43), same: false },
+          { id: "o1", text: "the moment the referee blows the whistle", truth: true, decoy: false, authors: [], voters: names(6), count: 11, seen: 43, points: 2000, artistPoints: 2 * share(11, 1000, 43), same: false },
         ],
       },
     ],
@@ -421,6 +467,26 @@ function bless(): void {
   for (let seed = 1; seed <= 12; seed++) out.push(block(liarsBlock(seed)));
   for (let seed = 1; seed <= 8; seed++) out.push(block(rotateBlock(seed)));
   for (let seed = 1; seed <= 48; seed++) out.push(block(turn(seed)));
+  for (const input of PROMPT_FILES) {
+    out.push(block([["test", "prompts"], ["input", input], ["parsed", JSON.stringify(parsePrompts(input).map((p) => [p.tag, p.text]))]]));
+  }
+  for (const [tags, window] of SPREADS) {
+    const order = spread(tags.map((_, i) => i), (i) => tags[i]!, window);
+    out.push(block([["test", "spread"], ["tags", JSON.stringify(tags)], ["window", String(window)], ["order", JSON.stringify(order)]]));
+  }
+  for (let seed = 1; seed <= 6; seed++) {
+    const r = seeded(seed * 13 + 1);
+    const tags = ["odd", "idiom", "moment", "view"].slice(0, 1 + Math.floor(r() * 4));
+    const prompts: Prompt[] = Array.from({ length: 3 + Math.floor(r() * 14) }, (_, i) => ({ tag: pick(r, tags), text: `prompt ${String.fromCharCode(97 + i)}` }));
+    out.push(block(deckBlock(JSON.stringify(prompts.map((p) => [p.tag, p.text])), prompts, seed)));
+  }
+  for (const seed of [1, 2, 3]) out.push(block(deckBlock("file", PROMPT_LIST, seed)));
+  for (let seed = 1; seed <= 4; seed++) {
+    const r = seeded(seed * 7 + 2);
+    const spares: Prompt[] = Array.from({ length: Math.floor(r() * 9) }, (_, i) => ({ tag: pick(r, ["odd", "moment", "title"]), text: `spare ${i}` }));
+    const tag = pick(r, ["odd", "moment", "title", "drama"]);
+    out.push(block([["test", "decoys"], ["spares", JSON.stringify(spares.map((p) => [p.tag, p.text]))], ["tag", tag], ["order", JSON.stringify(decoyOrder(spares, tag).map((p) => p.text))]]));
+  }
   writeFileSync(RULES, out.join("\n\n") + "\n");
   console.log(`wrote ${RULES}`);
   writeFileSync(SCREENS, JSON.stringify(bigScreens()) + "\n");

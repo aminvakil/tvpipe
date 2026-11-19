@@ -4,12 +4,16 @@ import { test } from "node:test";
 
 import { PartyError } from "@tvpipe/party";
 
+import { PROMPT_LIST } from "../game/prompts.ts";
 import {
   buildOptions,
   cleanTitle,
   deal,
+  deck,
+  decoyOrder,
   displayTitle,
   optionsFor,
+  parsePrompts,
   PHONE_LIES,
   pickLiars,
   plan,
@@ -19,9 +23,11 @@ import {
   seeded,
   share,
   shuffle,
+  spread,
   titleKey,
   validateDrawing,
   type Option,
+  type Prompt,
 } from "../game/rules.ts";
 import { drawingInput, get, has, parseVectors, RULES } from "./vectors.ts";
 
@@ -93,9 +99,30 @@ test("the shared rule vectors (test/vectors/rules.txt)", () => {
         assert.deepEqual(revealOrder(options as Option[], scoring.voters).map((o) => o.id), json("reveal"), at);
         break;
       }
+      case "prompts":
+        assert.deepEqual(parsePrompts(json("input")).map((p) => [p.tag, p.text]), json("parsed"), at);
+        break;
+      case "spread": {
+        const tags = json("tags") as string[];
+        assert.deepEqual(spread(tags.map((_, i) => i), (i) => tags[i]!, Number(get(b, "window"))), json("order"), at);
+        break;
+      }
+      case "deck": {
+        const src = get(b, "prompts");
+        const prompts: readonly Prompt[] = src === "file" ? PROMPT_LIST : (JSON.parse(src) as [string, string][]).map(([tag, text]) => ({ tag, text }));
+        const d = deck(prompts, seeded(Number(get(b, "seed"))));
+        const want = json("dealt") as string[];
+        assert.deepEqual(want.map(() => d.pop()!.text), want, at);
+        break;
+      }
+      case "decoys": {
+        const spares = (json("spares") as [string, string][]).map(([tag, text]) => ({ tag, text }));
+        assert.deepEqual(decoyOrder(spares, get(b, "tag")).map((p) => p.text), json("order"), at);
+        break;
+      }
       default:
         assert.fail(`${at}: unknown test ${kind}`);
     }
   }
-  for (const kind of ["rng", "shuffle", "title", "drawing", "plan", "share", "liars", "rotate", "turn"]) assert.ok((seen.get(kind) ?? 0) > 0, kind);
+  for (const kind of ["rng", "shuffle", "title", "drawing", "plan", "share", "liars", "rotate", "turn", "prompts", "spread", "deck", "decoys"]) assert.ok((seen.get(kind) ?? 0) > 0, kind);
 });

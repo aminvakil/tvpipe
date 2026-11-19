@@ -142,6 +142,8 @@ interface TextOpts {
   align?: "left" | "center" | "right";
   base?: "top" | "middle" | "alphabetic";
   max?: number;
+  /** With `max`: shrink the font down to this share of `size` before shortening with … */
+  shrink?: number;
 }
 
 function setFont(f: Frame, o: TextOpts): void {
@@ -151,15 +153,25 @@ function setFont(f: Frame, o: TextOpts): void {
   f.ctx.textBaseline = o.base ?? "top";
 }
 
-/** One line, shortened with … to `max` px. */
-function text(f: Frame, s: string, x: number, y: number, o: TextOpts): void {
+/** One line, shortened with … to `max` px (after shrinking, with `shrink`); returns its width. */
+function text(f: Frame, s: string, x: number, y: number, o: TextOpts): number {
   setFont(f, o);
+  if (o.shrink !== undefined && o.max !== undefined) {
+    const wide = f.ctx.measureText(s).width;
+    if (wide > o.max) {
+      // Whole pixels (fonts are set in them), rounded down to fit.
+      const px = Math.round(o.size);
+      o = { ...o, size: Math.max(Math.ceil(px * o.shrink), Math.floor((px * o.max) / wide)) };
+      setFont(f, o);
+    }
+  }
   let str = s;
   if (o.max !== undefined && f.ctx.measureText(str).width > o.max) {
     while (str.length > 1 && f.ctx.measureText(`${str}…`).width > o.max) str = str.slice(0, -1);
     str = `${str.trimEnd()}…`;
   }
   f.ctx.fillText(str, x, y);
+  return f.ctx.measureText(str).width;
 }
 
 /** Wrapped text; returns the height used. */
@@ -368,7 +380,7 @@ function gallery(f: Frame, view: Record<string, any>): void {
     f.ctx.clip();
     drawDrawing(f.ctx, it.drawing, cx - size / 2, y, size);
     f.ctx.restore();
-    text(f, it.prompt ?? "", cx, y + size + 1 * vh, { size: 2.2 * vh, weight: 600, color: C.accent, align: "center", max: cw });
+    text(f, it.prompt ?? "", cx, y + size + 1 * vh, { size: 2.2 * vh, weight: 600, color: C.accent, align: "center", max: cw, shrink: 0.7 });
     text(f, `by ${it.name ?? "?"}`, cx, y + size + 4 * vh, { size: 2 * vh, align: "center", max: cw, color: "rgba(255,253,246,0.8)" });
   });
   const liars = (s.liars ?? []).length;
@@ -403,7 +415,7 @@ function guess(f: Frame, view: Record<string, any>): void {
   opts.forEach((o, i) => {
     const y = 11 * vh + i * (oh + 1.4 * vh);
     round(f, x, y, width, oh, 1.6 * vh, C.paper);
-    text(f, o.text, x + 1.6 * vw, y + oh / 2, { size: Math.min(3.4 * vh, oh * 0.45), weight: 600, color: C.dark, base: "middle", max: width - 3.2 * vw });
+    text(f, o.text, x + 1.6 * vw, y + oh / 2, { size: Math.min(3.4 * vh, oh * 0.45), weight: 600, color: C.dark, base: "middle", max: width - 3.2 * vw, shrink: 0.7 });
   });
   const y = 11 * vh + opts.length * (oh + 1.4 * vh) + 7 * vh;
   timer(f, s.deadline, x + 6.5 * vh, Math.min(y, 87 * vh));
@@ -428,18 +440,16 @@ function reveal(f: Frame, view: Record<string, any>, t: number): void {
     const inner = width - 3.2 * vw;
     const who = revealLine(it, s.artist?.name);
     if (ih < 11 * vh) {
-      // Many answers (up to 7 liars at 50 players): the title and its tag on one line, who below.
-      const mid = y + 0.34 * ih;
-      const tagOpts: TextOpts = { font: DISPLAY, size: Math.min(1.6 * vh, 0.22 * ih), color, base: "middle", align: "right", max: inner * 0.45 };
-      setFont(f, tagOpts);
-      const tw = Math.min(f.ctx.measureText(tag).width, inner * 0.45);
-      text(f, tag, x + width - 1.6 * vw, mid, tagOpts);
-      text(f, it.text, x + 1.6 * vw, mid, { size: Math.min(2.8 * vh, 0.36 * ih), weight: 600, color: C.dark, base: "middle", max: inner - tw - 1.6 * vw });
-      text(f, who, x + 1.6 * vw, y + 0.74 * ih, { size: Math.min(1.9 * vh, 0.25 * ih), color: C.grey, base: "middle", max: inner });
+      // Many answers (up to 7 liars at 50 players): the title on one line (all of it: up to 40
+      // characters), its tag and who fell for it below.
+      text(f, it.text, x + 1.6 * vw, y + 0.34 * ih, { size: Math.min(2.8 * vh, 0.36 * ih), weight: 600, color: C.dark, base: "middle", max: inner, shrink: 0.7 });
+      const low = y + 0.74 * ih;
+      const tw = text(f, tag, x + 1.6 * vw, low, { font: DISPLAY, size: Math.min(1.5 * vh, 0.21 * ih), color, base: "middle", max: inner * 0.45 });
+      text(f, who, x + 1.6 * vw + tw + 1.2 * vw, low, { size: Math.min(1.9 * vh, 0.25 * ih), color: C.grey, base: "middle", max: inner - tw - 1.2 * vw });
       return;
     }
     text(f, tag, x + 1.6 * vw, y + 1.2 * vh, { font: DISPLAY, size: 1.9 * vh, color, max: inner });
-    text(f, it.text, x + 1.6 * vw, y + 4 * vh, { size: Math.min(3.4 * vh, ih * 0.3), weight: 600, color: C.dark, max: inner });
+    text(f, it.text, x + 1.6 * vw, y + 4 * vh, { size: Math.min(3.4 * vh, ih * 0.3), weight: 600, color: C.dark, max: inner, shrink: 0.7 });
     text(f, who, x + 1.6 * vw, y + ih - 3.6 * vh, { size: 2.2 * vh, color: C.grey, max: inner });
   });
   void t;

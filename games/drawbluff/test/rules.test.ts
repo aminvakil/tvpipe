@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { PartyError } from "@tvpipe/party";
 
-import { PROMPTS } from "../game/prompts.ts";
+import { PROMPT_LIST, PROMPTS } from "../game/prompts.ts";
 import { buildOptions, cleanTitle, deal, displayTitle, LIE_SOFT, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
 
 test("titles compare without case, accents, punctuation and a leading article", () => {
@@ -11,7 +11,7 @@ test("titles compare without case, accents, punctuation and a leading article", 
   assert.equal(titleKey("The café"), titleKey("cafe"));
   assert.notEqual(titleKey("a cactus"), titleKey("a cactuses"));
   assert.equal(cleanTitle("  hi\u0000 there  "), "hi there");
-  assert.equal(cleanTitle("x".repeat(80)).length, 40);
+  assert.equal(cleanTitle("x".repeat(80)).length, 48);
   assert.equal(new Set(PROMPTS.map(titleKey)).size, PROMPTS.length, "prompts are distinct");
 });
 
@@ -139,6 +139,13 @@ test("titles are shown alike, so formatting gives the truth away nowhere", () =>
     assert.ok([...p].length <= LIE_SOFT, p);
     assert.match(p, /^[a-z' ]+$/, p);
   }
+  // Several hundred, every structure with enough prompts to mix.
+  assert.ok(PROMPT_LIST.length >= 300, String(PROMPT_LIST.length));
+  for (const tag of ["odd", "idiom", "feeling", "moment", "secret", "invented", "contra", "view", "drama", "title"]) {
+    const n = PROMPT_LIST.filter((p) => p.tag === tag).length;
+    assert.ok(n >= 30, `${tag}: ${n}`);
+  }
+  assert.ok(PROMPT_LIST.every((p) => p.tag !== ""));
   const opts = buildOptions("A Haunted Toaster", new Map([["b", "A SPOOKY toaster!!"]]), [], seeded(1), 2);
   assert.deepEqual(opts.map((o) => o.text).sort(), ["a haunted toaster", "a spooky toaster"]);
 });

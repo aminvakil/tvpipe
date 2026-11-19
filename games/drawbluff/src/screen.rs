@@ -51,6 +51,9 @@ struct T {
     align: Align,
     base: Baseline,
     max: Option<f32>,
+    /// With `max`: shrink the font down to this share of `size` before
+    /// shortening with …
+    shrink: Option<f32>,
 }
 
 fn t(face: Face, size: f32) -> T {
@@ -61,6 +64,7 @@ fn t(face: Face, size: f32) -> T {
         align: Align::Left,
         base: Baseline::Top,
         max: None,
+        shrink: None,
     }
 }
 
@@ -93,6 +97,13 @@ impl T {
     fn max(self, max: f32) -> T {
         T {
             max: Some(max),
+            ..self
+        }
+    }
+
+    fn shrink(self, k: f32) -> T {
+        T {
+            shrink: Some(k),
             ..self
         }
     }
@@ -259,8 +270,17 @@ impl Screen {
         self.text.measure(&strip_emoji(s), &self.fonts.style(&o))
     }
 
-    /// One line, shortened with … to `max` px.
-    fn text(&mut self, f: &mut F<'_>, s: &str, x: f32, y: f32, o: T) {
+    /// One line, shortened with … to `max` px (after shrinking, with
+    /// `shrink`); returns its width.
+    fn text(&mut self, f: &mut F<'_>, s: &str, x: f32, y: f32, mut o: T) -> f32 {
+        if let (Some(k), Some(max)) = (o.shrink, o.max) {
+            let wide = self.measure(s, o);
+            if wide > max {
+                // Whole pixels (fonts are set in them), rounded down to fit.
+                let px = o.size.round().max(1.0);
+                o.size = (px * k).ceil().max((px * max / wide).floor());
+            }
+        }
         let style = self.fonts.style(&o);
         let mut s = strip_emoji(s);
         if let Some(max) = o.max {
@@ -268,6 +288,7 @@ impl Screen {
             s = self.text.ellipsize(&s, max + 0.5, &style);
         }
         self.text.draw(f.c, &s, x, y, &style);
+        self.text.measure(&s, &style)
     }
 
     /// Wrapped text (at most `max_lines`); returns the height used.
@@ -646,7 +667,7 @@ impl Screen {
             draw_drawing(f.c, &it["drawing"], x, y, size);
             let prompt = it["prompt"].as_str().unwrap_or_default();
             let o = t(Face::Semi, 2.2 * vh).color(ACCENT).center().max(cw);
-            self.text(f, prompt, cx, y + size + vh, o);
+            self.text(f, prompt, cx, y + size + vh, o.shrink(0.7));
             let by = format!("by {}", it["name"].as_str().unwrap_or("?"));
             let o = t(Face::Sans, 2.0 * vh)
                 .center()
@@ -735,7 +756,8 @@ impl Screen {
                 t(Face::Semi, size)
                     .color(DARK)
                     .middle()
-                    .max(width - 3.2 * vw),
+                    .max(width - 3.2 * vw)
+                    .shrink(0.7),
             );
         }
         let y = (11.0 * vh + opts.len() as f32 * (oh + 1.4 * vh) + 7.0 * vh).min(87.0 * vh);
@@ -801,18 +823,18 @@ impl Screen {
             let text = it["text"].as_str().unwrap_or_default();
             let who = reveal_line(it, artist);
             if ih < 11.0 * vh {
-                // Many answers (up to 7 liars at 50 players): the title and
-                // its tag on one line, who below.
-                let mid = y + 0.34 * ih;
-                let o = t(Face::Display, (1.6 * vh).min(0.22 * ih)).color(tag_color);
-                let tw = self.measure(&tag, o).min(max * 0.45);
-                let (tx, o) = (x + width - 1.6 * vw, o.middle().right().max(max * 0.45));
-                self.text(f, &tag, tx, mid, o);
+                // Many answers (up to 7 liars at 50 players): the title on
+                // one line (all of it: up to 40 characters), its tag and
+                // who fell for it below.
                 let o = t(Face::Semi, (2.8 * vh).min(0.36 * ih));
-                let o = o.color(DARK).middle().max(max - tw - 1.6 * vw);
-                self.text(f, text, x + 1.6 * vw, mid, o);
+                let o = o.color(DARK).middle().max(max).shrink(0.7);
+                self.text(f, text, x + 1.6 * vw, y + 0.34 * ih, o);
+                let low = y + 0.74 * ih;
+                let o = t(Face::Display, (1.5 * vh).min(0.21 * ih)).color(tag_color);
+                let tw = self.text(f, &tag, x + 1.6 * vw, low, o.middle().max(max * 0.45));
                 let o = t(Face::Sans, (1.9 * vh).min(0.25 * ih)).color(GREY);
-                self.text(f, &who, x + 1.6 * vw, y + 0.74 * ih, o.middle().max(max));
+                let o = o.middle().max(max - tw - 1.2 * vw);
+                self.text(f, &who, x + 1.6 * vw + tw + 1.2 * vw, low, o);
                 continue;
             }
             self.text(
@@ -828,7 +850,7 @@ impl Screen {
                 text,
                 x + 1.6 * vw,
                 y + 4.0 * vh,
-                t(Face::Semi, size).color(DARK).max(max),
+                t(Face::Semi, size).color(DARK).max(max).shrink(0.7),
             );
             self.text(
                 f,

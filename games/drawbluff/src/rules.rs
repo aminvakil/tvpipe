@@ -17,7 +17,7 @@ pub const MAX_STROKES: usize = 300;
 /// The most points in a drawing (all strokes).
 pub const MAX_POINTS: usize = 12_000;
 /// The longest title, in user-perceived characters.
-pub const MAX_TITLE: usize = 40;
+pub const MAX_TITLE: usize = 48;
 
 /// A drawing on the 1000×1000 grid: strokes of `[colour, width, x0, y0,
 /// x1, y1, …]` (a stroke with one point is a dot).
@@ -107,10 +107,10 @@ pub fn clean_title(text: &str) -> String {
     clean_text(text, MAX_TITLE)
 }
 
-/// The longest lie a phone lets you type: about the longest prompt
+/// The longest lie a phone lets you type: the longest prompt
 /// (`data/prompts.txt` stays within it), so a long title is no tell. The
 /// host accepts up to [`MAX_TITLE`].
-pub const LIE_SOFT: usize = 32;
+pub const LIE_SOFT: usize = 40;
 
 /// A title as the TV and the phones show it, the truth and the lies
 /// alike, so formatting gives nothing away (the typed text is kept):
@@ -566,6 +566,99 @@ pub fn reveal_order<'a>(options: &'a [Choice], scoring: &Scoring) -> Vec<&'a Cho
     lies.sort_by_key(|o| scoring.voters_of(&o.id).len());
     lies.extend(options.iter().filter(|o| o.truth));
     lies
+}
+
+// ---------------------------------------------------------------------------
+// Prompts (docs/drawbluff-scale.md "Prompts")
+
+/// A prompt to draw and its structure (`odd`, `idiom`, `moment`, …; ""
+/// for none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    /// What to draw.
+    pub text: String,
+    /// Its structure.
+    pub tag: String,
+}
+
+impl Prompt {
+    /// A prompt without a structure.
+    pub fn plain(text: &str) -> Prompt {
+        Prompt {
+            text: text.to_owned(),
+            tag: String::new(),
+        }
+    }
+}
+
+/// Reads `data/prompts.txt`: `[tag]` starts a structure, then one prompt
+/// per line (trimmed); blank lines and `#` comments are skipped; prompts
+/// before any `[tag]` have the tag "" (`parsePrompts` in `game/rules.ts`).
+pub fn parse_prompts(text: &str) -> Vec<Prompt> {
+    let mut out = Vec::new();
+    let mut tag = String::new();
+    for line in text.split('\n').map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let inner = line.strip_prefix('[').and_then(|l| l.strip_suffix(']'));
+        match inner {
+            Some(t) if !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase()) => {
+                tag = t.to_owned();
+            }
+            _ => out.push(Prompt {
+                text: line.to_owned(),
+                tag: tag.clone(),
+            }),
+        }
+    }
+    out
+}
+
+/// Prompts in a row among which a structure appears at most once, when it
+/// can.
+pub const SPREAD: usize = 3;
+
+/// Reorders `items` so that no tag comes twice among `window` in a row
+/// where the rest allows it: each next item is the first one left whose
+/// tag is not among the last `window - 1` taken, else not among the last
+/// `window - 2`, …, else simply the first one left (`spread` in
+/// `game/rules.ts`).
+pub fn spread<T>(items: Vec<T>, tag: impl Fn(&T) -> String, window: usize) -> Vec<T> {
+    let mut rest = items;
+    let mut out: Vec<T> = Vec::with_capacity(rest.len());
+    let mut tags: Vec<String> = Vec::new();
+    while !rest.is_empty() {
+        let mut at = 0;
+        for w in (1..window.max(1)).rev() {
+            let recent = &tags[tags.len().saturating_sub(w)..];
+            if let Some(i) = rest.iter().position(|x| !recent.contains(&tag(x))) {
+                at = i;
+                break;
+            }
+        }
+        let item = rest.remove(at);
+        tags.push(tag(&item));
+        out.push(item);
+    }
+    out
+}
+
+/// A game's deck: the prompts shuffled, then spread by structure
+/// ([`spread`]), reversed, so that `pop()` deals them in the spread order.
+pub fn deck(prompts: &[Prompt], rng: &mut Rng) -> Vec<Prompt> {
+    let mut d = spread(shuffle(prompts, rng), |p| p.tag.clone(), SPREAD);
+    d.reverse();
+    d
+}
+
+/// Decoys for a drawing: the spares of its own structure first, each part
+/// in its order.
+pub fn decoy_order(spares: &[Prompt], tag: &str) -> Vec<Prompt> {
+    let (mut same, other): (Vec<Prompt>, Vec<Prompt>) =
+        spares.iter().cloned().partition(|p| p.tag == tag);
+    same.extend(other);
+    same
 }
 
 /// A seeded generator (mulberry32), the same as `seeded()` in

@@ -12,7 +12,7 @@ const MAX_STROKES = 300;
 const MAX_POINTS = 12000;
 const WIDTHS = [8, 20, 48];
 /** The longest lie the input takes (`LIE_SOFT` in game/rules.ts and src/rules.rs). */
-const LIE_SOFT = 32;
+const LIE_SOFT = 40;
 
 // Phones are game controllers here, not documents: iOS Safari ignores
 // `user-scalable=no`, so block its pinch and double-tap zoom gestures and

@@ -163,10 +163,59 @@ spacing collapses, everything is lowercase, trailing `.` `!` `?` `…` and
 surrounding quotes go (`"A Cat!"` → `a cat`); emoji are already gone
 (`cleanTitle`). `titleKey` works on that form, so `a cat` = `A Cat.`.
 The prompts (`data/prompts.txt`) are already in it: lowercase letters,
-spaces and apostrophes, at most 32 characters (three longer ones were
-shortened; both test suites check it). The phone's lie input takes at
-most 32 characters too (`LIE_SOFT`; the host still accepts up to 40),
-with `autocapitalize="none"` and autocorrect left on.
+spaces and apostrophes, at most 40 characters (both test suites check
+it). The phone's lie input takes at most 40 characters too (`LIE_SOFT`,
+the longest prompt; the host still accepts up to 48), with
+`autocapitalize="none"` and autocorrect left on.
+
+### Prompts
+
+The first prompts were all one shape ("a nervous cactus": an adjective
+and a thing, or a thing in a place): quick to draw, quick to guess, and
+the lies all sounded alike. `data/prompts.txt` now has 407 prompts in
+ten structures, so a round mixes kinds of drawing and kinds of lie:
+
+| Tag | Structure | Example | Prompts |
+|---|---|---|---|
+| `odd` | odd combinations | a lonely lighthouse at a party | 46 |
+| `idiom` | idioms taken literally | raining cats and dogs | 50 |
+| `feeling` | abstract ideas and feelings | the fear of mondays | 42 |
+| `moment` | the moment when … | the moment the ice cream falls | 38 |
+| `secret` | the secret lives of things | what the fridge does at night | 39 |
+| `invented` | invented jobs, sports, holidays | a puddle inspector | 40 |
+| `contra` | misleading or contradictory pairs | a shy fireworks show | 42 |
+| `view` | an unusual point of view | the world seen by an ant | 36 |
+| `drama` | tiny dramas | the last cookie standoff | 38 |
+| `title` | famous-sounding invented titles | the phantom of the bakery | 36 |
+
+51 of the 144 old prompts stayed, sorted into the structures; the
+plain ones went. All are written for drawbluff, drawable, family
+friendly and in the display form.
+
+- **Format**: `[tag]` lines start a structure, then one prompt per
+  line (`parsePrompts` / `parse_prompts`; blank lines and `#` comments
+  skipped; prompts before any tag have the tag "").
+- **Length**: 40 characters at most (was 32): "the moment …" and the
+  points of view need it (the longest: "the moment the referee blows the
+  whistle"). The lie input follows (`LIE_SOFT` 40), so a long truth is
+  no tell. Checked at 40 in every layout: the phone's prompt and input
+  wrap; the TV's options, the reveal's lines and the gallery's captions
+  shrink the font to fit (down to 70 %) before they would shorten with
+  … (video screens: `shrink`; screens-50.json has 40-character options,
+  answers and captions); the 50-player reveal now puts the title on its
+  own line and the tag in front of who fell for it.
+- **Mixing** (`deck`, rule vectors `prompts`, `spread`, `deck` — one of
+  them on the real file in both hosts — and `decoys`): a game's deck is
+  the prompts shuffled with the game's seeded rng, then spread: each
+  next prompt is the first one left whose structure is not among the
+  last two (`SPREAD` 3: no structure twice among three in a row), else
+  not the last one, else the first one left. Players get consecutive
+  prompts, so every round mixes the structures; the spotlights are
+  spread the same way after the rotation picked them, so the TV never
+  shows two "the moment …" in a row while it can avoid it.
+- **Decoys** (too few lies for a drawing) come from the drawing's own
+  structure first (`decoyOrder` / `decoy_order`): a "moment" truth
+  gets "moment" decoys, which look like it, and are better bluffs.
 
 ## 7. Scoring: per exposure
 
