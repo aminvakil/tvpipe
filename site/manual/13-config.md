@@ -33,4 +33,5 @@ tvpipe has no configuration file. It keeps two files and reads a few environment
 | `TVPIPE_BROWSER` | The browser for `share URL`. |
 | `TVPIPE_OPENTUNNEL_API` | A self-hosted OpenTunnel service. |
 | `TVPIPE_OPENTUNNEL_DIR` | Another directory for the `opentunnel/` files. |
+| `TVPIPE_NO_QR` | `1`: no QR codes of public links. |
 | `SSL_CERT_FILE` | More certificates to trust when connecting to OpenTunnel, for example behind a company proxy. |

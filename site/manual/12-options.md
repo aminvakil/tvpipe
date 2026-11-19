@@ -56,6 +56,7 @@ These need `--to browser`.
 | `--new-token` | A new address for the player page. Old ones stop working. |
 | `--tunnel[=PROVIDER]` | Also on a public link: `cloudflare`, the default, or `opentunnel`. See [Public links](links.md). |
 | `--tunnel-ttl MIN` | New viewers can join over the link for MIN minutes. |
+| `--no-qr` | No QR code of the public link in the terminal. |
 
 ## Share page
 
@@ -66,6 +67,7 @@ These need `share` without a URL.
 | `--tunnel[=PROVIDER]` | The share page on a public link. See [Public links](links.md). |
 | `--tunnel-ttl MIN` | The link lets people in for MIN minutes. Default 60, `0` is no limit. |
 | `-y`, `--yes` | Show a share from elsewhere without asking first. |
+| `--no-qr` | No QR code of the public link in the terminal. |
 
 ## Encoders
 

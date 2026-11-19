@@ -23,5 +23,6 @@ $ tvpipe -v play --to TV movie.mp4
 | No receivers found | Make sure the computer and the TV are on the same network. Try `--interface`, or give `--to` the address. |
 | Windows asks to allow tvpipe | Allow it. Apple TVs need to reach tvpipe on your computer. |
 | No sound in a browser tab | Click the page once. |
+| An Apple TV fails with `fairplay-required` | This tvpipe was built without FairPlay. Use a release, or build it with the default features. |
 | tvpipe does not stop | Press `Ctrl-C` a second time. |
 | A site does not show with `share URL` | It refuses controlled browsers. See [limitations](web-page.md#s4). |

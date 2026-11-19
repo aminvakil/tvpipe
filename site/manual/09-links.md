@@ -22,7 +22,9 @@ $ tvpipe preview movie.mp4 --tunnel
 $ tvpipe screen --to browser --tunnel=opentunnel
 ```
 
-tvpipe prints the link. At most 4 people can watch over it. Each of them gets a full copy of the stream, so your upload speed limits how many can watch.
+tvpipe prints the link. In a terminal it also draws the link as a QR code, so a phone can open it by scanning the screen. `--no-qr`, or `TVPIPE_NO_QR=1`, turns that off.
+
+At most 4 people can watch over a link. Each of them gets a full copy of the stream, so your upload speed limits how many can watch.
 
 ## Sharing to your TV from elsewhere
 
