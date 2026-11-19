@@ -278,10 +278,12 @@ fn event_shapes() {
         error_event(&e).to_json(),
         r#"{"type":"error","kind":"not-found","message":"x"}"#
     );
-    let v = with_error(
-        event("receiver").with("name", "TV").with("state", "failed"),
+    let v = Event::Receiver(crate::events::ReceiverEvent::new(
+        "TV",
+        None,
+        crate::events::ReceiverState::Failed,
         Some(&e),
-    );
+    ));
     assert_eq!(
         v.to_json(),
         r#"{"type":"receiver","name":"TV","state":"failed","error":"x"}"#

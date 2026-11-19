@@ -16,9 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use crate::codec::json::Value;
 use crate::error::{Error, Result};
-use crate::events::{Event, Events};
+use crate::events::{EndInfo, EndReason, ErrorInfo, Event, Events, Hello};
 use crate::media::slrw;
 
 /// The protocol version in `hello`. New fields and event types do not
@@ -32,35 +31,10 @@ pub const MAX_COMMAND: u32 = 64 << 10;
 /// is two messages: the header and the payload).
 const FORWARD_QUEUE: usize = 16;
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
 static END_SENT: AtomicBool = AtomicBool::new(false);
 
-/// Turns the machine interface on (`main`, before anything logs).
-pub fn enable() {
-    ENABLED.store(true, Ordering::SeqCst);
-}
-
-pub fn enabled() -> bool {
-    ENABLED.load(Ordering::Relaxed)
-}
-
-/// A new event object of `ty`.
-pub fn event(ty: &str) -> Value {
-    Value::object().with("type", ty)
-}
-
-/// Writes `event` as one line on stdout (nothing without `--machine`).
-/// A closed stdout is ignored: the parent stopped listening.
-pub fn emit(event: Value) {
-    if !enabled() {
-        return;
-    }
-    if event["type"].as_str() == Some("end") {
-        END_SENT.store(true, Ordering::SeqCst);
-    }
-    write_line(&event.to_json());
-}
-
+/// Writes one line on stdout. A closed stdout is ignored: the parent
+/// stopped listening.
 fn write_line(line: &str) {
     let mut out = io::stdout().lock();
     let _ = out.write_all(line.as_bytes());
@@ -70,11 +44,11 @@ fn write_line(line: &str) {
 
 /// The session's events as lines on stdout.
 pub fn events() -> Events {
-    Events::to(|e| emit_event(&e))
+    Events::to(|e| emit(&e))
 }
 
 /// Writes one event line.
-pub fn emit_event(e: &Event) {
+pub fn emit(e: &Event) {
     if matches!(e, Event::End(_)) {
         END_SENT.store(true, Ordering::SeqCst);
     }
@@ -83,48 +57,23 @@ pub fn emit_event(e: &Event) {
 
 /// `hello`, the first event.
 pub fn hello(command: &str) {
-    emit(
-        event("hello")
-            .with("protocol", PROTOCOL)
-            .with("version", env!("CARGO_PKG_VERSION"))
-            .with("command", command),
-    );
+    emit(&Event::Hello(Hello::new(
+        PROTOCOL,
+        env!("CARGO_PKG_VERSION"),
+        command,
+    )));
 }
 
 /// `end`, unless the session already sent one (with its details).
-pub fn end_if_unsent(reason: &str) {
+pub fn end_if_unsent(reason: EndReason) {
     if !END_SENT.load(Ordering::SeqCst) {
-        emit(event("end").with("reason", reason));
+        emit(&Event::End(EndInfo::new(reason)));
     }
 }
 
 /// `error`, the last event of a failed command.
-pub fn error_event(e: &Error) -> Value {
-    event("error")
-        .with("kind", e.kind().id())
-        .with_opt("code", e.code())
-        .with("message", e.to_string())
-        .with_opt("device", e.device())
-}
-
-/// The error's fields for a `receiver` event.
-fn with_error(v: Value, e: Option<&Error>) -> Value {
-    match e {
-        Some(e) => v.with("error", e.to_string()).with_opt("code", e.code()),
-        None => v,
-    }
-}
-
-/// A `receiver` state change.
-pub fn receiver(name: &str, protocol: Option<&str>, state: &str, error: Option<&Error>) {
-    if !enabled() {
-        return;
-    }
-    let v = event("receiver")
-        .with("name", name)
-        .with_opt("protocol", protocol)
-        .with("state", state);
-    emit(with_error(v, error));
+pub fn error_event(e: &Error) -> Event {
+    Event::Error(ErrorInfo::from(e))
 }
 
 /// The back channel of an encoded SLRW input in machine mode: each
@@ -217,7 +166,7 @@ pub fn start_router(stop: crate::util::stop::Stop) {
         io::stdin(),
         Hooks {
             stop: Box::new(move || stop.request()),
-            keyframe: Box::new(|| emit(event("keyframe"))),
+            keyframe: Box::new(|| emit(&Event::Keyframe)),
         },
     );
     let _ = ROUTER.set(r);

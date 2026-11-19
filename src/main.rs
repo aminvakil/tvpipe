@@ -37,9 +37,7 @@ fn main() -> ExitCode {
         log::Level::Info
     };
     let installed = if global.machine {
-        log::set_logger(level, |r| {
-            machine::emit_event(&events::Event::Log(r.clone()))
-        })
+        log::set_logger(level, |r| machine::emit(&events::Event::Log(r.clone())))
     } else {
         let start = std::time::Instant::now();
         log::set_logger(level, move |r| {
@@ -61,7 +59,6 @@ fn main() -> ExitCode {
     let mut ctx = ctx::Ctx::new();
     if global.machine {
         ctx.events = machine::events();
-        machine::enable();
         machine::hello(command.name());
         machine::start_router(ctx.stop.clone());
     }
@@ -126,7 +123,7 @@ fn main() -> ExitCode {
     };
     let report = |err: &error::Error| {
         if global.machine {
-            machine::emit(machine::error_event(err));
+            machine::emit(&machine::error_event(err));
         } else {
             eprintln!("error: {err}");
         }
@@ -136,16 +133,16 @@ fn main() -> ExitCode {
     if util::interrupt::signalled() {
         match rv {
             Err(err) => report(&err),
-            Ok(()) => machine::end_if_unsent("stopped"),
+            Ok(()) => machine::end_if_unsent(events::EndReason::Stopped),
         }
         return ExitCode::from(130);
     }
     match rv {
         Ok(()) => {
             machine::end_if_unsent(if ctx.stop.requested() {
-                "stopped"
+                events::EndReason::Stopped
             } else {
-                "done"
+                events::EndReason::Done
             });
             ExitCode::SUCCESS
         }
