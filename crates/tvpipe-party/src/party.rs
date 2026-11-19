@@ -499,7 +499,7 @@ impl ScreenWatch {
     }
 }
 
-/// The party state without I/O: owned by [`Party`](crate::Party)(crate::Party).
+/// The party state without I/O: owned by [`Party`](crate::Party).
 pub(crate) struct Core {
     pub code: String,
     pub join_key: String,
