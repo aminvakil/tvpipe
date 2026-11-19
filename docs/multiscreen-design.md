@@ -1,6 +1,7 @@
 # Multi-screen games in Rust (design)
 
-Status: proposal, nothing built. Builds on `docs/party-design.md` (the
+Status: decided (§10), being built in the order of §8.
+Builds on `docs/party-design.md` (the
 Node-first party library as built: `@tvpipe/party`, drawbluff) and
 `docs/rust-sdk-design.md` (the in-process `tvpipe` library, 0.2.0).
 
@@ -20,7 +21,7 @@ Contents: 1. crates and the game author's view, 2. transport (WebSocket,
 WebRTC: `webrtc`/`rtc` vs `str0m` vs Chrome as the peer, measured), 3.
 join modes (tunnel, LAN), 4. the reference game: drawbluff in Rust, 5.
 the TV screen rendered in Rust, 6. shipping and security, 7. per-player
-video (design only), 8. plan, 9. questions for the owner.
+video (design only), 8. plan, 9. questions for the owner, 10. decisions.
 
 ## 1. Crates and the game author's view
 
@@ -718,3 +719,70 @@ opt-in, WASM controllers (game code compiled for the phone).
 10. **Node as the oracle** for the first protocol vectors (step 2), so
     the Rust server is built against the implementation that already
     passed live checks?
+
+## 10. Decisions
+
+The owner's answers to §9 (2026-11-19):
+
+1. **`rtc` is allowed** as an optional dependency of `tvpipe-party`
+   behind the `webrtc` feature, never in `tvpipe` itself.
+2. **No async** in `tvpipe-party` (nor in `tvpipe-canvas`): threads and
+   blocking I/O, sans-IO `rtc` driven from our threads.
+3. **`tvpipe-party` and `tvpipe-canvas` are separate published crates**,
+   versioned in lockstep with `tvpipe`.
+4. **The hidden `tvpipe::__web` module** with an exact version pin
+   (`tvpipe = { version = "=0.x.y" }`) is how the party crate reaches
+   tvpipe's HTTP/WebSocket code.
+5. **Emoji are stripped on the TV** (drawn names lose them; phones,
+   being DOM, show them). No emoji font.
+6. **No HTTPS-on-LAN name service.** Hybrid when online, plain HTTP
+   when offline.
+7. **Default join mode: tunnel**, the LAN link when no tunnel comes up
+   (offline). `Join::Auto` as in §3.
+8. **Not serde: [`deser`](https://crates.io/crates/deser)** (the owner's
+   crate) as an optional feature for game-defined message types; the
+   hand-rolled `Value` and `json!` stay the default (§10.1).
+9. **Both drawbluff hosts stay** (Node and Rust), sharing `web/`, the
+   prompts and the rule vectors.
+10. **Node is the reference** for the first protocol vectors (§8 step 2).
+
+The dependency policy for the new crates therefore reads: `tvpipe`
+keeps `ring` and optional `rustls` (and `argument` in `tvpipe-cli`);
+`tvpipe-party` depends on `tvpipe`, `ring`, and optionally `rtc`
+(`webrtc`) and `deser` (`deser`); `tvpipe-canvas` on nothing.
+
+### 10.1 `deser` integration
+
+State checked 2026-11-19: `deser` 0.10.2 (Apache-2.0, MSRV 1.88,
+"experimental" in its README), a facade over `deser-core` with the
+derive macros behind the `derive` feature. Its tree is small: `deser`,
+`deser-core`, and with `derive` `deser-derive` + `syn` 3, `quote`,
+`proc-macro2`, `unicode-ident`. Serialization is event based
+(`Serialize::serialize` returns an `Emit` of atoms, sequences and maps;
+a `Serializer` drives the events, a `Deserializer` feeds them to a type's
+sink through a `DeserializeDriver`), it does not recurse on the stack,
+rejects duplicate keys by default and has limits in a `Context`: a good
+fit for untrusted phone data. `deser-value`'s `convert.rs` (≈ 430 lines)
+is the model for converting between a dynamic value and typed data.
+
+Design (feature `deser` of `tvpipe-party`, dependency `deser = "0.10"`
+without default features beyond `std`; games add `deser` with `derive`
+themselves):
+
+- `impl deser::Serialize for Value` and `impl deser::Deserialize for
+  Value`: a game type may embed a raw `Value` field.
+- `tvpipe_party::to_value(&T) -> Result<Value>` (`T: Serialize`, via a
+  `deser::ser::Serializer` whose events build a `Value`) and
+  `from_value::<T>(&Value) -> Result<T>` (`T: Deserialize`, via a
+  `deser::de::Deserializer` emitting the value's events). No JSON text in
+  between: the wire JSON is parsed once by our own parser (which already
+  enforces sizes and depth), then converted.
+- Typed conveniences on top: `action.data_as::<T>()` (a conversion error
+  becomes the reply `bad-data` with deser's path to the field), and
+  `view.set_typed(&T)` / `player.state().set_typed(&T)`.
+- Without the feature the same game code is written with `Value`
+  accessors and `json!`; the wire format is identical, so a phone cannot
+  tell which a game uses.
+- The `deser` version is pinned to its minor (`0.10`): it is
+  pre-1.0 and experimental, and only the conversion module touches it,
+  so a breaking `deser` release is a one-file change here.
