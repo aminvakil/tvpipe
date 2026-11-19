@@ -56,6 +56,7 @@ use tvpipe::{QrCode, Tunnel, TunnelProvider};
 
 pub use assets::{Asset, Assets};
 pub use collect::Collect;
+pub use names::{clean_text, fold, name_key, MAX_NAME};
 pub use party::{
     Action, Event, Limits, Moderate, Moderation, PartyError, Player, PlayerId, Role, ScreenWatch,
     Source, State, PROTOCOL,

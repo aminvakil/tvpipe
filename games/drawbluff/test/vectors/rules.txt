@@ -1,0 +1,918 @@
+# drawbluff's rules, written by `node test/vectors.ts --bless` from game/rules.ts
+
+# (the reference); replayed by test/vectors.test.ts and src/rules.rs.
+
+test = rng
+seed = 0
+values = [1144304738,1416247,958946056,627933444,2007157716,2340967985,2642484575,2787370982]
+
+test = rng
+seed = 1
+values = [2693262067,11749833,2265367787,4213581821,4159151403,1207330352,2632122864,3095568220]
+
+test = rng
+seed = 7
+values = [50271532,266108690,4195786334,3002305430,2239590375,1741702388,2002453909,1030470827]
+
+test = rng
+seed = 42
+values = [2581720956,1925393290,3661312704,2876485805,750819978,2261697747,1173505300,2683257857]
+
+test = rng
+seed = 3735928559
+values = [4043151706,1147597007,3315858022,1538288752,2042435954,3600176436,484360372,1362401224]
+
+test = rng
+seed = 4294967295
+values = [3850105811,813802916,3073704848,4054706436,3630262831,2315588663,2922715533,2042566601]
+
+test = shuffle
+seed = 1
+n = 1
+order = [0]
+
+test = shuffle
+seed = 1
+n = 2
+order = [0,1]
+
+test = shuffle
+seed = 7
+n = 5
+order = [3,1,2,4,0]
+
+test = shuffle
+seed = 42
+n = 10
+order = [0,7,3,5,2,1,8,9,4,6]
+
+test = shuffle
+seed = 3
+n = 52
+order = [15,35,47,50,12,2,5,4,21,17,6,20,42,51,33,13,26,38,39,14,44,40,29,10,19,27,41,34,0,31,25,16,45,9,24,43,32,30,18,28,48,8,23,11,7,46,49,36,3,22,1,37]
+
+test = title
+input = "A Nervous  Cactus!"
+clean = "A Nervous Cactus!"
+key = "nervouscactus"
+
+test = title
+input = "nervous cactus"
+clean = "nervous cactus"
+key = "nervouscactus"
+
+test = title
+input = "The café"
+clean = "The café"
+key = "cafe"
+
+test = title
+input = "cafe"
+clean = "cafe"
+key = "cafe"
+
+test = title
+input = "an apple"
+clean = "an apple"
+key = "apple"
+
+test = title
+input = "an"
+clean = "an"
+key = "an"
+
+test = title
+input = "a"
+clean = "a"
+key = "a"
+
+test = title
+input = "the the cat"
+clean = "the the cat"
+key = "thecat"
+
+test = title
+input = "theatre"
+clean = "theatre"
+key = "theatre"
+
+test = title
+input = "a-b-c"
+clean = "a-b-c"
+key = "bc"
+
+test = title
+input = "  hi\u0000 there  "
+clean = "hi there"
+key = "hithere"
+
+test = title
+input = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+clean = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+test = title
+input = "Ⅻ angry men"
+clean = "Ⅻ angry men"
+key = "xiiangrymen"
+
+test = title
+input = "½ a sandwich"
+clean = "½ a sandwich"
+key = "12asandwich"
+
+test = title
+input = "ΟΔΟΣ"
+clean = "ΟΔΟΣ"
+key = "οδος"
+
+test = title
+input = "İstanbul"
+clean = "İstanbul"
+key = "istanbul"
+
+test = title
+input = "Straße"
+clean = "Straße"
+key = "straße"
+
+test = title
+input = "ﬁsh ﬂakes"
+clean = "ﬁsh ﬂakes"
+key = "fishflakes"
+
+test = title
+input = "ｆｕｌｌ ｗｉｄｔｈ"
+clean = "ｆｕｌｌ ｗｉｄｔｈ"
+key = "fullwidth"
+
+test = title
+input = "Ⓐ circled"
+clean = "Ⓐ circled"
+key = "circled"
+
+test = title
+input = "🅐 negative"
+clean = "🅐 negative"
+key = "negative"
+
+test = title
+input = "東京タワー"
+clean = "東京タワー"
+key = "東京タワー"
+
+test = title
+input = "한국어 제목"
+clean = "한국어 제목"
+key = "한국어제목"
+
+test = title
+input = "🍕 pizza 🍕"
+clean = "🍕 pizza 🍕"
+key = "pizza"
+
+test = title
+input = "👩‍👩‍👧 family"
+clean = "👩‍👩‍👧 family"
+key = "family"
+
+test = title
+input = "!!!"
+clean = "!!!"
+key = ""
+
+test = title
+input = "   "
+clean = ""
+key = ""
+
+test = title
+input = "été"
+clean = "été"
+key = "ete"
+
+test = title
+input = "Ǆungla"
+clean = "Ǆungla"
+key = "dzungla"
+
+test = title
+input = "٣ cats"
+clean = "٣ cats"
+key = "٣cats"
+
+test = title
+input = "rock'n'roll"
+clean = "rock'n'roll"
+key = "rocknroll"
+
+test = title
+input = "A\tB\nC"
+clean = "A B C"
+key = "bc"
+
+test = title
+input = "‮evil"
+clean = "evil"
+key = "evil"
+
+test = title
+input = "zero​width"
+clean = "zerowidth"
+key = "zerowidth"
+
+test = drawing
+input = {"strokes":[[1,500,-5,2000,10.4,20.6]]}
+output = {"strokes":[[1,120,0,1000,10,21]]}
+
+test = drawing
+input = {"strokes":[]}
+output = {"strokes":[]}
+
+test = drawing
+input = {"strokes":[[0,1,0.5,1.5,2.5,-0.5,999.5,1000.49]]}
+output = {"strokes":[[0,2,1,2,3,0,1000,1000]]}
+
+test = drawing
+input = {"strokes":[[7,2.5,3,4],[6,119.5,1,1,2,2]]}
+output = {"strokes":[[7,3,3,4],[6,120,1,1,2,2]]}
+
+test = drawing
+input = {"strokes":[[1,4,1,1]]}
+output = {"strokes":[[1,4,1,1]]}
+
+test = drawing
+input = {"strokes":[[0,-10,5,5]]}
+output = {"strokes":[[0,2,5,5]]}
+
+test = drawing
+input = null
+error = bad-drawing
+
+test = drawing
+input = {}
+error = bad-drawing
+
+test = drawing
+input = []
+error = bad-drawing
+
+test = drawing
+input = {"strokes":{}}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[1,2,3]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[1,2,3,4,5]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[9,2,3,4]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[-1,2,3,4]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[1.5,2,3,4]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[1,2,"x",4]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[1,2,true,4]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[1,2,null,4]]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":["1234"]}
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[0,4,1,1]]}
+repeat = 300
+output = input
+
+test = drawing
+input = {"strokes":[[0,4,1,1]]}
+repeat = 301
+error = bad-drawing
+
+test = drawing
+input = {"strokes":[[0,4]]}
+pad = 24000
+output = input
+
+test = drawing
+input = {"strokes":[[0,4]]}
+pad = 24002
+error = bad-drawing
+
+test = turn
+artist = "p4"
+truth = "a frog prince on a diet"
+lies = [["p1","A FROG PRINCE ON A DIET!"],["p2","a very tired frog"]]
+spares = ["a chef cooking in space","an elevator to nowhere","a karate kangaroo","a knight afraid of the dark","a bored astronaut","a cyclops at the eye doctor"]
+seed = 1
+min = 4
+round = 2
+votes = [["p2","o4"],["p3","o2"]]
+options = [{"id":"o4","text":"an elevator to nowhere","truth":false,"authors":[],"decoy":true},{"id":"o1","text":"a very tired frog","truth":false,"authors":["p2"],"decoy":false},{"id":"o2","text":"a frog prince on a diet","truth":true,"authors":[],"decoy":false},{"id":"o3","text":"a chef cooking in space","truth":false,"authors":[],"decoy":true}]
+shown = {"p1":["o4","o1","o2","o3"],"p2":["o4","o2","o3"],"p3":["o4","o1","o2","o3"],"p4":["o4","o1","o2","o3"]}
+points = {"p3":2000,"p4":2000}
+voters = {"o4":["p2"],"o1":[],"o2":["p3"],"o3":[]}
+reveal = ["o4","o2"]
+
+test = turn
+artist = "p3"
+truth = "a sad clown at a party"
+lies = [["p1","a dancing lamp"],["p2","A SAD CLOWN AT A PARTY!"],["p5","a very tired frog"]]
+spares = ["an egg about to hatch something weird","a goat on a mountain of laundry","a pigeon stealing fries","a mole playing golf","a trampoline for elephants","a flamingo doing yoga"]
+seed = 2
+min = 4
+round = 2
+votes = [["p1","o3"],["p2","o2"],["p5","o4"]]
+options = [{"id":"o1","text":"a dancing lamp","truth":false,"authors":["p1"],"decoy":false},{"id":"o4","text":"an egg about to hatch something weird","truth":false,"authors":[],"decoy":true},{"id":"o3","text":"a sad clown at a party","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"a very tired frog","truth":false,"authors":["p5"],"decoy":false}]
+shown = {"p1":["o4","o3","o2"],"p2":["o1","o4","o3","o2"],"p3":["o1","o4","o3","o2"],"p4":["o1","o4","o3","o2"],"p5":["o1","o4","o3"]}
+points = {"p1":2000,"p3":2000,"p5":1000}
+voters = {"o1":[],"o4":["p5"],"o3":["p1"],"o2":["p2"]}
+reveal = ["o4","o2","o3"]
+
+test = turn
+artist = "p4"
+truth = "a fox in socks"
+lies = [["p1","a dancing lamp"],["p2","abstract art"],["p5","Abstract   art"]]
+spares = ["an elevator to nowhere","a wizard stuck in traffic","a family of snowmen","a smartphone addicted to people","a mermaid at the gym","the abominable snowball"]
+seed = 3
+min = 4
+round = 1
+votes = [["p1","o2"],["p2","o1"],["p3","o4"],["p5","o3"]]
+options = [{"id":"o1","text":"a dancing lamp","truth":false,"authors":["p1"],"decoy":false},{"id":"o4","text":"an elevator to nowhere","truth":false,"authors":[],"decoy":true},{"id":"o3","text":"a fox in socks","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"abstract art","truth":false,"authors":["p2","p5"],"decoy":false}]
+shown = {"p1":["o4","o3","o2"],"p2":["o1","o4","o3"],"p3":["o1","o4","o3","o2"],"p4":["o1","o4","o3","o2"],"p5":["o1","o4","o3"]}
+points = {"p2":500,"p5":1500,"p1":500,"p4":1000}
+voters = {"o1":["p2"],"o4":["p3"],"o3":["p5"],"o2":["p1"]}
+reveal = ["o1","o4","o2","o3"]
+
+test = turn
+artist = "p4"
+truth = "a penguin on vacation"
+lies = [["p1","abstract art"],["p2","a dancing lamp"],["p3","A PENGUIN ON VACATION!"],["p6","A PENGUIN ON VACATION!"],["p7","a sad potato"]]
+spares = ["a broccoli bodybuilder","a microwave meal for a king","the last slice of pizza","a dog walking a human","a bridge made of spaghetti","a bird building a skyscraper"]
+seed = 4
+min = 4
+round = 2
+votes = [["p1","o4"],["p2","nope"],["p3","o4"],["p5","o4"],["p6","o2"],["p7","o2"]]
+options = [{"id":"o1","text":"abstract art","truth":false,"authors":["p1"],"decoy":false},{"id":"o2","text":"a dancing lamp","truth":false,"authors":["p2"],"decoy":false},{"id":"o4","text":"a penguin on vacation","truth":true,"authors":[],"decoy":false},{"id":"o3","text":"a sad potato","truth":false,"authors":["p7"],"decoy":false}]
+shown = {"p1":["o2","o4","o3"],"p2":["o1","o4","o3"],"p3":["o1","o2","o4","o3"],"p4":["o1","o2","o4","o3"],"p5":["o1","o2","o4","o3"],"p6":["o1","o2","o4","o3"],"p7":["o1","o2","o4"]}
+points = {"p1":2000,"p4":6000,"p3":2000,"p5":2000,"p2":2000}
+voters = {"o1":[],"o2":["p6","p7"],"o4":["p1","p3","p5"],"o3":[]}
+reveal = ["o2","o4"]
+
+test = turn
+artist = "p6"
+truth = "a pumpkin with stage fright"
+lies = [["p1","a tiny king on a huge throne"],["p2","A PUMPKIN WITH STAGE FRIGHT!"],["p3","a dancing lamp"],["p4","the floor is lava"],["p5","a confused banana"],["p7","a jellyfish in a hat shop"],["p8","a sneaky pancake"]]
+spares = ["a worm with glasses","a tree with a haircut","a mermaid at the gym","a microwave meal for a king","a library for ghosts","a dog walking a human"]
+seed = 5
+min = 4
+round = 2
+votes = [["p1","o6"],["p2","o6"],["p3","o1"],["p4","o3"],["p5","o7"],["p6","o4"],["p7","o6"],["p8","o2"]]
+options = [{"id":"o3","text":"the floor is lava","truth":false,"authors":["p4"],"decoy":false},{"id":"o5","text":"a jellyfish in a hat shop","truth":false,"authors":["p7"],"decoy":false},{"id":"o7","text":"a pumpkin with stage fright","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"a dancing lamp","truth":false,"authors":["p3"],"decoy":false},{"id":"o1","text":"a tiny king on a huge throne","truth":false,"authors":["p1"],"decoy":false},{"id":"o6","text":"a sneaky pancake","truth":false,"authors":["p8"],"decoy":false},{"id":"o4","text":"a confused banana","truth":false,"authors":["p5"],"decoy":false}]
+shown = {"p1":["o3","o5","o7","o2","o6","o4"],"p2":["o3","o5","o7","o2","o1","o6","o4"],"p3":["o3","o5","o7","o1","o6","o4"],"p4":["o5","o7","o2","o1","o6","o4"],"p5":["o3","o5","o7","o2","o1","o6"],"p6":["o3","o5","o7","o2","o1","o6","o4"],"p7":["o3","o7","o2","o1","o6","o4"],"p8":["o3","o5","o7","o2","o1","o4"]}
+points = {"p8":3000,"p1":1000,"p5":2000,"p6":2000,"p3":1000}
+voters = {"o3":[],"o5":[],"o7":["p5"],"o2":["p8"],"o1":["p3"],"o6":["p1","p2","p7"],"o4":[]}
+reveal = ["o2","o1","o6","o7"]
+
+test = turn
+artist = "p3"
+truth = "a polite tornado"
+lies = [["p1","a sad potato"],["p2","A sad potato!"],["p4","the evil teapot"],["p5","A POLITE TORNADO!"],["p6","A POLITE TORNADO!"]]
+spares = ["a sock puppet uprising","a fountain of soup","a snake wearing a scarf","a wizard stuck in traffic","an egg about to hatch something weird","a vampire at the dentist"]
+seed = 6
+min = 4
+round = 1
+votes = [["p1","o4"],["p2","o3"],["p4","o1"],["p5","o1"],["p6","o4"]]
+options = [{"id":"o4","text":"a sock puppet uprising","truth":false,"authors":[],"decoy":true},{"id":"o1","text":"a sad potato","truth":false,"authors":["p1","p2"],"decoy":false},{"id":"o3","text":"a polite tornado","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"the evil teapot","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o4","o3","o2"],"p2":["o4","o3","o2"],"p3":["o4","o1","o3","o2"],"p4":["o4","o1","o3"],"p5":["o4","o1","o3","o2"],"p6":["o4","o1","o3","o2"]}
+points = {"p2":2000,"p3":1000,"p1":1000}
+voters = {"o4":["p1","p6"],"o1":["p4","p5"],"o3":["p2"],"o2":[]}
+reveal = ["o4","o1","o3"]
+
+test = turn
+artist = "p2"
+truth = "a llama wearing pajamas"
+lies = [["p1","A sad potato!"]]
+spares = ["a banana in pajamas","a sad clown at a party","a parrot giving a speech","a lonely sock","a polite tornado","a fox in socks"]
+seed = 7
+min = 4
+round = 2
+votes = [["p1","o2"],["p3","o1"],["p4","o1"]]
+options = [{"id":"o3","text":"a banana in pajamas","truth":false,"authors":[],"decoy":true},{"id":"o1","text":"A sad potato!","truth":false,"authors":["p1"],"decoy":false},{"id":"o4","text":"a sad clown at a party","truth":false,"authors":[],"decoy":true},{"id":"o2","text":"a llama wearing pajamas","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o3","o4","o2"],"p2":["o3","o1","o4","o2"],"p3":["o3","o1","o4","o2"],"p4":["o3","o1","o4","o2"]}
+points = {"p1":4000,"p2":2000}
+voters = {"o3":[],"o1":["p3","p4"],"o4":[],"o2":["p1"]}
+reveal = ["o1","o2"]
+
+test = turn
+artist = "p2"
+truth = "the world's smallest elephant"
+lies = [["p1","A sad potato!"],["p3","the evil teapot"],["p4","a turtle with a jetpack"],["p6","THE WORLD'S SMALLEST ELEPHANT!"],["p7","a fish out of water"],["p8","a fountain of soup"]]
+spares = ["a castle made of pillows","the world's tallest sandwich","a cyclops at the eye doctor","a moth in love with a lamp","a gorilla eating spaghetti","a frog prince on a diet"]
+seed = 8
+min = 4
+round = 1
+votes = [["p3","o6"],["p4","o4"],["p5","o6"],["p6","nope"],["p7","o2"],["p8","o3"]]
+options = [{"id":"o5","text":"a fountain of soup","truth":false,"authors":["p8"],"decoy":false},{"id":"o4","text":"a fish out of water","truth":false,"authors":["p7"],"decoy":false},{"id":"o2","text":"the evil teapot","truth":false,"authors":["p3"],"decoy":false},{"id":"o1","text":"A sad potato!","truth":false,"authors":["p1"],"decoy":false},{"id":"o3","text":"a turtle with a jetpack","truth":false,"authors":["p4"],"decoy":false},{"id":"o6","text":"the world's smallest elephant","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o5","o4","o2","o3","o6"],"p2":["o5","o4","o2","o1","o3","o6"],"p3":["o5","o4","o1","o3","o6"],"p4":["o5","o4","o2","o1","o6"],"p5":["o5","o4","o2","o1","o3","o6"],"p6":["o5","o4","o2","o1","o3","o6"],"p7":["o5","o2","o1","o3","o6"],"p8":["o4","o2","o1","o3","o6"]}
+points = {"p3":1500,"p2":2000,"p7":500,"p5":1000,"p4":500}
+voters = {"o5":[],"o4":["p4"],"o2":["p7"],"o1":[],"o3":["p8"],"o6":["p3","p5"]}
+reveal = ["o4","o2","o3","o6"]
+
+test = turn
+artist = "p1"
+truth = "a goat on a mountain of laundry"
+lies = [["p3","a nervous cactus"],["p4","a pickle in a tuxedo"]]
+spares = ["an iceberg with a secret","a skeleton playing the xylophone","a train made of cheese","a mummy unwrapping a present","a balloon escaping","a cloud with a bad mood"]
+seed = 9
+min = 4
+round = 1
+votes = [["p2","o1"],["p3","o2"],["p4","o4"]]
+options = [{"id":"o1","text":"a nervous cactus","truth":false,"authors":["p3"],"decoy":false},{"id":"o4","text":"an iceberg with a secret","truth":false,"authors":[],"decoy":true},{"id":"o2","text":"a pickle in a tuxedo","truth":false,"authors":["p4"],"decoy":false},{"id":"o3","text":"a goat on a mountain of laundry","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o1","o4","o2","o3"],"p2":["o1","o4","o2","o3"],"p3":["o4","o2","o3"],"p4":["o1","o4","o3"]}
+points = {"p3":500,"p4":500}
+voters = {"o1":["p2"],"o4":["p4"],"o2":["p3"],"o3":[]}
+reveal = ["o1","o4","o2","o3"]
+
+test = turn
+artist = "p2"
+truth = "a pumpkin with stage fright"
+lies = [["p1","Abstract   art"],["p3","a very tired frog"],["p4","abstract art"],["p5","A PUMPKIN WITH STAGE FRIGHT!"],["p6","Abstract   art"]]
+spares = ["a disco ball at a funeral","a tea party for bugs","a mountain wearing a hat","a cactus hugging a balloon","a pirate who lost his map","a viking in a canoe"]
+seed = 10
+min = 4
+round = 2
+votes = [["p1","o1"],["p3","o3"],["p4","nope"],["p5","o3"],["p6","o4"],["p7","o4"]]
+options = [{"id":"o3","text":"a pumpkin with stage fright","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"Abstract   art","truth":false,"authors":["p1","p4","p6"],"decoy":false},{"id":"o4","text":"a disco ball at a funeral","truth":false,"authors":[],"decoy":true},{"id":"o2","text":"a very tired frog","truth":false,"authors":["p3"],"decoy":false}]
+shown = {"p1":["o3","o4","o2"],"p2":["o3","o1","o4","o2"],"p3":["o3","o1","o4"],"p4":["o3","o4","o2"],"p5":["o3","o1","o4","o2"],"p6":["o3","o4","o2"],"p7":["o3","o1","o4","o2"]}
+points = {"p3":2000,"p2":4000,"p5":2000}
+voters = {"o3":["p3","p5"],"o1":[],"o4":["p6","p7"],"o2":[]}
+reveal = ["o4","o3"]
+
+test = turn
+artist = "p7"
+truth = "a sandcastle under attack"
+lies = [["p1","Abstract   art"],["p2","a crab playing the piano"],["p3","a very tired frog"],["p4","A sad potato!"],["p5","a confused banana"],["p6","Abstract   art"]]
+spares = ["a polite tornado","a broccoli bodybuilder","a witch's broom getting a wash","an angry rubber duck","a bear stuck in a phone booth","a crab playing the piano"]
+seed = 11
+min = 4
+round = 1
+votes = [["p1","o2"],["p2","o5"],["p3","o1"],["p4","o2"],["p5","o4"],["p6","o5"]]
+options = [{"id":"o6","text":"a sandcastle under attack","truth":true,"authors":[],"decoy":false},{"id":"o5","text":"a confused banana","truth":false,"authors":["p5"],"decoy":false},{"id":"o1","text":"Abstract   art","truth":false,"authors":["p1","p6"],"decoy":false},{"id":"o4","text":"A sad potato!","truth":false,"authors":["p4"],"decoy":false},{"id":"o2","text":"a crab playing the piano","truth":false,"authors":["p2"],"decoy":false},{"id":"o3","text":"a very tired frog","truth":false,"authors":["p3"],"decoy":false}]
+shown = {"p1":["o6","o5","o4","o2","o3"],"p2":["o6","o5","o1","o4","o3"],"p3":["o6","o5","o1","o4","o2"],"p4":["o6","o5","o1","o2","o3"],"p5":["o6","o1","o4","o2","o3"],"p6":["o6","o5","o4","o2","o3"],"p7":["o6","o5","o1","o4","o2","o3"]}
+points = {"p2":1000,"p5":1000,"p1":500,"p6":500,"p4":500}
+voters = {"o6":[],"o5":["p2","p6"],"o1":["p3"],"o4":["p5"],"o2":["p1","p4"],"o3":[]}
+reveal = ["o1","o4","o5","o2","o6"]
+
+test = turn
+artist = "p8"
+truth = "a mermaid at the gym"
+lies = [["p1","the evil teapot"],["p2","the sun wearing sunglasses"],["p3","the evil teapot"],["p4","a confused banana"],["p5","A sad potato!"],["p6","a broken heart getting stitches"],["p7","the evil teapot"]]
+spares = ["a very proud potato","a penguin on vacation","a family of snowmen","the moon taking a selfie","a lazy sunday","a superhero with allergies"]
+seed = 12
+min = 4
+round = 2
+votes = [["p2","o2"],["p3","o6"],["p4","o4"],["p5","o6"],["p6","o3"],["p7","o3"]]
+options = [{"id":"o5","text":"a broken heart getting stitches","truth":false,"authors":["p6"],"decoy":false},{"id":"o4","text":"A sad potato!","truth":false,"authors":["p5"],"decoy":false},{"id":"o3","text":"a confused banana","truth":false,"authors":["p4"],"decoy":false},{"id":"o2","text":"the sun wearing sunglasses","truth":false,"authors":["p2"],"decoy":false},{"id":"o6","text":"a mermaid at the gym","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"the evil teapot","truth":false,"authors":["p1","p3","p7"],"decoy":false}]
+shown = {"p1":["o5","o4","o3","o2","o6"],"p2":["o5","o4","o3","o6","o1"],"p3":["o5","o4","o3","o2","o6"],"p4":["o5","o4","o2","o6","o1"],"p5":["o5","o3","o2","o6","o1"],"p6":["o4","o3","o2","o6","o1"],"p7":["o5","o4","o3","o2","o6"],"p8":["o5","o4","o3","o2","o6","o1"]}
+points = {"p3":2000,"p8":4000,"p5":3000,"p4":2000}
+voters = {"o5":[],"o4":["p4"],"o3":["p6","p7"],"o2":[],"o6":["p3","p5"],"o1":[]}
+reveal = ["o4","o3","o6"]
+
+test = turn
+artist = "p3"
+truth = "a bridge made of spaghetti"
+lies = [["p1","abstract art"],["p2","a sad potato"],["p4","A BRIDGE MADE OF SPAGHETTI!"],["p6","a dancing lamp"]]
+spares = ["a lazy sunday","a superhero with allergies","a snowman in the desert","the tooth fairy's day off","a ghost doing laundry","a duck in a business suit"]
+seed = 13
+min = 4
+round = 2
+votes = [["p1","o3"],["p2","nope"],["p4","o1"],["p5","o1"],["p6","o1"]]
+options = [{"id":"o3","text":"a dancing lamp","truth":false,"authors":["p6"],"decoy":false},{"id":"o4","text":"a bridge made of spaghetti","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"abstract art","truth":false,"authors":["p1"],"decoy":false},{"id":"o2","text":"a sad potato","truth":false,"authors":["p2"],"decoy":false}]
+shown = {"p1":["o3","o4","o2"],"p2":["o3","o4","o1"],"p3":["o3","o4","o1","o2"],"p4":["o3","o4","o1","o2"],"p5":["o3","o4","o1","o2"],"p6":["o4","o1","o2"]}
+points = {"p6":1000,"p1":3000}
+voters = {"o3":["p1"],"o4":[],"o1":["p4","p5","p6"],"o2":[]}
+reveal = ["o3","o1","o4"]
+
+test = turn
+artist = "p4"
+truth = "a ladder to the clouds"
+lies = [["p1","a family of snowmen"],["p2","the cat's revenge"],["p3","a sneaky pancake"],["p5","a confused banana"],["p6","a confused banana"],["p7","a very tired frog"]]
+spares = ["a camel in the snow","a spider knitting a sweater","a haunted toaster","a sneezing elephant","a ghost doing laundry","a lion at the hairdresser"]
+seed = 14
+min = 4
+round = 2
+votes = [["p1","o4"],["p3","o6"],["p5","o6"],["p6","o1"],["p7","o3"]]
+options = [{"id":"o3","text":"a sneaky pancake","truth":false,"authors":["p3"],"decoy":false},{"id":"o6","text":"a ladder to the clouds","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"a family of snowmen","truth":false,"authors":["p1"],"decoy":false},{"id":"o4","text":"a confused banana","truth":false,"authors":["p5","p6"],"decoy":false},{"id":"o5","text":"a very tired frog","truth":false,"authors":["p7"],"decoy":false},{"id":"o2","text":"the cat's revenge","truth":false,"authors":["p2"],"decoy":false}]
+shown = {"p1":["o3","o6","o4","o5","o2"],"p2":["o3","o6","o1","o4","o5"],"p3":["o6","o1","o4","o5","o2"],"p4":["o3","o6","o1","o4","o5","o2"],"p5":["o3","o6","o1","o5","o2"],"p6":["o3","o6","o1","o5","o2"],"p7":["o3","o6","o1","o4","o2"]}
+points = {"p5":3000,"p6":1000,"p3":3000,"p4":4000,"p1":1000}
+voters = {"o3":["p7"],"o6":["p3","p5"],"o1":["p6"],"o4":["p1"],"o5":[],"o2":[]}
+reveal = ["o3","o1","o4","o6"]
+
+test = turn
+artist = "p3"
+truth = "an alien ordering coffee"
+lies = [["p1","a very tired frog"],["p4","a dancing lamp"],["p5","a very tired frog"],["p6","Abstract   art"]]
+spares = ["a hedgehog hugging a balloon","a peacock at a wedding","the best day ever","a library for ghosts","a hamster's gym membership","a moose at the movies"]
+seed = 15
+min = 4
+round = 1
+votes = [["p1","o3"],["p2","o3"],["p3","o4"],["p4","o4"],["p5","o3"],["p6","o4"]]
+options = [{"id":"o2","text":"a dancing lamp","truth":false,"authors":["p4"],"decoy":false},{"id":"o3","text":"Abstract   art","truth":false,"authors":["p6"],"decoy":false},{"id":"o1","text":"a very tired frog","truth":false,"authors":["p1","p5"],"decoy":false},{"id":"o4","text":"an alien ordering coffee","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o2","o3","o4"],"p2":["o2","o3","o1","o4"],"p3":["o2","o3","o1","o4"],"p4":["o3","o1","o4"],"p5":["o2","o3","o4"],"p6":["o2","o1","o4"]}
+points = {"p6":2500,"p4":1000,"p3":2000}
+voters = {"o2":[],"o3":["p1","p2","p5"],"o1":[],"o4":["p4","p6"]}
+reveal = ["o3","o4"]
+
+test = turn
+artist = "p8"
+truth = "a witch's broom getting a wash"
+lies = [["p1","a confused banana"],["p2","the evil teapot"],["p3","Abstract   art"],["p4","a sneaky pancake"],["p5","A sad potato!"],["p7","a dancing lamp"]]
+spares = ["a snake wearing a scarf","a skeleton playing the xylophone","a tiny king on a huge throne","a viking in a canoe","a nervous cactus","a broken heart getting stitches"]
+seed = 16
+min = 4
+round = 2
+votes = [["p2","o1"],["p3","o1"],["p5","o7"],["p6","o7"],["p7","nope"]]
+options = [{"id":"o2","text":"the evil teapot","truth":false,"authors":["p2"],"decoy":false},{"id":"o5","text":"A sad potato!","truth":false,"authors":["p5"],"decoy":false},{"id":"o6","text":"a dancing lamp","truth":false,"authors":["p7"],"decoy":false},{"id":"o1","text":"a confused banana","truth":false,"authors":["p1"],"decoy":false},{"id":"o3","text":"Abstract   art","truth":false,"authors":["p3"],"decoy":false},{"id":"o7","text":"a witch's broom getting a wash","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"a sneaky pancake","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o2","o5","o6","o3","o7","o4"],"p2":["o5","o6","o1","o3","o7","o4"],"p3":["o2","o5","o6","o1","o7","o4"],"p4":["o2","o5","o6","o1","o3","o7"],"p5":["o2","o6","o1","o3","o7","o4"],"p6":["o2","o5","o6","o1","o3","o7","o4"],"p7":["o2","o5","o1","o3","o7","o4"],"p8":["o2","o5","o6","o1","o3","o7","o4"]}
+points = {"p1":2000,"p5":2000,"p8":4000,"p6":2000}
+voters = {"o2":[],"o5":[],"o6":[],"o1":["p2","p3"],"o3":[],"o7":["p5","p6"],"o4":[]}
+reveal = ["o1","o7"]
+
+test = turn
+artist = "p2"
+truth = "a whale singing karaoke"
+lies = [["p1","the cat's revenge"],["p4","A sad potato!"],["p5","A sad potato!"],["p6","a dancing lamp"],["p7","a sneaky pancake"]]
+spares = ["a cowboy riding a goose","a jellyfish in a hat shop","a donut planet","a bird building a skyscraper","a pineapple surfing","a mermaid at the gym"]
+seed = 17
+min = 4
+round = 2
+votes = [["p1","nope"],["p4","o1"],["p5","o1"],["p6","o2"],["p7","o1"]]
+options = [{"id":"o2","text":"A sad potato!","truth":false,"authors":["p4","p5"],"decoy":false},{"id":"o4","text":"a sneaky pancake","truth":false,"authors":["p7"],"decoy":false},{"id":"o1","text":"the cat's revenge","truth":false,"authors":["p1"],"decoy":false},{"id":"o5","text":"a whale singing karaoke","truth":true,"authors":[],"decoy":false},{"id":"o3","text":"a dancing lamp","truth":false,"authors":["p6"],"decoy":false}]
+shown = {"p1":["o2","o4","o5","o3"],"p2":["o2","o4","o1","o5","o3"],"p3":["o2","o4","o1","o5","o3"],"p4":["o4","o1","o5","o3"],"p5":["o4","o1","o5","o3"],"p6":["o2","o4","o1","o5"],"p7":["o2","o1","o5","o3"]}
+points = {"p1":3000,"p4":1000,"p5":1000}
+voters = {"o2":["p6"],"o4":[],"o1":["p4","p5","p7"],"o5":[],"o3":[]}
+reveal = ["o2","o1","o5"]
+
+test = turn
+artist = "p7"
+truth = "a ship in a bottle trying to escape"
+lies = [["p1","a very tired frog"],["p2","A sad potato!"],["p3","a sad potato"],["p4","a confused banana"],["p5","a dancing lamp"],["p6","A sad potato!"]]
+spares = ["a pineapple surfing","a deer in headlights","a lonely sock","a dragon guarding a cookie jar","a bird building a skyscraper","a monster under the stairs"]
+seed = 18
+min = 4
+round = 1
+votes = [["p1","o1"],["p2","o1"],["p3","o5"],["p4","o2"],["p5","o5"]]
+options = [{"id":"o3","text":"a confused banana","truth":false,"authors":["p4"],"decoy":false},{"id":"o5","text":"a ship in a bottle trying to escape","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"a dancing lamp","truth":false,"authors":["p5"],"decoy":false},{"id":"o2","text":"A sad potato!","truth":false,"authors":["p2","p3","p6"],"decoy":false},{"id":"o1","text":"a very tired frog","truth":false,"authors":["p1"],"decoy":false}]
+shown = {"p1":["o3","o5","o4","o2"],"p2":["o3","o5","o4","o1"],"p3":["o3","o5","o4","o1"],"p4":["o5","o4","o2","o1"],"p5":["o3","o5","o2","o1"],"p6":["o3","o5","o4","o1"],"p7":["o3","o5","o4","o2","o1"]}
+points = {"p1":500,"p3":1500,"p7":2000,"p2":500,"p6":500,"p5":1000}
+voters = {"o3":[],"o5":["p3","p5"],"o4":[],"o2":["p4"],"o1":["p2"]}
+reveal = ["o2","o1","o5"]
+
+test = turn
+artist = "p3"
+truth = "the tooth fairy's day off"
+lies = [["p1","a confused banana"],["p4","the tooth fairy's day off"],["p5","THE TOOTH FAIRY'S DAY OFF!"],["p6","a sad potato"]]
+spares = ["a smartphone addicted to people","a deer in headlights","a pumpkin with stage fright","a family of snowmen","a nervous cactus","a pineapple surfing"]
+seed = 19
+min = 4
+round = 1
+votes = [["p1","o3"],["p2","o4"],["p4","o3"],["p5","o3"],["p6","nope"]]
+options = [{"id":"o1","text":"a confused banana","truth":false,"authors":["p1"],"decoy":false},{"id":"o2","text":"a sad potato","truth":false,"authors":["p6"],"decoy":false},{"id":"o4","text":"a smartphone addicted to people","truth":false,"authors":[],"decoy":true},{"id":"o3","text":"the tooth fairy's day off","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o2","o4","o3"],"p2":["o1","o2","o4","o3"],"p3":["o1","o2","o4","o3"],"p4":["o1","o2","o4","o3"],"p5":["o1","o2","o4","o3"],"p6":["o1","o4","o3"]}
+points = {"p1":1000,"p3":3000,"p4":1000,"p5":1000}
+voters = {"o1":[],"o2":[],"o4":["p2"],"o3":["p1","p4","p5"]}
+reveal = ["o4","o3"]
+
+test = turn
+artist = "p1"
+truth = "a penguin on vacation"
+lies = [["p2","the cat's revenge"],["p3","A sad potato!"],["p4","a dancing lamp"],["p5","abstract art"],["p6","a sad potato"]]
+spares = ["a snail in a hurry","a lonely sock","a rocket made of fruit","an unhappy birthday cake","a vampire at the dentist","a candle afraid of birthdays"]
+seed = 20
+min = 4
+round = 2
+votes = [["p2","o2"],["p3","o1"],["p4","o2"],["p5","o5"],["p6","o3"]]
+options = [{"id":"o2","text":"A sad potato!","truth":false,"authors":["p3","p6"],"decoy":false},{"id":"o5","text":"a penguin on vacation","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"abstract art","truth":false,"authors":["p5"],"decoy":false},{"id":"o1","text":"the cat's revenge","truth":false,"authors":["p2"],"decoy":false},{"id":"o3","text":"a dancing lamp","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o2","o5","o4","o1","o3"],"p2":["o2","o5","o4","o3"],"p3":["o5","o4","o1","o3"],"p4":["o2","o5","o4","o1"],"p5":["o2","o5","o1","o3"],"p6":["o5","o4","o1","o3"]}
+points = {"p3":2000,"p6":2000,"p2":1000,"p5":2000,"p1":2000,"p4":1000}
+voters = {"o2":["p2","p4"],"o5":["p5"],"o4":[],"o1":["p3"],"o3":["p6"]}
+reveal = ["o1","o3","o2","o5"]
+
+test = turn
+artist = "p2"
+truth = "a haunted toaster"
+lies = [["p1","a very tired frog"],["p3","A HAUNTED TOASTER!"],["p4","a confused banana"]]
+spares = ["a cheese wheel rolling away","a bee with a briefcase","the queen of the bees","a whale singing karaoke","a squirrel bank robbery","a viking in a canoe"]
+seed = 21
+min = 4
+round = 2
+votes = [["p1","o1"],["p3","o4"],["p4","o4"]]
+options = [{"id":"o2","text":"a confused banana","truth":false,"authors":["p4"],"decoy":false},{"id":"o3","text":"a haunted toaster","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"a cheese wheel rolling away","truth":false,"authors":[],"decoy":true},{"id":"o1","text":"a very tired frog","truth":false,"authors":["p1"],"decoy":false}]
+shown = {"p1":["o2","o3","o4"],"p2":["o2","o3","o4","o1"],"p3":["o2","o3","o4","o1"],"p4":["o3","o4","o1"]}
+points = {}
+voters = {"o2":[],"o3":[],"o4":["p3","p4"],"o1":[]}
+reveal = ["o4","o3"]
+
+test = turn
+artist = "p3"
+truth = "a smartphone addicted to people"
+lies = [["p1","A sad potato!"],["p2","the cat's revenge"],["p4","a vampire at the dentist"],["p5","a very tired frog"],["p6","abstract art"]]
+spares = ["a peacock at a wedding","the last slice of pizza","a monster under the stairs","a garden gnome on strike","a pig that can fly","a rocket made of fruit"]
+seed = 22
+min = 4
+round = 1
+votes = [["p2","nope"],["p4","o2"],["p5","o6"],["p6","o1"]]
+options = [{"id":"o4","text":"a very tired frog","truth":false,"authors":["p5"],"decoy":false},{"id":"o2","text":"the cat's revenge","truth":false,"authors":["p2"],"decoy":false},{"id":"o5","text":"abstract art","truth":false,"authors":["p6"],"decoy":false},{"id":"o6","text":"a smartphone addicted to people","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"A sad potato!","truth":false,"authors":["p1"],"decoy":false},{"id":"o3","text":"a vampire at the dentist","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o4","o2","o5","o6","o3"],"p2":["o4","o5","o6","o1","o3"],"p3":["o4","o2","o5","o6","o1","o3"],"p4":["o4","o2","o5","o6","o1"],"p5":["o2","o5","o6","o1","o3"],"p6":["o4","o2","o6","o1","o3"]}
+points = {"p2":500,"p5":1000,"p3":1000,"p1":500}
+voters = {"o4":[],"o2":["p4"],"o5":[],"o6":["p5"],"o1":["p6"],"o3":[]}
+reveal = ["o2","o1","o6"]
+
+test = turn
+artist = "p6"
+truth = "a bridge made of spaghetti"
+lies = [["p1","the cat's revenge"],["p2","abstract art"],["p3","the evil teapot"],["p5","the evil teapot"]]
+spares = ["the sun wearing sunglasses","a lonely sock","a fountain of soup","a dog dreaming of bacon","a microwave meal for a king","a train made of cheese"]
+seed = 23
+min = 4
+round = 2
+votes = [["p1","o3"],["p2","o3"],["p3","o2"],["p4","o1"],["p6","o4"],["p7","o1"]]
+options = [{"id":"o2","text":"abstract art","truth":false,"authors":["p2"],"decoy":false},{"id":"o1","text":"the cat's revenge","truth":false,"authors":["p1"],"decoy":false},{"id":"o3","text":"the evil teapot","truth":false,"authors":["p3","p5"],"decoy":false},{"id":"o4","text":"a bridge made of spaghetti","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o2","o3","o4"],"p2":["o1","o3","o4"],"p3":["o2","o1","o4"],"p4":["o2","o1","o3","o4"],"p5":["o2","o1","o4"],"p6":["o2","o1","o3","o4"],"p7":["o2","o1","o3","o4"]}
+points = {"p3":2000,"p5":2000,"p2":1000,"p1":2000}
+voters = {"o2":["p3"],"o1":["p4","p7"],"o3":["p1","p2"],"o4":[]}
+reveal = ["o2","o1","o3","o4"]
+
+test = turn
+artist = "p1"
+truth = "a chef cooking in space"
+lies = [["p3","a mouse with a big secret"],["p4","a very tired frog"],["p5","a dancing lamp"],["p6","Abstract   art"]]
+spares = ["a fish out of water","a raccoon chef","a gorilla eating spaghetti","a carrot in a sauna","a tired alarm clock","a whale in a bathtub"]
+seed = 24
+min = 4
+round = 1
+votes = [["p2","o4"],["p3","o2"],["p4","o5"],["p5","o1"],["p6","o3"]]
+options = [{"id":"o4","text":"Abstract   art","truth":false,"authors":["p6"],"decoy":false},{"id":"o2","text":"a very tired frog","truth":false,"authors":["p4"],"decoy":false},{"id":"o5","text":"a chef cooking in space","truth":true,"authors":[],"decoy":false},{"id":"o3","text":"a dancing lamp","truth":false,"authors":["p5"],"decoy":false},{"id":"o1","text":"a mouse with a big secret","truth":false,"authors":["p3"],"decoy":false}]
+shown = {"p1":["o4","o2","o5","o3","o1"],"p2":["o4","o2","o5","o3","o1"],"p3":["o4","o2","o5","o3"],"p4":["o4","o5","o3","o1"],"p5":["o4","o2","o5","o1"],"p6":["o2","o5","o3","o1"]}
+points = {"p6":500,"p4":1500,"p1":1000,"p3":500,"p5":500}
+voters = {"o4":["p2"],"o2":["p3"],"o5":["p4"],"o3":["p6"],"o1":["p5"]}
+reveal = ["o4","o2","o3","o1","o5"]
+
+test = turn
+artist = "p6"
+truth = "a bird building a skyscraper"
+lies = [["p1","a confused banana"],["p2","a confused banana"],["p4","a confused banana"],["p7","abstract art"],["p8","abstract art"]]
+spares = ["a ladder to the clouds","an egg about to hatch something weird","a mountain wearing a hat","a tree with a haircut","a snowman in the desert","a trampoline for elephants"]
+seed = 25
+min = 4
+round = 2
+votes = [["p1","o2"],["p3","o2"],["p4","o2"],["p5","o3"],["p7","o1"],["p8","o1"]]
+options = [{"id":"o3","text":"a bird building a skyscraper","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"a confused banana","truth":false,"authors":["p1","p2","p4"],"decoy":false},{"id":"o4","text":"a ladder to the clouds","truth":false,"authors":[],"decoy":true},{"id":"o2","text":"abstract art","truth":false,"authors":["p7","p8"],"decoy":false}]
+shown = {"p1":["o3","o4","o2"],"p2":["o3","o4","o2"],"p3":["o3","o1","o4","o2"],"p4":["o3","o4","o2"],"p5":["o3","o1","o4","o2"],"p6":["o3","o1","o4","o2"],"p7":["o3","o1","o4"],"p8":["o3","o1","o4"]}
+points = {"p7":3000,"p8":3000,"p5":2000,"p6":2000,"p1":2000,"p2":2000,"p4":2000}
+voters = {"o3":["p5"],"o1":["p7","p8"],"o4":[],"o2":["p1","p3","p4"]}
+reveal = ["o1","o2","o3"]
+
+test = turn
+artist = "p2"
+truth = "a fountain of soup"
+lies = [["p1","the evil teapot"],["p3","Abstract   art"],["p4","the evil teapot"],["p5","a sneaky pancake"],["p7","A sad potato!"]]
+spares = ["a tiny king on a huge throne","a flamingo doing yoga","a very proud potato","a knight afraid of the dark","a giraffe in a tiny car","a tree with a haircut"]
+seed = 26
+min = 4
+round = 1
+votes = [["p1","o4"],["p3","o5"],["p4","o4"],["p5","o5"],["p6","o1"],["p7","o1"],["p8","o2"]]
+options = [{"id":"o3","text":"a sneaky pancake","truth":false,"authors":["p5"],"decoy":false},{"id":"o5","text":"a fountain of soup","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"the evil teapot","truth":false,"authors":["p1","p4"],"decoy":false},{"id":"o4","text":"A sad potato!","truth":false,"authors":["p7"],"decoy":false},{"id":"o2","text":"Abstract   art","truth":false,"authors":["p3"],"decoy":false}]
+shown = {"p1":["o3","o5","o4","o2"],"p2":["o3","o5","o1","o4","o2"],"p3":["o3","o5","o1","o4"],"p4":["o3","o5","o4","o2"],"p5":["o5","o1","o4","o2"],"p6":["o3","o5","o1","o4","o2"],"p7":["o3","o5","o1","o2"],"p8":["o3","o5","o1","o4","o2"]}
+points = {"p7":1000,"p3":1500,"p2":2000,"p5":1000,"p1":1000,"p4":1000}
+voters = {"o3":[],"o5":["p3","p5"],"o1":["p6","p7"],"o4":["p1","p4"],"o2":["p8"]}
+reveal = ["o2","o1","o4","o5"]
+
+test = turn
+artist = "p5"
+truth = "an owl doing homework"
+lies = [["p1","A sad potato!"],["p2","the cat's revenge"],["p3","AN OWL DOING HOMEWORK!"],["p4","AN OWL DOING HOMEWORK!"],["p6","a candle afraid of birthdays"],["p7","a dancing lamp"]]
+spares = ["a dragon's first day at school","a jellyfish in a hat shop","a train made of cheese","a broken heart getting stitches","a family of snowmen","a cheese wheel rolling away"]
+seed = 27
+min = 4
+round = 2
+votes = [["p1","o2"],["p2","o3"],["p3","o2"],["p4","o3"],["p5","o5"],["p6","o1"],["p7","o1"],["p8","o2"]]
+options = [{"id":"o1","text":"A sad potato!","truth":false,"authors":["p1"],"decoy":false},{"id":"o4","text":"a dancing lamp","truth":false,"authors":["p7"],"decoy":false},{"id":"o3","text":"a candle afraid of birthdays","truth":false,"authors":["p6"],"decoy":false},{"id":"o5","text":"an owl doing homework","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"the cat's revenge","truth":false,"authors":["p2"],"decoy":false}]
+shown = {"p1":["o4","o3","o5","o2"],"p2":["o1","o4","o3","o5"],"p3":["o1","o4","o3","o5","o2"],"p4":["o1","o4","o3","o5","o2"],"p5":["o1","o4","o3","o5","o2"],"p6":["o1","o4","o5","o2"],"p7":["o1","o3","o5","o2"],"p8":["o1","o4","o3","o5","o2"]}
+points = {"p2":3000,"p6":2000,"p1":2000}
+voters = {"o1":["p6","p7"],"o4":[],"o3":["p2","p4"],"o5":[],"o2":["p1","p3","p8"]}
+reveal = ["o1","o3","o2","o5"]
+
+test = turn
+artist = "p1"
+truth = "a dinosaur at a job interview"
+lies = [["p2","a dancing lamp"],["p4","the evil teapot"],["p5","a crab playing the piano"],["p6","the cat's revenge"]]
+spares = ["a candle afraid of birthdays","a cheese wheel rolling away","a mouse with a big secret","a bored astronaut","a witch's broom getting a wash","the world's tallest sandwich"]
+seed = 28
+min = 4
+round = 1
+votes = [["p2","o2"],["p3","o1"],["p4","o3"],["p5","o1"],["p6","o2"]]
+options = [{"id":"o5","text":"a dinosaur at a job interview","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"a dancing lamp","truth":false,"authors":["p2"],"decoy":false},{"id":"o3","text":"a crab playing the piano","truth":false,"authors":["p5"],"decoy":false},{"id":"o4","text":"the cat's revenge","truth":false,"authors":["p6"],"decoy":false},{"id":"o2","text":"the evil teapot","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o5","o1","o3","o4","o2"],"p2":["o5","o3","o4","o2"],"p3":["o5","o1","o3","o4","o2"],"p4":["o5","o1","o3","o4"],"p5":["o5","o1","o4","o2"],"p6":["o5","o1","o3","o2"]}
+points = {"p4":1000,"p2":1000,"p5":500}
+voters = {"o5":[],"o1":["p3","p5"],"o3":["p4"],"o4":[],"o2":["p2","p6"]}
+reveal = ["o3","o1","o2","o5"]
+
+test = turn
+artist = "p6"
+truth = "a lonely sock"
+lies = [["p1","A LONELY SOCK!"],["p2","A LONELY SOCK!"],["p4","a very tired frog"],["p5","a very tired frog"]]
+spares = ["a fox in socks","a crab playing the piano","a cowboy riding a goose","a dog dreaming of bacon","a bear stuck in a phone booth","a moose at the movies"]
+seed = 29
+min = 4
+round = 2
+votes = [["p1","o1"],["p2","o2"],["p3","o3"],["p4","o3"],["p5","o4"]]
+options = [{"id":"o1","text":"a very tired frog","truth":false,"authors":["p4","p5"],"decoy":false},{"id":"o3","text":"a fox in socks","truth":false,"authors":[],"decoy":true},{"id":"o4","text":"a crab playing the piano","truth":false,"authors":[],"decoy":true},{"id":"o2","text":"a lonely sock","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o1","o3","o4","o2"],"p2":["o1","o3","o4","o2"],"p3":["o1","o3","o4","o2"],"p4":["o3","o4","o2"],"p5":["o3","o4","o2"],"p6":["o1","o3","o4","o2"]}
+points = {"p4":1000,"p5":1000,"p2":2000,"p6":2000}
+voters = {"o1":["p1"],"o3":["p3","p4"],"o4":["p5"],"o2":["p2"]}
+reveal = ["o1","o4","o3","o2"]
+
+test = turn
+artist = "p2"
+truth = "a sneezing elephant"
+lies = [["p1","a sad potato"],["p3","the evil teapot"],["p4","a sleepy volcano"],["p5","A SNEEZING ELEPHANT!"],["p6","Abstract   art"]]
+spares = ["a lighthouse in love","a dragon with a cold","a broccoli bodybuilder","a whale singing karaoke","a pirate who lost his map","a ninja tripping over a cat"]
+seed = 30
+min = 4
+round = 1
+votes = [["p1","o4"],["p3","o4"],["p4","o2"],["p5","o4"],["p6","o2"]]
+options = [{"id":"o2","text":"the evil teapot","truth":false,"authors":["p3"],"decoy":false},{"id":"o5","text":"a sneezing elephant","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"a sad potato","truth":false,"authors":["p1"],"decoy":false},{"id":"o3","text":"a sleepy volcano","truth":false,"authors":["p4"],"decoy":false},{"id":"o4","text":"Abstract   art","truth":false,"authors":["p6"],"decoy":false}]
+shown = {"p1":["o2","o5","o3","o4"],"p2":["o2","o5","o1","o3","o4"],"p3":["o5","o1","o3","o4"],"p4":["o2","o5","o1","o4"],"p5":["o2","o5","o1","o3","o4"],"p6":["o2","o5","o1","o3"]}
+points = {"p6":1500,"p3":1000}
+voters = {"o2":["p4","p6"],"o5":[],"o1":[],"o3":[],"o4":["p1","p3","p5"]}
+reveal = ["o2","o4","o5"]
+
+test = turn
+artist = "p7"
+truth = "a dog dreaming of bacon"
+lies = [["p1","a confused banana"],["p2","A DOG DREAMING OF BACON!"],["p3","a polite tornado"],["p4","a confused banana"],["p5","the sun wearing sunglasses"],["p6","A sad potato!"],["p8","abstract art"]]
+spares = ["a cloud raining cats","a nervous cactus","a viking in a canoe","a penguin on vacation","a carrot in a sauna","a pineapple surfing"]
+seed = 31
+min = 4
+round = 1
+votes = [["p1","o4"],["p2","o2"],["p4","o5"],["p6","o3"],["p8","o2"]]
+options = [{"id":"o1","text":"a confused banana","truth":false,"authors":["p1","p4"],"decoy":false},{"id":"o3","text":"the sun wearing sunglasses","truth":false,"authors":["p5"],"decoy":false},{"id":"o6","text":"a dog dreaming of bacon","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"a polite tornado","truth":false,"authors":["p3"],"decoy":false},{"id":"o5","text":"abstract art","truth":false,"authors":["p8"],"decoy":false},{"id":"o4","text":"A sad potato!","truth":false,"authors":["p6"],"decoy":false}]
+shown = {"p1":["o3","o6","o2","o5","o4"],"p2":["o1","o3","o6","o2","o5","o4"],"p3":["o1","o3","o6","o5","o4"],"p4":["o3","o6","o2","o5","o4"],"p5":["o1","o6","o2","o5","o4"],"p6":["o1","o3","o6","o2","o5"],"p7":["o1","o3","o6","o2","o5","o4"],"p8":["o1","o3","o6","o2","o4"]}
+points = {"p6":500,"p3":1000,"p8":500,"p5":500}
+voters = {"o1":[],"o3":["p6"],"o6":[],"o2":["p2","p8"],"o5":["p4"],"o4":["p1"]}
+reveal = ["o3","o5","o4","o2","o6"]
+
+test = turn
+artist = "p1"
+truth = "a snail in a hurry"
+lies = [["p2","a shark afraid of water"],["p4","the cat's revenge"],["p5","a confused banana"],["p6","Abstract   art"],["p7","A sad potato!"]]
+spares = ["a disco ball at a funeral","a pirate who lost his map","the meeting that could have been an email","a sneezing elephant","the queen of the bees","a beaver's dam project"]
+seed = 32
+min = 4
+round = 1
+votes = [["p2","o3"],["p3","o3"],["p4","o3"],["p5","o4"],["p6","o6"]]
+options = [{"id":"o6","text":"a snail in a hurry","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"Abstract   art","truth":false,"authors":["p6"],"decoy":false},{"id":"o5","text":"A sad potato!","truth":false,"authors":["p7"],"decoy":false},{"id":"o1","text":"a shark afraid of water","truth":false,"authors":["p2"],"decoy":false},{"id":"o3","text":"a confused banana","truth":false,"authors":["p5"],"decoy":false},{"id":"o2","text":"the cat's revenge","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o6","o4","o5","o1","o3","o2"],"p2":["o6","o4","o5","o3","o2"],"p3":["o6","o4","o5","o1","o3","o2"],"p4":["o6","o4","o5","o1","o3"],"p5":["o6","o4","o5","o1","o2"],"p6":["o6","o5","o1","o3","o2"],"p7":["o6","o4","o1","o3","o2"]}
+points = {"p5":1500,"p6":1500,"p1":1000}
+voters = {"o6":["p6"],"o4":["p5"],"o5":[],"o1":[],"o3":["p2","p3","p4"],"o2":[]}
+reveal = ["o4","o3","o6"]
+
+test = turn
+artist = "p2"
+truth = "a frog prince on a diet"
+lies = [["p3","a very tired frog"],["p4","a dancing lamp"],["p5","a dancing lamp"],["p6","the cat's revenge"],["p7","A sad potato!"],["p8","abstract art"]]
+spares = ["a balloon escaping","a carrot in a sauna","a pumpkin with stage fright","a cheese wheel rolling away","a tiny king on a huge throne","a frog prince on a diet"]
+seed = 33
+min = 4
+round = 1
+votes = [["p1","o1"],["p3","o5"],["p4","o6"],["p5","o2"],["p6","o6"],["p7","o6"]]
+options = [{"id":"o1","text":"a very tired frog","truth":false,"authors":["p3"],"decoy":false},{"id":"o4","text":"A sad potato!","truth":false,"authors":["p7"],"decoy":false},{"id":"o6","text":"a frog prince on a diet","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"a dancing lamp","truth":false,"authors":["p4","p5"],"decoy":false},{"id":"o5","text":"abstract art","truth":false,"authors":["p8"],"decoy":false},{"id":"o3","text":"the cat's revenge","truth":false,"authors":["p6"],"decoy":false}]
+shown = {"p1":["o1","o4","o6","o2","o5","o3"],"p2":["o1","o4","o6","o2","o5","o3"],"p3":["o4","o6","o2","o5","o3"],"p4":["o1","o4","o6","o5","o3"],"p5":["o1","o4","o6","o5","o3"],"p6":["o1","o4","o6","o2","o5"],"p7":["o1","o6","o2","o5","o3"],"p8":["o1","o4","o6","o2","o3"]}
+points = {"p3":500,"p8":500,"p4":1000,"p2":3000,"p6":1000,"p7":1000}
+voters = {"o1":["p1"],"o4":[],"o6":["p4","p6","p7"],"o2":[],"o5":["p3"],"o3":[]}
+reveal = ["o1","o5","o6"]
+
+test = turn
+artist = "p5"
+truth = "a crab playing the piano"
+lies = [["p1","a monster under the stairs"],["p2","a confused banana"],["p4","a sad potato"],["p6","a fox in socks"],["p7","the evil teapot"],["p8","a confused banana"]]
+spares = ["a robot learning to dance","the meeting that could have been an email","the queen of the bees","a goat on a mountain of laundry","a snowman in the desert","a sandcastle under attack"]
+seed = 34
+min = 4
+round = 1
+votes = [["p1","o3"],["p2","o6"],["p3","o4"],["p4","o4"],["p6","o2"],["p7","o2"]]
+options = [{"id":"o2","text":"a confused banana","truth":false,"authors":["p2","p8"],"decoy":false},{"id":"o5","text":"the evil teapot","truth":false,"authors":["p7"],"decoy":false},{"id":"o1","text":"a monster under the stairs","truth":false,"authors":["p1"],"decoy":false},{"id":"o6","text":"a crab playing the piano","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"a fox in socks","truth":false,"authors":["p6"],"decoy":false},{"id":"o3","text":"a sad potato","truth":false,"authors":["p4"],"decoy":false}]
+shown = {"p1":["o2","o5","o6","o4","o3"],"p2":["o5","o1","o6","o4","o3"],"p3":["o2","o5","o1","o6","o4","o3"],"p4":["o2","o5","o1","o6","o4"],"p5":["o2","o5","o1","o6","o4","o3"],"p6":["o2","o5","o1","o6","o3"],"p7":["o2","o1","o6","o4","o3"],"p8":["o5","o1","o6","o4","o3"]}
+points = {"p4":500,"p2":2000,"p5":1000,"p6":1000,"p8":1000}
+voters = {"o2":["p6","p7"],"o5":[],"o1":[],"o6":["p2"],"o4":["p3","p4"],"o3":["p1"]}
+reveal = ["o3","o2","o4","o6"]
+
+test = turn
+artist = "p2"
+truth = "a pigeon stealing fries"
+lies = [["p1","the evil teapot"],["p3","a very tired frog"]]
+spares = ["a cat stuck in a tree house","a cowboy riding a goose","a bear stuck in a phone booth","a mole playing golf","a carrot in a sauna","a balloon escaping"]
+seed = 35
+min = 3
+round = 1
+votes = [["p1","o2"],["p2","o2"],["p3","o3"]]
+options = [{"id":"o2","text":"a very tired frog","truth":false,"authors":["p3"],"decoy":false},{"id":"o1","text":"the evil teapot","truth":false,"authors":["p1"],"decoy":false},{"id":"o3","text":"a pigeon stealing fries","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o2","o3"],"p2":["o2","o1","o3"],"p3":["o1","o3"]}
+points = {"p3":1500,"p2":1000}
+voters = {"o2":["p1"],"o1":[],"o3":["p3"]}
+reveal = ["o2","o3"]
+
+test = turn
+artist = "p2"
+truth = "a lion at the hairdresser"
+lies = [["p1","a sneaky pancake"],["p3","the evil teapot"],["p4","a sad clown at a party"],["p5","the evil teapot"],["p6","the cat's revenge"],["p7","a dancing lamp"],["p8","a very tired frog"]]
+spares = ["a ship in a bottle trying to escape","a lion at the hairdresser","a disco ball at a funeral","an owl doing homework","a rocket made of fruit","a mummy unwrapping a present"]
+seed = 36
+min = 4
+round = 2
+votes = [["p2","o1"],["p3","o4"],["p4","o7"],["p5","o4"],["p7","o5"],["p8","o4"]]
+options = [{"id":"o3","text":"a sad clown at a party","truth":false,"authors":["p4"],"decoy":false},{"id":"o4","text":"the cat's revenge","truth":false,"authors":["p6"],"decoy":false},{"id":"o2","text":"the evil teapot","truth":false,"authors":["p3","p5"],"decoy":false},{"id":"o7","text":"a lion at the hairdresser","truth":true,"authors":[],"decoy":false},{"id":"o1","text":"a sneaky pancake","truth":false,"authors":["p1"],"decoy":false},{"id":"o5","text":"a dancing lamp","truth":false,"authors":["p7"],"decoy":false},{"id":"o6","text":"a very tired frog","truth":false,"authors":["p8"],"decoy":false}]
+shown = {"p1":["o3","o4","o2","o7","o5","o6"],"p2":["o3","o4","o2","o7","o1","o5","o6"],"p3":["o3","o4","o7","o1","o5","o6"],"p4":["o4","o2","o7","o1","o5","o6"],"p5":["o3","o4","o7","o1","o5","o6"],"p6":["o3","o2","o7","o1","o5","o6"],"p7":["o3","o4","o2","o7","o1","o6"],"p8":["o3","o4","o2","o7","o1","o5"]}
+points = {"p6":3000,"p4":2000,"p2":2000}
+voters = {"o3":[],"o4":["p3","p5","p8"],"o2":[],"o7":["p4"],"o1":[],"o5":[],"o6":[]}
+reveal = ["o4","o7"]
+
+test = turn
+artist = "p2"
+truth = "a snail in a hurry"
+lies = [["p3","abstract art"]]
+spares = ["a donut planet","a pig that can fly","a viking in a canoe","a llama wearing pajamas","a bored astronaut","a wizard stuck in traffic"]
+seed = 37
+min = 3
+round = 2
+votes = [["p1","o2"],["p2","nope"],["p3","o2"]]
+options = [{"id":"o2","text":"a snail in a hurry","truth":true,"authors":[],"decoy":false},{"id":"o3","text":"a donut planet","truth":false,"authors":[],"decoy":true},{"id":"o1","text":"abstract art","truth":false,"authors":["p3"],"decoy":false}]
+shown = {"p1":["o2","o3","o1"],"p2":["o2","o3","o1"],"p3":["o2","o3"]}
+points = {"p1":2000,"p2":4000,"p3":2000}
+voters = {"o2":["p1","p3"],"o3":[],"o1":[]}
+reveal = ["o2"]
+
+test = turn
+artist = "p3"
+truth = "the last slice of pizza"
+lies = []
+spares = ["a karate kangaroo","an angry rubber duck","grandma's secret skateboard","a hedgehog hugging a balloon","an alien ordering coffee","a crab playing the piano"]
+seed = 38
+min = 3
+round = 1
+votes = [["p1","o3"],["p2","o2"]]
+options = [{"id":"o1","text":"the last slice of pizza","truth":true,"authors":[],"decoy":false},{"id":"o2","text":"a karate kangaroo","truth":false,"authors":[],"decoy":true},{"id":"o3","text":"an angry rubber duck","truth":false,"authors":[],"decoy":true}]
+shown = {"p1":["o1","o2","o3"],"p2":["o1","o2","o3"],"p3":["o1","o2","o3"]}
+points = {}
+voters = {"o1":[],"o2":["p2"],"o3":["p1"]}
+reveal = ["o2","o3","o1"]
+
+test = turn
+artist = "p4"
+truth = "a superhero with allergies"
+lies = [["p1","the cat's revenge"],["p2","A SUPERHERO WITH ALLERGIES!"],["p3","Abstract   art"],["p5","A SUPERHERO WITH ALLERGIES!"],["p6","Abstract   art"],["p7","A SUPERHERO WITH ALLERGIES!"]]
+spares = ["a crab playing the piano","a rocket made of fruit","a goat on a mountain of laundry","a broccoli bodybuilder","a cupcake volcano","a cyclops at the eye doctor"]
+seed = 39
+min = 4
+round = 1
+votes = [["p1","o3"],["p3","nope"],["p5","o2"],["p6","o3"],["p7","o4"]]
+options = [{"id":"o4","text":"a crab playing the piano","truth":false,"authors":[],"decoy":true},{"id":"o1","text":"the cat's revenge","truth":false,"authors":["p1"],"decoy":false},{"id":"o2","text":"Abstract   art","truth":false,"authors":["p3","p6"],"decoy":false},{"id":"o3","text":"a superhero with allergies","truth":true,"authors":[],"decoy":false}]
+shown = {"p1":["o4","o2","o3"],"p2":["o4","o1","o2","o3"],"p3":["o4","o1","o3"],"p4":["o4","o1","o2","o3"],"p5":["o4","o1","o2","o3"],"p6":["o4","o1","o3"],"p7":["o4","o1","o2","o3"]}
+points = {"p1":1000,"p4":2000,"p3":500,"p6":1500}
+voters = {"o4":["p7"],"o1":[],"o2":["p5"],"o3":["p1","p6"]}
+reveal = ["o4","o2","o3"]
+
+test = turn
+artist = "p3"
+truth = "a jellyfish in a hat shop"
+lies = [["p1","a confused banana"],["p2","a confused banana"]]
+spares = ["a donut planet","a bird building a skyscraper","an owl doing homework","a tea party for bugs","a garden gnome on strike","a raccoon chef"]
+seed = 40
+min = 4
+round = 2
+votes = [["p1","o2"],["p2","o3"],["p4","o2"]]
+options = [{"id":"o1","text":"a confused banana","truth":false,"authors":["p1","p2"],"decoy":false},{"id":"o2","text":"a jellyfish in a hat shop","truth":true,"authors":[],"decoy":false},{"id":"o4","text":"a bird building a skyscraper","truth":false,"authors":[],"decoy":true},{"id":"o3","text":"a donut planet","truth":false,"authors":[],"decoy":true}]
+shown = {"p1":["o2","o4","o3"],"p2":["o2","o4","o3"],"p3":["o1","o2","o4","o3"],"p4":["o1","o2","o4","o3"]}
+points = {"p1":2000,"p3":4000,"p4":2000}
+voters = {"o1":[],"o2":["p1","p4"],"o4":[],"o3":["p2"]}
+reveal = ["o3","o2"]

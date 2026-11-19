@@ -1,0 +1,15 @@
+[package]
+name = "drawbluff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "A Drawful-style party game on tvpipe, hosted in Rust (the reference game of docs/multiscreen-design.md §4)"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+tvpipe = { path = "../../crates/tvpipe" }
+tvpipe-party = { path = "../../crates/tvpipe-party" }
+tvpipe-canvas = { path = "../../crates/tvpipe-canvas" }

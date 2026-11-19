@@ -13,8 +13,8 @@ mod tables;
 
 use tables::{COMBINING, COMPOSITIONS, DECOMPOSITIONS, MARKS};
 
-/// The longest name, in user-perceived characters.
-pub(crate) const MAX_NAME: usize = 16;
+/// The longest player name, in user-perceived characters.
+pub const MAX_NAME: usize = 16;
 
 /// JavaScript's `\s` (and what `String.prototype.trim` removes).
 pub(crate) fn is_js_space(c: char) -> bool {
@@ -53,9 +53,14 @@ fn js_trim(s: &str) -> &str {
 
 /// Untrusted text cleaned up for display: NFC, invisible and control
 /// characters removed, whitespace runs collapsed to one space, trimmed,
-/// at most `max` user-perceived characters. Not an HTML escape: render
-/// it as text.
-pub(crate) fn clean_text(input: &str, max: usize) -> String {
+/// at most `max` user-perceived characters (`cleanText` in
+/// `@tvpipe/party`). Not an HTML escape: render it as text.
+///
+/// ```
+/// assert_eq!(tvpipe_party::clean_text("  a\u{200b}b \n c ", 16), "ab c");
+/// assert_eq!(tvpipe_party::clean_text("abcdef", 3), "abc");
+/// ```
+pub fn clean_text(input: &str, max: usize) -> String {
     let nfc = nfc(input);
     let mut s = String::with_capacity(nfc.len());
     let mut in_space = false;
@@ -82,14 +87,30 @@ pub(crate) fn clean_text(input: &str, max: usize) -> String {
     js_trim(truncate_graphemes(trimmed, max)).to_owned()
 }
 
-/// How names compare for uniqueness: case- and accent-insensitive.
-pub(crate) fn name_key(name: &str) -> String {
-    let stripped: String = nfkd(name).chars().filter(|&c| !is_mark(c)).collect();
-    stripped
+/// How names compare for uniqueness: case- and accent-insensitive, no
+/// whitespace (`nameKey` in `@tvpipe/party`).
+///
+/// ```
+/// assert_eq!(tvpipe_party::name_key("Zoë Ann"), tvpipe_party::name_key("zoeann"));
+/// ```
+pub fn name_key(name: &str) -> String {
+    fold(name)
         .to_lowercase()
         .chars()
         .filter(|&c| !is_js_space(c))
         .collect()
+}
+
+/// Text folded for comparisons: the compatibility decomposition (NFKD)
+/// without combining marks, so "Ｃafé" and "Cafe" fold alike. What
+/// [`name_key`] starts from, for games' own keys (JavaScript:
+/// `s.normalize("NFKD").replace(/\p{M}/gu, "")`).
+///
+/// ```
+/// assert_eq!(tvpipe_party::fold("Ｃafé ½"), "Cafe 1⁄2");
+/// ```
+pub fn fold(text: &str) -> String {
+    nfkd(text).chars().filter(|&c| !is_mark(c)).collect()
 }
 
 // ---------------------------------------------------------------------------
