@@ -7,6 +7,7 @@ use super::check::{self, Checked};
 use super::smoke::{self, SmokeOptions};
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
+use crate::util::stop::Stop;
 
 /// `tvpipe bundle`'s options.
 #[derive(Debug, Clone, Default)]
@@ -29,7 +30,7 @@ pub struct BundleOptions {
 
 /// Runs `tvpipe bundle`; the report goes to stdout. An error when the
 /// game has errors (or warnings with `strict`).
-pub fn run(o: &BundleOptions) -> Result<()> {
+pub fn run(o: &BundleOptions, stop: Stop) -> Result<()> {
     if o.init {
         let files = init(&o.path)?;
         let d = o.path.display();
@@ -85,6 +86,7 @@ pub fn run(o: &BundleOptions) -> Result<()> {
             &target,
             &SmokeOptions {
                 browser: o.browser.clone(),
+                stop: Some(stop),
                 ..SmokeOptions::default()
             },
         )?;
@@ -270,8 +272,8 @@ mod tests {
             out: Some(dir.join("quiz-night.zip")),
             ..BundleOptions::default()
         };
-        run(&o).unwrap();
-        run(&o).unwrap();
+        run(&o, Stop::new()).unwrap();
+        run(&o, Stop::new()).unwrap();
         let z = check::check(&dir.join("quiz-night.zip")).unwrap();
         assert!(z.problems.is_empty(), "{}", z.render());
         assert!(!z.paths().any(|p| p.ends_with(".zip")));
@@ -281,7 +283,7 @@ mod tests {
             out: Some(dir.join("x.zip")),
             ..BundleOptions::default()
         };
-        assert!(run(&again).is_err());
+        assert!(run(&again, Stop::new()).is_err());
     }
 
     /// The starter game in a real headless Chrome: every step passes;

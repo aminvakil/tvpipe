@@ -40,6 +40,8 @@ pub struct SmokeOptions {
     pub browser: Option<PathBuf>,
     /// How long each step may take.
     pub step: Duration,
+    /// Ends the run early (Ctrl-C).
+    pub stop: Option<Stop>,
 }
 
 impl Default for SmokeOptions {
@@ -47,6 +49,7 @@ impl Default for SmokeOptions {
         SmokeOptions {
             browser: None,
             step: Duration::from_secs(15),
+            stop: None,
         }
     }
 }
@@ -146,6 +149,7 @@ struct Smoke {
     requests: std::collections::HashMap<(String, String), String>,
     local: String,
     report: SmokeReport,
+    outer: Option<Stop>,
 }
 
 impl Smoke {
@@ -226,6 +230,9 @@ impl Smoke {
         loop {
             if until(self) {
                 return true;
+            }
+            if self.outer.as_ref().is_some_and(Stop::requested) {
+                return false;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -429,9 +436,14 @@ pub fn smoke(path: &Path, opts: &SmokeOptions) -> Result<SmokeReport> {
             requests: Default::default(),
             local: format!("http://127.0.0.1:{}", ports.local),
             report: SmokeReport::default(),
+            outer: opts.stop.clone(),
         };
-        run_steps(&mut s, &running, &hub, &cast, &m, ports.public, opts.step)?;
+        let r = run_steps(&mut s, &running, &hub, &cast, &m, ports.public, opts.step);
         s.browser.close();
+        r?;
+        if s.outer.as_ref().is_some_and(Stop::requested) {
+            return Err(Error::closed("smoke: stopped"));
+        }
         Ok(s.report)
     })();
     stop.request();

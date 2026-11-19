@@ -184,7 +184,7 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
         Command::Bundle(_) if global.machine => Err(error::Error::usage(
             "bundle prints a report: run it without --machine",
         )),
-        Command::Bundle(o) => tvpipe::__cli::playshare::bundle(&o),
+        Command::Bundle(o) => tvpipe::__cli::playshare::bundle(&o, ctx.stop.clone()),
         Command::Qr { .. } if global.machine => Err(error::Error::usage(
             "qr writes the code to stdout: run it without --machine",
         )),
