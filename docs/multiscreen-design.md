@@ -765,21 +765,23 @@ rejects duplicate keys by default and has limits in a `Context`: a good
 fit for untrusted phone data. `deser-value`'s `convert.rs` (≈ 430 lines)
 is the model for converting between a dynamic value and typed data.
 
-Design (feature `deser` of `tvpipe-party`, dependency `deser = "0.10"`
-without default features beyond `std`; games add `deser` with `derive`
-themselves):
+Design (feature `deser` of `tvpipe-party`: `deser` with `derive`, and
+`deser-json`; Rust 1.88, deser's minimum, while the workspace stays at
+1.85 without the feature):
 
-- `impl deser::Serialize for Value` and `impl deser::Deserialize for
-  Value`: a game type may embed a raw `Value` field.
-- `tvpipe_party::to_value(&T) -> Result<Value>` (`T: Serialize`, via a
-  `deser::ser::Serializer` whose events build a `Value`) and
-  `from_value::<T>(&Value) -> Result<T>` (`T: Deserialize`, via a
-  `deser::de::Deserializer` emitting the value's events). No JSON text in
-  between: the wire JSON is parsed once by our own parser (which already
-  enforces sizes and depth), then converted.
+- `tvpipe_party::to_value(&T) -> Result<Value, deser::Error>` (`T:
+  Serialize`) and `from_value::<T>(&Value)` (`T: DeserializeOwned`).
+  **As built** they go through JSON text (`deser_json::to_string` and
+  our parser, our serializer and `deser_json::from_str`): one small
+  string per message at party rates, no dependency on deser's
+  driver/sink internals. A direct conversion (a `Serializer` building a
+  `Value`, a `Deserializer` emitting its events, like `deser-value`'s
+  `convert.rs`) and `Serialize`/`Deserialize` impls for `Value` itself
+  are a later optimisation if profiles ask for it.
 - Typed conveniences on top: `action.data_as::<T>()` (a conversion error
-  becomes the reply `bad-data` with deser's path to the field), and
-  `view.set_typed(&T)` / `player.state().set_typed(&T)`.
+  becomes `PartyError("bad-data", deser's message)` to reply with), and
+  `State::set_typed(&T)`, `replace_typed(&T)`, `get_typed::<T>()` for
+  the room, the screen and players' own states.
 - Without the feature the same game code is written with `Value`
   accessors and `json!`; the wire format is identical, so a phone cannot
   tell which a game uses.
