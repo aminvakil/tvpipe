@@ -221,3 +221,146 @@ key. Rust's std has none of these. Proposal:
 - `names.txt` holds the cases where both agree; the few deliberate
   differences (a non-Latin compatibility character) are listed in the
   vector file as such.
+
+## 2. Transport
+
+### 2.1 What latency is there to win
+
+| Path (phone → host → phone) | RTT | Source |
+|---|---|---|
+| WebSocket through a Cloudflare quick tunnel | median 16.5–17.1 ms, p95 19.7 ms, max 26 ms | party-design §13 (client on the host's Mac, so the internet is crossed twice, as for a phone on the same Wi-Fi) |
+| WebSocket through OpenTunnel | median 43 ms, p95 47 ms | same |
+| WebSocket over the LAN (LAN mode, §3.2) | Wi-Fi: typically 2–10 ms, spikes of 50–200 ms when a phone's Wi-Fi power saving kicks in | to measure in phase 2 |
+| WebRTC data channel over the LAN | same Wi-Fi floor; no head-of-line blocking on unordered channels | to measure in phase 4 |
+
+So for turn-based games (drawbluff) the tunnel is already fine: the TV's
+playout delay (100–300 ms) dominates. The fast path matters for
+real-time controllers (a joystick, a racing game with phones as wheels):
+there the tunnel adds 10–40 ms and, worse, one lost TCP segment stalls
+every later input (head-of-line blocking) for a retransmission timeout.
+A data channel with `ordered: false, maxRetransmits: 0` delivers the
+latest stick position or nothing.
+
+### 2.2 Recommendation in short
+
+1. **WebSocket first**, exactly party-design §5 (protocol v1), through
+   the tunnel or on the LAN. It always works, it is the only path in
+   Node, and it carries signaling for the fast path.
+2. **WebRTC data channels as an optional fast path** in `tvpipe-party`
+   (feature `webrtc`), on the **`rtc` crate** (the sans-IO core under
+   `webrtc` 0.21, same project and version) with blocking `UdpSocket`s;
+   LAN only by default (host candidates, no STUN, no TURN). Anything it
+   fails at falls back to the WebSocket silently.
+3. Not `str0m` (no ring backend, twice the size, measured below), not
+   async `webrtc` (forces a runtime for no gain over its own core), not
+   Chrome as the peer (an installed browser and 200 MB of RAM for a
+   data channel), unless measurements in phase 4 say otherwise.
+
+### 2.3 Measured: WebRTC stacks for a data channel answerer
+
+Scratch crates outside the repository (`/tmp/mscratch`), 2026-11-19,
+macOS 26 arm64, Rust 1.99, each a minimal **ICE-lite answerer with an
+echoing data channel** on a `std::net::UdpSocket` (async `webrtc` on
+tokio, its runtime), release, `lto = true`, `codegen-units = 1`,
+stripped. "On top of tvpipe" adds the stack to `crates/tvpipe/examples/
+stream.rs` built the same way (2.74 MB alone; a hello world is 0.30 MB).
+
+| | `rtc` 0.21.1 (sans-IO) | `webrtc` 0.21.1 (async) | `str0m` 0.25.0 (sans-IO) |
+|---|---|---|---|
+| Model | sans-IO: `handle_read`, `poll_write`, `poll_event`, `poll_timeout` | async over `rtc`; `runtime-tokio` (default) or `runtime-smol` | sans-IO: `handle_input`, `poll_output` |
+| Crypto backend | **`ring`** (default) or `aws-lc-rs`, or a provider of our own (`RTCCryptoProvider` trait) | forwards to `rtc` | `aws-lc-rs` (default), `rust-crypto`, `openssl`, `apple-crypto` (needs a Swift toolchain via `swift-rs`; did not resolve here), `wincrypto`; **no ring** |
+| C code / toolchain | none beyond `ring`'s (already ours) | same | `aws-lc-sys` (C, CMake-free but a C compiler, and NASM questions on Windows) **even with `rust-crypto`**: `str0m-rust-crypto` enables `dimpl/rcgen`, which enables `aws-lc-rs` |
+| Crates in the tree (normal deps, unique) | 148 (incl. `ring`, `rustls`, `serde`, `serde_json`, `url` + `idna` + 15 ICU crates, `rkyv`, `nix`, `uuid`, `x509-parser`, `rcgen`, `socket2`) | 177 (+ `tokio`, `mio`, `futures`, `async-*`, `parking_lot`, `quinn-udp`) | 107 (incl. `aws-lc-rs`/`aws-lc-sys`, RustCrypto, `serde`, `tracing`, `rcgen`) |
+| Binary, alone | 2.94 MB | 3.87 MB | 4.62 MB |
+| Binary, on top of tvpipe | **4.83 MB (+2.09 MB)**; shares `ring`/`rustls` | not built (≈ alone + tvpipe − shared) | 6.99 MB (+4.25 MB) |
+| Clean release build | 33 s | 43 s | 75 s (aws-lc) |
+| License | MIT/Apache-2.0 | MIT/Apache-2.0 | MIT |
+| MSRV | 1.89 | 1.89 (edition 2024) | 1.89 |
+| ICE-lite | yes (`SettingEngine::with_lite`) | yes | yes |
+| Maturity | the sans-IO rewrite of webrtc-rs (Pion lineage), young in this form; changelog shows active work (pluggable crypto providers, conformance suite) | as `rtc` plus the async layer | sans-IO from the start, several years old, used in production SFUs; frequent breaking minor releases (0.25 lists five) |
+
+Readings:
+
+- The owner's instinct about `webrtc` 0.21 holds, with a twist: since
+  the rewrite, `webrtc` is a thin async shell over `rtc`, and `rtc` is
+  sans-IO. We take the core and drive it from our threads: no tokio, no
+  exception to the async rule, and the async API is not needed.
+- `rtc`'s default crypto is `ring`, tvpipe's own, and it reuses
+  `rustls` (rcgen for the self-signed DTLS certificate). Its weight is
+  elsewhere: 140-odd extra crates of which most are glue (`url`/ICU via
+  ICE URLs, `serde_json` for SDP init objects, `rkyv` in DTLS, `nix` for
+  interfaces). That is a real change to the "ring + rustls, nothing
+  else" policy and needs the owner's yes (§9); the feature gate keeps it
+  out of games that do not ask for it, and out of `tvpipe` entirely.
+- `str0m` is the more battle-tested sans-IO stack, but on our
+  constraints it loses: no `ring` provider (a provider of our own would
+  mean implementing its DTLS crypto traits), an unavoidable C library in
+  0.25 even on the "pure Rust" backend, and twice the binary cost.
+- Neither was checked for panics on hostile input. Before the fast path
+  ships, our fuzz smoke tests (`AGENTS.md`: never panic on network data)
+  get a target that feeds random datagrams into an `rtc` peer
+  connection; a game built with `panic = "abort"` must not die from a
+  malformed STUN packet. The stack sits behind a small internal trait
+  (`FastPath`: datagram in, datagrams and channel messages out, timeouts),
+  so swapping `rtc` for `str0m` or for a hand-rolled stack is one module.
+
+**Chrome as the peer.** tvpipe already drives a headless Chromium over
+CDP (`share URL`). A hidden host page could hold the phones'
+`RTCPeerConnection`s and relay to the Rust host over a loopback
+WebSocket. For: libwebrtc itself, zero new crates, and later per-player
+video with hardware encoding for free (`canvas.captureStream()` → video
+tracks, §7). Against: needs Chrome/Edge/Chromium installed (the
+"one binary" promise breaks), 150–300 MB of memory and 1–2 s to start,
+another process to supervise, the firewall prompt names the browser, and
+mDNS candidate obfuscation flags to manage. Keep it as the fallback if
+`rtc` disappoints, and as the likely route for §7.
+
+**Hand-rolled** (ICE-lite STUN responder, DTLS 1.2 with one cipher suite
+on `ring`, SCTP for data channels, DCEP): within the project's habits
+(tvpipe hand-rolls TLS-adjacent pairing, RTSP, mDNS), but SCTP alone is
+several thousand lines of retransmission and congestion logic to get
+right. Not now; revisit if the dependency weight of `rtc` is refused.
+
+### 2.4 How the fast path works
+
+- **Offerer is the phone.** After `welcome`, a client that supports it
+  (and was told `rtc: true` in `welcome`) creates two channels, `r`
+  (reliable, ordered) and `u` (`ordered: false, maxRetransmits: 0`),
+  and sends `{t: "rtc", sdp}` over the WebSocket. The host answers with
+  `{t: "rtc", sdp}` (ICE-lite, its host candidates embedded, no trickle).
+  Unknown `t` is ignored by v1 peers, so a Node host or an old client
+  simply never upgrades. `hello` gains `caps: ["rtc"]`.
+- **ICE on the LAN.** Phones' browsers hide their addresses behind mDNS
+  `.local` candidates (no camera permission). We never need to resolve
+  them: the host is ICE-lite with host candidates on its LAN
+  interfaces; the phone sends connectivity checks to them and the host
+  learns the phone's address as peer-reflexive. One UDP socket per
+  interface serves all phones (demultiplexed by ICE username), on a
+  fixed port when configured (firewall rules, §6).
+- **No STUN, no TURN by default.** A phone on mobile data (tunnel mode)
+  cannot reach a LAN address and stays on the WebSocket; that is the
+  fallback working, not a failure. STUN for server-reflexive candidates
+  is an opt-in later (it reveals the host's public address to every
+  player with the join key, which the tunnel otherwise hides). TURN is
+  never: the WebSocket is our relay.
+- **Binding to the player.** The SDP exchange runs over the
+  authenticated WebSocket, so the DTLS fingerprints are bound to the
+  player's session; a data channel is attached to exactly that player.
+  Over a tunnel the signaling is TLS; in LAN mode (plain HTTP) an active
+  attacker on the Wi-Fi could swap fingerprints, the same exposure as
+  the WebSocket itself (§3.2).
+- **What travels where.** The WebSocket stays the source of truth:
+  `welcome`, `state`, `bye`, and acts when the channel is down. When `r`
+  is open the client sends `act` on it and the host may send `state`,
+  `ack`, `msg` on it (same JSON, same `rev`; a gap triggers `resync`
+  over either). Act ids already make delivery exactly-once across paths
+  (the server's per-player cache), so switching paths mid-game is safe.
+  `u` carries a new message, `{t: "in", s, data}`: continuous input,
+  latest wins by sequence `s`, never acked; `party.poll()` surfaces it
+  as `Event::Input` coalesced per player per tick. Node hosts never get
+  `in` (no `rtc`), and a client without a channel sends `in` over the
+  WebSocket, rate-limited to the token bucket.
+- **Failure.** No open channel within 3 s, an ICE failure or a closed
+  channel: the client keeps using the WebSocket, retries once after a
+  network change (`online` event, page visible), and tells the host
+  (`{t: "rtc", state: "failed"}`) for the logs.
