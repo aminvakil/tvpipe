@@ -364,3 +364,79 @@ right. Not now; revisit if the dependency weight of `rtc` is refused.
   channel: the client keeps using the WebSocket, retries once after a
   network change (`online` event, page visible), and tells the host
   (`{t: "rtc", state: "failed"}`) for the logs.
+
+## 3. Join modes
+
+`PartyOptions::join(…)`: `Join::Tunnel(provider)`, `Join::Lan(bind)`, or
+**`Join::Auto` (the default)**: a tunnel (Cloudflare, OpenTunnel when it
+answers 429), and the LAN link when no tunnel comes up within 10 s (no
+internet: a cabin, a train, a captive portal). The TV shows whichever
+link is live; the host may serve both at once (the WebSocket and pages
+answer on loopback for the tunnel and on the LAN address).
+
+### 3.1 Tunnel (as built in Node)
+
+Join link `https://HOST/?r=CODE#k=JOINKEY`; the server binds 127.0.0.1
+and accepts `Host` = the tunnel's name (party-design §6). The page is
+**HTTPS, a secure context**, reachable from mobile data, and needs no
+firewall exception (loopback listener only). Costs: internet required,
+Cloudflare reads everything (OpenTunnel ends TLS in tvpipe), 6–7 s to a
+Cloudflare link (0.2 s OpenTunnel), and the RTT of §2.1.
+
+With feature `webrtc`, tunnel mode is the **hybrid**: page, keys and
+signaling over the tunnel, the data channel directly over the LAN when
+the phone is on the same network. This is the only way for an HTTPS page
+to reach the LAN host directly: `ws://192.168.…` from an `https:` page
+is mixed content (blocked), and Chrome's Local Network Access gates
+fetches from public origins to private addresses behind a permission
+prompt; WebRTC's DTLS transport is neither (Local Network Access does not
+cover WebRTC today; to re-check as Chrome evolves).
+
+### 3.2 LAN only
+
+- **Bind** one LAN address (default: the interface with the default
+  route, from tvpipe's `net::iface`; `--lan 192.168.1.23`), port 7420 by
+  default (fixed, so a firewall rule or a bookmarked link survives a
+  restart; the next free one if taken).
+- **Link** `http://192.168.1.23:7420/?r=CODE#k=JOINKEY` in the QR code;
+  the IP, not a `.local` name (Android resolves mDNS names unreliably).
+- **Access rule** (a third case next to tvpipe's local and public ones):
+  `Host` must be exactly `IP:PORT` (or a loopback name), WebSocket
+  `Origin` `http://IP:PORT`. DNS rebinding and cross-site WebSocket
+  hijacking stay closed. Keys as before; the join key is in the fragment
+  but crosses the Wi-Fi in the `hello` **in clear**: anyone who can read
+  the network (open Wi-Fi, or WPA2-Personal peers with the passphrase)
+  can join. That is the LAN mode's trade, said on the TV's setup line and
+  in the docs; tunnel mode is the answer on untrusted networks.
+- **Works without internet**; fails with Wi-Fi client isolation (hotels,
+  many guest networks), phones on mobile data or a phone VPN, and
+  separate VLANs. The host cannot detect these (no OS network APIs), so
+  the TV shows "phones must be on the same Wi-Fi as this computer" and
+  the address; `Join::Auto` prefers the tunnel when there is internet.
+
+**No secure context over `http://IP`.** What that means for controllers:
+
+| Works on plain HTTP | Needs a secure context (tunnel mode) |
+|---|---|
+| DOM, CSS, canvas, touch and pointer events | Screen Wake Lock (drawbluff asks for it: a silent no-op; a locked phone reconnects and resumes, as designed) |
+| WebSocket (`ws:`), `localStorage`, `sessionStorage` | `crypto.subtle`, `crypto.randomUUID()` |
+| `RTCPeerConnection` and data channels | DeviceOrientation/DeviceMotion (iOS `requestPermission()`, Chrome): tilt and shake controllers |
+| Audio after a tap, Fullscreen (Android) | `getUserMedia` (camera and microphone: selfie avatars, voice) |
+| `crypto.getRandomValues()` | service workers, offline/PWA install, Web Share, async clipboard, notifications |
+
+Consequences: the shared client and drawbluff's phone UI use nothing
+from the right column without a fallback (a CI check loads them from an
+`http://` non-loopback origin in headless Chrome); a game that needs
+the right column declares it (`PartyOptions::require_secure_context()`)
+and LAN-only is then refused at start with a clear error. Browsers mark
+the page "Not secure"; whether Chrome's HTTPS-First mode puts an
+interstitial in front of `http://` private addresses on current Android
+and whether iOS does anything similar is to check on devices in phase 2.
+
+**HTTPS on the LAN** was considered and left out: self-signed
+certificates (a full-page warning on every phone), installing a local CA
+(not for party guests), and a real certificate for a per-install name
+that resolves to the LAN address (the plex.direct approach: a DNS zone
+and ACME on a service we would have to run). The hybrid mode (§3.1)
+gives HTTPS plus LAN latency whenever there is internet; question 6 in §9
+asks whether a hosted name service is ever wanted.
