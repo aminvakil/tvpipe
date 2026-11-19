@@ -7,7 +7,7 @@
  * @module
  */
 
-export { createParty, toTv, consoleLogger, type CreatePartyOptions, type HostedParty, type PartyLinks, type TunnelChoice, type ToTvOptions, type ToTvWeb, type ToTvVideo, type TvHandle } from "./create.ts";
+export { createParty, socketsFor, toTv, consoleLogger, type CreatePartyOptions, type HostedParty, type PartyLinks, type TunnelChoice, type ToTvOptions, type ToTvWeb, type ToTvVideo, type TvHandle } from "./create.ts";
 export {
   Party,
   PartyError,
@@ -23,6 +23,7 @@ export {
   type PartyEvents,
   type PartyLimits,
   type PartyOptions,
+  type PartyStats,
   type Role,
   type Screen,
   type Sender,

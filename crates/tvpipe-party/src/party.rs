@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::conn::{Conn, ConnId, Inbound, Incoming, STATE_HIGH_WATER};
 use crate::limits::{TokenBucket, WindowCounter};
 use crate::names::{clean_text, name_key, MAX_NAME};
-use crate::sync::diff;
+use crate::sync::{diff_at, json_equal};
 use crate::value::{dedupe, Object, Value};
 
 /// The protocol version (`hello.v`).
@@ -207,6 +207,10 @@ impl From<&PlayerId> for Value {
 pub struct State {
     value: Object,
     dirty: bool,
+    /// Counts the changes.
+    version: u64,
+    /// A copy as of a version, made once per version for the flush.
+    snap: Option<(u64, Arc<Value>)>,
 }
 
 impl State {
@@ -226,6 +230,7 @@ impl State {
                     self.value.insert(k, v.clone());
                 }
                 self.dirty = true;
+                self.version += 1;
             }
             v => panic!("party state must be an object, not {v}"),
         }
@@ -240,6 +245,7 @@ impl State {
             Value::Object(o) => {
                 self.value = o;
                 self.dirty = true;
+                self.version += 1;
             }
             v => panic!("party state must be an object, not {v}"),
         }
@@ -249,6 +255,7 @@ impl State {
     pub fn remove(&mut self, key: &str) {
         if self.value.remove(key).is_some() {
             self.dirty = true;
+            self.version += 1;
         }
     }
 
@@ -256,7 +263,55 @@ impl State {
     pub fn update(&mut self, f: impl FnOnce(&mut Object)) {
         f(&mut self.value);
         self.dirty = true;
+        self.version += 1;
     }
+
+    /// The state as of this version (a copy made once per version).
+    fn snapshot(&mut self) -> Arc<Value> {
+        match &self.snap {
+            Some((v, value)) if *v == self.version => value.clone(),
+            _ => {
+                let value = Arc::new(Value::Object(self.value.clone()));
+                self.snap = Some((self.version, value.clone()));
+                value
+            }
+        }
+    }
+}
+
+/// A part of a client's view (`roster`, `room`/`screen`, `me`/`join`) as
+/// of a version.
+#[derive(Debug, Clone)]
+struct Section {
+    key: &'static str,
+    /// Names the source: sections of the same id and version are equal.
+    id: String,
+    version: u64,
+    value: Arc<Value>,
+}
+
+/// A section's diff between two versions, serialized once per flush for
+/// every client that needs it.
+#[derive(Debug, Default)]
+struct SectionDiff {
+    /// `"key":{…}` for the `set` object, if anything is set.
+    set: Option<String>,
+    /// The `del` paths, each serialized.
+    del: Vec<String>,
+}
+
+/// What the views cost: counters since the party started
+/// ([`Party::stats`](crate::Party::stats)).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Stats {
+    /// Flushes that had something to send.
+    pub flushes: u64,
+    /// `state` messages sent.
+    pub states: u64,
+    /// Bytes of those messages.
+    pub state_bytes: u64,
+    /// Time spent building and sending them.
+    pub flush_time: Duration,
 }
 
 /// A player: a person with a phone, across reconnects.
@@ -461,8 +516,8 @@ struct Client {
     /// `p1` or `s1`.
     id: String,
     player: Option<PlayerId>,
-    /// The view this client has.
-    sent: Object,
+    /// The view this client has, by section.
+    sent: Vec<Section>,
     rev: u64,
     waiting: bool,
     bucket: TokenBucket,
@@ -495,6 +550,11 @@ struct ClientFast {
 
 impl Client {
     fn send(&self, msg: Value) -> bool {
+        self.send_text(msg.to_string())
+    }
+
+    /// A message already serialized.
+    fn send_text(&self, text: String) -> bool {
         if self.conn.closed() {
             return false;
         }
@@ -504,7 +564,7 @@ impl Client {
                 if link.send(crate::fast::driver::Cmd::Send {
                     peer: self.conn.id,
                     channel: crate::fast::Channel::Reliable,
-                    text: msg.to_string(),
+                    text: text.clone(),
                 }) {
                     return true;
                 }
@@ -514,7 +574,7 @@ impl Client {
             bye(&self.conn, Bye::Slow, None);
             return false;
         }
-        self.conn.send(msg.to_string());
+        self.conn.send(text);
         true
     }
 }
@@ -576,7 +636,10 @@ pub(crate) struct Core {
     moderate: Option<Moderate>,
     join: Value,
     join_dirty: bool,
+    join_snap: (u64, Arc<Value>),
     roster_dirty: bool,
+    roster_snap: (u64, Arc<Value>),
+    stats: Stats,
     players: Vec<Player>,
     clients: HashMap<ConnId, Client>,
     pending: HashMap<ConnId, Conn>,
@@ -622,9 +685,12 @@ impl Core {
             max_players: options.max_players,
             limits: options.limits,
             moderate: options.moderate,
+            join_snap: (1, Arc::new(join.clone())),
             join,
             join_dirty: true,
             roster_dirty: false,
+            roster_snap: (0, Arc::new(Value::Array(Vec::new()))),
+            stats: Stats::default(),
             players: Vec::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -644,8 +710,14 @@ impl Core {
     }
 
     pub fn set_join(&mut self, join: Value) {
+        self.join_snap = (self.join_snap.0 + 1, Arc::new(join.clone()));
         self.join = join;
         self.join_dirty = true;
+    }
+
+    /// What the views cost so far.
+    pub fn stats(&self) -> Stats {
+        self.stats
     }
 
     pub fn watch(&self) -> ScreenWatch {
@@ -728,19 +800,52 @@ impl Core {
         o
     }
 
-    fn player_view(&self, p: &Player) -> Object {
-        let mut o = Object::new();
-        o.insert("roster", self.roster());
-        o.insert("room", Value::Object(self.room.value.clone()));
-        o.insert("me", Value::Object(p.state.value.clone()));
-        o
+    /// The roster's snapshot: a new version only when it changed.
+    fn refresh_roster(&mut self) {
+        let roster = self.roster();
+        if !json_equal(&roster, &self.roster_snap.1) {
+            self.roster_snap = (self.roster_snap.0 + 1, Arc::new(roster));
+        }
     }
 
-    fn view_for(&self, c: &Client) -> Object {
-        match c.player.as_ref().and_then(|id| self.player(id)) {
-            Some(p) => self.player_view(p),
-            None => self.screen_view(),
+    /// A client's view as sections (a player's, or a screen's without
+    /// one); call [`Core::refresh_roster`] first.
+    fn sections(&mut self, player: Option<&PlayerId>) -> Vec<Section> {
+        let roster = Section {
+            key: "roster",
+            id: "roster".to_owned(),
+            version: self.roster_snap.0,
+            value: self.roster_snap.1.clone(),
+        };
+        if let Some(i) = player.and_then(|id| self.players.iter().position(|p| &p.id == id)) {
+            let room = Section {
+                key: "room",
+                id: "room".to_owned(),
+                version: self.room.version,
+                value: self.room.snapshot(),
+            };
+            let p = &mut self.players[i];
+            let me = Section {
+                key: "me",
+                id: format!("me:{}", p.id.as_str()),
+                version: p.state.version,
+                value: p.state.snapshot(),
+            };
+            return vec![roster, room, me];
         }
+        let screen = Section {
+            key: "screen",
+            id: "screen".to_owned(),
+            version: self.screen.version,
+            value: self.screen.snapshot(),
+        };
+        let join = Section {
+            key: "join",
+            id: "join".to_owned(),
+            version: self.join_snap.0,
+            value: self.join_snap.1.clone(),
+        };
+        vec![roster, screen, join]
     }
 
     // -------------------------------------------------------------------
@@ -1009,7 +1114,7 @@ impl Core {
             role,
             id,
             player,
-            sent: Object::new(),
+            sent: Vec::new(),
             rev: 0,
             waiting: false,
             bucket: TokenBucket::new(self.limits.rate, self.limits.burst, at),
@@ -1030,7 +1135,9 @@ impl Core {
                 bucket: TokenBucket::new(INPUT_RATE.0, INPUT_RATE.1, at),
             },
         };
-        let view = self.view_for(&c);
+        self.refresh_roster();
+        let sections = self.sections(c.player.as_ref());
+        let view = view_of(&sections);
         let mut you = Object::new();
         you.insert("id", c.id.as_str());
         you.insert("role", role.as_str());
@@ -1046,13 +1153,13 @@ impl Core {
         msg.insert("room", Value::object().with("code", self.code.as_str()));
         msg.insert("you", Value::Object(you));
         msg.insert("now", now_ms());
-        msg.insert("view", Value::Object(view.clone()));
+        msg.insert("view", Value::Object(view));
         msg.insert("rev", 0);
         #[cfg(feature = "webrtc")]
         if c.fast.capable && c.fast.link.is_some() {
             msg.insert("rtc", true);
         }
-        c.sent = view;
+        c.sent = sections;
         c.send(Value::Object(msg));
         self.clients.insert(c.conn.id, c);
     }
@@ -1110,12 +1217,15 @@ impl Core {
                 let Some(c) = self.clients.get(&conn) else {
                     return;
                 };
-                let view = self.view_for(c);
+                let player = c.player.clone();
+                self.refresh_roster();
+                let sections = self.sections(player.as_ref());
+                let view = view_of(&sections);
                 let Some(c) = self.clients.get_mut(&conn) else {
                     return;
                 };
                 c.rev += 1;
-                c.sent = view.clone();
+                c.sent = sections;
                 let msg = Value::object()
                     .with("t", "state")
                     .with("rev", c.rev)
@@ -1432,9 +1542,14 @@ impl Core {
         {
             let mut ids: Vec<ConnId> = self.clients.keys().copied().collect();
             ids.sort_unstable();
+            let started = Instant::now();
+            self.refresh_roster();
+            let mut diffs = HashMap::new();
             for id in ids {
-                self.flush_client(id);
+                self.flush_client_with(id, &mut diffs);
             }
+            self.stats.flushes += 1;
+            self.stats.flush_time += started.elapsed();
             if self.screen.dirty || self.roster_dirty || self.join_dirty {
                 self.watch_version += 1;
                 let view = Arc::new(Value::Object(self.screen_view()));
@@ -1453,6 +1568,18 @@ impl Core {
     }
 
     fn flush_client(&mut self, id: ConnId) {
+        let started = Instant::now();
+        self.refresh_roster();
+        self.flush_client_with(id, &mut HashMap::new());
+        self.stats.flush_time += started.elapsed();
+    }
+
+    /// Sends a client the diff of its view: only the sections whose
+    /// version moved, each section's diff computed and serialized once
+    /// per flush for every client that had the same version (`diffs`).
+    /// The text is what serializing `{t, rev, set, del}` of the whole
+    /// view's diff gives.
+    fn flush_client_with(&mut self, id: ConnId, diffs: &mut HashMap<(String, u64), SectionDiff>) {
         let Some(c) = self.clients.get(&id) else {
             return;
         };
@@ -1466,21 +1593,49 @@ impl Core {
             }
             return;
         }
-        let view = self.view_for(c);
+        let player = c.player.clone();
+        let sections = self.sections(player.as_ref());
         let Some(c) = self.clients.get_mut(&id) else {
             return;
         };
         c.waiting = false;
-        let Some(d) = diff(&c.sent, &view) else {
+        let mut set: Vec<String> = Vec::new();
+        let mut del: Vec<String> = Vec::new();
+        for (i, s) in sections.into_iter().enumerate() {
+            let Some(old) = c.sent.get(i) else {
+                continue;
+            };
+            if old.id == s.id && old.version == s.version {
+                continue;
+            }
+            let key = (old.id.clone(), old.version);
+            let d = diffs
+                .entry(key)
+                .or_insert_with(|| section_diff(s.key, &old.value, &s.value));
+            set.extend(d.set.iter().cloned());
+            del.extend(d.del.iter().cloned());
+            c.sent[i] = s;
+        }
+        if set.is_empty() && del.is_empty() {
             return;
-        };
-        c.sent = view;
+        }
         c.rev += 1;
-        let mut msg = Object::new();
-        msg.insert("t", "state");
-        msg.insert("rev", c.rev);
-        d.write_into(&mut msg);
-        c.send(Value::Object(msg));
+        let mut text = format!("{{\"t\":\"state\",\"rev\":{}", c.rev);
+        if !set.is_empty() {
+            text.push_str(",\"set\":{");
+            text.push_str(&set.join(","));
+            text.push('}');
+        }
+        if !del.is_empty() {
+            text.push_str(",\"del\":[");
+            text.push_str(&del.join(","));
+            text.push(']');
+        }
+        text.push('}');
+        let bytes = text.len() as u64;
+        c.send_text(text);
+        self.stats.states += 1;
+        self.stats.state_bytes += bytes;
     }
 
     fn send_acks(&mut self) {
@@ -1698,5 +1853,38 @@ pub(crate) fn pump(core: &mut Core, inbox: &Inbox, wait: Option<Duration>) {
     }
     while let Ok(m) = inbox.try_recv() {
         core.handle(m);
+    }
+}
+
+/// A view from its sections (for `welcome` and `resync`).
+fn view_of(sections: &[Section]) -> Object {
+    let mut o = Object::new();
+    for s in sections {
+        o.insert(s.key, (*s.value).clone());
+    }
+    o
+}
+
+/// One section's diff, serialized: objects diff key by key, anything else
+/// is set when it changed (the rules of `sync::diff` at the top level).
+fn section_diff(key: &'static str, old: &Value, new: &Value) -> SectionDiff {
+    let name = Value::from(key).to_string();
+    match (old, new) {
+        (Value::Object(a), Value::Object(b)) => {
+            let d = diff_at(a, b, key);
+            SectionDiff {
+                set: (!d.set.is_empty()).then(|| format!("{name}:{}", Value::Object(d.set))),
+                del: d
+                    .del
+                    .into_iter()
+                    .map(|p| Value::Array(p.into_iter().map(Value::from).collect()).to_string())
+                    .collect(),
+            }
+        }
+        _ if json_equal(old, new) => SectionDiff::default(),
+        _ => SectionDiff {
+            set: Some(format!("{name}:{new}")),
+            del: Vec::new(),
+        },
     }
 }

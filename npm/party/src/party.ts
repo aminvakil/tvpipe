@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 
 import { TokenBucket } from "./limits.ts";
 import { cleanText, MAX_NAME, nameKey } from "./names.ts";
-import { diff, isObject, StateBox, toJson, type Json, type JsonObject } from "./sync.ts";
+import { deepEqual, diffAt, isObject, StateBox, toJson, type Json, type JsonObject } from "./sync.ts";
 import type { WsConnection } from "./ws.ts";
 
 export const PROTOCOL = 1;
@@ -79,6 +79,23 @@ const MAX_CONTROL_MESSAGE = 16 * 1024;
 /** Largest `in` message (continuous input). */
 const MAX_INPUT = 4 * 1024;
 
+/** A part of a client's view (`roster`, `room`/`screen`, `me`/`join`) as of a version. */
+interface Section {
+  key: string;
+  /** Names the box: views of the same id and version are equal. */
+  id: string;
+  version: number;
+  value: Json;
+}
+
+/** A section's diff between two versions, serialized once per flush for everybody who needs it. */
+interface SectionDiff {
+  /** `"key":{…}` for the `set` object, if anything is set. */
+  set?: string;
+  /** The `del` paths, each serialized. */
+  del: string[];
+}
+
 type Ack = { t: "ack"; id: number; ok: true; result?: Json; dup?: true } | { t: "ack"; id: number; ok: false; error: { code: string; message: string } };
 
 /** A player: a person with a phone, across reconnects. */
@@ -145,6 +162,8 @@ export class Client {
   player: Player | undefined;
   /** The view this client has (after the last `state`). */
   sent: JsonObject | undefined;
+  /** The versions of `sent`'s sections (`Section.id` → version). */
+  have: Map<string, number> = new Map();
   rev = 0;
   waiting = false;
   readonly bucket: TokenBucket;
@@ -162,12 +181,17 @@ export class Client {
   }
 
   send(msg: JsonObject): boolean {
+    return this.sendText(JSON.stringify(msg));
+  }
+
+  /** A message already serialized. */
+  sendText(text: string): boolean {
     if (this.ws.closed) return false;
     if (this.ws.bufferedAmount > SLOW_LIMIT) {
       this.bye("slow");
       return false;
     }
-    this.ws.send(JSON.stringify(msg));
+    this.ws.send(text);
     return true;
   }
 
@@ -258,6 +282,18 @@ export interface CollectOptions<T> {
   signal?: AbortSignal | undefined;
 }
 
+/** What the views cost: counters since the party started (`party.stats`). */
+export interface PartyStats {
+  /** Flushes that sent anything or had something to send. */
+  flushes: number;
+  /** `state` messages sent. */
+  states: number;
+  /** Bytes of those messages (UTF-8 text). */
+  stateBytes: number;
+  /** Time spent building and sending them, ms. */
+  flushMs: number;
+}
+
 let partySeq = 0;
 
 export class Party extends EventEmitter<PartyEvents> {
@@ -281,7 +317,10 @@ export class Party extends EventEmitter<PartyEvents> {
   #seq = 0;
   #screenSeq = 0;
   #flushQueued = false;
+  readonly #stats: PartyStats = { flushes: 0, states: 0, stateBytes: 0, flushMs: 0 };
   #screenView: JsonObject | undefined;
+  #rosterSection = { version: 0, value: [] as Json };
+  #joinSection = { version: 0, value: null as Json };
   readonly #moderate: PartyOptions["moderate"];
   readonly #limits: Required<PartyLimits>;
   readonly #log: Logger;
@@ -334,7 +373,13 @@ export class Party extends EventEmitter<PartyEvents> {
 
   set joinInfo(info: JoinInfo) {
     this.#join = info;
+    this.#joinSection = { version: this.#joinSection.version + 1, value: toJson(info) };
     this.#changed();
+  }
+
+  /** What the views cost so far (a copy). */
+  get stats(): PartyStats {
+    return { ...this.#stats };
   }
 
   player(id: string): Player | undefined {
@@ -553,17 +598,53 @@ export class Party extends EventEmitter<PartyEvents> {
     c.ws.on("message", (data, binary) => this.#onMessage(c, data, binary));
     c.ws.on("close", () => this.#onClose(c));
     c.ws.socket.on("drain", () => {
-      if (c.waiting) this.#flushClient(c);
+      if (c.waiting) {
+        this.#refreshRoster();
+        this.#flushClient(c, new Map());
+      }
     });
   }
 
-  #viewFor(c: Client): JsonObject {
-    return c.player ? this.playerView(c.player) : this.screenView();
+  /** The roster's section: a new version only when it changed. */
+  #refreshRoster(): void {
+    const roster = this.#roster();
+    if (!deepEqual(roster, this.#rosterSection.value)) this.#rosterSection = { version: this.#rosterSection.version + 1, value: roster };
+  }
+
+  /** A client's view as sections (snapshots: do not modify). */
+  #sections(c: Client): Section[] {
+    const roster: Section = { key: "roster", id: "roster", ...this.#rosterSection };
+    if (c.player) {
+      const p = c.player;
+      return [
+        roster,
+        { key: "room", id: "room", version: this.room.version, value: this.room.snapshot() },
+        { key: "me", id: `me:${p.id}`, version: p.state.version, value: p.state.snapshot() },
+      ];
+    }
+    if (this.#joinSection.version === 0) this.#joinSection = { version: 1, value: toJson(this.#join) };
+    return [
+      roster,
+      { key: "screen", id: "screen", version: this.screen.version, value: this.screen.snapshot() },
+      { key: "join", id: "join", ...this.#joinSection },
+    ];
+  }
+
+  /** The client's whole view now, remembered as what it has. */
+  #fullView(c: Client): JsonObject {
+    this.#refreshRoster();
+    const view: JsonObject = {};
+    c.have = new Map();
+    for (const s of this.#sections(c)) {
+      view[s.key] = s.value;
+      c.have.set(s.id, s.version);
+    }
+    c.sent = view;
+    return view;
   }
 
   #welcome(c: Client): void {
-    const view = toJson(this.#viewFor(c)) as JsonObject;
-    c.sent = view;
+    const view = this.#fullView(c);
     c.rev = 0;
     const you: JsonObject = { id: c.id, role: c.role };
     if (c.player) {
@@ -627,8 +708,7 @@ export class Party extends EventEmitter<PartyEvents> {
         c.send({ t: "pong", c: typeof msg["c"] === "number" ? msg["c"] : 0, now: this.now() });
         return;
       case "resync": {
-        const view = toJson(this.#viewFor(c)) as JsonObject;
-        c.sent = view;
+        const view = this.#fullView(c);
         c.send({ t: "state", rev: ++c.rev, full: view });
         return;
       }
@@ -713,12 +793,24 @@ export class Party extends EventEmitter<PartyEvents> {
     this.#flushQueued = true;
     queueMicrotask(() => {
       this.#flushQueued = false;
-      for (const c of this.#clients) this.#flushClient(c);
+      const t0 = performance.now();
+      this.#refreshRoster();
+      const diffs = new Map<string, SectionDiff>();
+      for (const c of this.#clients) this.#flushClient(c, diffs);
+      this.#stats.flushes++;
+      this.#stats.flushMs += performance.now() - t0;
       if (this.listenerCount("screen-view") > 0) this.emit("screen-view", this.screenView());
     });
   }
 
-  #flushClient(c: Client): void {
+  /**
+   * Sends a client the diff of its view: only the sections whose version
+   * moved, each section's diff computed and serialized once per flush
+   * for every client that had the same version (`diffs`). The message is
+   * what `JSON.stringify({t, rev, set, del})` of the whole view's diff
+   * gives.
+   */
+  #flushClient(c: Client, diffs: Map<string, SectionDiff>): void {
     if (c.ws.closed || !c.sent || (c.role === "player" && !c.player)) return;
     if (c.ws.bufferedAmount > STATE_HIGH_WATER) {
       // Latest wins: one diff against what it has once the socket drains.
@@ -726,11 +818,40 @@ export class Party extends EventEmitter<PartyEvents> {
       return;
     }
     c.waiting = false;
-    const view = toJson(this.#viewFor(c)) as JsonObject;
-    const d = diff(c.sent, view);
-    if (!d) return;
-    c.sent = view;
-    c.send({ t: "state", rev: ++c.rev, ...(d as JsonObject) });
+    const sent = c.sent;
+    const set: string[] = [];
+    const del: string[] = [];
+    for (const s of this.#sections(c)) {
+      const had = c.have.get(s.id);
+      if (had === s.version) continue;
+      const cacheKey = had === undefined ? undefined : `${s.id}:${had}`;
+      let d = cacheKey ? diffs.get(cacheKey) : undefined;
+      if (!d) {
+        const old = sent[s.key];
+        if (old !== undefined && isObject(old) && isObject(s.value)) {
+          const at = diffAt(old, s.value, [s.key]);
+          d = { del: at.del.map((p) => JSON.stringify(p)) };
+          if (Object.keys(at.set).length > 0) d.set = `${JSON.stringify(s.key)}:${JSON.stringify(at.set)}`;
+        } else if (old === undefined || !deepEqual(old, s.value)) {
+          d = { set: `${JSON.stringify(s.key)}:${JSON.stringify(s.value)}`, del: [] };
+        } else {
+          d = { del: [] };
+        }
+        if (cacheKey) diffs.set(cacheKey, d);
+      }
+      if (d.set) set.push(d.set);
+      del.push(...d.del);
+      sent[s.key] = s.value;
+      c.have.set(s.id, s.version);
+    }
+    if (set.length === 0 && del.length === 0) return;
+    let text = `{"t":"state","rev":${++c.rev}`;
+    if (set.length > 0) text += `,"set":{${set.join(",")}}`;
+    if (del.length > 0) text += `,"del":[${del.join(",")}]`;
+    text += "}";
+    this.#stats.states++;
+    this.#stats.stateBytes += Buffer.byteLength(text);
+    c.sendText(text);
   }
 }
 

@@ -58,6 +58,18 @@ export function diff(a: JsonObject, b: JsonObject): Diff | undefined {
   return out.set || out.del ? out : undefined;
 }
 
+/**
+ * The diff from `a` to `b` as it appears inside a bigger view at `path`
+ * (`del` paths start with `path`; `set` is relative to it). A view's
+ * diff is its sections' diffs in key order (`party.ts` composes them).
+ */
+export function diffAt(a: JsonObject, b: JsonObject, path: string[]): { set: JsonObject; del: string[][] } {
+  const set: JsonObject = {};
+  const del: string[][] = [];
+  walk(a, b, path, set, del);
+  return { set, del };
+}
+
 function walk(a: JsonObject, b: JsonObject, path: string[], set: JsonObject, del: string[][]): void {
   for (const k of Object.keys(a)) {
     if (!Object.hasOwn(b, k)) del.push([...path, k]);
@@ -107,6 +119,8 @@ function merge(target: JsonObject, patch: JsonObject): void {
  */
 export class StateBox<T extends JsonObject = JsonObject> {
   #value: JsonObject = {};
+  #version = 0;
+  #snapshot: { version: number; value: JsonObject } | undefined;
   readonly #changed: () => void;
 
   constructor(changed: () => void) {
@@ -123,12 +137,24 @@ export class StateBox<T extends JsonObject = JsonObject> {
     return this.#value as T;
   }
 
+  /** Counts the changes (each `set`, `replace`, `update`). */
+  get version(): number {
+    return this.#version;
+  }
+
+  /** A copy of the state as of this version, made once per version: do not modify. */
+  snapshot(): Readonly<T> {
+    if (this.#snapshot?.version !== this.#version) this.#snapshot = { version: this.#version, value: toJson(this.#value) as JsonObject };
+    return this.#snapshot.value as T;
+  }
+
   /** Merges the top-level fields of `partial` into the state (`undefined` removes one). */
   set(partial: Partial<T> | Record<string, unknown>): void {
     const j = toJson(partial);
     if (!isObject(j)) throw new TypeError("state must be an object");
     Object.assign(this.#value, j);
     for (const [k, v] of Object.entries(partial)) if (v === undefined) delete this.#value[k];
+    this.#version++;
     this.#changed();
   }
 
@@ -137,6 +163,7 @@ export class StateBox<T extends JsonObject = JsonObject> {
     const j = toJson(value);
     if (!isObject(j)) throw new TypeError("state must be an object");
     this.#value = j;
+    this.#version++;
     this.#changed();
   }
 

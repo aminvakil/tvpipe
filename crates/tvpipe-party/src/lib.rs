@@ -67,7 +67,7 @@ pub use collect::Collect;
 pub use names::{clean_text, fold, name_key, MAX_NAME};
 pub use party::{
     Action, Event, Limits, Moderate, Moderation, PartyError, Player, PlayerId, Role, ScreenWatch,
-    Source, State, PROTOCOL,
+    Source, State, Stats, PROTOCOL,
 };
 pub use server::DEFAULT_CSP;
 #[cfg(feature = "deser")]
@@ -139,7 +139,7 @@ pub struct PartyOptions {
     tunnel_timeout: Duration,
     secure: bool,
     csp: Option<String>,
-    max_sockets: usize,
+    max_sockets: Option<usize>,
     max_message: usize,
     joins_per_minute: usize,
     moderate: Option<Moderate>,
@@ -177,7 +177,7 @@ impl PartyOptions {
             tunnel_timeout: Duration::from_secs(10),
             secure: false,
             csp: Some(DEFAULT_CSP.to_owned()),
-            max_sockets: 64,
+            max_sockets: None,
             max_message: 256 * 1024,
             joins_per_minute: 20,
             moderate: None,
@@ -260,9 +260,9 @@ impl PartyOptions {
         self
     }
 
-    /// WebSockets at once (default 64).
+    /// WebSockets at once (default: [`sockets_for`] the most players).
     pub fn max_sockets(mut self, n: usize) -> Self {
-        self.max_sockets = n;
+        self.max_sockets = Some(n);
         self
     }
 
@@ -345,6 +345,9 @@ impl Party {
     /// Starts the server (and the tunnel, which may take several
     /// seconds) and makes the room.
     pub fn start(options: PartyOptions) -> tvpipe::Result<Party> {
+        let max_sockets = options
+            .max_sockets
+            .unwrap_or_else(|| sockets_for(options.max_players));
         let (tx, inbox) = mpsc::channel();
         let joins = Arc::new(Mutex::new(WindowCounter::new(
             options.joins_per_minute,
@@ -362,12 +365,12 @@ impl Party {
             phone: options.phone,
             screen: options.screen,
             csp: options.csp,
-            max_sockets: options.max_sockets,
+            max_sockets,
             max_message: options.max_message,
         });
         let config = httpd::Config {
             // Sockets, plus room for page loads.
-            max_connections: options.max_sockets + 32,
+            max_connections: max_sockets + 32,
             ..httpd::Config::default()
         };
         if options.secure && matches!(options.join, Join::Lan(_)) {
@@ -625,6 +628,12 @@ impl Party {
         self.core.flush();
     }
 
+    /// What the views cost so far: flushes, `state` messages, their
+    /// bytes, the time spent on them.
+    pub fn stats(&self) -> Stats {
+        self.core.stats()
+    }
+
     /// Answers an action: a result for the phone (`null` for none) or an
     /// error. Sent by the next [`flush`](Party::flush), after the state.
     pub fn reply(&mut self, action: Action, result: Result<Value, PartyError>) {
@@ -781,6 +790,13 @@ fn auto_tunnel(port: u16, timeout: Duration) -> tvpipe::Result<Tunnel> {
             )))
         }
     }
+}
+
+/// The default socket limit for a party of `max_players`: every player
+/// twice (a phone that reconnects before its old socket is gone) plus 16
+/// screens and watchers, at least 64 (`socketsFor` in `@tvpipe/party`).
+pub fn sockets_for(max_players: usize) -> usize {
+    (2 * max_players + 16).max(64)
 }
 
 /// The LAN listener: `port`, else the next free of the following 20

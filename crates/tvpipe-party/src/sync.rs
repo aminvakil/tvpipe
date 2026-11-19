@@ -15,6 +15,7 @@ pub(crate) struct Diff {
     pub del: Vec<Vec<String>>,
 }
 
+#[cfg(test)]
 impl Diff {
     /// The fields of a `state` message (`set`, `del`), into `msg`.
     pub fn write_into(self, msg: &mut Object) {
@@ -36,11 +37,23 @@ impl Diff {
 }
 
 /// The diff from `a` to `b`, `None` when they are equal.
+#[cfg(test)]
 pub(crate) fn diff(a: &Object, b: &Object) -> Option<Diff> {
     let mut d = Diff::default();
     let mut path = Vec::new();
     walk(a, b, &mut path, &mut d.set, &mut d.del);
     (!d.set.is_empty() || !d.del.is_empty()).then_some(d)
+}
+
+/// The diff from `a` to `b` as it appears inside a bigger view under
+/// `key` (`del` paths start with `key`; `set` is relative to it). A
+/// view's diff is its sections' diffs in key order (`Party::flush`
+/// composes them).
+pub(crate) fn diff_at(a: &Object, b: &Object, key: &str) -> Diff {
+    let mut d = Diff::default();
+    let mut path = vec![key.to_owned()];
+    walk(a, b, &mut path, &mut d.set, &mut d.del);
+    d
 }
 
 fn walk(

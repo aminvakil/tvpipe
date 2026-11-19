@@ -58,9 +58,18 @@ export function consoleLogger(min: LogLevel = "warn"): Logger {
   };
 }
 
+/**
+ * The default socket limit for a party of `maxPlayers`: every player
+ * twice (a phone that reconnects before its old socket is gone) plus 16
+ * screens and watchers, at least 64 (`sockets_for` in `tvpipe-party`).
+ */
+export function socketsFor(maxPlayers: number): number {
+  return Math.max(64, 2 * maxPlayers + 16);
+}
+
 export async function createParty(options: CreatePartyOptions = {}): Promise<HostedParty> {
   const log = options.log ?? consoleLogger(options.logLevel);
-  const server = new PartyServer({ ...options, log });
+  const server = new PartyServer({ ...options, maxSockets: options.maxSockets ?? socketsFor(options.maxPlayers ?? 8), log });
   await server.listen();
   const party = server.createParty({ ...options, log });
   let tunnel: TunnelLike | undefined;
