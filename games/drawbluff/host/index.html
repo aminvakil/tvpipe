@@ -17,44 +17,45 @@
     <section class="join">
       <div id="qr" class="qr"></div>
       <div>
-        <p class="muted">Room</p>
+        <p class="muted" data-t="room">Room</p>
         <p id="code" class="code">····</p>
-        <p class="muted">Phones join at</p>
+        <p class="muted" data-t="joinAt">Phones join at</p>
         <p id="link" class="link"></p>
         <p id="link-note" class="muted small"></p>
       </div>
     </section>
     <section>
-      <h2>On the TV</h2>
-      <ul id="tvs" class="tvs"><li class="muted">No TV: open the preview on a screen yourself.</li></ul>
+      <h2 data-t="onTv">On the TV</h2>
+      <ul id="tvs" class="tvs"><li class="muted" data-t="noTv">No TV: open the preview on a screen yourself.</li></ul>
       <div class="row">
-        <button id="cast-again" hidden>Try again</button>
-        <a id="player" href="#" target="_blank" hidden>Open the TV view</a>
+        <button id="cast-again" data-t="tryAgain" hidden>Try again</button>
+        <a id="player" href="#" target="_blank" data-t="openTv" hidden>Open the TV view</a>
       </div>
     </section>
     <section>
-      <h2>Players <span id="count" class="muted"></span></h2>
+      <h2><span data-t="players">Players</span> <span id="count" class="muted"></span></h2>
       <ul id="players" class="players"></ul>
       <div class="row">
-        <button id="bot1">Add a bot</button>
-        <button id="bot3">Add 3 bots</button>
+        <button id="bot1" data-t="addBot">Add a bot</button>
+        <button id="bot3" data-t="addBots">Add 3 bots</button>
       </div>
     </section>
     <section class="settings">
-      <label>Rounds <select id="rounds"><option>1</option><option selected>2</option><option>3</option></select></label>
-      <label>Timers <select id="timers"><option value="normal">normal</option><option value="fast">fast</option></select></label>
-      <label>TV picture <select id="tvmode"><option value="page">tvpipe's browser</option><option value="canvas">drawn here</option></select></label>
-      <label>Latecomers <select id="late"><option value="wait">next round</option><option value="open">anytime</option><option value="closed">not during a game</option></select></label>
+      <label><span data-t="language">Language</span> <select id="lang"><option value="en" lang="en">English</option><option value="de" lang="de">Deutsch</option></select></label>
+      <label><span data-t="rounds">Rounds</span> <select id="rounds"><option>1</option><option selected>2</option><option>3</option></select></label>
+      <label><span data-t="timers">Timers</span> <select id="timers"><option value="normal" data-t="normal">normal</option><option value="fast" data-t="fast">fast</option></select></label>
+      <label><span data-t="tvPicture">TV picture</span> <select id="tvmode"><option value="page" data-t="tvpipeBrowser">tvpipe's browser</option><option value="canvas" data-t="drawnHere">drawn here</option></select></label>
+      <label><span data-t="latecomers">Latecomers</span> <select id="late"><option value="wait" data-t="nextRound">next round</option><option value="open" data-t="anytime">anytime</option><option value="closed" data-t="notDuring">not during a game</option></select></label>
     </section>
     <footer>
       <button id="start" class="primary">Start the game</button>
-      <button id="quit" class="quiet">End</button>
+      <button id="quit" class="quiet" data-t="end">End</button>
     </footer>
     <p id="error" class="error" hidden></p>
   </aside>
   <main>
     <div class="preview"><iframe id="preview" title="What the TV shows"></iframe></div>
-    <p class="muted small">What the TV shows (a preview, no sound). The VIP's phone can start the game too.</p>
+    <p class="muted small" data-t="previewNote">What the TV shows (a preview, no sound). The VIP's phone can start the game too.</p>
   </main>
 </div>
 </body>

@@ -4,14 +4,16 @@
  * relay, puts the TV page on the TVs the launcher chose, runs the rules
  * (`game/`), and shows the room: the join code and QR code, the TVs,
  * the players (bots to try it alone), the settings and a preview of the
- * TV.
+ * TV. The room's language (default: this browser's) is a setting: the
+ * prompts, every phone, the TV and this page follow it.
  */
 
 import { qrSvg, Tvpipe, type CastStatus, type HostedParty, type LateJoin, type SurfaceEncoder } from "@tvpipe/party";
 
 import { bots, type Bot } from "../game/bots.ts";
 import { DEFAULT_TIMINGS, Drawbluff, FAST_TIMINGS } from "../game/game.ts";
-import { parsePrompts } from "../game/rules.ts";
+import { LANGS, parsePrompts, pickLang, type Lang, type Prompt } from "../game/rules.ts";
+import { strings } from "./strings.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -26,20 +28,29 @@ let game: Drawbluff;
 let tvpipe: Tvpipe;
 const robots: Bot[] = [];
 
+/** The room's language: last time's choice on this computer, else the browser's. */
+const LANG_KEY = "drawbluff:host-lang";
+let lang: Lang = pickLang(localStorage.getItem(LANG_KEY) ?? navigator.languages?.[0] ?? navigator.language);
+let t = strings(lang);
+
+/** The page's fixed texts and the language attribute (hyphenation). */
+function renderLang(): void {
+  document.documentElement.lang = lang;
+  const page = t.page as Record<string, string>;
+  for (const el of document.querySelectorAll<HTMLElement>("[data-t]")) {
+    const text = page[el.dataset["t"]!];
+    if (text !== undefined) el.textContent = text;
+  }
+  $<HTMLSelectElement>("lang").value = lang;
+}
+
 function renderJoin(): void {
   const j = party.joinInfo;
   $("code").textContent = party.code;
   $("link").textContent = j.url.replace(/#.*$/, "");
   $("qr").innerHTML = qrSvg(j.qr, { quiet: 2 });
-  const t = party.info.tunnel;
-  $("link-note").textContent =
-    j.mode === "tunnel"
-      ? ""
-      : j.mode === "lan"
-        ? "On this Wi-Fi only"
-        : t.state === "starting"
-          ? "Opening a public link…"
-          : "This computer only (no public link)";
+  const tunnel = party.info.tunnel;
+  $("link-note").textContent = j.mode === "tunnel" ? "" : j.mode === "lan" ? t.lanOnly : tunnel.state === "starting" ? t.opening : t.localOnly;
 }
 
 function renderPlayers(): void {
@@ -54,14 +65,14 @@ function renderPlayers(): void {
       who.textContent = p.name;
       const tag = document.createElement("span");
       tag.className = "tag";
-      tag.textContent = [p.vip ? "VIP" : "", p.waiting ? "waiting" : "", p.connected ? "" : "away"].filter(Boolean).join(" · ");
+      tag.textContent = [p.vip ? t.vip : "", p.waiting ? t.waiting : "", p.connected ? "" : t.away].filter(Boolean).join(" · ");
       const end = document.createElement("span");
       end.className = "end";
       end.append(tag);
       if (!running) {
         const kick = document.createElement("button");
         kick.className = "kick";
-        kick.title = `Remove ${p.name}`;
+        kick.title = t.remove(p.name);
         kick.textContent = "✕";
         kick.onclick = () => party.kick(p);
         end.append(kick);
@@ -72,8 +83,8 @@ function renderPlayers(): void {
   );
   $("count").textContent = `${party.players.length} / ${party.maxPlayers}`;
   ($("start") as HTMLButtonElement).disabled = running || party.connectedPlayers.length < game.minPlayers;
-  $("start").textContent = running ? "Playing…" : party.connectedPlayers.length < game.minPlayers ? `Waiting for ${game.minPlayers - party.connectedPlayers.length} more` : "Start the game";
-  for (const id of ["rounds", "timers", "late"]) ($(id) as HTMLSelectElement).disabled = running;
+  $("start").textContent = running ? t.playing : party.connectedPlayers.length < game.minPlayers ? t.waitingMore(game.minPlayers - party.connectedPlayers.length) : t.start;
+  for (const id of ["rounds", "timers", "late", "lang"]) ($(id) as HTMLSelectElement).disabled = running;
 }
 
 function renderCast(s: CastStatus): void {
@@ -81,18 +92,18 @@ function renderCast(s: CastStatus): void {
   const rows = (s.receivers ?? []).map((r) => {
     const li = document.createElement("li");
     const name = document.createElement("span");
-    name.textContent = r.name === "browser" ? "A browser tab" : r.name;
+    name.textContent = r.name === "browser" ? t.browserTab : r.name;
     const tag = document.createElement("span");
     const ok = r.state === "connected" || r.state === "reconnected";
     tag.className = `tag ${ok ? "ok" : r.state === "failed" || r.state === "gave-up" ? "bad" : ""}`;
-    tag.textContent = ok ? (s.state === "streaming" ? "showing" : "connected") : r.error ? `${r.state}: ${r.error}` : r.state;
+    tag.textContent = ok ? (s.state === "streaming" ? t.showing : t.connected) : r.error ? `${r.state}: ${r.error}` : r.state;
     li.append(name, tag);
     return li;
   });
   if (rows.length === 0) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = s.state === "starting" ? `Starting${s.to ? `: ${s.to.join(", ")}` : ""}…` : s.error ? `The TV failed: ${s.error}` : `The TV: ${s.state}`;
+    li.textContent = s.state === "starting" ? t.starting(s.to) : s.error ? t.tvFailed(s.error) : t.tvState(s.state);
     rows.push(li);
   }
   list.replaceChildren(...rows);
@@ -150,7 +161,7 @@ async function beamCanvas(): Promise<void> {
   const s = await tvpipe.surface({ canvas, fps: 30 });
   surface = s;
   s.on("status", (st) => renderCast(st as CastStatus));
-  s.on("error", (e) => showError(`The TV picture: ${e.message}`));
+  s.on("error", (e) => showError(t.tvPicture(e.message)));
   canvas.onpaint = () => {
     ctx.reset();
     try {
@@ -194,20 +205,33 @@ async function addBots(n: number): Promise<void> {
     });
     robots.push(...added);
   } catch (err) {
-    showError(`A bot could not join: ${(err as Error).message}`);
+    showError(t.botFailed((err as Error).message));
   }
 }
 
 async function main(): Promise<void> {
+  renderLang();
   try {
     tvpipe = await Tvpipe.connect();
   } catch (err) {
-    showError(`${(err as Error).message}. Start the game with tvpipe playshare.`);
+    showError(t.noTvpipe((err as Error).message));
     return;
   }
-  const prompts = parsePrompts(await (await fetch(new URL("../data/prompts.txt", import.meta.url))).text());
+  // Every language's prompts (data/prompts.txt, data/prompts.de.txt).
+  const prompts: Partial<Record<Lang, Prompt[]>> = {};
+  await Promise.all(
+    LANGS.map(async (l) => {
+      const file = l === "en" ? "prompts.txt" : `prompts.${l}.txt`;
+      const res = await fetch(new URL(`../data/${file}`, import.meta.url));
+      if (res.ok) prompts[l] = parsePrompts(await res.text());
+    }),
+  );
+  if (!prompts[lang]) lang = "en";
+  for (const o of $<HTMLSelectElement>("lang").options) o.disabled = !prompts[pickLang(o.value)];
+  t = strings(lang);
+  renderLang();
   party = await tvpipe.party({ lateJoin: "wait" });
-  game = new Drawbluff(party, { prompts, rounds: 2 });
+  game = new Drawbluff(party, { prompts, lang, rounds: 2 });
   game.open();
   renderJoin();
   renderPlayers();
@@ -216,12 +240,12 @@ async function main(): Promise<void> {
     renderPlayers();
   });
   game.on("phase", (p) => {
-    $("phase").textContent = p === "lobby" ? "lobby" : p === "final" ? "game over" : `round ${String(party.room.peek()["round"] ?? "")} · ${p}`;
+    $("phase").textContent = p === "lobby" ? t.lobby : p === "final" ? t.gameOver : t.round(Number(party.room.peek()["round"] ?? 0), t.phases[p] ?? p);
     renderPlayers();
   });
   tvpipe.on("cast", renderCast);
   tvpipe.on("tunnel", () => setTimeout(renderJoin, 100));
-  tvpipe.on("close", () => showError("tvpipe stopped: the game is over."));
+  tvpipe.on("close", () => showError(t.stopped));
   tvpipe.on("closing", () => {
     for (const b of robots) b.close();
   });
@@ -231,6 +255,23 @@ async function main(): Promise<void> {
   fitPreview();
   addEventListener("resize", fitPreview);
 
+  $<HTMLSelectElement>("lang").onchange = (e) => {
+    const next = pickLang((e.target as HTMLSelectElement).value);
+    try {
+      game.configure({ lang: next });
+    } catch (err) {
+      showError((err as Error).message);
+      $<HTMLSelectElement>("lang").value = lang;
+      return;
+    }
+    lang = next;
+    t = strings(lang);
+    localStorage.setItem(LANG_KEY, lang);
+    renderLang();
+    renderJoin();
+    renderPlayers();
+    $("phase").textContent = game.phase === "lobby" ? t.lobby : game.phase === "final" ? t.gameOver : "";
+  };
   ($("rounds") as HTMLSelectElement).onchange = (e) => game.configure({ rounds: Number((e.target as HTMLSelectElement).value) });
   ($("timers") as HTMLSelectElement).onchange = (e) =>
     game.configure({ timings: (e.target as HTMLSelectElement).value === "fast" ? FAST_TIMINGS : DEFAULT_TIMINGS });
@@ -250,7 +291,7 @@ async function main(): Promise<void> {
   const mode = $<HTMLSelectElement>("tvmode");
   if (!htmlInCanvas) {
     mode.disabled = true;
-    mode.title = "Needs a browser that draws HTML into a canvas (Chrome 157 or later)";
+    mode.title = t.needsCanvas;
   }
   mode.onchange = () => {
     tvMode = mode.value === "canvas" ? "canvas" : "page";

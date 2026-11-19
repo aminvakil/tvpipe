@@ -8,7 +8,14 @@
  * stream); bots join through the public listener. Screenshots of the
  * launcher, the host window, the TV and the phone per phase.
  *
- *   npm run build && node test/live/playshare.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--out DIR]
+ *   npm run build && node test/live/playshare.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--lang en|de] [--out DIR]
+ *
+ * `--lang de`: the host page sets the room to German (its Language
+ * setting), the phone is a German one (`de-DE`); the screenshots go to
+ * `/tmp/drawbluff-de` unless `--out`. Every shot also checks the layout
+ * (the phone, also at 320 px wide, and the TV page in the host's
+ * preview): no text running out of its box, nothing off the screen, no
+ * English left in a German room.
  *
  * `--tv canvas`: the TV page drawn into a canvas in the window
  * (HTML-in-Canvas) and streamed as a surface instead of tvpipe's own
@@ -33,8 +40,9 @@ const { values: args } = parseArgs({
     bots: { type: "string", default: "2" },
     rounds: { type: "string", default: "1" },
     tunnel: { type: "string" },
-    out: { type: "string", default: "/tmp/drawbluff-playshare" },
+    out: { type: "string" },
     tv: { type: "string", default: "page" },
+    lang: { type: "string", default: "en" },
   },
 });
 
@@ -46,7 +54,8 @@ const binary =
   ["release", "debug"].map((p) => fileURLToPath(new URL(`target/${p}/${exe}`, repo))).find((p) => existsSync(p));
 if (!binary) throw new Error("build tvpipe first (cargo build --release -p tvpipe-cli)");
 const bundle = fileURLToPath(args.zip ? new URL("drawbluff.zip", here) : here);
-const out = `${args.out}${args.zip ? "-zip" : ""}${args.tv === "canvas" ? "-canvas" : ""}`;
+const lang = args.lang === "de" ? "de" : "en";
+const out = `${args.out ?? (lang === "de" ? "/tmp/drawbluff-de" : "/tmp/drawbluff-playshare")}${args.zip ? "-zip" : ""}${args.tv === "canvas" ? "-canvas" : ""}`;
 mkdirSync(out, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
@@ -83,6 +92,10 @@ try {
   await win.until(`location.pathname.endsWith("/host/index.html") && !!globalThis.drawbluff`, 20_000);
   log("the host page runs the game");
   await win.eval(`(() => { const r = document.getElementById("rounds"); r.value = ${JSON.stringify(args.rounds)}; r.dispatchEvent(new Event("change")); const t = document.getElementById("timers"); t.value = "fast"; t.dispatchEvent(new Event("change")); return true; })()`);
+  // The room's language, as the host page sets it.
+  await win.eval(`(() => { const l = document.getElementById("lang"); l.value = ${JSON.stringify(lang)}; l.dispatchEvent(new Event("change")); return true; })()`);
+  await win.until(`drawbluff.game.lang === ${JSON.stringify(lang)} && document.documentElement.lang === ${JSON.stringify(lang)}`);
+  log(`the room speaks ${lang}`);
   const links = await win.eval<{ join: string; phone: string; code: string }>(
     `({ join: drawbluff.party.links.join, phone: drawbluff.party.info.phone.url, code: drawbluff.party.code })`,
   );
@@ -100,10 +113,13 @@ try {
   log(`TV: ${playerUrl.replace(/t=.*/, "t=…")}`);
   // A phone (through the phones' listener, as the QR code says).
   const phoneUrl = links.join.startsWith("https://") ? links.join : links.join;
-  const phone = await browser.open(phoneUrl, { width: 390, height: 844, mobile: true });
+  const PHONE = { width: 390, height: 844, mobile: true };
+  const phone = await browser.open(phoneUrl, { ...PHONE, locale: lang === "de" ? "de-DE" : "en-US" });
   await phone.until(`!!document.getElementById("name")`, 20_000);
+  await phone.screenshot(`${out}/phone-join.png`);
+  log(`phone: navigator.language ${await phone.eval<string>("navigator.language")}, the join form says "${await phone.eval<string>(`document.querySelector("h1").textContent`)}"`);
   await phone.eval(`document.getElementById("name").value = "Phil"; document.querySelector("#join-form button").click(); true`);
-  await phone.until(`document.querySelector("h1")?.textContent === "You're in!"`);
+  await phone.until(`!!document.querySelector(".card.lobby") && document.documentElement.lang === ${JSON.stringify(lang)}`);
   const ws = `${links.phone.replace(/^http/, "ws")}_tvpipe/ws`;
   const u = new URL(links.join);
   const robots = await bots(Number(args.bots), {
@@ -115,11 +131,61 @@ try {
   log(`${robots.length} bots joined through the phones' listener`);
 
   const shots: string[] = [];
+  const problems: string[] = [];
+  /**
+   * Layout problems in a document (`doc`: an expression): text running
+   * out of its box (but where it ends with … on purpose), boxes off the
+   * screen, and in a German room English words left.
+   */
+  const layout = (doc: string) => `(() => {
+    const doc = ${doc};
+    if (!doc) return ["no document"];
+    const win = doc.defaultView;
+    const out = [];
+    const W = win.innerWidth, H = win.innerHeight;
+    if (doc.documentElement.scrollWidth > W + 1) out.push("the page is wider than the screen: " + doc.documentElement.scrollWidth);
+    for (const el of doc.querySelectorAll("body *")) {
+      if (!el.checkVisibility || !el.checkVisibility()) continue;
+      if (["svg", "path", "rect", "canvas", "i", "input", "select", "option", "template"].includes(el.localName)) continue;
+      const cs = win.getComputedStyle(el);
+      const text = (el.innerText || "").trim().slice(0, 60);
+      const clipped = cs.textOverflow === "ellipsis" || cs.webkitLineClamp !== "none" || cs.overflow === "hidden" && el.closest(".qr, #corner-qr");
+      if (!clipped && el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 0 && cs.overflowX !== "auto" && cs.overflowX !== "scroll") out.push("too wide: " + el.localName + "." + el.className + " " + JSON.stringify(text));
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && (r.right > W + 2 || r.left < -2)) out.push("off the side: " + el.localName + "." + el.className + " " + JSON.stringify(text));
+    }
+    ${
+      lang === "de"
+        ? `const words = (doc.body.innerText.match(/\\b(the|you|your|you're|waiting|players?|round|drawing|liars?|vote[sd]?|scores?|points?|found|fooled|meanwhile|which|title)\\b/gi) || []);
+    if (words.length) out.push("English left: " + [...new Set(words)].join(", "));`
+        : ""
+    }
+    return out;
+  })()`;
+  const check = async (where: string, tab: Tab, doc = "document") => {
+    const found = await tab.eval<string[]>(layout(doc)).catch((e: Error) => [`cannot check: ${e.message.slice(0, 120)}`]);
+    for (const f of found) {
+      const p = `${where}: ${f}`;
+      if (!problems.includes(p)) {
+        problems.push(p);
+        log(`LAYOUT ${p}`);
+      }
+    }
+  };
   const shot = async (name: string) => {
     await new Promise((r) => setTimeout(r, 1500)); // the TV is a stream: a little behind
     await tv.screenshot(`${out}/tv-${name}.png`);
     await win.screenshot(`${out}/host-${name}.png`);
     await phone.screenshot(`${out}/phone-${name}.png`);
+    await check(`phone ${name}`, phone);
+    // The TV page itself, in the host's preview (the TV's 1280×720).
+    await check(`tv ${name}`, win, `document.getElementById("preview").contentDocument`);
+    // A small phone (320 px wide, an iPhone SE): long German words.
+    await phone.resize({ width: 320, height: 640, mobile: true });
+    await new Promise((r) => setTimeout(r, 300));
+    await phone.screenshot(`${out}/phone-small-${name}.png`);
+    await check(`small phone ${name}`, phone);
+    await phone.resize(PHONE);
     shots.push(name);
     log(`screenshots: ${name}`);
   };
@@ -151,7 +217,7 @@ try {
       .catch(() => ({ lie: false, vote: 0, key: "" }));
     if (t.lie && !tasks.has(`lie:${t.key}`)) {
       tasks.add(`lie:${t.key}`);
-      await phone.eval(`(() => { const i = document.querySelector("form input"); i.value = "a suspicious muffin"; i.form.requestSubmit(); return true; })()`);
+      await phone.eval(`(() => { const i = document.querySelector("form input"); i.value = ${JSON.stringify(lang === "de" ? "ein verdächtiger Streuselkuchen" : "a suspicious muffin")}; i.form.requestSubmit(); return true; })()`);
       log("phone: lied");
     } else if (t.vote > 0 && !tasks.has(`vote:${t.key}`)) {
       tasks.add(`vote:${t.key}`);
@@ -164,9 +230,9 @@ try {
   const deadline = Date.now() + 10 * 60_000;
   while ((await phase()) !== "final") {
     if (Date.now() > deadline) throw new Error("the game took too long");
-    await drivePhone();
     const k = await key();
     if (seen.has(k)) {
+      await drivePhone();
       await new Promise((r) => setTimeout(r, 200));
       continue;
     }
@@ -176,11 +242,12 @@ try {
     if (p === "draw") {
       await draw(phone);
       await shot(`${at}-draw`);
-      await phone.eval(`[...document.querySelectorAll("button")].find((b) => b.textContent === "Done!").click(); true`);
+      await phone.eval(`document.getElementById("done").click(); true`);
     } else if (p === "lie" || p === "vote" || p === "scores" || p === "gallery") {
+      // The phone's input or options first, then its answer.
       await new Promise((r) => setTimeout(r, 400));
-      await drivePhone();
       await shot(`${at}-${p}`);
+      await drivePhone();
     } else if (p === "reveal") {
       await new Promise((r) => setTimeout(r, 3000));
       await shot(`${at}-reveal`);
@@ -188,7 +255,8 @@ try {
   }
   await shot("final");
   const errors = robots.flatMap((b) => b.errors);
-  log(`game over: ${shots.length} screenshot sets in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}`);
+  log(`game over: ${shots.length} screenshot sets in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}; layout problems: ${problems.length || "none"}`);
+  if (problems.length > 0) failed = true;
   // The End button: tvpipe ends, everyone is told.
   await win.eval(`document.getElementById("quit").click(); true`);
   const code = await Promise.race([exited, new Promise<string>((r) => setTimeout(() => r("still running"), 15_000))]);

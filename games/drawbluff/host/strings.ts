@@ -1,0 +1,130 @@
+/**
+ * What the host page says, per language: the room's (the Language
+ * setting), so the person running the party reads what the players read.
+ */
+
+import type { Lang } from "../game/rules.ts";
+
+function format(lang: Lang) {
+  const nf = new Intl.NumberFormat(lang);
+  const pr = new Intl.PluralRules(lang);
+  return {
+    n: (x: number) => nf.format(x),
+    p: (x: number, forms: Partial<Record<Intl.LDMLPluralRule, string>> & { other: string }) => (forms[pr.select(x)] ?? forms.other).replaceAll("#", nf.format(x)),
+  };
+}
+type Format = ReturnType<typeof format>;
+
+const en = (f: Format) => ({
+  /** The page's fixed texts, by `data-t`. */
+  page: {
+    room: "Room",
+    joinAt: "Phones join at",
+    onTv: "On the TV",
+    noTv: "No TV: open the preview on a screen yourself.",
+    tryAgain: "Try again",
+    openTv: "Open the TV view",
+    players: "Players",
+    addBot: "Add a bot",
+    addBots: "Add 3 bots",
+    rounds: "Rounds",
+    timers: "Timers",
+    normal: "normal",
+    fast: "fast",
+    tvPicture: "TV picture",
+    tvpipeBrowser: "tvpipe's browser",
+    drawnHere: "drawn here",
+    latecomers: "Latecomers",
+    nextRound: "next round",
+    anytime: "anytime",
+    notDuring: "not during a game",
+    language: "Language",
+    end: "End",
+    previewNote: "What the TV shows (a preview, no sound). The VIP's phone can start the game too.",
+  },
+  lanOnly: "On this Wi-Fi only",
+  opening: "Opening a public link…",
+  localOnly: "This computer only (no public link)",
+  vip: "VIP",
+  waiting: "waiting",
+  away: "away",
+  remove: (name: string) => `Remove ${name}`,
+  playing: "Playing…",
+  waitingMore: (n: number) => `Waiting for ${f.n(n)} more`,
+  start: "Start the game",
+  browserTab: "A browser tab",
+  showing: "showing",
+  connected: "connected",
+  starting: (to: string[] | undefined) => `Starting${to ? `: ${to.join(", ")}` : ""}…`,
+  tvFailed: (e: string) => `The TV failed: ${e}`,
+  tvState: (s: string) => `The TV: ${s}`,
+  needsCanvas: "Needs a browser that draws HTML into a canvas (Chrome 157 or later)",
+  noTvpipe: (msg: string) => `${msg}. Start the game with tvpipe playshare.`,
+  stopped: "tvpipe stopped: the game is over.",
+  tvPicture: (msg: string) => `The TV picture: ${msg}`,
+  botFailed: (msg: string) => `A bot could not join: ${msg}`,
+  lobby: "lobby",
+  gameOver: "game over",
+  phases: { draw: "drawing", gallery: "gallery", lie: "lies", vote: "vote", reveal: "reveal", scores: "scores" } as Record<string, string>,
+  round: (r: number, phase: string) => `round ${f.n(r)} · ${phase}`,
+});
+
+type Strings = ReturnType<typeof en>;
+
+const de = (f: Format): Strings => ({
+  page: {
+    room: "Raum",
+    joinAt: "Mitspielen über",
+    onTv: "Auf dem Fernseher",
+    noTv: "Kein Fernseher: Öffne die Vorschau selbst auf einem Bildschirm.",
+    tryAgain: "Noch mal versuchen",
+    openTv: "TV-Ansicht öffnen",
+    players: "Mitspieler",
+    addBot: "Bot dazu",
+    addBots: "3 Bots dazu",
+    rounds: "Runden",
+    timers: "Zeit",
+    normal: "normal",
+    fast: "schnell",
+    tvPicture: "TV-Bild",
+    tvpipeBrowser: "tvpipes Browser",
+    drawnHere: "hier gezeichnet",
+    latecomers: "Nachzügler",
+    nextRound: "nächste Runde",
+    anytime: "jederzeit",
+    notDuring: "nicht während des Spiels",
+    language: "Sprache",
+    end: "Beenden",
+    previewNote: "Was der Fernseher zeigt (Vorschau, ohne Ton). Der VIP kann das Spiel auch am Handy starten.",
+  },
+  lanOnly: "Nur in diesem WLAN",
+  opening: "Öffentlicher Link wird eingerichtet…",
+  localOnly: "Nur dieser Computer (kein öffentlicher Link)",
+  vip: "VIP",
+  waiting: "wartet",
+  away: "weg",
+  remove: (name) => `${name} entfernen`,
+  playing: "Läuft…",
+  waitingMore: (n) => f.p(n, { one: "Noch # fehlt", other: "Noch # fehlen" }),
+  start: "Spiel starten",
+  browserTab: "Ein Browser-Tab",
+  showing: "zeigt",
+  connected: "verbunden",
+  starting: (to) => `Startet${to ? `: ${to.join(", ")}` : ""}…`,
+  tvFailed: (e) => `Fernseher-Fehler: ${e}`,
+  tvState: (s) => `Fernseher: ${s}`,
+  needsCanvas: "Braucht einen Browser, der HTML in ein Canvas zeichnet (Chrome 157 oder neuer)",
+  noTvpipe: (msg) => `${msg}. Starte das Spiel mit tvpipe playshare.`,
+  stopped: "tvpipe wurde beendet: Das Spiel ist vorbei.",
+  tvPicture: (msg) => `TV-Bild: ${msg}`,
+  botFailed: (msg) => `Ein Bot kam nicht rein: ${msg}`,
+  lobby: "Lobby",
+  gameOver: "Spiel vorbei",
+  phases: { draw: "zeichnen", gallery: "Galerie", lie: "lügen", vote: "abstimmen", reveal: "Auflösung", scores: "Punkte" },
+  round: (r, phase) => `Runde ${f.n(r)} · ${phase}`,
+});
+
+/** The host page's strings in a language. */
+export function strings(lang: Lang): Strings {
+  return (lang === "de" ? de : en)(format(lang));
+}

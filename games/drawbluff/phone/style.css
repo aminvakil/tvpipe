@@ -34,6 +34,7 @@ header {
 }
 .logo { font-family: "Sixtyfour", monospace; color: var(--accent); font-size: 1rem; }
 #who { flex: 1; text-align: right; opacity: .8; font-size: .9rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#lang { font-size: .75rem; font-weight: 500; padding: .2rem .55rem; border-radius: 1rem; background: rgba(255,255,255,.12); }
 #timer {
   font-family: "Michroma", sans-serif; font-size: .95rem; min-width: 3ch; text-align: right;
   background: rgba(255,255,255,.12); border-radius: 1rem; padding: .15rem .6rem;
@@ -41,6 +42,8 @@ header {
 #timer.low { background: var(--hot); }
 #banner { background: var(--hot); color: #fff; text-align: center; padding: .4rem; font-size: .9rem; }
 main { padding: .5rem 1rem 1.5rem; max-width: 34rem; margin: 0 auto; }
+/* German compounds ("regenbogenreparaturdienst") break with a hyphen where the language allows. */
+main { overflow-wrap: break-word; hyphens: auto; -webkit-hyphens: auto; }
 .card { background: rgba(255,255,255,.08); border-radius: 1.2rem; padding: 1.2rem; margin-top: .5rem; }
 h1 { font-family: "Michroma", sans-serif; font-size: 1.15rem; margin: 0 0 1rem; line-height: 1.4; }
 h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin: 1rem 0 .4rem; }
@@ -82,7 +85,7 @@ canvas.mini { width: 60%; aspect-ratio: 1; display: block; margin: 0 auto .8rem;
 .palette button { aspect-ratio: 1; padding: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,.25); }
 .palette button.chosen { outline: none; border-color: var(--accent); transform: scale(1.12); }
 .tools { display: flex; gap: .4rem; margin-top: .6rem; }
-.tools button { flex: 1; padding: .55rem .2rem; font-size: .9rem; }
+.tools button { flex: 1; padding: .55rem .1rem; font-size: .9rem; hyphens: manual; -webkit-hyphens: manual; }
 .tools button.chosen { background: rgba(255,214,10,.3); outline: none; }
 .score { font-family: "Michroma", sans-serif; font-size: 2rem; color: var(--accent); margin: .2rem 0; }
 .muted { opacity: .7; }

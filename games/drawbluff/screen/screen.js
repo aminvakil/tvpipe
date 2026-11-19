@@ -1,13 +1,15 @@
 // @ts-check
 /**
- * drawbluff's main screen as a web page (variant 2): tvpipe casts it with
- * its own browser (`share URL`), or anyone opens the watch link. It shows
- * the screen view (`{ roster, screen, join }`); the video variant draws
- * the same view with screen-video.ts.
+ * drawbluff's TV page: tvpipe casts it with its own browser, or anyone
+ * opens the watch link (the host page's preview). It shows the screen
+ * view (`{ roster, screen, join }`) in the room's language
+ * (`screen.lang`).
  */
 
 import { PartyClient, qrSvg } from "/_tvpipe/lib/client.js";
+import { pickLang } from "../phone/i18n.js";
 import { drawDrawing } from "../phone/strokes.js";
+import { strings } from "./strings.js";
 
 const client = PartyClient.fromLocation({ role: /** @type {any} */ (new URLSearchParams(location.hash.slice(1)).get("role") ?? "screen") });
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
@@ -15,10 +17,9 @@ const corner = /** @type {HTMLElement} */ (document.getElementById("corner"));
 const status = /** @type {HTMLElement} */ (document.getElementById("status"));
 const joined = /** @type {HTMLElement} */ (document.getElementById("joined"));
 
-/** What the lobby says about latecomers (`join.lateJoin`). */
-const LATE_LINE = { open: "Join anytime, even during the game", wait: "Latecomers join at the next round", closed: "Joining closes when the game starts" };
-/** The corner's line during a game. @type {Record<string, string>} */
-const CORNER_LINE = { open: "Scan to join now (from the next drawing) or to rejoin.", wait: "Scan to join (from the next round) or to rejoin." };
+/** The room's language (English until the first view says). */
+let lang = pickLang(undefined);
+let t = strings(lang);
 
 /**
  * @param {string} tag
@@ -87,13 +88,19 @@ let refresh = null;
 client.on("view", (view) => render(view));
 client.on("status", (s) => {
   status.hidden = s === "open";
-  status.textContent = s === "reconnecting" || s === "connecting" ? "Reconnecting to the game…" : s === "closed" ? "The game is over." : "";
+  status.textContent = s === "reconnecting" || s === "connecting" ? t.reconnecting : s === "closed" ? t.over : "";
 });
 
 /** @param {Record<string, any>} view */
 function render(view) {
   const s = view.screen ?? {};
-  const key = `${s.phase}:${s.round ?? ""}:${s.deadline ?? ""}:${s.artist?.id ?? ""}:${s.page ?? ""}`;
+  const l = pickLang(s.lang);
+  if (l !== lang) {
+    lang = l;
+    t = strings(l);
+    document.documentElement.lang = l;
+  }
+  const key = `${lang}:${s.phase}:${s.round ?? ""}:${s.deadline ?? ""}:${s.artist?.id ?? ""}:${s.page ?? ""}`;
   if (s.phase !== lastPhase) {
     if (s.phase === "draw" || s.phase === "lie" || s.phase === "vote" || s.phase === "gallery") beep([523, 659, 784]);
     if (s.phase === "final") beep([523, 659, 784, 1047], 0.18);
@@ -114,12 +121,12 @@ function render(view) {
     corner.dataset.url = view.join.url;
     /** @type {HTMLElement} */ (document.getElementById("corner-qr")).innerHTML = qrSvg(view.join.qr, { quiet: 2 });
   }
-  if (!corner.hidden) /** @type {HTMLElement} */ (document.getElementById("corner-text")).textContent = CORNER_LINE[late] ?? "";
+  if (!corner.hidden) /** @type {HTMLElement} */ (document.getElementById("corner-text")).textContent = t.corner[late] ?? "";
   // This round's newcomers, discreetly.
   const names = /** @type {string[]} */ (s.phase !== "lobby" && Array.isArray(s.joined) ? s.joined : []);
   const more = typeof s.joinedMore === "number" ? s.joinedMore : 0;
   joined.hidden = names.length === 0;
-  joined.textContent = names.map((n) => `+ ${n}`).join(" · ") + (more > 0 ? ` · + ${more} more` : "");
+  joined.textContent = [...names.map((n) => `+ ${n}`), ...(more > 0 ? [t.joinedMore(more)] : [])].join(" · ");
 }
 
 /** @param {Record<string, any>} view */
@@ -156,19 +163,19 @@ function lobby(view) {
       "div",
       { class: "col join" },
       h("div", { class: "logo" }, "drawbluff"),
-      h("h2", {}, "Scan to join with your phone"),
+      h("h2", {}, t.scanToJoin),
       qr(view.join),
       h("div", { class: "url" }, view.join?.url ?? ""),
       h("div", { class: "code" }, view.join?.code ?? ""),
       lateLine,
     ),
-    h("div", { class: "col grow" }, h("h1", {}, "Players"), players, hint),
+    h("div", { class: "col grow" }, h("h1", {}, t.players), players, hint),
   );
   refresh = () => {
     const v = client.view;
     const roster = v.roster ?? [];
     const late = /** @type {"open" | "wait" | "closed"} */ (v.join?.lateJoin ?? "wait");
-    lateLine.textContent = LATE_LINE[late] ?? "";
+    lateLine.textContent = t.late[late] ?? "";
     lateLine.classList.toggle("open", late === "open");
     const max = v.screen?.maxPlayers ?? 8;
     const min = v.screen?.minPlayers ?? 3;
@@ -176,14 +183,11 @@ function lobby(view) {
       h("div", { class: `player${r.connected ? "" : " away"}` }, h("span", { class: "n" }, r.name), r.vip ? h("span", { class: "star" }, "★ VIP") : null),
     );
     // Empty seats up to 8; past 8 players a denser grid (up to 50 names).
-    for (let i = roster.length; i < Math.min(max, 8); i++) cards.push(h("div", { class: "player empty" }, i < min ? "waiting…" : "room for one more"));
+    for (let i = roster.length; i < Math.min(max, 8); i++) cards.push(h("div", { class: "player empty" }, i < min ? t.seatWaiting : t.seatFree));
     players.className = `players${roster.length > 24 ? " many" : roster.length > 8 ? " more" : ""}`;
     players.replaceChildren(...cards);
     const ready = roster.filter((/** @type {any} */ r) => r.connected).length;
-    hint.textContent =
-      ready < min
-        ? `${min - ready} more player${min - ready === 1 ? "" : "s"} needed.`
-        : `${roster.find((/** @type {any} */ r) => r.vip)?.name ?? "The VIP"} starts the game on their phone.`;
+    hint.textContent = ready < min ? t.needed(min - ready) : t.vipStarts(roster.find((/** @type {any} */ r) => r.vip)?.name);
     if (roster.length > lobbyCount) beep([660, 880]);
     lobbyCount = roster.length;
   };
@@ -197,7 +201,7 @@ const CHIPS = 12;
  * Who has answered: a chip per player waited for, or the count.
  * @param {Record<string, any>} view
  * @param {string} [list] the screen field with the ids waited for
- * @param {string} [verb] what they do ("done", "voted")
+ * @param {"done" | "voted"} [verb] what they do
  */
 function chips(view, list = "waiting", verb = "done") {
   const box = h("div", { class: "chips" });
@@ -217,8 +221,8 @@ function chips(view, list = "waiting", verb = "done") {
     const bar = h("div", { class: "bar" }, h("i", { style: `width:${Math.round((100 * n) / waiting.length)}%` }));
     box.className = "chips progress";
     // Not null in replaceChildren: it would show as "null".
-    box.replaceChildren(h("div", { class: "count" }, `${n} of ${waiting.length} ${verb}`), bar);
-    if (left.length > 0 && left.length <= 6) box.append(h("div", { class: "left" }, `Waiting for ${left.map(name).join(", ")}`));
+    box.replaceChildren(h("div", { class: "count" }, t[verb](n, waiting.length)), bar);
+    if (left.length > 0 && left.length <= 6) box.append(h("div", { class: "left" }, t.waitingFor(left.map(name))));
   };
   update();
   return { box, update };
@@ -243,19 +247,19 @@ let ticker = null;
 /** @param {Record<string, any>} view */
 function draw(view) {
   const s = view.screen;
-  const t = timer();
+  const clock = timer();
   const c = chips(view);
   stage.replaceChildren(
     h(
       "div",
       { class: "col grow center" },
-      h("h2", {}, `Round ${s.round} of ${s.rounds}`),
-      h("div", { class: "big-title" }, "Draw your prompt on your phone!"),
-      t.el,
+      h("h2", {}, t.roundOf(s.round, s.rounds)),
+      h("div", { class: "big-title" }, t.drawPrompt),
+      clock.el,
       c.box,
     ),
   );
-  ticker = t.update;
+  ticker = clock.update;
   refresh = c.update;
 }
 
@@ -282,29 +286,29 @@ function gallery(view) {
   const s = view.screen;
   const line = h("span", {});
   const cells = (s.items ?? []).map((/** @type {any} */ it) =>
-    h("div", { class: "cell" }, canvas(it.drawing, "thumb"), h("div", { class: "cap" }, h("b", {}, it.prompt), h("span", {}, `by ${it.name}`))),
+    h("div", { class: "cell" }, canvas(it.drawing, "thumb"), h("div", { class: "cap" }, h("b", {}, it.prompt), h("span", {}, t.by(it.name)))),
   );
   const liars = (s.liars ?? []).length;
   stage.replaceChildren(
     h(
       "div",
       { class: "col grow" },
-      h("h2", {}, `Round ${s.round} · the gallery${s.pages > 1 ? ` · ${s.page} of ${s.pages}` : ""}`),
+      h("h2", {}, t.gallery(s.round, s.page, s.pages)),
       h("div", { class: "gallery" }, ...cells),
       liars > 0 ? h("div", { class: "meanwhile" }, line) : null,
     ),
   );
   refresh = () => {
     const v = client.view.screen ?? {};
-    line.textContent = `Meanwhile ${liars === 1 ? "1 liar is" : `${liars} liars are`} writing for ${v.artist?.name ?? "the first"}'s drawing · ${(v.done ?? []).length} done`;
+    line.textContent = t.meanwhile(liars, v.artist?.name, (v.done ?? []).length);
   };
 }
 
 /** @param {Record<string, any>} view */
 function guess(view) {
   const s = view.screen;
-  const t = timer();
-  const spot = s.spots > 1 ? ` · drawing ${s.spot} of ${s.spots}` : "";
+  const clock = timer();
+  const spot = s.spots > 1 ? t.spotOf(s.spot, s.spots) : "";
   const liars = (s.waiting ?? []).length;
   const c = s.phase === "lie" ? chips(view) : chips(view, "waiting", "voted");
   const right =
@@ -312,21 +316,21 @@ function guess(view) {
       ? h(
           "div",
           { class: "col grow" },
-          h("h2", {}, `${s.artist?.name ?? "Someone"} drew this${spot}`),
-          h("h1", {}, liars === 1 ? "What is it called? The liar is writing a fake title." : `What is it called? ${liars} liars are writing fake titles.`),
-          t.el,
+          h("h2", {}, `${t.drewThis(s.artist?.name)}${spot}`),
+          h("h1", {}, t.liarsWriting(liars)),
+          clock.el,
           c.box,
         )
       : h(
           "div",
           { class: "col grow" },
-          h("h2", {}, `Which one is the real title?${spot}`),
+          h("h2", {}, `${t.whichReal}${spot}`),
           h("div", { class: `options${(s.options ?? []).length >= 6 ? " many" : ""}` }, ...(s.options ?? []).map((/** @type {any} */ o) => h("div", { class: "option" }, o.text))),
-          h("div", { style: "display:flex;gap:2vw;align-items:center;margin-top:3vh" }, t.el, c.box),
-          s.writing > 0 ? h("p", { class: "hint small" }, `Meanwhile ${s.writing} liars write for the next drawing.`) : null,
+          h("div", { style: "display:flex;gap:2vw;align-items:center;margin-top:3vh" }, clock.el, c.box),
+          s.writing > 0 ? h("p", { class: "hint small" }, t.writingNext(s.writing)) : null,
         );
   stage.replaceChildren(canvas(s.drawing), right);
-  ticker = t.update;
+  ticker = clock.update;
   refresh = c.update;
 }
 
@@ -336,21 +340,21 @@ function reveal(view) {
   const items = (s.items ?? []).map((/** @type {any} */ it) => {
     const count = it.count ?? it.voters.length;
     // Names while they fit, else how many of those who could.
-    const names = count <= it.voters.length ? it.voters.join(", ") : `${count} of ${it.seen}`;
+    const all = count <= it.voters.length;
     const who = it.truth
       ? count
-        ? `found by ${names} · +${it.points} each, ${s.artist?.name} +${it.artistPoints}`
-        : "nobody found it"
-      : `${count <= it.voters.length ? `${names} fell for it` : `fooled ${names}`}${it.decoy ? " (our lie)" : ` · ${it.authors.join(" & ")} +${it.points}${it.same ? " (same idea!)" : ""}`}`;
+        ? t.foundBy(all ? it.voters.join(", ") : t.foundOf(count, it.seen), it.points, s.artist?.name, it.artistPoints)
+        : t.nobodyFound
+      : `${all ? t.fellForIt(it.voters) : t.fooledOf(count, it.seen)}${it.decoy ? t.ourLie : `${t.liarsGet(it.authors, it.points)}${it.same ? t.sameIdea : ""}`}`;
     return h(
       "div",
       { class: `option hidden${it.truth ? " truth" : ""}` },
-      h("span", { class: "tag" }, it.truth ? `THE TRUTH by ${s.artist?.name ?? "?"}` : it.decoy ? "A LIE" : `A LIE by ${it.authors.join(" & ")}`),
+      h("span", { class: "tag" }, it.truth ? t.truthBy(s.artist?.name) : it.decoy ? t.aLie : t.aLieBy(it.authors)),
       h("span", {}, it.text),
       h("span", { class: "who" }, who),
     );
   });
-  stage.replaceChildren(canvas(s.drawing), h("div", { class: `col grow reveal${items.length > 5 ? " many" : ""}` }, h("h2", {}, "The answers"), h("div", { class: "options" }, ...items)));
+  stage.replaceChildren(canvas(s.drawing), h("div", { class: `col grow reveal${items.length > 5 ? " many" : ""}` }, h("h2", {}, t.answers), h("div", { class: "options" }, ...items)));
   refresh = () => {
     const step = client.view.screen?.step ?? 0;
     items.forEach((/** @type {HTMLElement} */ el, /** @type {number} */ i) => el.classList.toggle("hidden", i >= step));
@@ -374,20 +378,20 @@ function board(view) {
     h(
       "div",
       { class: `line${i === 0 ? " first" : ""}` },
-      h("span", { class: "rank" }, `${i + 1}.`),
+      h("span", { class: "rank" }, t.rank(i + 1)),
       h("span", { class: "n" }, l.name),
-      !final && l.delta ? h("span", { class: "delta" }, `+${l.delta}`) : null,
-      h("span", { class: "pts" }, String(l.score)),
+      !final && l.delta ? h("span", { class: "delta" }, `+${t.n(l.delta)}`) : null,
+      h("span", { class: "pts" }, t.n(l.score)),
     ),
   );
-  const title = final ? `${s.scores?.[0]?.name ?? "Nobody"} wins!` : s.last ? "Final scores" : `Scores after round ${s.round}`;
+  const title = final ? t.wins(s.scores?.[0]?.name) : s.last ? t.finalScores : t.scoresAfter(s.round);
   const highlights = (s.highlights ?? []).map((/** @type {any} */ x) =>
     h(
       "div",
       { class: "highlight" },
-      h("span", { class: "tag" }, x.kind === "liar" ? "Best liar" : "Sharpest eye"),
+      h("span", { class: "tag" }, x.kind === "liar" ? t.bestLiar : t.sharpestEye),
       h("span", { class: "n" }, x.name),
-      h("span", {}, x.kind === "liar" ? `fooled ${x.count}` : `found ${x.count} of ${x.of}`),
+      h("span", {}, x.kind === "liar" ? t.fooledN(x.count) : t.foundN(x.count, x.of)),
     ),
   );
   stage.replaceChildren(
@@ -396,13 +400,13 @@ function board(view) {
       { class: "col grow center" },
       h("div", { class: "big-title" }, title),
       h("div", { class: "board-row" }, h("div", { class: "board" }, ...lines), highlights.length ? h("div", { class: "highlights" }, ...highlights) : null),
-      total > top.length ? h("p", { class: "hint" }, `${total} players · your rank is on your phone`) : null,
-      final ? h("p", { class: "hint" }, "The VIP can start another game on their phone.") : null,
+      total > top.length ? h("p", { class: "hint" }, t.rankOnPhone(total)) : null,
+      final ? h("p", { class: "hint" }, t.anotherGame) : null,
     ),
   );
   ticker = null;
 }
 
 client.connect().catch((e) => {
-  stage.replaceChildren(h("div", { class: "col grow center" }, h("h1", {}, `Cannot show the game: ${e?.message ?? e}`)));
+  stage.replaceChildren(h("div", { class: "col grow center" }, h("h1", {}, t.cannotShow(e?.message ?? String(e)))));
 });

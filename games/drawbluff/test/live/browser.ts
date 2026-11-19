@@ -57,6 +57,11 @@ export class Tab {
     }
   }
 
+  /** Changes the viewport (CSS px). */
+  async resize(view: { width: number; height: number; mobile?: boolean }): Promise<void> {
+    await this.send("Emulation.setDeviceMetricsOverride", { width: view.width, height: view.height, deviceScaleFactor: view.mobile ? 2 : 1, mobile: view.mobile ?? false });
+  }
+
   async screenshot(path: string): Promise<void> {
     writeFileSync(path, await this.capture());
   }
@@ -121,7 +126,8 @@ export class Browser {
     return new Browser(proc, port);
   }
 
-  async open(url: string, view: { width: number; height: number; mobile?: boolean }): Promise<Tab> {
+  /** A tab at a viewport; `locale` (`de-DE`) for its language (`navigator.language`, Intl). */
+  async open(url: string, view: { width: number; height: number; mobile?: boolean; locale?: string }): Promise<Tab> {
     const t = (await (await fetch(`http://127.0.0.1:${this.#port}/json/new?about:blank`, { method: "PUT" })).json()) as {
       webSocketDebuggerUrl: string;
     };
@@ -139,6 +145,11 @@ export class Browser {
       mobile: view.mobile ?? false,
     });
     if (view.mobile) await tab.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    if (view.locale) {
+      const { userAgent } = (await tab.send("Browser.getVersion")) as { userAgent: string };
+      await tab.send("Emulation.setUserAgentOverride", { userAgent, acceptLanguage: view.locale });
+      await tab.send("Emulation.setLocaleOverride", { locale: view.locale });
+    }
     await tab.send("Page.navigate", { url });
     return tab;
   }

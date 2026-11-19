@@ -19,6 +19,8 @@
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body { background: radial-gradient(circle at 15% 10%, var(--bg2), var(--bg) 65%); }
 #stage { position: absolute; inset: 0; padding: 5vh 4vw; display: flex; gap: 4vw; }
+/* German compounds ("regenbogenreparaturdienst") break with a hyphen where the language allows. */
+#stage { overflow-wrap: break-word; hyphens: auto; -webkit-hyphens: auto; }
 .logo { font-family: "Sixtyfour", monospace; color: var(--accent); }
 h1 { font-family: "Michroma", sans-serif; font-weight: 400; font-size: 4.2vh; line-height: 1.35; margin: 0 0 2vh; }
 h2 { font-size: 2.4vh; text-transform: uppercase; letter-spacing: .1em; opacity: .7; margin: 0 0 1.5vh; font-weight: 600; }

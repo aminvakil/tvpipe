@@ -2,16 +2,20 @@
 /**
  * drawbluff's phone page: joining, the lobby, the drawing pad, lies,
  * votes, scores. Everything it shows comes from the party's view
- * (`{ roster, room, me }`); everything it does is an action.
+ * (`{ roster, room, me }`); everything it does is an action. It speaks
+ * the room's language (`room.lang`), or the one the player picked with
+ * the switch in the header (kept on this phone).
  */
 
 import { PartyClient } from "/_tvpipe/lib/client.js";
+import { browserLang, pickLang } from "./i18n.js";
+import { strings } from "./strings.js";
 import { drawDrawing, drawStroke, GRID, PALETTE } from "./strokes.js";
 
 const MAX_STROKES = 300;
 const MAX_POINTS = 12000;
 const WIDTHS = [8, 20, 48];
-/** The longest lie the input takes (`LIE_SOFT` in game/rules.ts and src/rules.rs). */
+/** The longest lie the input takes (`LIE_SOFT` in game/rules.ts). */
 const LIE_SOFT = 40;
 
 // Phones are game controllers here, not documents: iOS Safari ignores
@@ -38,6 +42,61 @@ const app = /** @type {HTMLElement} */ (document.getElementById("app"));
 const banner = /** @type {HTMLElement} */ (document.getElementById("banner"));
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const who = /** @type {HTMLElement} */ (document.getElementById("who"));
+const langButton = /** @type {HTMLButtonElement} */ (document.getElementById("lang"));
+
+// ---------------------------------------------------------------------------
+// The language: the phone's own choice, else the room's, else the browser's.
+
+const LANG_KEY = "drawbluff:lang";
+/** @returns {import("./i18n.js").Lang | null} */
+function ownLang() {
+  try {
+    const v = localStorage.getItem(LANG_KEY);
+    return v ? pickLang(v) : null;
+  } catch {
+    return null;
+  }
+}
+/** @returns {import("./i18n.js").Lang} */
+function roomLang() {
+  const l = client.view?.room?.lang;
+  return typeof l === "string" ? pickLang(l) : browserLang();
+}
+let lang = ownLang() ?? roomLang();
+let t = strings(lang);
+document.documentElement.lang = lang;
+
+/** Follows the language; true when it changed (the screen has to be built again). */
+function useLang() {
+  const l = ownLang() ?? roomLang();
+  if (l === lang) return false;
+  lang = l;
+  t = strings(l);
+  document.documentElement.lang = l;
+  return true;
+}
+
+/** The switch: only where rebuilding loses nothing (joining, the lobby, the end). */
+function showSwitch(on = false) {
+  langButton.hidden = !on;
+  langButton.textContent = t.otherLang;
+}
+langButton.addEventListener("click", () => {
+  const next = lang === "de" ? "en" : "de";
+  try {
+    // Back to the room's language: follow the room again.
+    if (next === roomLang()) localStorage.removeItem(LANG_KEY);
+    else localStorage.setItem(LANG_KEY, next);
+  } catch {}
+  if (!useLang()) return;
+  if (shown === "join") {
+    const typed = /** @type {HTMLInputElement | null} */ (document.getElementById("name"))?.value;
+    joinForm("", typed);
+  } else if (client.view?.me) {
+    shown = "";
+    render(client.view);
+  } else showSwitch(true);
+});
 
 /** The key of what is on screen: rebuilt only when it changes. */
 let shown = "";
@@ -81,14 +140,22 @@ function setBanner(text) {
 // ---------------------------------------------------------------------------
 // Joining
 
-function joinForm(error = "") {
+/**
+ * @param {string} [error]
+ * @param {string} [typed] the name typed so far (the language switched)
+ */
+function joinForm(error = "", typed) {
   shown = "join";
   refresh = null;
+  showSwitch(true);
   const tpl = /** @type {HTMLTemplateElement} */ (document.getElementById("t-join"));
   show(tpl.content.cloneNode(true));
   const input = /** @type {HTMLInputElement} */ (document.getElementById("name"));
   const err = /** @type {HTMLElement} */ (document.getElementById("join-error"));
-  input.value = client.saved?.name ?? localStorage.getItem("drawbluff:name") ?? "";
+  /** @type {HTMLElement} */ (app.querySelector("h1")).textContent = t.joinTitle;
+  /** @type {HTMLElement} */ (app.querySelector("label")).textContent = t.yourName;
+  /** @type {HTMLElement} */ (app.querySelector("#join-form button")).textContent = t.join;
+  input.value = typed ?? client.saved?.name ?? localStorage.getItem("drawbluff:name") ?? "";
   err.textContent = error;
   /** @type {HTMLFormElement} */ (document.getElementById("join-form")).addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -112,40 +179,34 @@ function message(e) {
   const code = e?.code;
   switch (code) {
     case "name-taken":
-      return "Someone already has that name.";
+      return t.nameTaken;
     case "name-invalid":
-      return e.message || "Pick another name.";
+      return lang === "en" && e.message ? e.message : t.pickAnother;
     case "full":
-      return "The game is full.";
+      return t.full;
     case "locked":
     case "in-progress":
-      return "A game is running and it's closed to newcomers. Ask the VIP to let you in at the next game.";
+      return t.closed;
     case "bad-key":
-      return "This link does not work any more. Scan the code on the TV again.";
+      return t.badKey;
     case "no-room":
-      return "That game is over. Scan the code on the TV again.";
+      return t.noRoom;
     default:
-      return e?.message ?? String(e);
+      return (typeof code === "string" ? t.errors[code] : undefined) ?? e?.message ?? String(e);
   }
 }
 
 client.on("status", (s) => {
-  if (s === "reconnecting") setBanner("Reconnecting…");
+  if (s === "reconnecting") setBanner(t.reconnecting);
   else if (s === "open") setBanner(null);
 });
 
 client.on("bye", (reason) => {
-  const text =
-    reason === "kicked"
-      ? "You were removed from the game."
-      : reason === "replaced"
-        ? "You opened the game somewhere else."
-        : reason === "room-closed"
-          ? "The game is over. Thanks for playing!"
-          : null;
+  const text = reason === "kicked" ? t.kicked : reason === "replaced" ? t.replaced : reason === "room-closed" ? t.roomClosed : null;
   if (text) {
     shown = "bye";
     refresh = null;
+    showSwitch(false);
     setBanner(null);
     timer.hidden = true;
     show(h("section", { class: "card" }, h("p", { class: "big" }, text)));
@@ -163,10 +224,12 @@ function render(view) {
   const room = view.room ?? {};
   const roster = view.roster ?? [];
   const mine = roster.find((/** @type {any} */ r) => r.id === client.you?.id);
-  const rank = typeof me.rank === "number" && typeof me.of === "number" && me.of > 0 && me.task !== "lobby" ? ` · #${me.rank} of ${me.of}` : "";
+  if (useLang()) shown = "";
+  const rank = typeof me.rank === "number" && typeof me.of === "number" && me.of > 0 && me.task !== "lobby" ? ` · ${t.rankShort(me.rank, me.of)}` : "";
   who.textContent = mine ? `${mine.vip ? "★ " : ""}${mine.name}${rank}` : "";
   const key = screenKey(me, room);
   if (key !== shown) {
+    showSwitch(me.task === "lobby" || me.task === "final");
     shown = key;
     refresh = null;
     pad = null;
@@ -203,31 +266,23 @@ function build(view) {
     case "lobby":
       return lobby(view);
     case "draw":
-      return me.done ? waiting("Nice! Waiting for the others to finish…") : draw(me.prompt);
+      return me.done ? waiting(t.drawDone) : draw(me.prompt);
     case "wait":
-      return waiting(
-        me.note === "drawing"
-          ? "You're in! You vote from the next drawing on. Watch the TV meanwhile."
-          : me.note === "game"
-            ? "You're in! This game is about to end: you play the next one. Watch the TV meanwhile."
-            : "You're in! You join the game at the next round. Watch the TV meanwhile.",
-      );
+      return waiting(me.note === "drawing" ? t.waitDrawing : me.note === "game" ? t.waitGame : t.waitRound);
     case "artist":
-      return waiting("That's your drawing! Watch the others try to name it.");
+      return waiting(t.artist);
     case "lie":
-      return me.done
-        ? waiting(`Your lie: “${me.lie ?? ""}”. ${me.early ? "That drawing is next on the TV." : "Waiting for the other liars…"}`)
-        : lie(me);
+      return me.done ? waiting(t.lieDone(me.lie ?? "", !!me.early)) : lie(me);
     case "vote":
-      return me.done ? waiting("Vote counted. Look at the TV!") : vote(me.options ?? [], room.drawing);
+      return me.done ? waiting(t.voteDone) : vote(me.options ?? [], room.drawing);
     case "watch":
       return watch(me, room);
     case "scores":
-      return scoreCard(`Round ${room.round} done`, me);
+      return scoreCard(t.roundDone(room.round ?? 0), me);
     case "final":
       return final(view);
     default:
-      return waiting("Look at the TV!");
+      return waiting(t.lookAtTv);
   }
 }
 
@@ -248,15 +303,15 @@ function scoreCard(title, me, ...extra) {
       { class: "card" },
       h("h1", {}, title),
       ...extra,
-      h("p", { class: "score" }, String(me.score ?? 0)),
-      h("p", { class: "muted" }, `points · #${me.rank ?? "?"}${me.of ? ` of ${me.of}` : ""}`),
+      h("p", { class: "score" }, formatNumber(me.score ?? 0)),
+      h("p", { class: "muted" }, `${t.points(me.score ?? 0)} · ${me.of ? t.rank(me.rank ?? 0, me.of) : t.rankOnly(me.rank ?? 0)}`),
     ),
   );
 }
 
-/** @param {string[]} names */
-function list(names) {
-  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+/** @param {number} n */
+function formatNumber(n) {
+  return new Intl.NumberFormat(lang).format(n);
 }
 
 /**
@@ -266,54 +321,46 @@ function list(names) {
  */
 function watch(me, room) {
   if (me.note === "gallery") {
-    return scoreCard("Look at the TV: the gallery!", me, h("p", { class: "big" }, me.mine ? `Your drawing is on page ${me.mine}.` : "The other drawings of this round."));
+    return scoreCard(t.galleryTitle, me, h("p", { class: "big" }, me.mine ? t.galleryMine(me.mine) : t.galleryOthers));
   }
   if (me.note === "rest") {
-    return scoreCard(
-      `${me.artist?.name ?? "Someone"}'s drawing`,
-      me,
-      h("p", { class: "big" }, "You're not lying on this one. The liars are writing; you vote next."),
-    );
+    return scoreCard(t.drawingOf(me.artist?.name), me, h("p", { class: "big" }, t.notLying));
   }
   const r = me.result;
   if (me.note === "reveal" && r) {
     const lines = [];
-    if (r.kind === "artist") lines.push(`${r.count} of ${r.seen} found your drawing.`);
-    if (r.kind === "found") lines.push("You found the real title!");
-    if (r.kind === "fooled") lines.push(r.by?.length ? `You fell for ${list(r.by)}'s lie.` : "You fell for our lie.");
-    if (r.lie !== undefined) lines.push(`Your lie “${r.lie}” fooled ${r.fooledCount === 1 ? "1 player" : `${r.fooledCount} players`}.`);
+    if (r.kind === "artist") lines.push(t.artistResult(r.count ?? 0, r.seen ?? 0));
+    if (r.kind === "found") lines.push(t.found);
+    if (r.kind === "fooled") lines.push(r.by?.length ? t.fellFor(r.by) : t.fellForOurs);
+    if (r.lie !== undefined) lines.push(t.lieFooled(r.lie, r.fooledCount ?? 0));
     return scoreCard(
-      r.points > 0 ? `+${r.points}` : "Look at the TV!",
+      r.points > 0 ? `+${formatNumber(r.points)}` : t.lookAtTv,
       me,
       ...lines.map((l) => h("p", { class: "big" }, l)),
     );
   }
-  return scoreCard("Look at the TV!", me);
+  return scoreCard(t.lookAtTv, me);
 }
 
-/** Who may join during a game: the VIP's choice (`late-join`), the label, what it means. */
-const LATE_JOIN = [
-  ["wait", "Next round", "Latecomers join at the next round."],
-  ["open", "Anytime", "Latecomers join at the next drawing."],
-  ["closed", "Closed", "Nobody joins once the game is on."],
-];
+/** Who may join during a game: the VIP's choice (`late-join`). */
+const LATE_JOIN = ["wait", "open", "closed"];
 
 /**
  * Latecomers: three buttons for the VIP, a line for everybody else.
  * @param {HTMLElement} err
  */
 function lateJoin(err) {
-  const buttons = LATE_JOIN.map(([mode, label]) => /** @type {HTMLButtonElement} */ (h("button", { "data-mode": mode, onclick: () => act("late-join", { mode }, err).catch(() => {}) }, label)));
+  const buttons = LATE_JOIN.map((mode) => /** @type {HTMLButtonElement} */ (h("button", { "data-mode": mode, onclick: () => act("late-join", { mode }, err).catch(() => {}) }, t.late[mode]?.[0])));
   const row = h("div", { class: "row seg" }, ...buttons);
   const line = h("p", { class: "muted" });
-  const box = h("div", { class: "late" }, h("h2", {}, "Latecomers"), row, line);
+  const box = h("div", { class: "late" }, h("h2", {}, t.latecomers), row, line);
   const update = () => {
     const v = client.view;
     const mode = v.room?.lateJoin ?? "wait";
     const vip = (v.roster ?? []).find((/** @type {any} */ r) => r.id === client.you?.id)?.vip;
     row.hidden = !vip;
     for (const b of buttons) b.classList.toggle("chosen", b.dataset.mode === mode);
-    line.textContent = LATE_JOIN.find(([m]) => m === mode)?.[2] ?? "";
+    line.textContent = t.late[mode]?.[1] ?? "";
   };
   return { box, update };
 }
@@ -321,11 +368,11 @@ function lateJoin(err) {
 /** @param {Record<string, any>} view */
 function lobby(view) {
   const list = h("ul", { class: "players" });
-  const start = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err).catch(() => {}) }, "Everybody's in!"));
+  const start = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", id: "start", onclick: () => act("start", null, err).catch(() => {}) }, t.everybodyIn));
   const err = h("p", { class: "error" });
   const hint = h("p", { class: "muted" });
   const late = lateJoin(err);
-  show(h("section", { class: "card" }, h("h1", {}, "You're in!"), hint, h("h2", {}, "Players"), list, start, err, late.box));
+  show(h("section", { class: "card lobby" }, h("h1", {}, t.youreIn), hint, h("h2", {}, t.players), list, start, err, late.box));
   refresh = () => {
     late.update();
     const v = client.view;
@@ -339,18 +386,14 @@ function lobby(view) {
           "li",
           { class: r.connected ? "" : "away" },
           h("span", { class: "name" }, r.name),
-          r.vip ? h("span", { class: "vip" }, "★ VIP") : null,
-          meVip && r.id !== client.you?.id ? h("button", { onclick: () => act("kick", { id: r.id }, err).catch(() => {}) }, "remove") : null,
+          r.vip ? h("span", { class: "vip" }, t.vip) : null,
+          meVip && r.id !== client.you?.id ? h("button", { onclick: () => act("kick", { id: r.id }, err).catch(() => {}) }, t.remove) : null,
         ),
       ),
     );
     start.hidden = !meVip;
     start.disabled = ready < min;
-    hint.textContent = meVip
-      ? ready < min
-        ? `You're the VIP. Start when ${min - ready} more joined.`
-        : "You're the VIP: start when everybody's in."
-      : "Waiting for the VIP to start the game.";
+    hint.textContent = meVip ? (ready < min ? t.vipWait(min - ready) : t.vipReady) : t.waitVip;
   };
 }
 
@@ -358,15 +401,15 @@ function lobby(view) {
 function final(view) {
   const me = view.me ?? {};
   const err = h("p", { class: "error" });
-  const again = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err).catch(() => {}) }, "Play again"));
+  const again = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", id: "start", onclick: () => act("start", null, err).catch(() => {}) }, t.playAgain));
   const late = lateJoin(err);
   show(
     h(
       "section",
       { class: "card" },
-      h("h1", {}, me.rank === 1 ? "You won!" : "Game over"),
-      h("p", { class: "score" }, String(me.score ?? 0)),
-      h("p", { class: "muted" }, `points · #${me.rank ?? "?"}`),
+      h("h1", {}, me.rank === 1 ? t.won : t.gameOver),
+      h("p", { class: "score" }, formatNumber(me.score ?? 0)),
+      h("p", { class: "muted" }, `${t.points(me.score ?? 0)} · ${t.rankOnly(me.rank ?? 0)}`),
       again,
       err,
       late.box,
@@ -390,7 +433,7 @@ async function act(type, data, err) {
   try {
     return await client.act(type, data);
   } catch (e) {
-    err.textContent = /** @type {any} */ (e).message;
+    err.textContent = message(e);
     throw e;
   }
 }
@@ -492,12 +535,12 @@ function draw(prompt) {
   const err = h("p", { class: "error" });
   const palette = h("div", { class: "palette" });
   const tools = h("div", { class: "tools" });
-  const done = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => submit() }, "Done!"));
-  show(h("section", { class: "card" }, h("h2", {}, "Draw"), h("p", { class: "prompt" }, prompt), h("div", { class: "pad-wrap" }, canvas), palette, tools, done, err));
+  const done = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", id: "done", onclick: () => submit() }, t.done));
+  show(h("section", { class: "card" }, h("h2", {}, t.draw), h("p", { class: "prompt" }, prompt), h("div", { class: "pad-wrap" }, canvas), palette, tools, done, err));
   const p = new Pad(canvas);
   pad = p;
   const swatches = PALETTE.map((c, i) => {
-    const b = h("button", { style: `background:${c}`, "aria-label": `colour ${i + 1}`, onclick: () => pick(i) });
+    const b = h("button", { style: `background:${c}`, "aria-label": t.colour(i + 1), onclick: () => pick(i) });
     palette.append(b);
     return b;
   });
@@ -508,7 +551,7 @@ function draw(prompt) {
   };
   pick(0);
   const sizes = WIDTHS.map((w, i) => {
-    const b = h("button", { onclick: () => size(i) }, ["thin", "medium", "thick"][i] ?? "");
+    const b = h("button", { onclick: () => size(i) }, t.sizes[i] ?? "");
     tools.append(b);
     return b;
   });
@@ -518,7 +561,7 @@ function draw(prompt) {
     sizes.forEach((b, j) => b.classList.toggle("chosen", j === i));
   };
   size(1);
-  tools.append(h("button", { onclick: () => p.clear() }, "clear"));
+  tools.append(h("button", { onclick: () => p.clear() }, t.clear));
   let sent = false;
   const submit = async () => {
     if (sent) return;
@@ -565,7 +608,7 @@ function lie(me) {
   // As long as the prompts at most (LIE_SOFT in game/rules.ts), no capitals
   // (titles are shown in lowercase anyway); autocorrect stays on.
   const input = /** @type {HTMLInputElement} */ (
-    h("input", { maxlength: LIE_SOFT, placeholder: "a convincing title", enterkeyhint: "send", autocapitalize: "none", autocomplete: "off", spellcheck: "true" })
+    h("input", { maxlength: LIE_SOFT, placeholder: t.liePlaceholder, enterkeyhint: "send", autocapitalize: "none", autocomplete: "off", spellcheck: "true", lang })
   );
   const err = h("p", { class: "error" });
   const send = async (/** @type {any} */ data) => {
@@ -583,17 +626,17 @@ function lie(me) {
       },
     },
     input,
-    h("button", { type: "submit", class: "primary" }, "Send"),
+    h("button", { type: "submit", class: "primary" }, t.send),
     err,
   );
-  const role = `You're a liar for ${me.artist?.name ?? "this"}'s drawing${me.liars > 1 ? ` (one of ${me.liars})` : ""}.`;
+  const role = t.liarFor(me.artist?.name, me.liars ?? 0);
   // Early: the first drawing's liars write during the gallery, the next
   // drawing's during the current vote (which they sit out).
   const hint = h("p", { class: "muted" });
-  show(h("section", { class: "card" }, h("h2", {}, "Fake a title"), h("p", { class: "role" }, role), me.early ? hint : null, mini(drawing), form));
+  show(h("section", { class: "card" }, h("h2", {}, t.fakeTitle), h("p", { class: "role" }, role), me.early ? hint : null, mini(drawing), form));
   refresh = () => {
     const phase = client.view.room?.phase;
-    hint.textContent = phase === "draw" || phase === "gallery" ? "It's the first on the TV after the gallery." : "It's next on the TV: you sit this vote out.";
+    hint.textContent = phase === "draw" || phase === "gallery" ? t.firstAfterGallery : t.nextSitOut;
   };
 }
 
@@ -619,7 +662,7 @@ function vote(options, drawing) {
     );
     list.append(b);
   }
-  show(h("section", { class: "card" }, h("h2", {}, "Which is the real title?"), mini(drawing), list, err));
+  show(h("section", { class: "card" }, h("h2", {}, t.whichReal), mini(drawing), list, err));
 }
 
 // ---------------------------------------------------------------------------
@@ -649,8 +692,9 @@ document.addEventListener("visibilitychange", () => {
 
 // ---------------------------------------------------------------------------
 
+/** @type {HTMLElement} */ (app.querySelector(".big")).textContent = t.connecting;
 if (!client.room || !client.key) {
-  show(h("section", { class: "card" }, h("p", { class: "big" }, "Scan the code on the TV to join.")));
+  show(h("section", { class: "card" }, h("p", { class: "big" }, t.scanToJoin)));
 } else if (client.canResume) {
   client.connect().then(wake, (e) => joinForm(e?.code === "no-player" ? "" : message(e)));
 } else {
