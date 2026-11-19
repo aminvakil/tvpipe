@@ -440,3 +440,112 @@ that resolves to the LAN address (the plex.direct approach: a DNS zone
 and ACME on a service we would have to run). The hybrid mode (§3.1)
 gives HTTPS plus LAN latency whenever there is internet; question 6 in §9
 asks whether a hosted name service is ever wanted.
+
+## 4. The reference game: drawbluff in Rust
+
+One binary, `drawbluff`, same rules, prompts and phone UI as the Node
+version (party-design §10), proving the whole path: game logic,
+`tvpipe-party` (phones), `tvpipe` (the TV), `tvpipe-canvas` (the TV
+picture), embedded assets.
+
+```
+games/drawbluff/
+  Cargo.toml          package `drawbluff` (publish = false), a workspace member
+  src/main.rs         CLI: --to NAME…, --lan / --tunnel=…, --bots N, --rounds N, --fast, --size WxH, --web-screen
+  src/rules.rs        port of game/rules.ts: validation, options, scoring, reveal order, mulberry32
+  src/game.rs         port of game/game.ts: the phase machine on Party (§1.3), Collect for draw/lie/vote
+  src/screen.rs       the TV renderer on tvpipe-canvas (port of screen-video.ts)
+  src/sound.rs        generated cues (join, tick, reveal) as PCM for Stream::write_audio
+  src/bots.rs         fake players over real WebSockets, for tests and --bots
+  data/prompts.txt    the prompts, one per line: read by prompts.ts (generated import) and include_str!
+  fonts/*.ttf         TrueType versions of the OFL fonts the web UI uses (§5)
+  web/phone/          unchanged, embedded with assets! (and served from disk with TVPIPE_PARTY_ASSETS)
+  web/screen/         the web screen, embedded for --web-screen
+  game/ main.ts …     the Node version, unchanged apart from reading data/prompts.txt
+```
+
+- **Same rules, checked.** `tests/vectors/rules.txt` (shared): seeded
+  games as inputs (players, prompts, drawings' validity, lies, votes, the
+  mulberry32 seed) and the expected options, reveal order and scores per
+  round. The TS tests (`games/drawbluff/test/`) and the Rust tests replay
+  the same file; mulberry32 is three lines in both languages, so shuffles
+  agree. Drawing validation vectors (point limits, coordinates, palette)
+  likewise.
+- **Same phone UI**, byte for byte: the phone talks to either host
+  through the shared client; nothing in `web/phone/` knows which host it
+  has. The live check (`test/live/play.ts`, headless Chrome as the
+  phone) gains a `--host rust` switch, running the binary instead of
+  `node main.ts`, so one script checks both.
+- **The TV**: the video screen by default (rendered in Rust, §5, one
+  binary, no browser needed); `--web-screen` casts `web/screen/` with
+  `tvpipe::share` (feature `headless`, needs Chrome/Edge/Chromium/Brave or
+  Firefox, as in Node), driven by the same `screen` view. `--to browser`
+  for development, as everywhere in tvpipe.
+- **Threads**: the game on the main thread (`party.wait(next_deadline)`,
+  ticks on events and deadlines); a render thread that takes the latest
+  screen view snapshot and the clock, draws and writes frames at 30 fps
+  when something moves (countdowns, reveal steps), otherwise at the
+  encoder's minimum rate (`wants_frame()`); the audio cues are written by
+  the render thread from `msg`-like cue events. TV restarts (a receiver
+  gone) re-create the `Stream` without touching the party.
+- **Size budget** (to confirm when built): tvpipe defaults (2.7 MB) +
+  party (~0.3 MB) + canvas (~0.1 MB) + fonts (~0.3 MB) + phone UI
+  (~0.1 MB) ≈ 3.5 MB stripped, 5.6 MB with `webrtc`.
+
+## 5. The TV screen rendered in Rust
+
+drawbluff's video screen in Node uses `@napi-rs/canvas` (Skia). In Rust
+the equivalent dependency (`tiny-skia` + a font crate, or Skia bindings)
+is not allowed and not needed: a party game's TV picture is rectangles,
+rounded panels, circles, anti-aliased strokes, a QR code and a lot of
+text in three fonts. **Proposal: `tvpipe-canvas`, std only.**
+
+| Piece | How | Size (estimate) |
+|---|---|---|
+| Canvas | an RGBA8 buffer (straight alpha, sRGB treated as linear like browsers' canvas), clip rectangle, `fill_rect`, `blit`, `copy_from` (images, the previous frame) | 200 lines |
+| Paths | lines and quadratic/cubic Béziers flattened to polygons; filled with a **signed-area coverage accumulator** (the `font-rs` technique: exact anti-aliasing, non-zero winding, one pass per row); rounded rectangles, circles and arcs as paths | 300 lines |
+| Strokes | drawbluff's strokes as round-capped, round-joined polylines: per segment, coverage from the distance to the segment (a capsule) over its bounding box, max-combined per stroke so joints do not double-blend | 150 lines |
+| TrueType | `cmap` (formats 4 and 12), `loca`/`glyf` (simple and composite glyphs, quadratic outlines), `hmtx`/`hhea`, `kern` format 0 (optional); outlines → the same accumulator; no hinting (TV sizes are ≥ 18 px); glyph coverage cached per (font, glyph, size, 1/4-pixel x offset) | 700 lines |
+| Text | left-to-right layout, kerning, `measure`, alignment, word wrap into a width, ellipsis at a maximum width, fallback through a list of fonts, then a box | 250 lines |
+| QR | `tvpipe::qr` modules scaled to whole pixels, quiet zone, dark on white | 40 lines |
+
+Tests: known-answer coverage for shapes (a half-covered pixel is 50 %,
+a circle's area matches πr² within 0.5 %), glyph bitmaps of a few
+characters against checked-in PGM fixtures, a TrueType parser that
+returns errors (never panics) on truncated and fuzzed font data, and
+drawbluff's renderer drawing every phase without error and with the QR
+modules on the expected pixels (as `test/video.test.ts` does in Node).
+
+**Fonts.** The web UI ships WOFF2, which is Brotli-compressed with a
+transformed `glyf` table: decoding it would mean a Brotli decoder
+(~1 500 lines plus a 120 KB dictionary). Instead the game embeds TTF
+versions of the same OFL fonts (Plex Sans, Michroma, Sixtyfour), subset
+to Latin, Latin-1 and Latin Extended-A once with a font tool outside the
+build (the subset files are checked in with `OFL.txt`); ≈ 50–150 KB each.
+CFF-flavoured OpenType (`.otf`) is not supported: say so and pick `glyf`
+fonts.
+
+**Considered:**
+
+- *Bitmap font* (public-domain or OFL pixel fonts): ~100 lines and no
+  parser, but blocky when scaled to TV headline sizes, one look only,
+  and drawbluff's display face (Michroma) is gone. Fine for a debug
+  overlay, not for the game.
+- *Pre-baked SDF/MSDF atlas*: smooth at any size from one texture and
+  cheap to draw, but needs a generator (msdfgen or our own rasteriser
+  anyway), a fixed character set chosen at build time (players' names
+  are arbitrary), and blurs small text. It saves no code once we have a
+  rasteriser.
+- *Pre-rendered glyph atlases at fixed sizes* (made once with a tool,
+  checked in): zero font code at run time, but every new size or font is
+  a regeneration step and names outside the set fall back to boxes. The
+  fallback plan if the rasteriser overruns its budget.
+
+**Limits, stated:** no shaping (no Arabic, Hebrew, Indic scripts, no
+ligatures), no colour emoji. Player names with emoji are common; the TV
+draws them as the name without the emoji (the phones, being DOM, show
+them). A monochrome emoji font (Noto Emoji, OFL, ~1 MB+) is question 5.
+Performance: a 1280×720 frame of a busy phase (two drawings with 12 000
+points, 40 lines of text with a warm glyph cache) should render in
+under 10 ms on one core; the renderer redraws only when the view or an
+animation changes, otherwise it re-sends the last frame.
