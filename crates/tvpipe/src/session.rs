@@ -666,14 +666,18 @@ fn configure_browsers(
     if !targets.iter().any(|t| matches!(t, Target::Browser(_))) {
         return;
     }
-    // One URL across runs (docs/player-protocol.md); a
-    // config directory we cannot write only costs that.
-    let token = match crate::browser::player_options::persistent_token(storage, opts.new_token) {
-        Ok(t) => Some(t),
-        Err(e) => {
-            warn!("browser: cannot keep the page's token ({e}); the URL is new this time");
-            None
-        }
+    // One URL across runs on a fixed port (docs/player-protocol.md); a
+    // storage we cannot write only costs that. Any free port (0) makes a
+    // new URL anyway, so nothing is kept.
+    let token = match opts.port {
+        Some(0) => None,
+        _ => match crate::browser::player_options::persistent_token(storage, opts.new_token) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                warn!("browser: cannot keep the page's token ({e}); the URL is new this time");
+                None
+            }
+        },
     };
     for t in targets {
         if let Target::Browser(o) = t {

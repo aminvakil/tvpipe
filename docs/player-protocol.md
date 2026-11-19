@@ -17,8 +17,10 @@ The share page's rules ([`share-protocol.md`](share-protocol.md)), with one more
   - `PORT` is 8765, or `--port` (0: any free port). When 8765 is taken
     (another tvpipe), tvpipe warns and takes a free port for this run.
   - `TOKEN` (16 random bytes in hex) is kept in `player-token` in the
-    config directory (0600 on unix), made on first use; `--new-token`
-    replaces it. A config directory that cannot be written costs only
+    config directory (0600 on unix; a program's own storage with the Rust
+    library), made on first use; `--new-token` replaces it. With
+    `--port 0` the URL changes every run anyway, so the token is a new
+    one per run and nothing is kept. A config directory that cannot be written costs only
     the stable URL (a token for this run, with a warning).
   - The share page keeps a new token per run: it captures the user's
     screen, while the player only shows what tvpipe streams anyway, so

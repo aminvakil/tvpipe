@@ -35,8 +35,7 @@
 //!
 //! `--gop N` sets the encoder's keyframe interval in frames (default 2 s).
 
-#[path = "../src/media/slrw.rs"]
-mod slrw;
+use tvpipe::slrw;
 
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
