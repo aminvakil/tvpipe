@@ -20,7 +20,10 @@ export function webFiles(): Map<string, string> {
   const out = new Map<string, string>();
   const strip = (js: string) => js.replace(/\n\/\/# sourceMappingURL=.*\n?$/, "\n");
   for (const f of readdirSync(dist).sort()) {
-    if (f.endsWith(".js")) out.set(`lib/${f}`, strip(readFileSync(join(dist, f), "utf8")));
+    // Only what src/ still has: dist/ keeps the output of deleted modules.
+    if (f.endsWith(".js") && existsSync(join(src, f.replace(/\.js$/, ".ts")))) {
+      out.set(`lib/${f}`, strip(readFileSync(join(dist, f), "utf8")));
+    }
   }
   // The launcher sits beside lib/ when served: `../x.js` is `../lib/x.js`.
   const launcher = strip(readFileSync(join(dist, "launcher", "launcher.js"), "utf8")).replace(
