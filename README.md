@@ -45,6 +45,16 @@ import { play } from "@tvpipe/sdk";
 await play("movie.mp4", { to: "Living Room" });
 ```
 
+From Rust, `cargo add tvpipe` links tvpipe into your program (no binary,
+no async runtime); a game streams its own frames and sound
+([`crates/tvpipe`](crates/tvpipe/README.md),
+[From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/)):
+
+```rust
+let mut s = tvpipe::stream(Options::new().to("Living Room").video(1280, 720, 60, PixelFormat::Rgba))?;
+s.write_video(&frame, s.elapsed())?;
+```
+
 ## Features
 
 - Plays files and URLs, and mirrors cameras, capture cards and the screen
@@ -106,6 +116,7 @@ that off; never with `--machine`).
 | [Public links](https://mitsuhiko.github.io/tvpipe/manual/links/) | `--tunnel` |
 | [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
 | [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
+| [From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/) | the `tvpipe` crate |
 | [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
@@ -116,8 +127,14 @@ that off; never with `--machine`).
 
 ```sh
 cargo build --release        # → target/release/tvpipe (Rust 1.85+, a C compiler)
-cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
+cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
+
+The workspace has three crates: [`crates/tvpipe`](crates/tvpipe/) (the
+library, Apache-2.0), [`crates/tvpipe-cli`](crates/tvpipe-cli/) (the
+`tvpipe` command on top of it) and
+[`crates/tvpipe-fairplay`](crates/tvpipe-fairplay/) (the LGPL FairPlay port,
+behind the library's opt-in `fairplay` feature).
 
 The Node SDK's tests run against the debug binary: `cargo build && cd
 npm/tvpipe && npm ci && npm run check && npm test`. A release bumps the
