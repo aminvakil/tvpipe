@@ -1,0 +1,19 @@
+tvpipe · Test pattern
+
+✗ No receiver named "Nowhere TV" answered on this network
+  See which receivers are on this network: tvpipe discover
+---
+tvpipe · Playing nosuch.mkv
+
+✗ nosuch.mkv: no such file
+  Check the file's name, or give a URL
+---
+tvpipe · Test pattern
+
+✗ Livingroom (2) needs pairing before it shows anything
+  Pair it once with: tvpipe pair "Livingroom (2)"
+---
+tvpipe · Test pattern
+
+✗ --raw-video ...:h264 reads SLRW from stdin (-)
+  See: tvpipe debug pattern --help

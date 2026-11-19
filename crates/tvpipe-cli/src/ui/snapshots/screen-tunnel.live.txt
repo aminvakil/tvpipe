@@ -1,0 +1,18 @@
+tvpipe · Sharing your screen
+
+! The browser tab plays the shared sound again (an echo): mute it, or use --no-audio
+✓ Chrome started (0.7 s)
+✓ Capturing your screen · 6016×3384 with sound (1.5 s)
+
+  Watch on this computer
+  http://127.0.0.1:61868/?t=ee7d3e605e59c1314f0ba31148737fac
+
+✓ Public link ready (5.3 s)
+
+  Anyone with this link can watch
+  https://galleries-courtesy-incredible-priced.trycloudflare.com/?t=05fc5f84727fa4b88dd604050721dd5a
+&delay=300
+  Cloudflare quick tunnel · a new link every run
+
+• Someone opened the public link
+● Live · 3840×2160 · 30 fps · 12.5 Mbit/s · 1 viewer · 00:03:12    q + Enter to stop

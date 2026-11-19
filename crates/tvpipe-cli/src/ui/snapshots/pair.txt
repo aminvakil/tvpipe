@@ -1,0 +1,5 @@
+tvpipe · Pairing with Livingroom (2)
+
+? Enter the PIN shown on Livingroom (2): 1234
+✓ Paired with Livingroom (2) · AppleTV6,2
+  Stream to it with: tvpipe play FILE --to "Livingroom (2)"

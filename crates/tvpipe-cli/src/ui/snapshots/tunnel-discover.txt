@@ -1,0 +1,13 @@
+tvpipe · Public link to port 8080
+
+✓ Public link ready (5.2 s)
+
+  Public link
+  https://a-b-c.trycloudflare.com/
+  Cloudflare quick tunnel · a new link every run
+
+● Link open · 00:01:00    q + Enter to stop
+---
+tvpipe · Looking for receivers
+
+⠸ Looking for receivers on this network… 2 s

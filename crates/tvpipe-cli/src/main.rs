@@ -9,6 +9,7 @@ extern crate tvpipe;
 mod cli;
 mod interrupt;
 mod machine;
+mod ui;
 
 use tvpipe::__cli::{error, events};
 use tvpipe::log;
@@ -20,42 +21,22 @@ use tvpipe::{Device, Storage};
 
 fn main() -> ExitCode {
     let (global, command) = cli::parse_env();
-    let level = if global.debug {
-        log::Level::Trace
-    } else if global.verbose {
-        log::Level::Debug
-    } else {
-        log::Level::Info
+    let mode = match ui::Mode::pick(
+        global.machine,
+        global.verbose,
+        global.debug,
+        std::env::var("TVPIPE_LOG").ok().as_deref(),
+    ) {
+        // A tool for developers: its log is part of its report.
+        ui::Mode::People if matches!(command, Command::DebugPipeline(_)) => {
+            ui::Mode::Developer(log::Level::Info)
+        }
+        m => m,
     };
-    let installed = if global.machine {
-        log::set_logger(level, |r| machine::emit(&events::Event::Log(r.clone())))
-    } else {
-        let start = std::time::Instant::now();
-        log::set_logger(level, move |r| {
-            use std::io::Write;
-            let t = start.elapsed();
-            let _ = writeln!(
-                std::io::stderr().lock(),
-                "{:>4}.{:03} {} {}: {}",
-                t.as_secs(),
-                t.subsec_millis(),
-                r.level.label(),
-                r.module,
-                r.message
-            );
-        })
-    };
-    // Only fails when installed twice, which main does not.
-    let _ = installed;
     // The CLI shares one config directory with every run (and with
     // programs that use Storage::cli()).
     let mut ctx = tvpipe::__cli::Ctx::new();
     ctx.storage = Storage::cli();
-    if global.machine {
-        ctx.events = machine::events();
-        machine::hello(command.name());
-        machine::start_router(ctx.stop.clone());
-    }
     // Ctrl-C and `q` stop sessions (not discover/pair, which end by
     // themselves; pair reads its PIN from stdin).
     let (session, reads_stdin) = match &command {
@@ -65,14 +46,57 @@ fn main() -> ExitCode {
         }
         _ => (false, false),
     };
-    // A person at a terminal gets the public links as QR codes too, after
-    // the log line naming them (`--no-qr`, `TVPIPE_NO_QR`).
-    if session && !global.machine && tvpipe::__cli::qr::wanted(global.no_qr) {
-        ctx.events = events::Events::to(|e| {
-            if let events::Event::Tunnel(t) = e {
-                tvpipe::__cli::qr::print(&t.url);
+    match mode {
+        ui::Mode::Machine => {
+            let level = if global.debug {
+                log::Level::Trace
+            } else if global.verbose {
+                log::Level::Debug
+            } else {
+                log::Level::Info
+            };
+            // Only fails when installed twice, which main does not.
+            let _ = log::set_logger(level, |r| machine::emit(&events::Event::Log(r.clone())));
+            ctx.events = machine::events();
+            machine::hello(command.name());
+            machine::start_router(ctx.stop.clone());
+        }
+        ui::Mode::Developer(level) => {
+            let start = std::time::Instant::now();
+            let _ = log::set_logger(level, move |r| {
+                use std::io::Write;
+                let t = start.elapsed();
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "{:>4}.{:03} {} {}: {}",
+                    t.as_secs(),
+                    t.subsec_millis(),
+                    r.level.label(),
+                    r.module,
+                    r.message
+                );
+            });
+            // The public links as QR codes too, after the log line naming
+            // them (`--no-qr`, `TVPIPE_NO_QR`).
+            if session && tvpipe::__cli::qr::wanted(global.no_qr) {
+                ctx.events = events::Events::to(|e| match e {
+                    events::Event::Tunnel(t) => tvpipe::__cli::qr::print(&t.url),
+                    events::Event::Progress(events::Progress::GameLink { url, .. }) => {
+                        tvpipe::__cli::qr::print(&url)
+                    }
+                    _ => {}
+                });
             }
-        });
+        }
+        ui::Mode::People => {
+            use std::io::IsTerminal;
+            let hint = match session {
+                false => ui::term::StopHint::None,
+                true if !reads_stdin && std::io::stdin().is_terminal() => ui::term::StopHint::Q,
+                true => ui::term::StopHint::CtrlC,
+            };
+            ctx.events = ui::install(&command, global.no_qr, hint, ctx.stop.clone());
+        }
     }
     if session {
         if !interrupt::link(ctx.stop.clone()) {
@@ -100,7 +124,7 @@ fn main() -> ExitCode {
     let report = |err: &error::Error| {
         if global.machine {
             machine::emit(&machine::error_event(err));
-        } else {
+        } else if !ui::error(&events::ErrorInfo::from(err)) {
             eprintln!("error: {err}");
         }
     };
@@ -110,12 +134,15 @@ fn main() -> ExitCode {
         match rv {
             Err(err) => report(&err),
             Ok(()) if global.machine => machine::end_if_unsent(events::EndReason::Stopped),
-            Ok(()) => {}
+            Ok(()) => ui::finish(true),
         }
         return ExitCode::from(130);
     }
     match rv {
-        Ok(()) if !global.machine => ExitCode::SUCCESS,
+        Ok(()) if !global.machine => {
+            ui::finish(stop.requested());
+            ExitCode::SUCCESS
+        }
         Ok(()) => {
             machine::end_if_unsent(if stop.requested() {
                 events::EndReason::Stopped
@@ -140,7 +167,18 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
             json,
             interfaces,
         } => {
-            let devices = tvpipe::__cli::discover(timeout, &interfaces, &ctx.storage)?;
+            let step = |p: fn(events::Step) -> events::Progress| {
+                ctx.events
+                    .emit(events::Event::Progress(p(events::Step::Discover)))
+            };
+            if !json {
+                step(events::Progress::Begin);
+            }
+            let found = tvpipe::__cli::discover(timeout, &interfaces, &ctx.storage);
+            if !json {
+                step(|s| events::Progress::Done(s, None));
+            }
+            let devices = found?;
             if global.machine {
                 machine::emit(&tvpipe::__cli::devices_event(devices));
                 return Ok(());
@@ -153,7 +191,7 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
         }
         Command::Pair { target, pin } => {
             let p = tvpipe::__cli::pair(&target, pin.as_deref(), &ctx, &mut prompt_pin)?;
-            if !global.machine {
+            if !global.machine && !ui::active() {
                 print(&format!(
                     "Paired with {} ({})\n",
                     p.name,
@@ -168,6 +206,8 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
             for u in removed {
                 if global.machine {
                     machine::emit(&events::Event::Unpaired(u));
+                } else if ui::active() {
+                    ui::event(&events::Event::Unpaired(u));
                 } else {
                     print(&format!("Forgot pairing with {} ({})\n", u.name, u.id))?;
                 }
@@ -237,6 +277,10 @@ fn tunnel(port: u16, provider: Provider, ctx: &tvpipe::__cli::Ctx) -> error::Res
         warn!("tunnel: nothing answers on 127.0.0.1:{port} yet; visitors get errors until it does");
     }
     let stop = ctx.stop.clone();
+    ctx.events
+        .emit(events::Event::Progress(events::Progress::Begin(
+            events::Step::Tunnel,
+        )));
     let t = tvpipe::__cli::start_tunnel(port, provider, &|| stop.requested())?;
     let url = format!("https://{}/", t.host());
     info!(
@@ -261,61 +305,94 @@ fn print(text: &str) -> error::Result<()> {
     }
 }
 
-/// `discover`'s table: one receiver per line.
+/// `discover`'s list: the receivers tvpipe streams to (one per line),
+/// then the speakers it does not (audio only), by name.
 fn table(devices: &[Device]) -> String {
-    if devices.is_empty() {
-        return "no receivers found\n".to_owned();
-    }
-    let protocols = |d: &Device| {
-        let mut p = Vec::new();
-        if let Some(a) = &d.airplay {
-            p.push(if a.mirroring {
-                "airplay(mirror)"
-            } else {
-                "airplay"
-            });
-        }
-        if d.raop.is_some() {
-            p.push("raop");
-        }
-        if let Some(c) = &d.cast {
-            p.push(if c.video { "cast(video)" } else { "cast" });
-        }
-        p.join(",")
+    let video = |d: &Device| {
+        d.airplay.as_ref().is_some_and(|a| a.mirroring)
+            || d.cast.as_ref().is_some_and(|c| c.video && !c.group)
     };
-    let rows: Vec<[String; 4]> = devices
-        .iter()
-        .map(|d| {
-            [
-                d.name.clone(),
-                d.addresses
-                    .first()
-                    .map(|a| a.to_string())
-                    .unwrap_or_default(),
-                protocols(d),
-                d.model.clone().unwrap_or_default(),
-            ]
-        })
-        .collect();
-    let header = ["NAME", "ADDRESS", "PROTOCOLS", "MODEL"].map(str::to_owned);
-    let mut widths = [0usize; 4];
-    for row in std::iter::once(&header).chain(&rows) {
-        for (w, cell) in widths.iter_mut().zip(row) {
-            *w = (*w).max(cell.chars().count());
-        }
-    }
+    let (tvs, speakers): (Vec<&Device>, Vec<&Device>) = devices.iter().partition(|d| video(d));
     let mut out = String::new();
-    for row in std::iter::once(&header).chain(&rows) {
-        let mut line = String::new();
-        for (i, cell) in row.iter().enumerate() {
-            line.push_str(cell);
-            if i + 1 < row.len() {
-                let pad = widths[i] - cell.chars().count() + 2;
-                line.extend(std::iter::repeat_n(' ', pad));
+    if tvs.is_empty() {
+        out.push_str("No receivers that show video answered on this network.\n");
+    } else {
+        out.push_str(&format!(
+            "Found {} {} you can stream to:\n\n",
+            tvs.len(),
+            if tvs.len() == 1 {
+                "receiver"
+            } else {
+                "receivers"
+            }
+        ));
+        let rows: Vec<[String; 5]> = tvs
+            .iter()
+            .map(|d| {
+                let cast = d.cast.as_ref().filter(|c| c.video);
+                let airplay = d.airplay.as_ref().filter(|a| a.mirroring);
+                let kind = match (cast, airplay) {
+                    (Some(_), Some(_)) => "Google Cast, AirPlay",
+                    (Some(_), None) => "Google Cast",
+                    _ => "AirPlay",
+                };
+                let note = match airplay {
+                    Some(a) if a.paired == Some(true) => "paired",
+                    Some(a) if a.pin && cast.is_none() => "needs pairing",
+                    _ => "",
+                };
+                [
+                    d.name.clone(),
+                    kind.to_owned(),
+                    d.model.clone().unwrap_or_default(),
+                    d.addresses
+                        .first()
+                        .map(|a| a.to_string())
+                        .unwrap_or_default(),
+                    note.to_owned(),
+                ]
+            })
+            .collect();
+        let mut widths = [0usize; 5];
+        for row in &rows {
+            for (w, cell) in widths.iter_mut().zip(row) {
+                *w = (*w).max(cell.chars().count());
             }
         }
-        out.push_str(line.trim_end());
-        out.push('\n');
+        for row in &rows {
+            let mut line = String::from("  ");
+            for (i, cell) in row.iter().enumerate() {
+                line.push_str(cell);
+                if i + 1 < row.len() {
+                    let pad = widths[i] - cell.chars().count() + 3;
+                    line.extend(std::iter::repeat_n(' ', pad));
+                }
+            }
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+    }
+    if !speakers.is_empty() {
+        let names: Vec<&str> = speakers.iter().map(|d| d.name.as_str()).collect();
+        out.push_str(&format!(
+            "\nAlso found {} {} that play audio only (tvpipe streams video):\n  {}\n",
+            speakers.len(),
+            if speakers.len() == 1 {
+                "speaker"
+            } else {
+                "speakers"
+            },
+            names.join(", ")
+        ));
+    }
+    match tvs.first() {
+        Some(d) => out.push_str(&format!(
+            "\nStream to one: tvpipe play FILE --to {}\n",
+            ui::render::quote(&d.name)
+        )),
+        None => {
+            out.push_str("\nCheck that the TV is on and on the same network as this computer.\n")
+        }
     }
     out
 }
@@ -327,13 +404,12 @@ fn prompt_pin(req: &events::PinRequest) -> error::Result<String> {
     if let Some(router) = machine::router() {
         return router.wait_pin();
     }
-    eprint!("Enter the PIN shown on {}: ", req.name);
+    ui::prompt(&format!("Enter the PIN shown on {}:", req.name));
     let _ = std::io::stderr().flush();
     let mut line = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut line)
-        .map_err(|e| error::Error::io("read PIN", e))?;
+    let read = std::io::stdin().lock().read_line(&mut line);
+    ui::answered(line.is_empty());
+    read.map_err(|e| error::Error::io("read PIN", e))?;
     if line.is_empty() {
         return Err(error::Error::usage("no PIN entered"));
     }
@@ -344,8 +420,13 @@ fn prompt_pin(req: &events::PinRequest) -> error::Result<String> {
 /// tunnel may reach the receivers. Without a terminal nothing remote is
 /// shown unless `--yes` was given.
 fn approve_in_terminal(what: &str, cancel: &dyn Fn() -> bool) -> bool {
-    let _ = what; // logged by the session
-    match interrupt::ask("share: show it on the receivers? [y/N]", cancel) {
+    // The developer log has a line for it already.
+    let question = if ui::active() {
+        format!("{}. Show it on the receivers? [y/N]", what)
+    } else {
+        "share: show it on the receivers? [y/N]".to_owned()
+    };
+    match interrupt::ask(&question, cancel) {
         Some(a) => matches!(a.trim(), "y" | "Y" | "yes" | "Yes" | "YES"),
         None => {
             if !cancel() {

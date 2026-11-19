@@ -7,6 +7,8 @@ detail lives in `docs/`:
 - [`slrw.md`](docs/slrw.md): the game input format.
 - [`machine.md`](docs/machine.md): `--machine`, the interface for
   programs (the Node SDK).
+- [`terminal-ui.md`](docs/terminal-ui.md): what people see in the
+  terminal by default (`-v` for the developer log) and how it is fed.
 - [`share-protocol.md`](docs/share-protocol.md) and
   [`player-protocol.md`](docs/player-protocol.md): the browser pages.
 - [`measurements.md`](docs/measurements.md): latency and experiments.
@@ -564,7 +566,10 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
   (`util::vectors`); binary fixtures under `crates/tvpipe/tests/fixtures/<module>/`.
 - **Logging** uses the `error!`/`warn!`/`info!`/`debug!`/`trace!` macros
   from `crates/tvpipe/src/log.rs`; `play` writes nothing but SLRW keyframe requests to
-  stdout.
+  stdout. By default people see only `warn!` lines (as `!` lines,
+  [`docs/terminal-ui.md`](docs/terminal-ui.md)): write them short and
+  say what to do; what people should see besides goes out as an event,
+  not as an `info!` line.
 - **Naming:** the project was called streamlib before it became tvpipe.
   An existing `…/streamlib` config directory is moved over once on first
   use; the SLRW magic and some fixtures keep the old name on purpose.

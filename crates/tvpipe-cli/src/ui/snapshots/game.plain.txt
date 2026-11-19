@@ -1,0 +1,16 @@
+tvpipe · drawbluff
+
+  Play in a browser on this computer
+  http://127.0.0.1:62991/
+
+✓ Public link ready
+
+  Phones join here
+  https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/
+  Carried by OpenTunnel
+
+✓ Game window open (1.1 s)
+• Casting to Living Room TV
+✗ The cast failed: Living Room TV: connection refused
+
+Stopped after 00:12:02.

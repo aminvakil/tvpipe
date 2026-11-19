@@ -1,0 +1,6 @@
+tvpipe · Playing movie.mkv
+
+✓ Connected to Living Room TV · Google Cast (1.8 s)
+• Streaming 1920×1080 at 24 fps
+
+✓ Done. Played 00:42:10 to Living Room TV.

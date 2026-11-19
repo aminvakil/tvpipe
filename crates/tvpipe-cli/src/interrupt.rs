@@ -45,7 +45,7 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
     }
     let (tx, rx) = mpsc::channel();
     *ANSWER.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
-    eprint!("{question} ");
+    crate::ui::prompt(question);
     let answer = loop {
         if cancel() || signalled() {
             break None;
@@ -57,9 +57,7 @@ pub fn ask(question: &str, cancel: &dyn Fn() -> bool) -> Option<String> {
         }
     };
     ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take();
-    if answer.is_none() {
-        eprintln!();
-    }
+    crate::ui::answered(answer.is_none());
     answer
 }
 
@@ -86,6 +84,8 @@ pub fn watch_stdin(stop: Stop) {
         .name("stdin-quit".into())
         .spawn(move || {
             for line in stdin.lock().lines() {
+                // The terminal echoed the line: the status line moved up.
+                crate::ui::typed();
                 match line {
                     Ok(l) if l.trim().eq_ignore_ascii_case("q") => {
                         stop.request();

@@ -29,6 +29,9 @@ stdio contract; the commands and their options stay the same:
 
 Every event has a `type`; names are snake_case. Readers ignore types and
 fields they do not know: new ones do not change the protocol version.
+The library's `Event::Progress` (steps and `game play`'s news for the
+terminal UI, [`terminal-ui.md`](terminal-ui.md)) and `Stats::video_bytes`
+are not part of the protocol: `--machine` does not write them.
 
 The first event is `hello`. A command ends with `end` (exit status 0) or
 `error` (exit status 1); `end` may be followed by `log` events and, when
