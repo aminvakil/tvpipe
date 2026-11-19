@@ -112,6 +112,8 @@ const tv = await tvpipe.surface({ canvas, fps: 30, to: ["Living Room"] });
 function draw() { render(ctx); tv.frame(); requestAnimationFrame(draw); }
 ```
 
+A game that streams a canvas this way does not need a party client on its TV page.
+
 Drawing stops while the window is minimized, unless the canvas lives in a worker. With an `OffscreenCanvas` drawn on a timer there (`clock: "timer"`), the library's `SurfaceEncoder` runs in the worker too.
 
 A TV page made of HTML can be drawn into a canvas in Chrome 157 and later (HTML-in-Canvas). The demo game offers it as **TV picture: drawn here**. `games/beam` in the repository shows both ways side by side, and [docs/playshare-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/playshare-design.md) explains surfaces in section 17.
@@ -139,7 +141,7 @@ The zip is the same byte for byte when the files are: entries are sorted and car
 
 `tvpipe bundle` checks `tvpipe.json`, then follows every page through its HTML, CSS and JavaScript imports. It reports missing files, names that differ only in case (they work on a Mac and break in the zip), TypeScript that was never built, imports a browser cannot resolve, files that come from the internet, and names that break on other systems. `--smoke` starts the game without TVs, opens the launcher, the host page, the TV page and the phone page in a headless browser, lets a fake phone join, and reports errors from any of them. `--strict` makes warnings fail too, for CI.
 
-Share the zip. Do not zip the folder by hand: the Finder's Compress adds files that tvpipe refuses.
+Share the zip. A zip made by hand, with the Finder's Compress for example, works too, but `tvpipe bundle` checks the game and leaves out what does not belong.
 
 ## Play
 
