@@ -14,6 +14,8 @@
  * packages as an application would).
  */
 
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { createParty, type TunnelChoice } from "@tvpipe/party";
@@ -43,6 +45,19 @@ if (args.help) {
     "usage: node main.ts [--to NAME]... [--video] [--tunnel=cloudflare|opentunnel|auto] [--no-tunnel] [--bots N] [--rounds N] [--fast] [--size WxH] [--open] [-v]",
   );
   process.exit(0);
+}
+
+// In this repository: the tvpipe it builds (release first: the built-in
+// encoder is slow unoptimized), unless TVPIPE_BINARY says otherwise.
+if (!process.env["TVPIPE_BINARY"]) {
+  const exe = process.platform === "win32" ? "tvpipe.exe" : "tvpipe";
+  for (const profile of ["release", "debug"]) {
+    const p = fileURLToPath(new URL(`../../target/${profile}/${exe}`, import.meta.url));
+    if (existsSync(p)) {
+      process.env["TVPIPE_BINARY"] = p;
+      break;
+    }
+  }
 }
 
 const tunnel: TunnelChoice = args["no-tunnel"] ? false : ((args.tunnel as TunnelChoice | undefined) ?? "auto");
