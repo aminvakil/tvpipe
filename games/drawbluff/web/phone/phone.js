@@ -202,7 +202,7 @@ function scoreCard(title, me) {
 /** @param {Record<string, any>} view */
 function lobby(view) {
   const list = h("ul", { class: "players" });
-  const start = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err) }, "Everybody's in!"));
+  const start = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err).catch(() => {}) }, "Everybody's in!"));
   const err = h("p", { class: "error" });
   const hint = h("p", { class: "muted" });
   show(h("section", { class: "card" }, h("h1", {}, "You're in!"), hint, h("h2", {}, "Players"), list, start, err));
@@ -219,7 +219,7 @@ function lobby(view) {
           { class: r.connected ? "" : "away" },
           h("span", { class: "name" }, r.name),
           r.vip ? h("span", { class: "vip" }, "★ VIP") : null,
-          meVip && r.id !== client.you?.id ? h("button", { onclick: () => act("kick", { id: r.id }, err) }, "remove") : null,
+          meVip && r.id !== client.you?.id ? h("button", { onclick: () => act("kick", { id: r.id }, err).catch(() => {}) }, "remove") : null,
         ),
       ),
     );
@@ -237,7 +237,7 @@ function lobby(view) {
 function final(view) {
   const me = view.me ?? {};
   const err = h("p", { class: "error" });
-  const again = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err) }, "Play again"));
+  const again = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err).catch(() => {}) }, "Play again"));
   show(
     h(
       "section",
