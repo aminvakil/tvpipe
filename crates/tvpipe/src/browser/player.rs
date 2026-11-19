@@ -624,21 +624,26 @@ impl BrowserSink {
             }
         });
         let at = |port: u16| -> SocketAddr { (std::net::Ipv4Addr::LOCALHOST, port).into() };
+        let mut taken = None;
         let http = match opts.port {
             Some(port) => httpd::Server::bind(at(port), handler)?,
             None => match httpd::Server::bind(at(DEFAULT_PORT), handler.clone()) {
                 Ok(h) => h,
                 Err(e) => {
-                    warn!(
-                        "{}: port {DEFAULT_PORT} is not available ({e}); using another one, \
-                         so the URL is not the usual one (--port picks one)",
-                        opts.name
-                    );
+                    taken = Some(e);
                     httpd::Server::bind(at(0), handler)?
                 }
             },
         };
         let port = http.local_addr().port();
+        if let Some(e) = taken {
+            // Not worth a warning: the page works, only its URL differs.
+            info!(
+                "{}: port {DEFAULT_PORT} is taken ({e}); using port {port}, so the URL is not \
+                 the usual one (--port picks one)",
+                opts.name
+            );
+        }
         let shared = Arc::new(Shared {
             name: opts.name.clone(),
             access: Access::new(&opts.name, port, token.clone()),

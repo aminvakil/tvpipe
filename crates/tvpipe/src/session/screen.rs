@@ -32,10 +32,9 @@ pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
         .iter()
         .any(|t| t.eq_ignore_ascii_case(crate::opts::BROWSER_TARGET));
     if to_player && !opts.share.no_audio {
-        warn!(
-            "screen: a --to browser tab on this computer plays the sound it gets, which is \
-             then shared again (an echo); mute that tab, or use --no-audio"
-        );
+        // The player tab on this computer plays the captured sound, which
+        // the capture picks up again.
+        warn!("screen: the browser tab plays the shared sound again (an echo): mute it, or use --no-audio");
     }
     let bin = match opts.engine {
         Some(ScreenEngine::Ffmpeg) => None,

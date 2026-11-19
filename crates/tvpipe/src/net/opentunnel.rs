@@ -1313,7 +1313,8 @@ fn supervise(ctx: Arc<Ctx>, first: Attached) {
                 next = Some(a);
             }
             Err(e) if matches!(e.kind(), ErrorKind::Auth) => {
-                error!("tunnel: {e}; the public link is down");
+                // Not fatal for the session: only the public link is gone.
+                warn!("tunnel: {e}; the public link is down");
                 return;
             }
             Err(e) => debug!("tunnel: reconnect: {e}"),

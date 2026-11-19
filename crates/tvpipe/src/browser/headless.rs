@@ -1002,7 +1002,8 @@ impl Keeper {
 fn report_status(url: &str, status: u64, text: &str) {
     let refusal = matches!(status, 401 | 403 | 429);
     if refusal {
-        error!(
+        // A warning: the page stays open (a login may follow).
+        warn!(
             "browser: {url} answered {status} {text}: the site refuses this browser. Sites \
              that refuse automated browsers do not work with 'tvpipe share URL' (it does not \
              hide that it is automated); log in with --visible --profile DIR if it needs a login"
