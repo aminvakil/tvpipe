@@ -418,6 +418,23 @@ fn library_rules() {
     ))
     .unwrap();
     assert!(c.problems.is_empty(), "{:#?}", lines(&c));
+    // tvpipe's look and its fonts.
+    let c = check(&game(
+        "look",
+        &[
+            ("host.css", Some("@import \"/_tvpipe/ui.css\";\n@font-face { src: url(/_tvpipe/fonts/michroma.woff2) }\n@font-face { src: url(/_tvpipe/fonts/comic-sans.woff2) }\n")),
+            ("host.html", Some("<link rel=stylesheet href=/_tvpipe/ui.css><link rel=stylesheet href=host.css><script type=module src=host.js></script>")),
+        ],
+    ))
+    .unwrap();
+    only(
+        &c,
+        Level::Error,
+        &[
+            "host.css:3: /_tvpipe/fonts/comic-sans.woff2 does not exist",
+            "/_tvpipe/ui.css",
+        ],
+    );
     // A library module tvpipe does not have.
     let c = check(&game(
         "nolib",

@@ -555,6 +555,20 @@ fn local_listener_rules() {
     assert!(r.contains("Cache-Control: no-cache"), "{r}");
     assert!(get(s.local(), "/_tvpipe/lib/client.js", &host, "").starts_with("HTTP/1.1 200"));
     assert!(get(s.local(), "/_tvpipe/launcher/", &host, "").starts_with("HTTP/1.1 200"));
+    // tvpipe's look: the stylesheet and the browser player's fonts.
+    let r = get(s.local(), "/_tvpipe/ui.css", &host, "");
+    assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    assert!(r.contains("Content-Type: text/css"), "{r}");
+    assert!(r.contains("url(fonts/michroma.woff2)"), "{r}");
+    let r = http(
+        s.local(),
+        &format!("HEAD /_tvpipe/fonts/michroma.woff2 HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
+    );
+    assert!(
+        r.starts_with("HTTP/1.1 200") && r.contains("font/woff2"),
+        "{r}"
+    );
+    assert!(get(s.local(), "/_tvpipe/fonts/nope.woff2", &host, "").starts_with("HTTP/1.1 404"));
     let r = get(s.local(), "/phone", &host, "");
     assert!(
         r.starts_with("HTTP/1.1 301") && r.contains("Location: /phone/"),
@@ -602,6 +616,7 @@ fn public_listener_rules() {
     assert!(r.contains("Location: /phone/index.html?r=BCDF"), "{r}");
     assert!(get(s.public(), "/phone/app.js", &host, "").contains("export const x"));
     assert!(get(s.public(), "/_tvpipe/lib/client.js", &host, "").starts_with("HTTP/1.1 200"));
+    assert!(get(s.public(), "/_tvpipe/ui.css", &host, "").starts_with("HTTP/1.1 200"));
     // Local-only things are not there.
     assert!(get(s.public(), "/_tvpipe/launcher/", &host, "").starts_with("HTTP/1.1 404"));
     assert!(get(

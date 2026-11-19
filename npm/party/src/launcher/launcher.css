@@ -1,41 +1,54 @@
-:root {
-  color-scheme: dark;
-  --bg: #14121c;
-  --card: #201d2c;
-  --line: #36314a;
-  --text: #f3f0fa;
-  --muted: #a49cb8;
-  --accent: #7c5cff;
-  --accent-2: #b8a6ff;
-  --error: #ff7a8a;
-  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+/* The launcher's own parts; the rest is tvpipe's look (/_tvpipe/ui.css). */
+
+body { min-height: 100vh; display: flex; flex-direction: column; }
+.top, main, .foot { width: 100%; }
+main { flex: 1; }
+.ph { padding-bottom: 40px; }
+.lead { color: var(--ink-2); }
+
+/* The TVs: rows between rules. */
+.devices { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.device { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; column-gap: 16px; align-items: center;
+          padding: 14px 4px; border-bottom: 1px solid var(--rule); cursor: pointer; }
+.device:hover { background: var(--panel); }
+.device input { appearance: none; display: grid; place-items: center; align-self: start; width: 16px; height: 16px; margin: 4px 0 0;
+                border: 1.5px solid var(--ink-3); border-radius: 2px; background: var(--bg); cursor: pointer; }
+.device input:checked { background: var(--accent); border-color: var(--accent); }
+.device input:checked::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.device .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device .meta { font-size: 13.5px; color: var(--ink-2); }
+.device .meta:empty { display: none; }
+.device .pairing { font-size: 13.5px; color: var(--ink-2); }
+.device .pairing.done { color: var(--accent); }
+.device .pairing.bad { color: var(--bad); }
+.device .end { display: flex; align-items: center; gap: 14px; }
+.tag { font: 400 8.5px/1 var(--title); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap;
+       color: var(--ink-2); padding: 5px 7px 4px; border: 1px solid var(--rule); border-radius: 2px; }
+
+.searching { margin: 14px 0 0; font-size: 13.5px; color: var(--ink-3); }
+.error { margin: 18px 0 0; font-size: 14.5px; }
+.ph .buttons { margin-top: 30px; }
+
+/* How phones join. */
+.phones { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+.phones code { font-size: 13px; color: var(--ink); word-break: break-all; }
+
+/* The AirPlay PIN. */
+dialog { width: min(440px, calc(100vw - 40px)); padding: 28px 32px 30px; border: 1px solid var(--rule); border-radius: 4px;
+         background: var(--bg); color: var(--ink); box-shadow: 0 18px 48px rgba(13, 24, 40, .18); }
+dialog::backdrop { background: rgba(13, 24, 40, .45); }
+dialog .lbl { display: block; margin-bottom: 12px; }
+dialog h2 { overflow-wrap: anywhere; }
+dialog p { margin: 0; color: var(--ink-2); }
+dialog input { display: block; width: 100%; margin: 22px 0 0; padding: 12px 14px; text-align: center;
+               font: 500 30px/1.2 var(--mono); letter-spacing: .35em; text-indent: .35em; font-variant-numeric: tabular-nums;
+               color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; }
+dialog input::placeholder { color: var(--ink-3); opacity: .5; }
+dialog input:focus { outline: none; border-color: var(--accent); }
+dialog .error { margin-top: 12px; }
+dialog .buttons { margin-top: 24px; }
+
+@media (max-width: 720px) {
+  .device { grid-template-columns: 18px minmax(0, 1fr); }
+  .device .end { grid-column: 2; justify-content: flex-start; margin-top: 8px; }
 }
-* { box-sizing: border-box; }
-body { margin: 0; background: radial-gradient(circle at 20% 0%, #2a2140, var(--bg) 60%); color: var(--text); min-height: 100vh; }
-main { max-width: 760px; margin: 0 auto; padding: 40px 28px 32px; display: flex; flex-direction: column; gap: 22px; min-height: 100vh; }
-header h1 { font-size: 40px; margin: 0; letter-spacing: -0.02em; }
-.kicker { text-transform: uppercase; letter-spacing: 0.14em; font-size: 12px; color: var(--accent-2); margin: 0 0 6px; }
-h2 { font-size: 18px; margin: 0 0 4px; }
-.muted { color: var(--muted); margin: 0; }
-.error { color: var(--error); margin: 6px 0 0; }
-.devices { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 10px; }
-.device { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
-.device:hover { border-color: #4b4466; }
-.device.selected { border-color: var(--accent); background: #2a2442; }
-.device input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
-.device .name { font-weight: 600; }
-.device .meta { color: var(--muted); font-size: 14px; }
-.device .grow { flex: 1; min-width: 0; }
-.device .state { font-size: 13px; color: var(--accent-2); }
-.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-.searching::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 8px; animation: pulse 1.2s infinite ease-in-out; }
-@keyframes pulse { 50% { opacity: .25; } }
-footer { margin-top: auto; display: flex; gap: 14px; align-items: center; }
-button { font: inherit; border-radius: 10px; padding: 10px 18px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
-button:disabled { opacity: .45; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); font-weight: 600; padding: 12px 28px; }
-button.link { background: none; border: none; color: var(--accent-2); padding: 10px 6px; }
-dialog { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; width: min(420px, 90vw); }
-dialog::backdrop { background: rgba(0, 0, 0, .55); }
-dialog input { font: 600 28px/1.2 ui-monospace, monospace; letter-spacing: .3em; width: 100%; margin: 14px 0 4px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); text-align: center; }
-.row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }

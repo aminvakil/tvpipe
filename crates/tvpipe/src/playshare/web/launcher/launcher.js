@@ -7,7 +7,7 @@ import { Tvpipe } from "../lib/tvpipe.js";
 const $ = (id) => document.getElementById(id);
 const KIND = {
     airplay: "AirPlay",
-    cast: "Chromecast",
+    cast: "Cast",
     both: "AirPlay · Cast",
     browser: "This computer",
 };
@@ -18,52 +18,84 @@ let info;
 let tvpipe;
 /** The device the PIN dialog is open for. */
 let pinFor = null;
+/** Set while the selection is cast and the host page loads. */
+let starting = null;
+/** Set when tvpipe is gone or never answered. */
+let stopped = null;
 function showError(text) {
     const e = $("error");
     e.hidden = !text;
     e.textContent = text ?? "";
+    renderState();
+}
+/** The status column: one state with a dot (grey, accent, pulsing, red). */
+function renderState() {
+    const tvs = devices.filter((d) => d.kind !== "browser").length;
+    const busy = [...pairing.values()].find((p) => p.state === "connecting" || p.state === "pin");
+    let text;
+    let cls = "";
+    if (stopped)
+        [text, cls] = [stopped, "bad"];
+    else if (starting)
+        [text, cls] = [starting, "on"];
+    else if (!$("error").hidden)
+        [text, cls] = ["Something failed", "bad"];
+    else if (busy)
+        [text, cls] = [busy.state === "pin" ? "Waiting for the code" : "Pairing", "on"];
+    else if (!info)
+        text = "Connecting…";
+    else if (tvs === 0)
+        [text, cls] = ["Looking for TVs", "on"];
+    else
+        [text, cls] = [tvs === 1 ? "1 TV found" : `${tvs} TVs found`, "ok"];
+    const st = $("state");
+    st.textContent = text;
+    st.className = `state ${cls}`;
+}
+function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    e.className = cls;
+    if (text !== undefined)
+        e.textContent = text;
+    return e;
+}
+function pairingText(p) {
+    if (p.state === "done")
+        return ["Paired", "done"];
+    if (p.state === "failed")
+        return [`Pairing failed${p.error ? `: ${p.error}` : ""}`, "bad"];
+    if (p.state === "pin")
+        return ["Type the code the TV shows", ""];
+    return ["Pairing…", ""];
 }
 function render() {
     const list = $("devices");
     list.replaceChildren(...devices.map((d) => {
-        const li = document.createElement("li");
-        li.className = `device${selected.has(d.name) ? " selected" : ""}`;
+        const li = el("li", `device${selected.has(d.name) ? " selected" : ""}`);
         li.dataset["name"] = d.name;
         const box = document.createElement("input");
         box.type = "checkbox";
         box.checked = selected.has(d.name);
         box.setAttribute("aria-label", d.name);
-        const text = document.createElement("div");
-        text.className = "grow";
-        const name = document.createElement("div");
-        name.className = "name";
-        name.textContent = d.kind === "browser" ? (d.title ?? "A browser tab on this computer") : d.name;
-        const meta = document.createElement("div");
-        meta.className = "meta";
-        meta.textContent =
-            d.kind === "browser" ? "Try the game without a TV: the TV picture plays in a tab" : (d.model ?? "");
-        text.append(name, meta);
+        const text = el("div", "grow");
+        const browser = d.kind === "browser";
+        text.append(el("div", "name", browser ? (d.title ?? "A browser tab on this computer") : d.name), el("div", "meta", browser ? "Try the game without a TV: the TV picture plays in a tab" : (d.model ?? "")));
         const p = pairing.get(d.name);
         if (p) {
-            const st = document.createElement("div");
-            st.className = "state";
-            st.textContent =
-                p.state === "done" ? "Paired" : p.state === "failed" ? `Pairing failed: ${p.error ?? ""}` : "Pairing…";
-            text.append(st);
+            const [t, c] = pairingText(p);
+            text.append(el("div", `pairing ${c}`, t));
         }
-        const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = KIND[d.kind] ?? d.kind;
-        li.append(box, text, badge);
+        const end = el("div", "end");
+        end.append(el("span", "tag", KIND[d.kind] ?? d.kind));
         if (d.needsPairing && pairing.get(d.name)?.state !== "done") {
-            const pair = document.createElement("button");
-            pair.textContent = "Pair";
+            const pair = el("button", "btn small", "Pair");
             pair.onclick = (ev) => {
                 ev.stopPropagation();
                 void startPairing(d.name);
             };
-            li.append(pair);
+            end.append(pair);
         }
+        li.append(box, text, end);
         li.onclick = () => {
             if (selected.has(d.name))
                 selected.delete(d.name);
@@ -74,21 +106,22 @@ function render() {
         return li;
     }));
     $("searching").hidden = devices.some((d) => d.kind !== "browser");
-    $("start").disabled = selected.size === 0;
+    $("start").disabled = selected.size === 0 || starting !== null;
+    renderState();
 }
 function renderPhones() {
     const t = info.tunnel;
-    const p = $("phones");
-    if (t.state === "starting")
-        p.textContent = "Opening the link for phones…";
-    else if (t.state === "up")
-        p.textContent = `Phones join through ${t.url}`;
-    else if (info.phone.mode === "lan")
-        p.textContent = `Phones join on this Wi-Fi: ${info.phone.lan ?? info.phone.url}`;
-    else if (t.state === "failed")
-        p.textContent = `No public link for phones (${t.error ?? "the tunnel failed"}): phones on this computer only.`;
-    else
-        p.textContent = "Phones on this computer only (no tunnel).";
+    const url = (u) => el("code", "", u);
+    const parts = t.state === "starting"
+        ? ["Opening the public link for phones…"]
+        : t.state === "up" && t.url
+            ? ["Phones join through ", url(t.url), ", on any network."]
+            : info.phone.mode === "lan"
+                ? ["Phones on this Wi-Fi join at ", url(info.phone.lan ?? info.phone.url), "."]
+                : t.state === "failed"
+                    ? [el("span", "bad", `No public link for phones (${t.error ?? "the tunnel failed"}).`), " Phones on this computer only."]
+                    : ["Phones on this computer only: no public link (", url("--no-tunnel"), ")."];
+    $("phones").replaceChildren(...parts);
 }
 async function startPairing(device) {
     showError(null);
@@ -122,29 +155,55 @@ function closePin() {
 }
 async function start(devicesToUse) {
     showError(null);
+    starting = devicesToUse.some((d) => d !== "browser") ? "Casting…" : "Starting…";
+    render();
     try {
         await tvpipe.select(devicesToUse);
         await tvpipe.watchDevices(false);
         location.assign(info.pages.host);
     }
     catch (err) {
+        starting = null;
+        render();
         showError(err.message);
     }
 }
+/** The light/dark/system switch, shared with tvpipe's other pages. */
+function themes() {
+    const buttons = document.querySelectorAll(".theme button");
+    const set = (t) => {
+        document.documentElement.dataset["theme"] = t;
+        try {
+            localStorage.setItem("tvpipe-theme", t);
+        }
+        catch {
+            // No storage: the choice lasts for this page.
+        }
+        buttons.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset["t"] === t)));
+    };
+    set(document.documentElement.dataset["theme"] ?? "auto");
+    buttons.forEach((b) => (b.onclick = () => set(b.dataset["t"] ?? "auto")));
+}
 async function main() {
+    themes();
+    $("where").textContent = `tvpipe playshare · ${location.host}`;
     try {
         tvpipe = await Tvpipe.connect();
     }
     catch (err) {
-        $("title").textContent = "Not connected";
-        showError(`${err.message}. Open the link tvpipe printed.`);
+        stopped = "Not connected";
+        $("title").textContent = "Open the link tvpipe printed";
+        $("message").textContent = "This page talks to tvpipe through the link it printed (or the window it opened).";
+        showError(`${err.message}.`);
         return;
     }
     info = await tvpipe.info();
     document.title = `${info.title} · tvpipe`;
-    $("title").textContent = info.title;
+    $("game").textContent = info.title;
+    $("game").title = info.title;
     const { min, max } = info.players;
-    $("players").textContent = min === max ? `${min} players` : `${min}–${max} players, each with a phone`;
+    $("players").textContent = min === max ? `${min}` : `${min}–${max}`;
+    $("message").textContent = `${info.title} shows on the TVs you pick. Everyone plays on their own phone.`;
     renderPhones();
     for (const name of await tvpipe.selection())
         selected.add(name);
@@ -168,8 +227,14 @@ async function main() {
             selected.add(p.device);
         render();
     });
-    tvpipe.on("close", () => showError("tvpipe stopped."));
-    tvpipe.on("closing", () => showError("tvpipe is ending."));
+    tvpipe.on("close", () => {
+        stopped = "Stopped";
+        showError("tvpipe stopped. Run it again to play.");
+    });
+    tvpipe.on("closing", () => {
+        stopped = "Ending";
+        showError("tvpipe is ending.");
+    });
     devices = await tvpipe.watchDevices(true);
     render();
     $("start").onclick = () => void start([...selected]);

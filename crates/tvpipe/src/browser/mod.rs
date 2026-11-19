@@ -14,7 +14,8 @@
 //!   protocol, Firefox over WebDriver BiDi with [`bidi`]).
 //! - [`screen`]: `tvpipe screen`, a browser of tvpipe's own that
 //!   captures a screen or a window with the computer's sound.
-//! - [`fonts`]: the fonts of the share and player pages, compiled in.
+//! - [`fonts`]: the fonts of the share and player pages, compiled in, and
+//!   `ui.css`, tvpipe's look for the playshare launcher and games.
 //! - [`platform`]: opening a URL with the OS's opener and the browsers'
 //!   install paths (the one place with `cfg(target_os)` in this module,
 //!   like a config path).

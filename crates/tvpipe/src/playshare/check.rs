@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use super::bundle::{clean_path, percent_decode, Bundle, Manifest, MANIFEST};
 use super::scan::{self, Kind, Ref, RefKind};
 use super::web;
+use crate::browser::fonts;
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
 use crate::util::zip;
@@ -1079,6 +1080,10 @@ impl Walker<'_> {
                         || rest.starts_with("launcher/")
                         || rest == "ws"
                         || rest == "api"
+                        || rest == "ui.css"
+                        || rest
+                            .strip_prefix("fonts/")
+                            .is_some_and(|f| fonts::font(f).is_some())
                 };
                 if !ok {
                     let libs: Vec<&str> = web::FILES
@@ -1089,7 +1094,7 @@ impl Walker<'_> {
                         Level::Error,
                         at,
                         format!(
-                            "/_tvpipe/{rest} does not exist: tvpipe serves its library as /_tvpipe/lib/ ({})",
+                            "/_tvpipe/{rest} does not exist: tvpipe serves its library as /_tvpipe/lib/ ({}) and its look as /_tvpipe/ui.css",
                             libs.join(", ")
                         ),
                     ));

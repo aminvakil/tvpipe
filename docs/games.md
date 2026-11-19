@@ -231,6 +231,27 @@ with `type="module"` scripts.
 `@tvpipe/party/testing` connects a `Party` and `PartyClient`s in memory
 (drawbluff's `test/` has examples, bots included).
 
+**tvpipe's look (optional).** The host page sits in tvpipe's window
+right after the launcher; for a host page that looks like tvpipe (the
+launcher, the share page, the manual), link tvpipe's stylesheet:
+
+```html
+<link rel="stylesheet" href="/_tvpipe/ui.css">
+```
+
+It brings the colours (custom properties: `--bg`, `--ink`, `--ink-2`,
+`--ink-3`, `--rule`, `--panel`, `--accent`, `--bad`; light, dark with
+the system or `<html data-theme="dark">`), the fonts (`--title`
+Michroma, `--sans` IBM Plex Sans, `--mono` IBM Plex Mono, `--display`
+Sixtyfour; the files are at `/_tvpipe/fonts/`, served by tvpipe, no
+internet needed), base typography, and a few parts: `.lbl` (an
+uppercase label), `.btn` and `.btn.primary`, `.state` with `.ok`, `.on`
+or `.bad` (a status with a dot), `.row` with `.meta` (a label column
+beside the content), `.note`, `.top` and `.foot` (the header and footer
+of the launcher). The launcher's page source shows them in use. It is
+for the host page and pages of your own on this computer; the TV and
+phone pages are the game's, in the game's own look.
+
 ## The dev loop
 
 ```sh

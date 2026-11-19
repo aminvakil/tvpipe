@@ -117,6 +117,7 @@ by mistake:
 | `/` | redirect to the launcher | redirect to the phone page, the query kept (`/?r=CODE` → `/phone/index.html?r=CODE`; browsers keep the `#k=` fragment across the redirect) |
 | bundle files | yes | yes (everything in a bundle is public: it is a web app; secrets do not belong in it) |
 | `/_tvpipe/lib/*.js` | the library | the library (the client side is what phones use) |
+| `/_tvpipe/ui.css`, `/_tvpipe/fonts/*.woff2` | tvpipe's look (the launcher, error pages, host pages that want it; the fonts are the browser player's) | the same |
 | `/_tvpipe/ws` | relayed WebSocket (the TV page) | relayed WebSocket (phones) |
 | `/_tvpipe/start?t=TOKEN` | sets the session cookie, redirects to the launcher | — (404) |
 | `/_tvpipe/launcher/` | the standard launcher | — |

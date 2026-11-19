@@ -3,7 +3,13 @@
 //! (labels), IBM Plex Sans (text) and IBM Plex Mono (numbers). Latin
 //! subsets as Google Fonts serves them, SIL Open Font License 1.1
 //! (`LICENSES/OFL-1.1-fonts.txt`). The website uses the same files.
+//!
+//! `ui.css` is tvpipe's look for pages that link a stylesheet (the
+//! playshare launcher and game pages, at `/_tvpipe/ui.css`): the tokens,
+//! these fonts (relative URLs: `fonts/` beside the stylesheet) and the
+//! parts of the share page.
 
+use crate::net::http::Response;
 use crate::net::httpd::{self, Reply};
 
 const FONTS: &[(&str, &[u8])] = &[
@@ -20,25 +26,37 @@ const FONTS: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// The font served at `/fonts/NAME`, if there is one.
-pub fn get(path: &str) -> Option<&'static [u8]> {
-    let name = path.strip_prefix("/fonts/")?;
+/// tvpipe's stylesheet (see the module documentation).
+pub const UI_CSS: &str = include_str!("ui.css");
+
+/// The font named `name` (`michroma.woff2`), if there is one.
+pub fn font(name: &str) -> Option<&'static [u8]> {
     FONTS
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, data)| *data)
 }
 
+/// The font served at `/fonts/NAME`, if there is one.
+pub fn get(path: &str) -> Option<&'static [u8]> {
+    font(path.strip_prefix("/fonts/")?)
+}
+
 /// The reply for a `/fonts/` path: the font, cached for a day (the files
 /// only change with tvpipe), or 404.
 pub fn reply(path: &str) -> Reply {
-    match get(path) {
+    Reply::Response(font_response(get(path)))
+}
+
+/// The response for a font (`None`: 404), cached for a day.
+pub fn font_response(font: Option<&'static [u8]>) -> Response {
+    match font {
         Some(data) => {
             let mut r = httpd::response(200, "OK", "font/woff2", data.to_vec());
             r.headers.set("Cache-Control", "max-age=86400");
-            Reply::Response(r)
+            r
         }
-        None => Reply::Response(httpd::error_response(404, "Not Found")),
+        None => httpd::error_response(404, "Not Found"),
     }
 }
 
@@ -55,5 +73,18 @@ mod tests {
         assert_eq!(get("/fonts/"), None);
         assert_eq!(get("/fonts/../share.html"), None);
         assert_eq!(get("/sixtyfour.woff2"), None);
+        assert_eq!(font("../fonts.rs"), None);
+    }
+
+    #[test]
+    fn the_stylesheet_names_only_fonts_there_are() {
+        let mut n = 0;
+        for part in UI_CSS.split("url(").skip(1) {
+            let url = part.split(')').next().unwrap();
+            let name = url.strip_prefix("fonts/").expect(url);
+            assert!(font(name).is_some(), "{url}");
+            n += 1;
+        }
+        assert_eq!(n, FONTS.len());
     }
 }

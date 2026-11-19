@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::browser::fonts;
 use crate::crypto::ring::ct_eq;
 use crate::net::http::{Request, Response, Version};
 use crate::net::httpd::{self, Handler, Reply};
@@ -234,6 +235,14 @@ impl Hub {
             }
             if rest == "launcher" && l == Listener::Local {
                 return redirect(301, LAUNCHER);
+            }
+            // tvpipe's look, for any page (the browser player's files).
+            if rest == "ui.css" {
+                let css = fonts::UI_CSS.as_bytes().to_vec();
+                return file_response(req, "ui.css", css, None);
+            }
+            if let Some(name) = rest.strip_prefix("fonts/") {
+                return fonts::font_response(fonts::font(name));
             }
             let Some(rel) = percent_decode(rest).and_then(|r| {
                 let r = if r.is_empty() || r.ends_with('/') {
