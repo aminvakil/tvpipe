@@ -24,6 +24,12 @@ $ tvpipe screen --to browser --tunnel=opentunnel
 
 tvpipe prints the link. In a terminal it also draws the link as a QR code, so a phone can open it by scanning the screen. `--no-qr`, or `TVPIPE_NO_QR=1`, turns that off.
 
+When someone opens the link, tvpipe says who: their address, their country with Cloudflare, and their browser.
+
+```text
+• 203.0.113.9 in DE (Safari 18 on iPhone) opened the public link
+```
+
 At most 4 people can watch over a link. Each of them gets a full copy of the stream, so your upload speed limits how many can watch.
 
 ## Sharing to your TV from elsewhere
