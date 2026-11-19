@@ -273,7 +273,9 @@ static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
             TunnelArg::Tunnel,
             "Who carries the link: cloudflare (the default) or opentunnel",
         ),
-        no_qr(TunnelArg::NoQr),
+        Opt::new(TunnelArg::NoQr)
+            .long("no-qr")
+            .help("Do not draw the link as a QR code (also TVPIPE_NO_QR=1)"),
     ])
     .args(&[Pos::new(TunnelArg::Port, "PORT").help("The port of a server on 127.0.0.1")])
     .after_help(
@@ -796,11 +798,11 @@ static SCREEN: Cli<ScreenArg> = Cli::new("screen")
 
 static PIPELINE: Cli<PipelineArg> = Cli::new("pipeline")
     .about("Run ffmpeg and the demuxer and print every frame")
-    .usage("[OPTIONS] (INPUT | - | -- FFMPEG_INPUT_ARGS...)")
+    .usage("[OPTIONS] [INPUT | - | -- FFMPEG_INPUT_ARGS...]")
     .opts(&[
         Opt::new(PipelineArg::Raw)
             .long("raw")
-            .help("Print frames without encoding a plan (ffmpeg defaults)"),
+            .help("Copy the input's streams without encoding: the frames as they are in the file"),
         raw_video(PipelineArg::RawVideo),
         raw_audio(PipelineArg::RawAudio),
         ffmpeg_path(PipelineArg::Ffmpeg),
@@ -809,7 +811,12 @@ static PIPELINE: Cli<PipelineArg> = Cli::new("pipeline")
         .optional()
         .allow_hyphen()
         .value_hint(ValueHint::FilePath)
-        .help("File or URL; '-' for SLRW raw input on stdin")]);
+        .help("File or URL; '-' for SLRW raw input on stdin; none: ffmpeg's test source")])
+    .after_help(
+        "Prints the ffmpeg command line, then one line per track and per frame (pts in the \
+         track's clock and in ms, keyframe, size, arrival time) and a summary per track. Without \
+         --raw the input is encoded the way 'play' would for an AirPlay and a Cast receiver.",
+    );
 
 #[derive(Debug, Clone, Default)]
 pub struct Global {

@@ -10,6 +10,8 @@ detail lives in `docs/`:
 - [`share-protocol.md`](docs/share-protocol.md) and
   [`player-protocol.md`](docs/player-protocol.md): the browser pages.
 - [`measurements.md`](docs/measurements.md): latency and experiments.
+- [`debug.md`](docs/debug.md): the `tvpipe debug` commands (test pattern,
+  pipeline dump, tunnel, QR) and the code and scripts behind them.
 - [`cross-platform.md`](docs/cross-platform.md): what was checked on which
   OS.
 - [`meet.md`](docs/meet.md): presenting into video calls.

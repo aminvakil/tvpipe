@@ -151,8 +151,9 @@ tvpipe game pack my-game --smoke      # my-game.zip (deterministic), run once in
 | [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
-| [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | `debug pattern`, `--latency`, measuring |
-| [ffmpeg and encoding](https://mitsuhiko.github.io/tvpipe/manual/encoding/) | when ffmpeg runs, `debug pipeline` |
+| [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | the test pattern, `--latency`, measuring |
+| [ffmpeg and encoding](https://mitsuhiko.github.io/tvpipe/manual/encoding/) | when ffmpeg runs |
+| [Debug commands](https://mitsuhiko.github.io/tvpipe/manual/debug-commands/) | `tvpipe debug`: the test pattern, the pipeline, a tunnel for any port, QR codes |
 
 ## Development
 
@@ -182,7 +183,8 @@ through [`--machine`](docs/machine.md).
 
 Tests that use ffmpeg as an oracle are skipped without it; tests against
 real receivers or hardware run with `--ignored`. How and why tvpipe works is
-in [`ARCHITECTURE.md`](ARCHITECTURE.md); protocols, formats, measurements and
+in [`ARCHITECTURE.md`](ARCHITECTURE.md); the `tvpipe debug` commands and the
+scripts behind them in [`docs/debug.md`](docs/debug.md); protocols, formats, measurements and
 per-OS status are in [`docs/`](docs/), and the website's sources in
 [`site/`](site/).
 
