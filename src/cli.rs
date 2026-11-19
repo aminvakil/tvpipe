@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use argument::{Cli, Cmd, Error, Opt, Parser, Pos, ValueHint};
 
-use crate::net::tunnel::Provider;
-pub use crate::opts::*;
-use crate::types::Encoder;
+pub use tvpipe::__cli::opts::*;
 
 #[derive(Copy, Clone)]
 enum Top {
@@ -1027,7 +1025,6 @@ fn parse_encoder(s: &str) -> Encoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::ratio::Ratio;
     use std::path::PathBuf;
 
     #[test]

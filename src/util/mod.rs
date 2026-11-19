@@ -2,7 +2,6 @@
 
 pub mod bytes;
 pub mod hex;
-pub mod interrupt;
 pub mod qr;
 pub mod ratio;
 pub mod stop;

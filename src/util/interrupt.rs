@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::util::stop::Stop;
+use tvpipe::__cli::Stop;
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
 /// The stdin watcher runs (stdin is a terminal).

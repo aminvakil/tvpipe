@@ -33,6 +33,7 @@ fn no_io() -> GameIo {
     GameIo {
         stdin: Box::new(std::io::empty()),
         stdout: Box::new(std::io::sink()),
+        approve: Box::new(|_, _| false),
     }
 }
 

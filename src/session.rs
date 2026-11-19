@@ -72,7 +72,7 @@ pub fn run(cmd: Command, ctx: &Ctx, io: GameIo) -> Result<()> {
         Command::Unpair { target } => crate::airplay::pair::unpair(&target, ctx),
         Command::Play(opts) | Command::TestPattern(opts) => play_io(opts, io, ctx),
         Command::Share(opts) if opts.page.is_some() => browse::browse(opts, ctx),
-        Command::Share(opts) => share(opts, ctx),
+        Command::Share(opts) => share(opts, ctx, &*io.approve),
         Command::Screen(opts) => screen::screen(opts, ctx),
         Command::DebugPipeline(o) => crate::media::debug::run(&o),
     }
@@ -893,6 +893,9 @@ fn use_builtin(opts: &PlayOptions, encoded: bool, tools: &mut Tools<'_>) -> Resu
 pub struct GameIo {
     pub stdin: Box<dyn std::io::Read + Send>,
     pub stdout: Box<dyn std::io::Write + Send>,
+    /// Whether a share from over the tunnel may reach the receivers
+    /// (without `--yes`).
+    pub approve: Box<RemoteApprover>,
 }
 
 impl GameIo {
@@ -901,6 +904,7 @@ impl GameIo {
         GameIo {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
+            approve: Box::new(|_, _| false),
         }
     }
 }
@@ -1272,7 +1276,7 @@ fn receiver_limits(caps: &[&Capabilities]) -> String {
     )
 }
 
-fn share(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
+fn share(opts: ShareOptions, ctx: &Ctx, ask: &RemoteApprover) -> Result<()> {
     let rejoin = Rejoin::system(opts.reconnect, ctx);
     let connect = |t: &Target, o: &CastOptions, m: &crate::airplay::session::MirrorOptions| {
         connect_one(t, o, m, ctx)
@@ -1285,7 +1289,7 @@ fn share(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
         &|_| Ok(Box::new(())),
         Some(&rejoin),
         ShareKind::Page,
-        &|cap, cancel| yes || approve_in_terminal(cap, cancel),
+        &|cap, cancel| yes || ask(&describe_remote(cap), cancel),
     )
 }
 
@@ -1318,19 +1322,11 @@ type ShareSource<'a> = &'a dyn Fn(&ShareServer) -> Result<Box<dyn std::any::Any>
 /// left, or tvpipe stops).
 pub type Approver<'a> = &'a dyn Fn(&CaptureInfo, &dyn Fn() -> bool) -> bool;
 
-/// Asks on the terminal (`y` + Enter). Without a terminal nothing remote
-/// is shown unless `--yes` was given.
-fn approve_in_terminal(_cap: &CaptureInfo, cancel: &dyn Fn() -> bool) -> bool {
-    match crate::util::interrupt::ask("share: show it on the receivers? [y/N]", cancel) {
-        Some(a) => matches!(a.trim(), "y" | "Y" | "yes" | "Yes" | "YES"),
-        None => {
-            if !cancel() {
-                warn!("share: no terminal to ask on; pass --yes to show remote shares unasked");
-            }
-            false
-        }
-    }
-}
+/// The program's answer to a share from over the tunnel, given its
+/// description ("203.0.113.9 (Chrome on macOS) wants to share a window");
+/// the second argument says the question is moot. The CLI asks on the
+/// terminal.
+pub type RemoteApprover = dyn Fn(&str, &dyn Fn() -> bool) -> bool + Send + Sync;
 
 /// Text from a remote page for the terminal: no control characters (no
 /// escape sequences), at most `max` characters.
@@ -2669,6 +2665,7 @@ mod tests {
                 pos: 0,
             }),
             stdout: Box::new(out.clone()),
+            approve: Box::new(|_, _| false),
         };
         play_io(o, io, &Ctx::new()).unwrap();
         let state = rx.shutdown();
@@ -2856,6 +2853,7 @@ mod tests {
         GameIo {
             stdin: Box::new(Paced::new(chunks)),
             stdout: Box::new(std::io::sink()),
+            approve: Box::new(|_, _| false),
         }
     }
 
@@ -3020,6 +3018,7 @@ mod tests {
         let io = GameIo {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
+            approve: Box::new(|_, _| false),
         };
         play_with(o, io, &connect, &never()).unwrap();
         let t = *tally.lock().unwrap();
@@ -3094,6 +3093,7 @@ mod tests {
         let io = GameIo {
             stdin: Box::new(std::io::empty()),
             stdout: Box::new(std::io::sink()),
+            approve: Box::new(|_, _| false),
         };
         play_with(o, io, &connect, &never()).unwrap();
         let t = *tally.lock().unwrap();

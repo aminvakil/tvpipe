@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use crate::error::{Error, Result};
-use crate::events::{EndInfo, EndReason, ErrorInfo, Event, Events, Hello};
-use crate::media::slrw;
+use tvpipe::__cli::error::{Error, Result};
+use tvpipe::__cli::events::{EndInfo, EndReason, ErrorInfo, Event, Events, Hello};
+use tvpipe::__cli::slrw;
 
 /// The protocol version in `hello`. New fields and event types do not
 /// change it; incompatible changes do.
@@ -161,7 +161,7 @@ static ROUTER: OnceLock<Router> = OnceLock::new();
 
 /// Starts the process's router on stdin (`main`, with `--machine`);
 /// `stop` is the session's.
-pub fn start_router(stop: crate::util::stop::Stop) {
+pub fn start_router(stop: tvpipe::__cli::Stop) {
     let r = Router::spawn(
         io::stdin(),
         Hooks {
@@ -419,7 +419,7 @@ fn forward(s: &Shared, kind: u8, mut head: Vec<u8>, payload: Vec<u8>) {
 
 fn command(s: &Shared, payload: &[u8], pins: &mpsc::Sender<String>) {
     let text = String::from_utf8_lossy(payload);
-    let v = match crate::codec::json::parse(&text) {
+    let v = match tvpipe::__cli::json::parse(&text) {
         Ok(v) => v,
         Err(e) => {
             warn!("stdin: bad command: {e}");
