@@ -17,7 +17,7 @@ use drawbluff::bots::{bots, BotOptions};
 use drawbluff::game::{Drawbluff, GameEvent, GameOptions, Timings};
 use drawbluff::tv::{Tv, TvOptions};
 use tvpipe::TunnelProvider;
-use tvpipe_party::{assets, Assets, Event, Join, Link, Party, PartyOptions};
+use tvpipe_party::{assets, Assets, Event, Join, LateJoin, Link, Party, PartyOptions};
 
 static PHONE: Assets = assets!(
     "web/phone",
@@ -38,7 +38,7 @@ static SCREEN: Assets = assets!("web/screen", ["index.html", "screen.css", "scre
 const USAGE: &str = "\
 usage: drawbluff [--to NAME]... [--web-screen] [--tunnel[=auto|cloudflare|opentunnel]]
                  [--lan | --local] [--bots N] [--rounds N] [--fast] [--size WxH]
-                 [--open] [--seed N] [-v]
+                 [--late-join=wait|open|closed] [--open] [--seed N] [-v]
 
   --to NAME       a TV (as `tvpipe list` names it, or an address; repeatable),
                   `browser` for a browser tab
@@ -51,6 +51,9 @@ usage: drawbluff [--to NAME]... [--web-screen] [--tunnel[=auto|cloudflare|opentu
   --bots N        fake players
   --rounds N      rounds per game (default 2)
   --fast          short timers
+  --late-join=M   who may join during a game (the VIP can change it in the
+                  lobby): wait (default, from the next round), open (from the
+                  next drawing), closed
   --size WxH      the video size (default 1280x720)
   --open          open the `browser` target's page
   --seed N        the shuffles' seed
@@ -64,6 +67,7 @@ struct Args {
     bots: usize,
     rounds: u32,
     fast: bool,
+    late_join: LateJoin,
     size: (u32, u32),
     open: bool,
     seed: Option<u32>,
@@ -78,6 +82,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
         bots: 0,
         rounds: 2,
         fast: false,
+        late_join: LateJoin::Wait,
         size: (1280, 720),
         open: false,
         seed: None,
@@ -113,6 +118,11 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
             "--bots" => a.bots = number(&value("a number")?, 0, 49)?,
             "--rounds" => a.rounds = number(&value("a number")?, 1, 10)?,
             "--fast" => a.fast = true,
+            "--late-join" => {
+                let v = value("wait, open or closed")?;
+                a.late_join = LateJoin::parse(&v)
+                    .ok_or_else(|| format!("--late-join is wait, open or closed, not {v:?}"))?;
+            }
             "--size" => {
                 let v = value("WxH")?;
                 let (w, h) = v.split_once('x').ok_or("--size is WxH, e.g. 1280x720")?;
@@ -174,6 +184,7 @@ fn main() -> ExitCode {
             Timings::DEFAULT
         },
         seed: args.seed,
+        late_join: Some(args.late_join),
         ..GameOptions::default()
     });
     game.open(&mut party);
@@ -341,6 +352,15 @@ mod tests {
         assert_eq!(a.to, ["TV", "browser"]);
         assert!(matches!(a.join, Join::Tunnel(TunnelProvider::Cloudflare)));
         assert_eq!((a.bots, a.size, a.fast), (3, (640, 360), true));
+        assert_eq!(a.late_join, LateJoin::Wait);
+        assert_eq!(
+            args("--late-join=open").unwrap().unwrap().late_join,
+            LateJoin::Open
+        );
+        assert_eq!(
+            args("--late-join closed").unwrap().unwrap().late_join,
+            LateJoin::Closed
+        );
         assert!(matches!(
             args("--lan").unwrap().unwrap().join,
             Join::Lan(None)
@@ -359,6 +379,7 @@ mod tests {
             "--rounds 0",
             "--bots",
             "--tunnel=nope",
+            "--late-join=maybe",
             "--what",
         ] {
             assert!(args(bad).is_err(), "{bad}");

@@ -91,6 +91,9 @@ h2 { font-size: 2.4vh; text-transform: uppercase; letter-spacing: .1em; opacity:
 #corner-qr { width: 12vh; height: 12vh; background: #fff; border-radius: .8vh; overflow: hidden; }
 #corner-qr svg { width: 100%; height: 100%; display: block; }
 #corner-text { max-width: 14vw; opacity: .85; }
+.late { margin-top: 1.6vh; font-size: 2.4vh; opacity: .8; }
+.late.open { color: var(--ok, #2ec4b6); opacity: 1; font-weight: 600; }
+#joined { position: absolute; left: 2.5vw; bottom: 2vh; font-size: 2.2vh; opacity: .7; white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
 #status { position: absolute; left: 0; right: 0; bottom: 0; background: var(--hot); text-align: center; padding: 1vh; }
 
 /* Many players */

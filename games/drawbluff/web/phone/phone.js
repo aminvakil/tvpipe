@@ -118,7 +118,8 @@ function message(e) {
     case "full":
       return "The game is full.";
     case "locked":
-      return "A game is running. Wait for the next one.";
+    case "in-progress":
+      return "A game is running and it's closed to newcomers. Ask the VIP to let you in at the next game.";
     case "bad-key":
       return "This link does not work any more. Scan the code on the TV again.";
     case "no-room":
@@ -204,7 +205,13 @@ function build(view) {
     case "draw":
       return me.done ? waiting("Nice! Waiting for the others to finish…") : draw(me.prompt);
     case "wait":
-      return waiting("You're in! You join the game at the next round. Watch the TV meanwhile.");
+      return waiting(
+        me.note === "drawing"
+          ? "You're in! You vote from the next drawing on. Watch the TV meanwhile."
+          : me.note === "game"
+            ? "You're in! This game is about to end: you play the next one. Watch the TV meanwhile."
+            : "You're in! You join the game at the next round. Watch the TV meanwhile.",
+      );
     case "artist":
       return waiting("That's your drawing! Watch the others try to name it.");
     case "lie":
@@ -284,14 +291,43 @@ function watch(me, room) {
   return scoreCard("Look at the TV!", me);
 }
 
+/** Who may join during a game: the VIP's choice (`late-join`), the label, what it means. */
+const LATE_JOIN = [
+  ["wait", "Next round", "Latecomers join at the next round."],
+  ["open", "Anytime", "Latecomers join at the next drawing."],
+  ["closed", "Closed", "Nobody joins once the game is on."],
+];
+
+/**
+ * Latecomers: three buttons for the VIP, a line for everybody else.
+ * @param {HTMLElement} err
+ */
+function lateJoin(err) {
+  const buttons = LATE_JOIN.map(([mode, label]) => /** @type {HTMLButtonElement} */ (h("button", { "data-mode": mode, onclick: () => act("late-join", { mode }, err).catch(() => {}) }, label)));
+  const row = h("div", { class: "row seg" }, ...buttons);
+  const line = h("p", { class: "muted" });
+  const box = h("div", { class: "late" }, h("h2", {}, "Latecomers"), row, line);
+  const update = () => {
+    const v = client.view;
+    const mode = v.room?.lateJoin ?? "wait";
+    const vip = (v.roster ?? []).find((/** @type {any} */ r) => r.id === client.you?.id)?.vip;
+    row.hidden = !vip;
+    for (const b of buttons) b.classList.toggle("chosen", b.dataset.mode === mode);
+    line.textContent = LATE_JOIN.find(([m]) => m === mode)?.[2] ?? "";
+  };
+  return { box, update };
+}
+
 /** @param {Record<string, any>} view */
 function lobby(view) {
   const list = h("ul", { class: "players" });
   const start = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err).catch(() => {}) }, "Everybody's in!"));
   const err = h("p", { class: "error" });
   const hint = h("p", { class: "muted" });
-  show(h("section", { class: "card" }, h("h1", {}, "You're in!"), hint, h("h2", {}, "Players"), list, start, err));
+  const late = lateJoin(err);
+  show(h("section", { class: "card" }, h("h1", {}, "You're in!"), hint, h("h2", {}, "Players"), list, start, err, late.box));
   refresh = () => {
+    late.update();
     const v = client.view;
     const roster = v.roster ?? [];
     const meVip = roster.find((/** @type {any} */ r) => r.id === client.you?.id)?.vip;
@@ -323,6 +359,7 @@ function final(view) {
   const me = view.me ?? {};
   const err = h("p", { class: "error" });
   const again = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", onclick: () => act("start", null, err).catch(() => {}) }, "Play again"));
+  const late = lateJoin(err);
   show(
     h(
       "section",
@@ -332,11 +369,14 @@ function final(view) {
       h("p", { class: "muted" }, `points · #${me.rank ?? "?"}`),
       again,
       err,
+      late.box,
     ),
   );
   refresh = () => {
     const vip = (client.view.roster ?? []).find((/** @type {any} */ r) => r.id === client.you?.id)?.vip;
     again.hidden = !vip;
+    late.update();
+    late.box.hidden = !vip;
   };
 }
 

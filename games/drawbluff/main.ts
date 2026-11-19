@@ -8,7 +8,9 @@
  *
  * Options: --tunnel=cloudflare|opentunnel|auto (default auto), --no-tunnel
  * (phones on this computer only), --bots N (fake players), --rounds N,
- * --fast (short timers), --size WxH (video, default 1280x720), -v.
+ * --fast (short timers), --late-join=wait|open|closed (who may join
+ * during a game; the VIP can change it in the lobby), --size WxH (video,
+ * default 1280x720), -v.
  *
  * Run `npm run build` in npm/tvpipe and npm/party first (this imports the
  * packages as an application would).
@@ -18,7 +20,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { createParty, type TunnelChoice } from "@tvpipe/party";
+import { createParty, LATE_JOIN, type LateJoin, type TunnelChoice } from "@tvpipe/party";
 
 import { bots } from "./game/bots.ts";
 import { Drawbluff, FAST_TIMINGS } from "./game/game.ts";
@@ -33,6 +35,7 @@ const { values: args } = parseArgs({
     bots: { type: "string", default: "0" },
     rounds: { type: "string", default: "2" },
     fast: { type: "boolean", default: false },
+    "late-join": { type: "string", default: "wait" },
     size: { type: "string", default: "1280x720" },
     open: { type: "boolean", default: false },
     verbose: { type: "boolean", short: "v", default: false },
@@ -42,9 +45,13 @@ const { values: args } = parseArgs({
 
 if (args.help) {
   console.log(
-    "usage: node main.ts [--to NAME]... [--video] [--tunnel=cloudflare|opentunnel|auto] [--no-tunnel] [--bots N] [--rounds N] [--fast] [--size WxH] [--open] [-v]",
+    "usage: node main.ts [--to NAME]... [--video] [--tunnel=cloudflare|opentunnel|auto] [--no-tunnel] [--bots N] [--rounds N] [--fast] [--late-join=wait|open|closed] [--size WxH] [--open] [-v]",
   );
   process.exit(0);
+}
+if (!LATE_JOIN.includes(args["late-join"] as LateJoin)) {
+  console.error(`drawbluff: --late-join is wait, open or closed, not ${JSON.stringify(args["late-join"])}`);
+  process.exit(2);
 }
 
 // In this repository: the tvpipe it builds (release first: the built-in
@@ -74,6 +81,7 @@ const party = await createParty({
 const game = new Drawbluff(party, {
   rounds: Number(args.rounds),
   timings: args.fast ? FAST_TIMINGS : undefined,
+  lateJoin: args["late-join"] as LateJoin,
 });
 game.open();
 game.on("phase", (p) => args.verbose && console.error(`drawbluff: ${p}`));

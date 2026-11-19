@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use drawbluff::bots::{bots, Bot, BotOptions};
 use drawbluff::game::{Drawbluff, GameEvent, GameOptions, ScoreLine, Timings};
-use tvpipe_party::{Join, Party, PartyOptions, Value};
+use tvpipe_party::{Join, LateJoin, Party, PartyOptions, Value};
 
 const FAST: Timings = Timings {
     draw: 1500,
@@ -21,6 +21,8 @@ const FAST: Timings = Timings {
 };
 
 type Cmd = Box<dyn FnOnce(&mut Party, &mut Drawbluff) + Send>;
+/// Runs on the loop thread after every tick (to watch the views).
+type Hook = Box<dyn FnMut(&mut Party) + Send>;
 
 /// The party and the game on a loop thread, as `main` runs them.
 struct Host {
@@ -34,6 +36,10 @@ struct Host {
 
 impl Host {
     fn start(rounds: u32) -> Host {
+        Host::start_with(rounds, None, None)
+    }
+
+    fn start_with(rounds: u32, late_join: Option<LateJoin>, mut hook: Option<Hook>) -> Host {
         let mut party = Party::start(
             PartyOptions::new()
                 .join(Join::Local)
@@ -46,6 +52,7 @@ impl Host {
             timings: FAST,
             grace: 100,
             seed: Some(7),
+            late_join,
             ..GameOptions::default()
         });
         game.open(&mut party);
@@ -71,6 +78,9 @@ impl Host {
                     cmd(&mut party, &mut game);
                 }
                 game.tick(&mut party);
+                if let Some(h) = hook.as_mut() {
+                    h(&mut party);
+                }
                 ev.lock().unwrap().extend(game.take_events());
                 party.flush();
             }
@@ -235,15 +245,167 @@ fn too_few_players_non_vip_start_a_late_joiner_plays_from_the_next_round() {
     });
     let late = host.bot("Late").unwrap();
     until("waiting", || task(&late) == "wait");
+    assert_eq!(late.client.view()["me"]["note"].as_str(), Some("round"));
+    let id = late.client.id();
+    let waiting = move |party: &mut Party, _: &mut Drawbluff| {
+        party
+            .players()
+            .iter()
+            .find(|p| p.id().as_str() == id)
+            .is_some_and(|p| p.waiting())
+    };
+    assert!(host.with(waiting.clone()));
+    until("+ Late on the TV", || {
+        host.with(|party, _| {
+            party.screen_view()["screen"]["joined"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|n| n.as_str() == Some("Late")))
+        })
+    });
     let end = Instant::now() + Duration::from_secs(15);
     while task(&late) != "draw" {
         assert!(Instant::now() < end, "no second round for the late joiner");
         thread::sleep(Duration::from_millis(5));
     }
+    assert!(!host.with(waiting));
     let table = host.wait_end(Duration::from_secs(30));
     let mut names: Vec<&str> = table.iter().map(|l| l.name.as_str()).collect();
     names.sort_unstable();
     assert_eq!(names, ["Ada", "Bea", "Late", "Zed"]);
+}
+
+#[test]
+fn late_join_open_dealt_in_at_the_next_drawing_first_in_the_next_rounds_spotlights() {
+    // 13: pipelined, and in round 2 seven never-spotted players compete
+    // for six spotlights.
+    let seen: Arc<Mutex<(Vec<String>, Vec<String>)>> = Arc::default();
+    let rec = seen.clone();
+    let hook: Hook = Box::new(move |party: &mut Party| {
+        let round = party.room().get().get("round").and_then(Value::as_u64);
+        let round = round.map_or("-".to_owned(), |r| r.to_string());
+        let Some(id) = party
+            .players()
+            .iter()
+            .find(|p| p.name() == "Late")
+            .map(|p| p.id().clone())
+        else {
+            return;
+        };
+        let me = Value::Object(party.player_state(&id).unwrap().get().clone());
+        let what = me["key"]
+            .as_str()
+            .or(me["note"].as_str())
+            .unwrap_or_default();
+        let t = format!("{round}:{}:{what}", me["task"].as_str().unwrap_or_default());
+        let s = party.screen_view()["screen"].clone();
+        let tv = format!(
+            "{}:{}:{}",
+            s["round"].as_u64().unwrap_or(0),
+            s["phase"].as_str().unwrap_or_default(),
+            s["artist"]["id"].as_str().unwrap_or_default()
+        );
+        let mut g = rec.lock().unwrap();
+        if g.0.last() != Some(&t) {
+            g.0.push(t);
+        }
+        if g.1.last() != Some(&tv) {
+            g.1.push(tv);
+        }
+    });
+    let host = Host::start_with(2, Some(LateJoin::Open), Some(hook));
+    let mut players = host.bots(13, 13);
+    players[0].client.act("start", Value::Null).unwrap();
+    assert!(host.with(|party, _| party.in_progress()));
+    let end = Instant::now() + Duration::from_secs(15);
+    while host.with(|_, g| g.phase()) != "vote" {
+        assert!(Instant::now() < end, "no vote");
+        thread::sleep(Duration::from_millis(2));
+    }
+    let running = host.with(|party, _| {
+        let s = &party.screen_view()["screen"];
+        format!(
+            "{}.{}",
+            s["round"].as_u64().unwrap_or(0),
+            s["spot"].as_u64().unwrap_or(0)
+        )
+    });
+    let late = host.bot("Late").unwrap();
+    until("waiting", || task(&late) == "wait");
+    assert_eq!(late.client.view()["me"]["note"].as_str(), Some("drawing"));
+    let id = late.client.id();
+    players.push(late);
+    let table = host.wait_end(Duration::from_secs(60));
+    assert!(table.iter().any(|l| l.name == "Late"));
+    let (tasks, tv) = seen.lock().unwrap().clone();
+    let all = tasks.join(" ");
+    assert!(
+        !tasks.iter().any(|t| t.starts_with("1:draw")),
+        "no drawing in round 1: {all}"
+    );
+    assert!(
+        !tasks.contains(&format!("1:vote:{running}")),
+        "not in the running vote: {all}"
+    );
+    assert!(
+        tasks
+            .iter()
+            .any(|t| t.starts_with("1:vote:") || t.starts_with("1:lie:")),
+        "dealt in during round 1: {all}"
+    );
+    assert!(
+        tasks.iter().any(|t| t.starts_with("2:draw")),
+        "draws in round 2: {all}"
+    );
+    assert!(
+        tv.iter()
+            .any(|t| *t == format!("2:lie:{id}") || *t == format!("2:vote:{id}")),
+        "a spotlight for the newcomer in round 2: {tv:?}"
+    );
+    assert!(!host.with(|party, _| party.in_progress()));
+    for b in &players {
+        assert_eq!(b.errors(), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn late_join_closed_refused_during_the_game_welcome_after_the_vips_toggle() {
+    let host = Host::start(1);
+    let mut players = host.bots(3, 3);
+    let room = |b: &Bot| {
+        b.client.view()["room"]["lateJoin"]
+            .as_str()
+            .map(str::to_owned)
+    };
+    assert_eq!(room(&players[0]).as_deref(), Some("wait"));
+    let mode = |m: &str| tvpipe_party::json!({ "mode": m });
+    let e = players[1]
+        .client
+        .act("late-join", mode("closed"))
+        .unwrap_err();
+    assert_eq!(e.code, "not-vip");
+    let e = players[0]
+        .client
+        .act("late-join", mode("maybe"))
+        .unwrap_err();
+    assert_eq!(e.code, "bad-mode");
+    players[0].client.act("late-join", mode("closed")).unwrap();
+    assert_eq!(host.with(|party, _| party.late_join()), LateJoin::Closed);
+    until("the room says closed", || {
+        room(&players[1]).as_deref() == Some("closed")
+    });
+    players[0].client.act("start", Value::Null).unwrap();
+    let e = players[0]
+        .client
+        .act("late-join", mode("open"))
+        .unwrap_err();
+    assert_eq!(e.code, "running");
+    let e = host.bot("Late").err().expect("refused");
+    assert_eq!(e.code, "in-progress");
+    host.wait_end(Duration::from_secs(30));
+    let late = host.bot("Late").unwrap();
+    until("final", || task(&late) == "final");
+    players.push(late);
+    assert_eq!(host.with(|party, _| party.players().len()), 4);
 }
 
 #[test]

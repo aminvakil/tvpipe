@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { PartyServer } from "@tvpipe/party";
+import { PartyServer, type LateJoin } from "@tvpipe/party";
 
 async function until(cond: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
@@ -17,11 +17,11 @@ import { seeded } from "../game/rules.ts";
 
 const fast = { draw: 1500, lie: 1200, vote: 1200, revealStep: 20, revealEnd: 20, scores: 20, gallery: 20 };
 
-async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number } = {}) {
+async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number; lateJoin?: LateJoin } = {}) {
   const server = new PartyServer({ log: () => {}, maxSockets: 128 });
   await server.listen();
-  const party = server.createParty({ grace: 100, maxPlayers: Math.max(8, n) });
-  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7) });
+  const party = server.createParty({ grace: 100, maxPlayers: Math.max(8, n + 2) });
+  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7), lateJoin: opts.lateJoin });
   g.open();
   const url = `ws://127.0.0.1:${server.port}/party/ws`;
   const phases: string[] = [];
@@ -87,9 +87,82 @@ test("too few players, non-VIP start, a late joiner plays from the next round", 
     const late = await bots(1, { url: `ws://127.0.0.1:${server.port}/party/ws`, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 });
     players.push(...late);
     await until(() => late[0]!.client.view["me"]?.task === "wait");
+    assert.equal(late[0]!.client.view["me"].note, "round");
+    assert.equal(party.players.find((p) => p.name === "Late")!.waiting, true);
+    await until(() => (party.screen.peek() as { joined?: string[] }).joined?.includes("Late") === true);
     await until(() => late[0]!.client.view["me"]?.task === "draw", 15_000);
+    assert.equal(party.players.find((p) => p.name === "Late")!.waiting, false);
     const table = (await end) as { name: string }[];
     assert.deepEqual(table.map((l) => l.name).sort(), ["Ada", "Bea", "Late", "Zed"]);
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
+test("late join open: dealt in at the next drawing (never into a running vote), first in the next round's spotlights", async () => {
+  // 13: pipelined, and in round 2 seven never-spotted players compete for six spotlights.
+  const { server, party, g, players } = await game(13, { lateJoin: "open" });
+  try {
+    const url = `ws://127.0.0.1:${server.port}/party/ws`;
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    assert.equal(party.inProgress, true);
+    await until(() => g.phase === "vote", 15_000);
+    const s = party.screen.peek() as { round: number; spot: number };
+    const running = `${s.round}.${s.spot}`;
+    const late = (await bots(1, { url, room: party.code, key: party.joinKey, names: ["Late"], think: () => 5 }))[0]!;
+    players.push(late);
+    const tasks: string[] = [];
+    late.client.on("view", (v) => {
+      const me = v["me"] ?? {};
+      const t = `${v["room"]?.round}:${me.task}:${me.key ?? me.note ?? ""}`;
+      if (tasks[tasks.length - 1] !== t) tasks.push(t);
+    });
+    await until(() => late.client.view["me"]?.task === "wait");
+    assert.equal(late.client.view["me"].note, "drawing");
+    await until(() => (party.screen.peek() as { joined?: string[] }).joined?.includes("Late") === true);
+    // Round 2: Late draws, and their drawing gets the stage.
+    const id = late.client.you!.id;
+    let spotted = false;
+    g.on("phase", (p) => {
+      const v = party.screen.peek() as { round?: number; artist?: { id: string } };
+      if ((p === "lie" || p === "vote") && v.round === 2 && v.artist?.id === id) spotted = true;
+    });
+    const table = (await end) as { name: string }[];
+    assert.ok(table.some((l) => l.name === "Late"));
+    assert.ok(!tasks.some((t) => t.startsWith("1:draw")), `no drawing in round 1: ${tasks.join(" ")}`);
+    assert.ok(!tasks.some((t) => t === `1:vote:${running}`), "not in the running vote");
+    assert.ok(tasks.some((t) => t.startsWith("1:vote:") || t.startsWith("1:lie:")), `dealt in during round 1: ${tasks.join(" ")}`);
+    assert.ok(tasks.some((t) => t.startsWith("2:draw")), "draws in round 2");
+    assert.ok(spotted, "a spotlight for the newcomer in round 2");
+    assert.equal(party.inProgress, false);
+    assert.deepEqual(late.errors, []);
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
+test("late join closed: newcomers refused during the game, welcome after; the VIP's toggle", async () => {
+  const { server, party, g, players } = await game(3, { rounds: 1 });
+  try {
+    const url = `ws://127.0.0.1:${server.port}/party/ws`;
+    assert.equal(players[0]!.client.view["room"].lateJoin, "wait");
+    await assert.rejects(players[1]!.client.act("late-join", { mode: "closed" }), (e: { code: string }) => e.code === "not-vip");
+    await assert.rejects(players[0]!.client.act("late-join", { mode: "maybe" }), (e: { code: string }) => e.code === "bad-mode");
+    await players[0]!.client.act("late-join", { mode: "closed" });
+    assert.equal(party.lateJoin, "closed");
+    assert.equal(players[1]!.client.view["room"].lateJoin, "closed");
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await assert.rejects(players[0]!.client.act("late-join", { mode: "open" }), (e: { code: string }) => e.code === "running");
+    await assert.rejects(bots(1, { url, room: party.code, key: party.joinKey, names: ["Late"] }), (e: { code: string }) => e.code === "in-progress");
+    await end;
+    const late = await bots(1, { url, room: party.code, key: party.joinKey, names: ["Late"] });
+    players.push(...late);
+    await until(() => late[0]!.client.view["me"]?.task === "final");
+    assert.equal(party.players.length, 4);
   } finally {
     for (const b of players) b.close();
     await server.close();

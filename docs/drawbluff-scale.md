@@ -214,10 +214,47 @@ usually wait for the deadline, hence the round lengths.)
 
 ## 9. Joining, leaving, the VIP
 
-- The room is no longer locked during a game: a new name joins at once
-  and sees `wait` ("you join at the next round"); the next draw phase
-  takes everybody who is in the room. The lobby's maximum is the game's
-  (`maxPlayers` 50).
+### Joining mid-game
+
+The platform keeps the setting and a waiting flag (docs/party-protocol.md
+§5.1: `lateJoin`, `inProgress`, `waiting` in the roster, `activate`);
+the game decides who plays when. The game says `inProgress` from its
+start to its podium, and activates every waiting player at the podium.
+
+| `lateJoin` | A new name during a game | Dealt in |
+|---|---|---|
+| `wait` (default) | joins, waits ("you join the game at the next round") | at the next round's drawing |
+| `open` | joins, waits ("you vote from the next drawing on") | at the next spotlight: its lies or its vote, whichever starts first |
+| `closed` | refused: `bye in-progress` (4030), "A game is running and it's closed to newcomers" on the phone | — (resumes still work) |
+
+- The default is the game's option (`lateJoin` in `GameOptions`, CLI
+  `--late-join=wait|open|closed` in both hosts). The VIP changes it in
+  the lobby and on the podium (`late-join` `{mode}`, three buttons on
+  the VIP's phone: Next round / Anytime / Closed; refused while a game
+  runs); every phone sees the line under it (`room.lateJoin`). The TV
+  shows it under the lobby's QR code (from `join.lateJoin`: "Join
+  anytime, even during the game" in green, "Latecomers join at the next
+  round", "Joining closes when the game starts"); during a game the
+  corner QR code says "Scan to join now (from the next drawing)" or
+  "(from the next round)", and is hidden with `closed`.
+- `open` in detail: a newcomer is dealt in at the next spotlight
+  boundary, when the game picks the next liars (`startLies`) or starts
+  a vote, so they vote from the next drawing on and, when the liars are
+  picked then (pipelined from 13 players, or the next drawing's liars
+  in small games), may be a liar. Their lie count starts at the fewest
+  so far, so they join the liars' rotation without jumping it. They
+  never join a vote that runs (its voters are fixed when it starts),
+  never draw in that round (no drawing, so no artist points), and
+  their drawing comes first in the next round's spotlight rotation
+  (key −4: ahead of everybody else who was not spotlighted yet). In the
+  last round, once the last vote started (its reveal, the scores), a
+  newcomer is not dealt in: they wait for the next game ("this game is
+  about to end"); same in `wait` mode during the last round.
+- The TV shows the round's newcomers discreetly, bottom left in every
+  phase but the lobby: "+ Anna · + Bob · + 2 more" (`screen.joined`,
+  the last three names, `screen.joinedMore`; cleared at each round's
+  drawing). All three screens (web, Node video, Rust video) draw it.
+- The lobby's maximum is the game's (`maxPlayers` 50).
 - A player who leaves during a round is dropped from the pools; their
   spotlight is skipped (as today); lies already in stay.
 - VIP and kick: as today (the VIP starts, kicks only in the lobby, the

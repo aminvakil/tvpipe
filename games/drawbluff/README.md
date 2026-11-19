@@ -16,7 +16,9 @@ phone gets at most six options, sampled so each lie is shown about
 equally often, and the artist's and the liars' points are per exposure
 (× min(1, 7 / voters who saw it)), so a big room does not inflate them
 and the spotlight draw does not decide the game. Players can join
-mid-game and play from the next round; every phone shows its role and
+mid-game, as the VIP sets it in the lobby (`--late-join`): from the
+next round (`wait`, the default), from the next drawing (`open`, "join
+anytime" on the TV) or not at all (`closed`); every phone shows its role and
 its rank ("#12 of 50"). The design and the numbers:
 [`docs/drawbluff-scale.md`](../../docs/drawbluff-scale.md).
 
@@ -53,7 +55,8 @@ node main.ts --to browser --bots 49 --fast  # a full room of 50
 ```
 
 `--tunnel=cloudflare|opentunnel|auto` (default `auto`), `--no-tunnel`
-(phones on this computer only), `--rounds N`, `--fast`, `--size WxH` (video).
+(phones on this computer only), `--rounds N`, `--fast`,
+`--late-join=wait|open|closed`, `--size WxH` (video).
 Scan the QR code on the TV; the first player is the VIP and starts the
 game once three are in. `--bots` takes up to 49.
 
@@ -72,7 +75,7 @@ TrueType fonts in `fonts/`), sound cues (`src/sound.rs`), bots
 (`src/bots.rs`), and the phone and web screen pages embedded. Phones
 join through a public link by default (`--tunnel`), else on the LAN
 (`--lan`, `http://IP:7420`, same Wi-Fi), or `--local`; `--rounds N`,
-`--fast`, `--size WxH`, `--seed N`, `-v`.
+`--fast`, `--late-join=wait|open|closed`, `--size WxH`, `--seed N`, `-v`.
 
 The rules agree with the Node version by test: `node test/vectors.ts
 --bless` writes `test/vectors/rules.txt` from `game/rules.ts` (seeded

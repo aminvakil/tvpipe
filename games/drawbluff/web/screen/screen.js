@@ -13,6 +13,12 @@ const client = PartyClient.fromLocation({ role: /** @type {any} */ (new URLSearc
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 const corner = /** @type {HTMLElement} */ (document.getElementById("corner"));
 const status = /** @type {HTMLElement} */ (document.getElementById("status"));
+const joined = /** @type {HTMLElement} */ (document.getElementById("joined"));
+
+/** What the lobby says about latecomers (`join.lateJoin`). */
+const LATE_LINE = { open: "Join anytime, even during the game", wait: "Latecomers join at the next round", closed: "Joining closes when the game starts" };
+/** The corner's line during a game. */
+const CORNER_LINE = { open: "Scan to join now (from the next drawing) or to rejoin.", wait: "Scan to join (from the next round) or to rejoin." };
 
 /**
  * @param {string} tag
@@ -97,13 +103,20 @@ function render(view) {
     build(view);
   }
   refresh?.();
-  // Not in the lobby (the big code), nor where the options fill the right side.
-  corner.hidden = s.phase === "lobby" || s.phase === "vote" || s.phase === "reveal" || !s.phase || !view.join?.qr;
-  if (!corner.hidden && !corner.dataset.url) {
+  // Not in the lobby (the big code), nor where the options fill the
+  // right side, nor when the game is closed to newcomers.
+  const late = /** @type {"open" | "wait" | "closed"} */ (view.join?.lateJoin ?? "wait");
+  corner.hidden = s.phase === "lobby" || s.phase === "vote" || s.phase === "reveal" || !s.phase || !view.join?.qr || late === "closed";
+  if (!corner.hidden && corner.dataset.url !== view.join.url) {
     corner.dataset.url = view.join.url;
     /** @type {HTMLElement} */ (document.getElementById("corner-qr")).innerHTML = qrSvg(view.join.qr, { quiet: 2 });
-    /** @type {HTMLElement} */ (document.getElementById("corner-text")).textContent = "Scan to join (from the next round) or to rejoin.";
   }
+  if (!corner.hidden) /** @type {HTMLElement} */ (document.getElementById("corner-text")).textContent = CORNER_LINE[late] ?? "";
+  // This round's newcomers, discreetly.
+  const names = /** @type {string[]} */ (s.phase !== "lobby" && Array.isArray(s.joined) ? s.joined : []);
+  const more = typeof s.joinedMore === "number" ? s.joinedMore : 0;
+  joined.hidden = names.length === 0;
+  joined.textContent = names.map((n) => `+ ${n}`).join(" · ") + (more > 0 ? ` · + ${more} more` : "");
 }
 
 /** @param {Record<string, any>} view */
@@ -134,6 +147,7 @@ function build(view) {
 function lobby(view) {
   const players = h("div", { class: "players" });
   const hint = h("p", { class: "hint" });
+  const lateLine = h("div", { class: "late" });
   stage.replaceChildren(
     h(
       "div",
@@ -143,12 +157,16 @@ function lobby(view) {
       qr(view.join),
       h("div", { class: "url" }, view.join?.url ?? ""),
       h("div", { class: "code" }, view.join?.code ?? ""),
+      lateLine,
     ),
     h("div", { class: "col grow" }, h("h1", {}, "Players"), players, hint),
   );
   refresh = () => {
     const v = client.view;
     const roster = v.roster ?? [];
+    const late = /** @type {"open" | "wait" | "closed"} */ (v.join?.lateJoin ?? "wait");
+    lateLine.textContent = LATE_LINE[late] ?? "";
+    lateLine.classList.toggle("open", late === "open");
     const max = v.screen?.maxPlayers ?? 8;
     const min = v.screen?.minPlayers ?? 3;
     const cards = roster.map((/** @type {any} */ r) =>

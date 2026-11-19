@@ -18,7 +18,7 @@
 
 import { EventEmitter } from "node:events";
 
-import { PartyError, type Party, type Player } from "@tvpipe/party";
+import { LATE_JOIN, PartyError, type LateJoin, type Party, type Player } from "@tvpipe/party";
 
 import { PROMPTS } from "./prompts.ts";
 import {
@@ -75,6 +75,9 @@ export const FAST_TIMINGS: Timings = {
   gallery: 3000,
 };
 
+/** Newcomers the TV names ("+ Anna"); more: a count. */
+export const JOINED_NAMES = 3;
+
 /** Drawings per gallery page on the TV. */
 export const GALLERY_PAGE = 8;
 /** Lines of the score table on the TV. */
@@ -88,6 +91,12 @@ export interface GameOptions {
   timings?: Partial<Timings> | undefined;
   rng?: (() => number) | undefined;
   prompts?: readonly string[] | undefined;
+  /**
+   * Who may join during a game (the VIP can change it in the lobby):
+   * `wait` (the default) from the next round, `open` from the next
+   * drawing, `closed` not at all (docs/drawbluff-scale.md §9).
+   */
+  lateJoin?: LateJoin | undefined;
 }
 
 export interface ScoreLine {
@@ -152,6 +161,12 @@ export class Drawbluff extends EventEmitter<GameEvents> {
   #round = 0;
   /** The lies whose progress the TV shows (`liars`/`done` on the screen). */
   #onScreen: Lies | undefined;
+  /** Dealt in during a round without a drawing of their own: first in the next round's spotlights. */
+  readonly #fresh = new Set<string>();
+  /** Names of this round's newcomers, oldest first (the TV's "+ Anna"). */
+  #joined: string[] = [];
+  /** Spotlights of this round whose vote has not started (a newcomer in `open` mode can still vote). */
+  #votesLeft = 0;
 
   constructor(party: Party, options: GameOptions = {}) {
     super();
@@ -161,6 +176,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
     this.#rng = options.rng ?? Math.random;
     this.#prompts = options.prompts ?? PROMPTS;
+    if (options.lateJoin !== undefined) party.lateJoin = options.lateJoin;
   }
 
   get phase(): Phase {
@@ -193,11 +209,26 @@ export class Drawbluff extends EventEmitter<GameEvents> {
       party.kick(p);
       return null;
     });
+    party.handle("late-join", (d, from) => {
+      if (from.role !== "player" || !from.vip) throw new PartyError("not-vip", "Only the VIP can change this");
+      if (this.#running) throw new PartyError("running", "Not during a game");
+      const mode = typeof d === "object" && d !== null && "mode" in d ? (d as { mode: unknown }).mode : d;
+      if (typeof mode !== "string" || !LATE_JOIN.includes(mode as LateJoin)) throw new PartyError("bad-mode", "closed, wait or open");
+      party.lateJoin = mode as LateJoin;
+      party.room.set({ lateJoin: mode });
+      return null;
+    });
     // Joiners in the lobby (or after the game) see the lobby; during a
-    // game they wait for the next round.
+    // game they wait (the party marks them waiting) until they are dealt
+    // in: at the next round, or with `open` at the next drawing.
     party.on("join", (p) => {
-      if (!this.#running) p.state.replace(this.#lobbyState(p));
-      else p.state.replace({ task: "wait", ...this.#rank(p) });
+      if (!this.#running) {
+        p.state.replace(this.#lobbyState(p));
+        return;
+      }
+      p.state.replace(this.#waitState(p));
+      this.#joined.push(p.name);
+      party.screen.set(this.#joinedView());
     });
     this.#lobby();
   }
@@ -216,10 +247,47 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     return { task: this.#phase === "final" ? "final" : "lobby", ...this.#rank(this.scores.has(p.id) ? p : undefined) };
   }
 
+  /** A waiting player's task: when they get in (`note`: `drawing`, `round` or `game`). */
+  #waitState(p: Player): Record<string, unknown> {
+    const open = this.party.lateJoin === "open" && (this.#phase === "draw" || this.#votesLeft > 0);
+    const note = open ? "drawing" : this.#round < this.rounds ? "round" : "game";
+    return { task: "wait", note, ...this.#rank(p) };
+  }
+
+  /** The TV's newcomers: `joined` (the last few names), `joinedMore` (how many others). */
+  #joinedView(): { joined: string[]; joinedMore: number } {
+    return { joined: this.#joined.slice(-JOINED_NAMES), joinedMore: Math.max(0, this.#joined.length - JOINED_NAMES) };
+  }
+
+  /** The TV's view of a phase, with the newcomers. */
+  #screen(fields: Record<string, unknown>): void {
+    this.party.screen.replace({ ...fields, ...this.#joinedView() });
+  }
+
+  /**
+   * Deals waiting players in (`open`: at a spotlight's lies and vote;
+   * every mode: at a round's drawing): in the game from now on, their
+   * lies counted as the fewest so far (so they join the rotation).
+   */
+  #dealIn(midRound: boolean): void {
+    const party = this.party;
+    const waiting = party.players.filter((p) => p.waiting);
+    if (waiting.length === 0) return;
+    const lied = this.#inGame().map((p) => this.#lied.get(p.id) ?? 0);
+    const least = lied.length > 0 ? Math.min(...lied) : 0;
+    for (const p of waiting) {
+      party.activate(p);
+      if (this.scores.has(p.id)) continue;
+      this.scores.set(p.id, 0);
+      this.#lied.set(p.id, least);
+      if (midRound) this.#fresh.add(p.id);
+    }
+  }
+
   #lobby(): void {
     const p = this.party;
     this.#setPhase("lobby");
-    p.room.replace({ phase: "lobby", minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, rounds: this.rounds });
+    p.room.replace({ phase: "lobby", minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, rounds: this.rounds, lateJoin: p.lateJoin });
     p.screen.replace({ phase: "lobby", minPlayers: this.minPlayers, maxPlayers: p.maxPlayers });
     for (const pl of p.players) pl.state.replace({ task: "lobby" });
   }
@@ -228,14 +296,19 @@ export class Drawbluff extends EventEmitter<GameEvents> {
   async play(): Promise<ScoreLine[]> {
     const party = this.party;
     this.#running = true;
+    party.inProgress = true;
     this.scores.clear();
     this.#lied.clear();
     this.#spotted.clear();
+    this.#fresh.clear();
     this.#deck = shuffle(this.#prompts, this.#rng);
     try {
       for (let round = 1; round <= this.rounds; round++) {
         this.#round = round;
+        this.#joined = [];
+        this.#votesLeft = 0;
         // Everybody in the room plays this round, late joiners too.
+        this.#dealIn(false);
         for (const p of party.players) if (!this.scores.has(p.id)) this.scores.set(p.id, 0);
         const before = new Map(this.scores);
         this.#tally = new Map();
@@ -249,6 +322,8 @@ export class Drawbluff extends EventEmitter<GameEvents> {
       return this.#final();
     } finally {
       this.#running = false;
+      party.inProgress = false;
+      for (const p of party.players) party.activate(p);
     }
   }
 
@@ -273,9 +348,9 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const prompts = new Map(players.map((p) => [p, this.#deck.pop() ?? "anything you like"]));
     const deadline = this.#deadline(this.timings.draw);
     this.#room({ phase: "draw", deadline });
-    party.screen.replace({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
+    this.#screen({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
     for (const [p, prompt] of prompts) p.state.replace({ task: "draw", prompt: displayTitle(prompt), deadline, done: false, ...this.#rank(p) });
-    for (const p of party.players) if (!prompts.has(p)) p.state.replace({ task: "wait", ...this.#rank(p) });
+    for (const p of party.players) if (!prompts.has(p)) p.state.replace(this.#waitState(p));
     const got = await party.collect<Drawing>("draw", {
       from: players,
       until: deadline,
@@ -296,12 +371,15 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const live = entries.filter((e) => party.players.includes(e.artist));
     const ids = live.map((e) => e.artist.id);
     const byId = new Map(live.map((e) => [e.artist.id, e]));
-    // The fewest spotlights first, then connected artists, then drawings with strokes.
+    // Newcomers of the last round first, then the fewest spotlights,
+    // then connected artists, then drawings with strokes.
     const key = (id: string) => {
       const e = byId.get(id)!;
-      return 4 * (this.#spotted.get(id) ?? 0) + (e.artist.connected ? 0 : 2) + (e.drawing.strokes.length === 0 ? 1 : 0);
+      return 4 * (this.#spotted.get(id) ?? 0) - (this.#fresh.has(id) ? 4 : 0) + (e.artist.connected ? 0 : 2) + (e.drawing.strokes.length === 0 ? 1 : 0);
     };
     const chosen = rotate(ids, key, p.spotlights, this.#rng);
+    this.#fresh.clear();
+    this.#votesLeft = chosen.length;
     const spots = chosen.map((id) => byId.get(id)!);
     for (const s of spots) this.#spotted.set(s.artist.id, (this.#spotted.get(s.artist.id) ?? 0) + 1);
     const gallery = live.filter((e) => !chosen.includes(e.artist.id));
@@ -335,6 +413,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
    */
   #startLies(round: number, i: number, spot: Entry, p: Plan, busy: readonly Player[], first: Player | undefined, early: boolean): Lies {
     const party = this.party;
+    if (party.lateJoin === "open") this.#dealIn(true);
     const pool = this.#inGame()
       .filter((x) => x !== spot.artist && !busy.includes(x))
       .map((x) => x.id);
@@ -394,7 +473,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
       gallery.slice(n * GALLERY_PAGE, (n + 1) * GALLERY_PAGE).map((e) => ({ id: e.artist.id, name: e.artist.name, prompt: displayTitle(e.prompt), drawing: e.drawing }));
     const busy = new Set(lies?.liars ?? []);
     this.#room({ phase: "gallery", count: gallery.length });
-    party.screen.replace({
+    this.#screen({
       phase: "gallery",
       round,
       rounds: this.rounds,
@@ -409,7 +488,8 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     for (const p of party.players) {
       if (busy.has(p)) continue;
       const mine = gallery.findIndex((e) => e.artist === p);
-      p.state.replace({ task: this.scores.has(p.id) ? "watch" : "wait", note: "gallery", mine: mine >= 0 ? Math.floor(mine / GALLERY_PAGE) + 1 : null, ...this.#rank(p) });
+      if (!this.scores.has(p.id)) p.state.replace(this.#waitState(p));
+      else p.state.replace({ task: "watch", note: "gallery", mine: mine >= 0 ? Math.floor(mine / GALLERY_PAGE) + 1 : null, ...this.#rank(p) });
     }
     for (let n = 1; n <= pages; n++) {
       if (n > 1) party.screen.set({ page: n, items: page(n - 1) });
@@ -428,7 +508,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const art = { id: spot.artist.id, name: spot.artist.name };
     const deadline = lies.deadline;
     this.#room({ phase: "lie", spot: i + 1, spots, deadline, artist: art });
-    party.screen.replace({
+    this.#screen({
       phase: "lie",
       round,
       spot: i + 1,
@@ -443,7 +523,8 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     for (const p of party.players) {
       if (busy.has(p)) continue;
       if (p === spot.artist) p.state.replace({ task: "artist", key: lies.key, ...this.#rank(p) });
-      else p.state.replace({ task: this.scores.has(p.id) ? "watch" : "wait", note: "rest", artist: art, ...this.#rank(p) });
+      else if (!this.scores.has(p.id)) p.state.replace(this.#waitState(p));
+      else p.state.replace({ task: "watch", note: "rest", artist: art, ...this.#rank(p) });
     }
     await lies.done;
   }
@@ -461,6 +542,9 @@ export class Drawbluff extends EventEmitter<GameEvents> {
       this.#rng,
       Math.min(4, lies.liars.length + 1),
     );
+    // With `open`, newcomers vote from here (never in a vote that runs).
+    if (party.lateJoin === "open") this.#dealIn(true);
+    this.#votesLeft = Math.max(0, this.#votesLeft - 1);
     const writing = new Set(next?.liars ?? []);
     const voters = this.#inGame().filter((p) => p !== artist && !writing.has(p));
     const shown = deal(options, voters.map((p) => p.id), PHONE_LIES, this.#rng);
@@ -473,7 +557,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const deadline = this.#deadline(this.timings.vote);
     const key = lies.key;
     this.#room({ phase: "vote", spot: i + 1, spots, deadline, drawing: spot.drawing, artist: art });
-    party.screen.replace({
+    this.#screen({
       phase: "vote",
       round,
       spot: i + 1,
@@ -489,7 +573,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     for (const p of voters) p.state.replace({ task: "vote", key, options: mine(p), deadline, done: false, ...this.#rank(p) });
     if (!writing.has(artist)) artist.state.replace({ task: "artist", key, ...this.#rank(artist) });
     for (const p of party.players) {
-      if (!this.scores.has(p.id) && !writing.has(p)) p.state.replace({ task: "wait", ...this.#rank(p) });
+      if (!this.scores.has(p.id) && !writing.has(p)) p.state.replace(this.#waitState(p));
     }
     const votes = await party.collect<string>("vote", {
       from: voters,
@@ -558,12 +642,12 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     });
     const art = { id: spot.artist.id, name: spot.artist.name };
     this.#room({ phase: "reveal", spot: i + 1, spots, drawing: spot.drawing, artist: art });
-    party.screen.replace({ phase: "reveal", round, spot: i + 1, spots, drawing: spot.drawing, artist: art, prompt: displayTitle(spot.prompt), items, step: 0 });
+    this.#screen({ phase: "reveal", round, spot: i + 1, spots, drawing: spot.drawing, artist: art, prompt: displayTitle(spot.prompt), items, step: 0 });
     const writing = new Set(next && !next.finished ? next.liars.filter((p) => !next.answers.has(p)) : []);
     for (const p of party.players) {
       if (writing.has(p)) continue;
       if (!this.scores.has(p.id)) {
-        p.state.replace({ task: "wait", ...this.#rank(p) });
+        p.state.replace(this.#waitState(p));
         continue;
       }
       p.state.replace({ task: "watch", note: "reveal", result: this.#result(p, spot, options, scoring, votes), ...this.#rank(p) });
@@ -632,7 +716,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     this.#setPhase("scores");
     const table = this.#table(before);
     this.#room({ phase: "scores" });
-    party.screen.replace({
+    this.#screen({
       phase: "scores",
       round,
       rounds: this.rounds,
@@ -641,7 +725,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
       highlights: this.#highlights(),
       last: round === this.rounds,
     });
-    for (const p of party.players) p.state.replace({ task: this.scores.has(p.id) ? "scores" : "wait", ...this.#rank(p) });
+    for (const p of party.players) p.state.replace(this.scores.has(p.id) ? { task: "scores", ...this.#rank(p) } : this.#waitState(p));
     await this.#sleep(this.timings.scores);
   }
 
@@ -649,7 +733,7 @@ export class Drawbluff extends EventEmitter<GameEvents> {
     const party = this.party;
     this.#setPhase("final");
     const table = this.#table();
-    party.room.replace({ phase: "final", minPlayers: this.minPlayers });
+    party.room.replace({ phase: "final", minPlayers: this.minPlayers, lateJoin: party.lateJoin });
     party.screen.replace({ phase: "final", scores: table.slice(0, BOARD_LINES), total: table.length });
     for (const p of party.players) p.state.replace({ task: "final", ...this.#rank(this.scores.has(p.id) ? p : undefined) });
     this.emit("end", table);

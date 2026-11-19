@@ -222,3 +222,25 @@ fn the_video_screen_with_50_players() {
         }
     }
 }
+
+#[test]
+fn latecomers_lines() {
+    use drawbluff::screen::{corner_line, joined_line, late_line};
+    assert_eq!(
+        late_line(Some("open")),
+        "Join anytime, even during the game"
+    );
+    assert_eq!(late_line(None), "Latecomers join at the next round");
+    assert_eq!(
+        late_line(Some("closed")),
+        "Joining closes when the game starts"
+    );
+    assert!(corner_line(Some("open")).contains("next drawing"));
+    let s = json!({ "phase": "vote", "joined": ["Anna", "Bob"], "joinedMore": 2 });
+    assert_eq!(joined_line(&s), "+ Anna · + Bob · + 2 more");
+    assert_eq!(
+        joined_line(&json!({ "phase": "lobby", "joined": ["Anna"] })),
+        ""
+    );
+    assert_eq!(joined_line(&json!({ "phase": "draw", "joined": [] })), "");
+}

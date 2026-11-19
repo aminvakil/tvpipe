@@ -62,6 +62,9 @@ button:disabled { opacity: .45; }
 button.chosen { outline: 3px solid var(--accent); }
 .row { display: flex; gap: .5rem; margin-top: .6rem; }
 .row > * { flex: 1; }
+.seg button { padding: .55rem .2rem; font-size: .9rem; }
+.seg button.chosen { background: rgba(255,214,10,.3); outline: 2px solid var(--accent); }
+.late .muted { margin: .5rem 0 0; font-size: .9rem; }
 .error { color: #ffb3c7; min-height: 1.2em; margin: .5rem 0 0; }
 ul.players { list-style: none; padding: 0; margin: 0; }
 ul.players li { display: flex; align-items: center; gap: .5rem; padding: .45rem 0; border-bottom: 1px solid rgba(255,255,255,.08); }

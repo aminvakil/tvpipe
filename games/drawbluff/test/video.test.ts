@@ -6,7 +6,7 @@ import { seeded } from "../game/rules.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 
-import { loadCanvas, renderScreen } from "../screen-video.ts";
+import { cornerLine, cornerShown, joinedLine, lateLine, loadCanvas, renderScreen } from "../screen-video.ts";
 import { SCREENS } from "./vectors.ts";
 
 let canvasMod: Awaited<ReturnType<typeof loadCanvas>> | undefined;
@@ -99,4 +99,15 @@ test("the video screen with 50 players (test/vectors/screens-50.json)", { skip: 
     assert.ok(bright > 50, `${name}: ${bright}`);
     if (out) writeFileSync(joinPath(out, `node-${name}.png`), await canvas.encode("png"));
   }
+});
+
+test("latecomers: the lobby's line, the corner's, the newcomers", () => {
+  assert.equal(lateLine("open"), "Join anytime, even during the game");
+  assert.equal(lateLine(undefined), "Latecomers join at the next round");
+  assert.equal(lateLine("closed"), "Joining closes when the game starts");
+  assert.match(cornerLine("open"), /next drawing/);
+  assert.equal(cornerShown("draw", "closed"), false);
+  assert.equal(joinedLine({ phase: "vote", joined: ["Anna", "Bob"], joinedMore: 2 }), "+ Anna · + Bob · + 2 more");
+  assert.equal(joinedLine({ phase: "lobby", joined: ["Anna"] }), "");
+  assert.equal(joinedLine({ phase: "draw", joined: [] }), "");
 });

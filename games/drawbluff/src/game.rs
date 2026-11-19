@@ -37,8 +37,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use tvpipe_party::{
-    fold, json, Action, Collect, Event, Moderation, Object, Party, PartyError, Player, PlayerId,
-    Value,
+    fold, json, Action, Collect, Event, LateJoin, Moderation, Object, Party, PartyError, Player,
+    PlayerId, Value,
 };
 
 use crate::rules::{
@@ -46,6 +46,9 @@ use crate::rules::{
     share, shuffle, title_key, validate_drawing, Choice, Drawing, Plan, Rng, Scoring, PHONE_LIES,
     POINTS_ARTIST, POINTS_FOOLED, POINTS_GUESS,
 };
+
+/// Newcomers the TV names ("+ Anna"); more: a count.
+pub const JOINED_NAMES: usize = 3;
 
 /// Drawings per gallery page on the TV.
 pub const GALLERY_PAGE: usize = 8;
@@ -119,6 +122,10 @@ pub struct GameOptions {
     pub seed: Option<u32>,
     /// The prompts (default [`crate::prompts`]).
     pub prompts: Vec<String>,
+    /// Who may join during a game (the VIP can change it in the lobby):
+    /// `Wait` from the next round, `Open` from the next drawing, `Closed`
+    /// not at all; `None` leaves the party's setting (docs/drawbluff-scale.md §9).
+    pub late_join: Option<LateJoin>,
 }
 
 impl Default for GameOptions {
@@ -130,6 +137,7 @@ impl Default for GameOptions {
             grace: 500,
             seed: None,
             prompts: crate::prompts(),
+            late_join: None,
         }
     }
 }
@@ -260,6 +268,16 @@ struct Table {
     /// The lies being written (the current or the next spotlight's).
     lies: Option<Lies>,
     events: Vec<GameEvent>,
+    /// The draw phase is on.
+    drawing: bool,
+    /// Dealt in during a round without a drawing of their own: first in
+    /// the next round's spotlights.
+    fresh: Vec<PlayerId>,
+    /// Names of this round's newcomers, oldest first (the TV's "+ Anna").
+    joined: Vec<String>,
+    /// Spotlights of this round whose vote has not started (a newcomer
+    /// with `Open` can still vote).
+    votes_left: usize,
 }
 
 /// A game of drawbluff on a [`Party`].
@@ -292,6 +310,10 @@ impl Drawbluff {
                 gallery: Vec::new(),
                 lies: None,
                 events: Vec::new(),
+                drawing: false,
+                fresh: Vec::new(),
+                joined: Vec::new(),
+                votes_left: 0,
             },
         }
     }
@@ -320,12 +342,17 @@ impl Drawbluff {
     /// Shows the lobby; the VIP starts the game from their phone.
     pub fn open(&mut self, party: &mut Party) {
         self.set_phase(Phase::Lobby);
+        if let Some(mode) = self.t.o.late_join {
+            party.set_late_join(mode);
+        }
         let (min, max, rounds) = (self.t.o.min_players, party.max_players(), self.t.o.rounds);
+        let late = party.late_join().as_str();
         party.room().replace(json!({
             "phase": "lobby",
             "minPlayers": min,
             "maxPlayers": max,
             "rounds": rounds,
+            "lateJoin": late,
         }));
         party.screen().replace(json!({
             "phase": "lobby",
@@ -367,14 +394,22 @@ impl Drawbluff {
     /// [`Drawbluff::tick`] after a batch.
     pub fn event(&mut self, party: &mut Party, event: Event) {
         match event {
+            // Joiners in the lobby (or after the game) see the lobby;
+            // during a game they wait (the party marks them waiting) until
+            // they are dealt in: at the next round, or with `Open` at the
+            // next drawing.
             Event::Joined(id) => {
-                let state = if self.t.running {
-                    self.t
-                        .with_rank(party, Some(&id), json!({ "task": "wait" }))
-                } else {
-                    self.lobby_state(party, &id)
-                };
+                if !self.t.running {
+                    let state = self.lobby_state(party, &id);
+                    return set_state(party, &id, state);
+                }
+                let state = self.t.wait_state(party, &id);
                 set_state(party, &id, state);
+                if let Some(p) = party.player(&id) {
+                    self.t.joined.push(p.name().to_owned());
+                }
+                let joined = self.t.joined_view();
+                party.screen().set(joined);
             }
             Event::Action(a) => self.act(party, a),
             _ => {}
@@ -399,6 +434,10 @@ impl Drawbluff {
             }
             "kick" => {
                 let result = self.kick(party, &a);
+                party.reply(a, result.map(|()| Value::Null));
+            }
+            "late-join" => {
+                let result = self.late_join(party, &a);
                 party.reply(a, result.map(|()| Value::Null));
             }
             _ => self.answer(party, a),
@@ -453,6 +492,29 @@ impl Drawbluff {
             .filter(|id| Some(id) != from.as_ref())
             .ok_or_else(|| PartyError::new("no-player", "No such player"))?;
         party.kick(&target, "kicked");
+        Ok(())
+    }
+
+    fn late_join(&mut self, party: &mut Party, a: &Action) -> Result<(), PartyError> {
+        let vip = a
+            .player()
+            .and_then(|id| party.player(id))
+            .is_some_and(Player::vip);
+        if !vip {
+            return Err(PartyError::new("not-vip", "Only the VIP can change this"));
+        }
+        if self.t.running {
+            return Err(PartyError::new("running", "Not during a game"));
+        }
+        let mode = match a.data() {
+            Value::Object(o) => o.get("mode").and_then(Value::as_str),
+            other => other.as_str(),
+        };
+        let mode = mode
+            .and_then(LateJoin::parse)
+            .ok_or_else(|| PartyError::new("bad-mode", "closed, wait or open"))?;
+        party.set_late_join(mode);
+        party.room().set(json!({ "lateJoin": mode.as_str() }));
         Ok(())
     }
 
@@ -652,9 +714,11 @@ impl Drawbluff {
     fn play(&mut self, party: &mut Party) {
         let t = &mut self.t;
         t.running = true;
+        party.set_in_progress(true);
         t.scores.clear();
         t.lied.clear();
         t.spotted.clear();
+        t.fresh.clear();
         t.lies = None;
         t.deck = shuffle(&t.o.prompts, &mut t.rng);
         t.round = 1;
@@ -663,7 +727,11 @@ impl Drawbluff {
 
     fn draw(&mut self, party: &mut Party) {
         let t = &mut self.t;
+        t.joined.clear();
+        t.votes_left = 0;
+        t.drawing = true;
         // Everybody in the room plays this round, late joiners too.
+        t.deal_in(party, false);
         for id in ids(party.players()) {
             if !t.has(&id) {
                 t.scores.push((id, 0));
@@ -683,14 +751,17 @@ impl Drawbluff {
         let deadline = party.now() + t.o.timings.draw;
         t.room(party, json!({ "phase": "draw", "deadline": deadline }));
         let (round, rounds) = (t.round, t.o.rounds);
-        party.screen().replace(json!({
-            "phase": "draw",
-            "round": round,
-            "rounds": rounds,
-            "deadline": deadline,
-            "waiting": strs(&players),
-            "done": [],
-        }));
+        t.screen(
+            party,
+            json!({
+                "phase": "draw",
+                "round": round,
+                "rounds": rounds,
+                "deadline": deadline,
+                "waiting": strs(&players),
+                "done": [],
+            }),
+        );
         for (p, prompt) in &prompts {
             let state = json!({ "task": "draw", "prompt": display_title(prompt), "deadline": deadline, "done": false });
             let state = t.with_rank(party, Some(p), state);
@@ -698,7 +769,7 @@ impl Drawbluff {
         }
         for id in ids(party.players()) {
             if !players.contains(&id) {
-                let state = t.with_rank(party, Some(&id), json!({ "task": "wait" }));
+                let state = t.wait_state(party, &id);
                 set_state(party, &id, state);
             }
         }
@@ -712,23 +783,28 @@ impl Drawbluff {
     /// (the first liars write meanwhile) or the first spotlight.
     fn spotlights(&mut self, party: &mut Party, entries: Vec<Entry>, players: usize) {
         let t = &mut self.t;
+        t.drawing = false;
         t.plan = plan(players);
         let live: Vec<Entry> = entries
             .into_iter()
             .filter(|e| party.player(&e.artist).is_some())
             .collect();
         let pool: Vec<String> = live.iter().map(|e| e.artist.as_str().to_owned()).collect();
-        // The fewest spotlights first, then connected artists, then drawings with strokes.
+        // Newcomers of the last round first, then the fewest spotlights,
+        // then connected artists, then drawings with strokes.
         let key = |id: &str| {
             let e = live
                 .iter()
                 .find(|e| e.artist.as_str() == id)
                 .expect("in pool");
             let spotted = t.spotted.get(&e.artist).copied().unwrap_or(0);
+            let fresh = if t.fresh.contains(&e.artist) { 4 } else { 0 };
             let away = party.player(&e.artist).is_some_and(|p| !p.connected());
-            4 * spotted + if away { 2 } else { 0 } + i64::from(e.drawing.strokes.is_empty())
+            4 * spotted - fresh + if away { 2 } else { 0 } + i64::from(e.drawing.strokes.is_empty())
         };
         let chosen = rotate(&pool, key, t.plan.spotlights, &mut t.rng);
+        t.fresh.clear();
+        t.votes_left = chosen.len();
         t.spots = chosen
             .iter()
             .filter_map(|id| live.iter().find(|e| e.artist.as_str() == id).cloned())
@@ -771,18 +847,21 @@ impl Drawbluff {
         };
         t.room(party, json!({ "phase": "gallery", "count": count }));
         let items = t.gallery_page(party, 0);
-        party.screen().replace(json!({
-            "phase": "gallery",
-            "round": t.round,
-            "rounds": t.o.rounds,
-            "page": 1,
-            "pages": pages,
-            "count": count,
-            "items": items,
-            "liars": liars,
-            "done": done,
-            "artist": artist_v,
-        }));
+        t.screen(
+            party,
+            json!({
+                "phase": "gallery",
+                "round": t.round,
+                "rounds": t.o.rounds,
+                "page": 1,
+                "pages": pages,
+                "count": count,
+                "items": items,
+                "liars": liars,
+                "done": done,
+                "artist": artist_v,
+            }),
+        );
         let busy: Vec<PlayerId> = t.lies.as_ref().map(|l| l.liars.clone()).unwrap_or_default();
         for id in ids(party.players()) {
             if busy.contains(&id) {
@@ -794,12 +873,15 @@ impl Drawbluff {
                 .position(|e| e.artist == id)
                 .map(|i| Value::from(i / GALLERY_PAGE + 1))
                 .unwrap_or(Value::Null);
-            let task = if t.has(&id) { "watch" } else { "wait" };
-            let state = t.with_rank(
-                party,
-                Some(&id),
-                json!({ "task": task, "note": "gallery", "mine": mine }),
-            );
+            let state = if t.has(&id) {
+                t.with_rank(
+                    party,
+                    Some(&id),
+                    json!({ "task": "watch", "note": "gallery", "mine": mine }),
+                )
+            } else {
+                t.wait_state(party, &id)
+            };
             set_state(party, &id, state);
         }
         let next = party.now() + t.o.timings.gallery;
@@ -839,17 +921,20 @@ impl Drawbluff {
             party,
             json!({ "phase": "lie", "spot": index, "spots": spots, "deadline": deadline, "artist": art.clone() }),
         );
-        party.screen().replace(json!({
-            "phase": "lie",
-            "round": t.round,
-            "spot": index,
-            "spots": spots,
-            "deadline": deadline,
-            "drawing": spot.drawing.to_value(),
-            "artist": art.clone(),
-            "waiting": strs(&lies.liars),
-            "done": answered_ids(&lies.collect),
-        }));
+        t.screen(
+            party,
+            json!({
+                "phase": "lie",
+                "round": t.round,
+                "spot": index,
+                "spots": spots,
+                "deadline": deadline,
+                "drawing": spot.drawing.to_value(),
+                "artist": art.clone(),
+                "waiting": strs(&lies.liars),
+                "done": answered_ids(&lies.collect),
+            }),
+        );
         let key = lies.key.clone();
         let busy = lies.liars.clone();
         for id in ids(party.players()) {
@@ -861,7 +946,9 @@ impl Drawbluff {
             } else if t.has(&id) {
                 json!({ "task": "watch", "note": "rest", "artist": art.clone() })
             } else {
-                json!({ "task": "wait" })
+                let state = t.wait_state(party, &id);
+                set_state(party, &id, state);
+                continue;
             };
             let state = t.with_rank(party, Some(&id), state);
             set_state(party, &id, state);
@@ -894,6 +981,11 @@ impl Drawbluff {
                     Some(t.start_lies(party, index + 1, &lies.liars, Some(&spot.artist), true));
             }
         }
+        // With `Open`, newcomers vote from here (never in a vote that runs).
+        if party.late_join() == LateJoin::Open {
+            t.deal_in(party, true);
+        }
+        t.votes_left = t.votes_left.saturating_sub(1);
         let writing: Vec<PlayerId> = t.lies.as_ref().map(|l| l.liars.clone()).unwrap_or_default();
         let voters: Vec<PlayerId> = t
             .in_game(party)
@@ -916,7 +1008,7 @@ impl Drawbluff {
                 .find(|o| o.id == id)
                 .map_or("", |o| o.text.as_str())
         };
-        party.screen().replace(json!({
+        t.screen(party, json!({
             "phase": "vote",
             "round": t.round,
             "spot": index + 1,
@@ -954,7 +1046,7 @@ impl Drawbluff {
         }
         for id in ids(party.players()) {
             if !t.has(&id) && !writing.contains(&id) {
-                let state = t.with_rank(party, Some(&id), json!({ "task": "wait" }));
+                let state = t.wait_state(party, &id);
                 set_state(party, &id, state);
             }
         }
@@ -1046,17 +1138,20 @@ impl Drawbluff {
             party,
             json!({ "phase": "reveal", "spot": index + 1, "spots": spots, "drawing": spot.drawing.to_value(), "artist": art.clone() }),
         );
-        party.screen().replace(json!({
-            "phase": "reveal",
-            "round": t.round,
-            "spot": index + 1,
-            "spots": spots,
-            "drawing": spot.drawing.to_value(),
-            "artist": art,
-            "prompt": display_title(&spot.prompt),
-            "items": items,
-            "step": 0,
-        }));
+        t.screen(
+            party,
+            json!({
+                "phase": "reveal",
+                "round": t.round,
+                "spot": index + 1,
+                "spots": spots,
+                "drawing": spot.drawing.to_value(),
+                "artist": art,
+                "prompt": display_title(&spot.prompt),
+                "items": items,
+                "step": 0,
+            }),
+        );
         // The next drawing's liars who are still writing keep writing.
         let writing: Vec<PlayerId> = match &t.lies {
             Some(l) if !l.collect.done(party) => l
@@ -1075,7 +1170,9 @@ impl Drawbluff {
                 let result = t.result(party, &id, spot, options, scoring, votes);
                 json!({ "task": "watch", "note": "reveal", "result": result })
             } else {
-                json!({ "task": "wait" })
+                let state = t.wait_state(party, &id);
+                set_state(party, &id, state);
+                continue;
             };
             let state = t.with_rank(party, Some(&id), state);
             set_state(party, &id, state);
@@ -1093,18 +1190,24 @@ impl Drawbluff {
         let table = t.table(party, Some(&t.before));
         t.room(party, json!({ "phase": "scores" }));
         let highlights = t.highlights(party);
-        party.screen().replace(json!({
-            "phase": "scores",
-            "round": t.round,
-            "rounds": t.o.rounds,
-            "scores": lines(&table[..table.len().min(BOARD_LINES)]),
-            "total": table.len(),
-            "highlights": highlights,
-            "last": t.round == t.o.rounds,
-        }));
+        t.screen(
+            party,
+            json!({
+                "phase": "scores",
+                "round": t.round,
+                "rounds": t.o.rounds,
+                "scores": lines(&table[..table.len().min(BOARD_LINES)]),
+                "total": table.len(),
+                "highlights": highlights,
+                "last": t.round == t.o.rounds,
+            }),
+        );
         for id in ids(party.players()) {
-            let task = if t.has(&id) { "scores" } else { "wait" };
-            let state = t.with_rank(party, Some(&id), json!({ "task": task }));
+            let state = if t.has(&id) {
+                t.with_rank(party, Some(&id), json!({ "task": "scores" }))
+            } else {
+                t.wait_state(party, &id)
+            };
             set_state(party, &id, state);
         }
         let until = party.now() + t.o.timings.scores;
@@ -1114,9 +1217,11 @@ impl Drawbluff {
     fn finish(&mut self, party: &mut Party) {
         let t = &self.t;
         let table = t.table(party, None);
+        let late = party.late_join().as_str();
         party.room().replace(json!({
             "phase": "final",
             "minPlayers": t.o.min_players,
+            "lateJoin": late,
         }));
         party.screen().replace(json!({
             "phase": "final",
@@ -1131,6 +1236,10 @@ impl Drawbluff {
         self.set_phase(Phase::Final);
         self.t.events.push(GameEvent::End(table));
         self.t.running = false;
+        party.set_in_progress(false);
+        for id in ids(party.players()) {
+            party.activate(&id);
+        }
     }
 }
 
@@ -1154,6 +1263,74 @@ impl Table {
             .filter(|p| self.has(p.id()))
             .map(|p| p.id().clone())
             .collect()
+    }
+
+    /// A waiting player's task: when they get in (`note`: `drawing`,
+    /// `round` or `game`).
+    fn wait_state(&self, party: &Party, id: &PlayerId) -> Value {
+        let open = party.late_join() == LateJoin::Open && (self.drawing || self.votes_left > 0);
+        let note = if open {
+            "drawing"
+        } else if self.round < self.o.rounds {
+            "round"
+        } else {
+            "game"
+        };
+        self.with_rank(party, Some(id), json!({ "task": "wait", "note": note }))
+    }
+
+    /// The TV's newcomers: `joined` (the last few names), `joinedMore`
+    /// (how many others).
+    fn joined_view(&self) -> Value {
+        let n = self.joined.len();
+        let last = &self.joined[n.saturating_sub(JOINED_NAMES)..];
+        json!({ "joined": last.to_vec(), "joinedMore": n.saturating_sub(JOINED_NAMES) })
+    }
+
+    /// The TV's view of a phase, with the newcomers.
+    fn screen(&self, party: &mut Party, fields: Value) {
+        let mut o = match fields {
+            Value::Object(o) => o,
+            _ => Object::new(),
+        };
+        if let Value::Object(j) = self.joined_view() {
+            for (k, v) in j.iter() {
+                o.insert(k, v.clone());
+            }
+        }
+        party.screen().replace(Value::Object(o));
+    }
+
+    /// Deals waiting players in (`Open`: at a spotlight's lies and vote;
+    /// every mode: at a round's drawing): in the game from now on, their
+    /// lies counted as the fewest so far (so they join the rotation).
+    fn deal_in(&mut self, party: &mut Party, mid_round: bool) {
+        let waiting: Vec<PlayerId> = party
+            .players()
+            .iter()
+            .filter(|p| p.waiting())
+            .map(|p| p.id().clone())
+            .collect();
+        if waiting.is_empty() {
+            return;
+        }
+        let least = self
+            .in_game(party)
+            .iter()
+            .map(|p| self.lied.get(p).copied().unwrap_or(0))
+            .min()
+            .unwrap_or(0);
+        for id in waiting {
+            party.activate(&id);
+            if self.has(&id) {
+                continue;
+            }
+            self.scores.push((id.clone(), 0));
+            self.lied.insert(id.clone(), least);
+            if mid_round {
+                self.fresh.push(id);
+            }
+        }
     }
 
     /// The room view: `round`, `rounds`, `players` and these fields.
@@ -1192,6 +1369,9 @@ impl Table {
         first: Option<&PlayerId>,
         early: bool,
     ) -> Lies {
+        if party.late_join() == LateJoin::Open {
+            self.deal_in(party, true);
+        }
         let spot = self.spots[index].clone();
         let pool_ids: Vec<PlayerId> = self
             .in_game(party)

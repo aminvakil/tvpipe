@@ -313,8 +313,10 @@ export function bigScreens(): Record<string, unknown> {
   const ids = roster.map((p) => p.id);
   const now = 1_000_000;
   const rows = Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => ((x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13) ? "1" : "0")).join(""));
-  const join = { code: "BCDF", url: "https://words-words-words-words.trycloudflare.com/?r=BCDF#k=abcdefghijklmnopqrstuv", qr: { size: 21, rows } };
+  const join = { code: "BCDF", url: "https://words-words-words-words.trycloudflare.com/?r=BCDF#k=abcdefghijklmnopqrstuv", qr: { size: 21, rows }, lateJoin: "open", inProgress: true };
   const drawing = doodle(seeded(9));
+  // Newcomers this round ("+ Anna" in the corner): the last three and a count.
+  const joined = { joined: ["Anna", "Maximiliane-Josephine", "Bob"], joinedMore: 2 };
   const artist = { id: "p4", name: roster[3]!.name };
   const liars = ["p4", "p9", "p17", "p23", "p30", "p41", "p48"];
   const voters = ids.filter((id) => id !== "p4" && !liars.includes(id));
@@ -328,10 +330,10 @@ export function bigScreens(): Record<string, unknown> {
   const lines = roster.slice(0, 8).map((p, i) => ({ id: p.id, name: p.name, score: 9000 - i * 650, delta: 1200 - i * 100 }));
   const views: [string, Record<string, unknown>][] = [
     ["lobby-50", { phase: "lobby", minPlayers: 3, maxPlayers: 50 }],
-    ["draw-50", { phase: "draw", round: 1, rounds: 2, deadline: now + 42_000, waiting: ids, done: ids.filter((_, i) => i % 9 !== 2) }],
-    ["gallery-50", { phase: "gallery", round: 1, rounds: 2, page: 2, pages: 6, count: 44, items: gallery, liars, done: liars.slice(0, 3), artist }],
-    ["lie-50", { phase: "lie", round: 1, spot: 2, spots: 6, deadline: now + 4000, drawing, artist, waiting: liars, done: liars.slice(0, 5) }],
-    ["vote-50", { phase: "vote", round: 1, spot: 2, spots: 6, deadline: now + 14_000, drawing, artist, options, waiting: voters, done: voters.filter((_, i) => i % 4 !== 0), writing: 7 }],
+    ["draw-50", { phase: "draw", round: 1, rounds: 2, deadline: now + 42_000, waiting: ids, done: ids.filter((_, i) => i % 9 !== 2), ...joined }],
+    ["gallery-50", { phase: "gallery", round: 1, rounds: 2, page: 2, pages: 6, count: 44, items: gallery, liars, done: liars.slice(0, 3), artist, ...joined }],
+    ["lie-50", { phase: "lie", round: 1, spot: 2, spots: 6, deadline: now + 4000, drawing, artist, waiting: liars, done: liars.slice(0, 5), ...joined }],
+    ["vote-50", { phase: "vote", round: 1, spot: 2, spots: 6, deadline: now + 14_000, drawing, artist, options, waiting: voters, done: voters.filter((_, i) => i % 4 !== 0), writing: 7, ...joined }],
     [
       "reveal-50",
       {
@@ -349,7 +351,7 @@ export function bigScreens(): Record<string, unknown> {
       // Seven liars and the truth: the most a drawing gets.
       "reveal-50-full",
       {
-        phase: "reveal", round: 1, spot: 1, spots: 6, drawing, artist, prompt: "a haunted toaster", step: 8,
+        phase: "reveal", round: 1, spot: 1, spots: 6, drawing, artist, prompt: "a haunted toaster", step: 8, ...joined,
         items: [
           item("o2", "a sad potato", 1, 30),
           item("o4", "my uncle on monday", 2, 31, { authors: ["Maximiliane-Josephine", "Quinn2"] }),
@@ -365,7 +367,7 @@ export function bigScreens(): Record<string, unknown> {
     [
       "scores-50",
       {
-        phase: "scores", round: 1, rounds: 2, scores: lines, total: 50, last: false,
+        phase: "scores", round: 1, rounds: 2, scores: lines, total: 50, last: false, ...joined,
         highlights: [{ kind: "liar", id: "p9", name: roster[8]!.name, count: 23 }, { kind: "eye", id: "p12", name: roster[11]!.name, count: 5, of: 6 }],
       },
     ],

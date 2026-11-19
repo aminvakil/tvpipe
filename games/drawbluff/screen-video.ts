@@ -101,12 +101,34 @@ export function renderScreen(ctx: Ctx, view: Record<string, any>, t: number, now
     default:
       text(f, "drawbluff", w / 2, h / 2, { font: LOGO, size: 8 * f.vh, color: C.accent, align: "center", base: "middle" });
   }
-  if (cornerShown(s.phase) && view["join"]?.qr) corner(f, view);
+  if (cornerShown(s.phase, view["join"]?.lateJoin) && view["join"]?.qr) corner(f, view);
+  const newcomers = joinedLine(s);
+  if (newcomers) text(f, newcomers, 2.5 * f.vw, 95 * f.vh, { size: 2.2 * f.vh, color: "rgba(255,253,246,0.7)", base: "middle", max: 60 * f.vw });
 }
 
-/** The corner's QR code (join or rejoin): not in the lobby, nor where the options fill the right side. */
-export function cornerShown(phase: unknown): boolean {
-  return typeof phase === "string" && phase !== "lobby" && phase !== "vote" && phase !== "reveal";
+/**
+ * The corner's QR code (join or rejoin): not in the lobby, nor where the
+ * options fill the right side, nor when the game is closed to newcomers.
+ */
+export function cornerShown(phase: unknown, lateJoin?: unknown): boolean {
+  return typeof phase === "string" && phase !== "lobby" && phase !== "vote" && phase !== "reveal" && lateJoin !== "closed";
+}
+
+/** What the lobby says about latecomers (`join.lateJoin`). */
+export function lateLine(lateJoin: unknown): string {
+  return lateJoin === "open" ? "Join anytime, even during the game" : lateJoin === "closed" ? "Joining closes when the game starts" : "Latecomers join at the next round";
+}
+
+/** The corner's line during a game. */
+export function cornerLine(lateJoin: unknown): string {
+  return lateJoin === "open" ? "Scan to join now (from the next drawing) or to rejoin." : "Scan to join (from the next round) or to rejoin.";
+}
+
+/** This round's newcomers, discreetly: "+ Anna · + Bob · + 2 more" ("" for none, and in the lobby). */
+export function joinedLine(s: any): string {
+  if (!s || s.phase === "lobby" || !Array.isArray(s.joined) || s.joined.length === 0) return "";
+  const more = typeof s.joinedMore === "number" && s.joinedMore > 0 ? ` · + ${s.joinedMore} more` : "";
+  return s.joined.map((n: unknown) => `+ ${String(n)}`).join(" · ") + more;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +209,8 @@ function lobby(f: Frame, view: Record<string, any>, t: number): void {
   drawQr(f.ctx, join.qr, cx - qs / 2, 22 * vh + (q - qs) / 2, qs, { quiet: 2 });
   para(f, join.url ?? "", cx, 72 * vh, 40 * vw, { size: 2.1 * vh, align: "center", color: "rgba(255,253,246,0.85)", maxLines: 2, lineHeight: 1.25 });
   text(f, (join.code ?? "").split("").join(" "), cx, 80 * vh, { font: DISPLAY, size: 3 * vh, color: C.accent, align: "center" });
+  const open = join.lateJoin === "open";
+  text(f, lateLine(join.lateJoin), cx, 86.5 * vh, { size: 2.4 * vh, weight: open ? 600 : 400, align: "center", color: open ? C.ok : "rgba(255,253,246,0.8)", max: 42 * vw });
 
   const x0 = 50 * vw;
   const colW = 22 * vw;
@@ -476,5 +500,5 @@ function corner(f: Frame, view: Record<string, any>): void {
   const y = h - 3 * vh - size - 2 * vh;
   round(f, x, y, bw, size + 2 * vh, 1.4 * vh, "rgba(0,0,0,0.35)");
   drawQr(f.ctx, view["join"].qr, x + vh, y + vh, size, { quiet: 2 });
-  para(f, "Scan to join (from the next round) or to rejoin.", x + size + 2 * vh, y + 2 * vh, bw - size - 3 * vh, { size: 1.8 * vh, lineHeight: 1.25, color: "rgba(255,253,246,0.85)" });
+  para(f, cornerLine(view["join"].lateJoin), x + size + 2 * vh, y + 2 * vh, bw - size - 3 * vh, { size: 1.8 * vh, lineHeight: 1.25, color: "rgba(255,253,246,0.85)" });
 }

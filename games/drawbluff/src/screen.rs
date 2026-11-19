@@ -211,9 +211,20 @@ impl Screen {
             }
         }
         let has_qr = view["join"].get("qr").is_some_and(|q| !q.is_null());
-        // Not in the lobby (the big code), nor where the options fill the right side.
-        if phase.is_some_and(|p| !matches!(p, "lobby" | "vote" | "reveal")) && has_qr {
+        // Not in the lobby (the big code), nor where the options fill the
+        // right side, nor when the game is closed to newcomers.
+        let closed = view["join"]["lateJoin"].as_str() == Some("closed");
+        if phase.is_some_and(|p| !matches!(p, "lobby" | "vote" | "reveal")) && has_qr && !closed {
             self.corner(&mut f, view);
+        }
+        let newcomers = joined_line(s);
+        if !newcomers.is_empty() {
+            let (x, y, vh, vw) = (2.5 * f.vw, 95.0 * f.vh, f.vh, f.vw);
+            let o = t(Face::Sans, 2.2 * vh)
+                .color(INK.alpha(0.7))
+                .middle()
+                .max(60.0 * vw);
+            self.text(&mut f, &newcomers, x, y, o);
         }
     }
 
@@ -336,6 +347,13 @@ impl Screen {
             80.0 * vh,
             t(Face::Display, 3.0 * vh).color(ACCENT).center(),
         );
+        let late = join["lateJoin"].as_str();
+        let o = if late == Some("open") {
+            t(Face::Semi, 2.4 * vh).color(OK)
+        } else {
+            t(Face::Sans, 2.4 * vh).color(INK.alpha(0.8))
+        };
+        self.text(f, late_line(late), cx, 86.5 * vh, o.center().max(42.0 * vw));
 
         let x0 = 50.0 * vw;
         let col_w = 22.0 * vw;
@@ -970,7 +988,7 @@ impl Screen {
         let o = t(Face::Sans, 1.8 * vh).color(INK.alpha(0.85));
         self.para(
             f,
-            "Scan to join (from the next round) or to rejoin.",
+            corner_line(view["join"]["lateJoin"].as_str()),
             x + size + 2.0 * vh,
             y + 2.0 * vh,
             bw - size - 3.0 * vh,
@@ -984,6 +1002,44 @@ impl Screen {
 /// Chips up to this many players waited for; more: a count, a bar and
 /// the last few names.
 const CHIPS: usize = 12;
+
+/// What the lobby says about latecomers (`join.lateJoin`).
+pub fn late_line(late_join: Option<&str>) -> &'static str {
+    match late_join {
+        Some("open") => "Join anytime, even during the game",
+        Some("closed") => "Joining closes when the game starts",
+        _ => "Latecomers join at the next round",
+    }
+}
+
+/// The corner's line during a game.
+pub fn corner_line(late_join: Option<&str>) -> &'static str {
+    match late_join {
+        Some("open") => "Scan to join now (from the next drawing) or to rejoin.",
+        _ => "Scan to join (from the next round) or to rejoin.",
+    }
+}
+
+/// This round's newcomers, discreetly: "+ Anna · + Bob · + 2 more" (""
+/// for none, and in the lobby).
+pub fn joined_line(s: &Value) -> String {
+    if s["phase"].as_str() == Some("lobby") {
+        return String::new();
+    }
+    let names: Vec<String> = list(&s["joined"])
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|n| format!("+ {n}"))
+        .collect();
+    if names.is_empty() {
+        return String::new();
+    }
+    let mut line = names.join(" · ");
+    if let Some(n) = s["joinedMore"].as_u64().filter(|&n| n > 0) {
+        line.push_str(&format!(" · + {n} more"));
+    }
+    line
+}
 
 /// The gallery's line about the first drawing's liars.
 fn meanwhile(s: &Value) -> String {
