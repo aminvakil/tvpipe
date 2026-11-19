@@ -14,6 +14,25 @@ const WIDTHS = [8, 20, 48];
 /** The longest lie the input takes (`LIE_SOFT` in game/rules.ts and src/rules.rs). */
 const LIE_SOFT = 32;
 
+// Phones are game controllers here, not documents: iOS Safari ignores
+// `user-scalable=no`, so block its pinch and double-tap zoom gestures and
+// text selection outside text fields by hand.
+for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+  document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+}
+document.addEventListener(
+  "touchmove",
+  (e) => {
+    if (e.touches.length > 1) e.preventDefault();
+  },
+  { passive: false },
+);
+document.addEventListener("dblclick", (e) => e.preventDefault(), { passive: false });
+document.addEventListener("selectstart", (e) => {
+  const t = e.target instanceof Element ? e.target : /** @type {Node} */ (e.target).parentElement;
+  if (!t?.closest("input, textarea")) e.preventDefault();
+});
+
 const client = PartyClient.fromLocation();
 const app = /** @type {HTMLElement} */ (document.getElementById("app"));
 const banner = /** @type {HTMLElement} */ (document.getElementById("banner"));
@@ -358,6 +377,12 @@ class Pad {
     canvas.addEventListener("pointermove", (e) => this.move(e));
     canvas.addEventListener("pointerup", () => this.up());
     canvas.addEventListener("pointercancel", () => this.up());
+    // Pointer events alone don't stop iOS Safari from starting a text
+    // selection, the magnifier or a scroll/zoom from a touch on the pad:
+    // cancel the touch events themselves (non-passive).
+    for (const type of ["touchstart", "touchmove", "touchend"]) {
+      canvas.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+    }
   }
 
   resize() {
