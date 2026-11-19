@@ -15,7 +15,7 @@ use crate::airplay::pairing::{self, Shared};
 use crate::airplay::secure::SecureStream;
 use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};
-use crate::events::{Event, Paired, PinRequest, Unpaired};
+use crate::events::{Event, Paired, PinRequest, Progress, Step, Unpaired};
 use crate::net::device::Device;
 use crate::net::discover;
 use crate::net::http::Conn;
@@ -287,7 +287,14 @@ pub fn pair(
     ctx: &Ctx,
     get_pin: &mut dyn FnMut(&PinRequest) -> Result<String>,
 ) -> Result<Paired> {
-    let target = resolve(target)?;
+    ctx.events
+        .progress(Progress::Begin(Step::Find(target.to_owned())));
+    let found = resolve(target);
+    ctx.events.progress(match &found {
+        Ok(_) => Progress::Done(Step::Find(target.to_owned()), None),
+        Err(e) => Progress::Failed(Step::Find(target.to_owned()), e.to_string()),
+    });
+    let target = found?;
     let mut store = Store::open(&ctx.storage)?;
     let label = target.label();
     info!("pairing with {label} at {}", target.addr);

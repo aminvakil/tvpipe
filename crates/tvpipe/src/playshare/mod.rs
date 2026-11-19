@@ -34,10 +34,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::ctx::Ctx;
 use crate::error::{Error, Result};
+use crate::events::{Events, Progress, Step};
 use crate::net::httpd;
 use crate::net::tunnel::Provider;
-use crate::storage::Storage;
 use crate::util::stop::Stop;
 
 pub use bundle::Bundle;
@@ -93,8 +94,20 @@ impl Running {
         opts: &Options,
         stop: Stop,
     ) -> Result<Running> {
+        Running::start_with(bundle, backend, opts, stop, Events::none())
+    }
+
+    /// [`Running::start`] with progress events for a front end.
+    pub(crate) fn start_with(
+        bundle: Bundle,
+        backend: Box<dyn backend::Backend>,
+        opts: &Options,
+        stop: Stop,
+        events: Events,
+    ) -> Result<Running> {
         let token = crate::util::hex::encode(&crate::crypto::ring::random_array::<16>()?);
         let hub = Hub::new(bundle, token, backend, stop);
+        let _ = hub.events.set(events);
         let servers = Servers::start(&hub, opts.port, opts.lan)?;
         let tunnel = start_tunnel(&hub, opts.tunnel);
         Ok(Running {
@@ -121,47 +134,69 @@ impl Running {
     }
 }
 
-/// Runs playshare until the window closes, the page quits or `stop` is
-/// requested. Prints the window's URL with `--window none`.
-pub fn run(opts: &Options, stop: Stop, storage: Storage) -> Result<()> {
+/// Runs playshare until the window closes, the page quits or `ctx`'s
+/// stop is requested. Prints the window's URL with `--window none`.
+pub fn run(opts: &Options, ctx: &Ctx) -> Result<()> {
+    let stop = ctx.stop.clone();
+    let events = ctx.events.clone();
     let bundle = Bundle::open(&opts.path)?;
     info!(
         "playshare: {} from {}",
         bundle.manifest.title,
         bundle.origin.display()
     );
+    let title = bundle.manifest.title.clone();
     let backend = backend::Real {
-        storage,
+        storage: ctx.storage.clone(),
         browser: opts.browser.clone(),
     };
-    let running = Running::start(bundle, Box::new(backend), opts, stop.clone())?;
+    let running = Running::start_with(
+        bundle,
+        Box::new(backend),
+        opts,
+        stop.clone(),
+        events.clone(),
+    )?;
     let hub = running.hub.clone();
     let p = *hub.ports.get().ok_or_else(|| Error::closed("no ports"))?;
+    let local = format!("http://127.0.0.1:{}/", p.public);
+    let lan = p.lan.map(|lan| format!("http://{lan}/"));
     info!(
-        "playshare: phones on this computer: http://127.0.0.1:{}/{}",
-        p.public,
-        if let Some(lan) = p.lan {
-            format!(", on the Wi-Fi: http://{lan}/")
-        } else {
-            String::new()
-        }
+        "playshare: phones on this computer: {local}{}",
+        lan.as_ref()
+            .map(|l| format!(", on the Wi-Fi: {l}"))
+            .unwrap_or_default()
     );
+    events.progress(Progress::Game { title, local, lan });
     let url = running.start_url();
+    if opts.window != WindowMode::None {
+        events.progress(Progress::Begin(Step::Window));
+    }
     let (mut window, mode) = match window::Window::open(opts.window, &url, opts.browser.as_ref()) {
         Ok(w) => w,
         Err(e) => {
+            events.progress(Progress::Failed(Step::Window, e.to_string()));
             running.end();
             return Err(e);
         }
     };
+    if opts.window != WindowMode::None {
+        events.progress(Progress::Done(Step::Window, None));
+    }
     if mode == WindowMode::None {
         println!("{url}");
     }
+    let mut phones = 0;
     let why = loop {
         if stop.wait(TICK) {
             break "stopped";
         }
         hub.tick();
+        let n = hub.client_count();
+        if n != phones {
+            phones = n;
+            events.progress(Progress::Phones(n));
+        }
         if window.owned() {
             if window.closed() {
                 break "the window was closed";
@@ -279,6 +314,7 @@ fn start_tunnel(hub: &Arc<Hub>, choice: TunnelChoice) -> TunnelThread {
         let mut t = hub.tunnel.write().unwrap_or_else(|e| e.into_inner());
         t.state = "starting";
     }
+    hub.progress(Progress::Begin(Step::Tunnel));
     let (hub, s) = (hub.clone(), slot.clone());
     let _ = std::thread::Builder::new()
         .name("playshare-tunnel".into())
@@ -315,6 +351,10 @@ fn start_tunnel(hub: &Arc<Hub>, choice: TunnelChoice) -> TunnelThread {
                             info.host = Some(t.host().to_owned());
                             info.error = None;
                         }
+                        hub.progress(Progress::GameLink {
+                            url: format!("https://{}/", t.host()),
+                            provider: p.name().to_owned(),
+                        });
                         *hub.peers.write().unwrap_or_else(|e| e.into_inner()) = t.peer_lookup();
                         *s.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
                         if stop.requested() {
@@ -330,6 +370,10 @@ fn start_tunnel(hub: &Arc<Hub>, choice: TunnelChoice) -> TunnelThread {
                     }
                 }
             }
+            hub.progress(Progress::Failed(
+                Step::Tunnel,
+                last_err.clone().unwrap_or_else(|| "no tunnel".into()),
+            ));
             {
                 let mut info = hub.tunnel.write().unwrap_or_else(|e| e.into_inner());
                 info.state = "failed";

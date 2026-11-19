@@ -55,7 +55,9 @@ pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
     debug!("browser: using {}", bin.display());
     launch::sweep_stale_profiles();
     let target = opts.target.clone();
+    let events = ctx.events.clone();
     let launcher = move |server: &ShareServer| -> Result<Box<dyn Any>> {
+        events.progress(Progress::Begin(Step::Browser));
         let b = ScreenBrowser::start(
             BrowserScreen {
                 bin: bin.clone(),
@@ -63,7 +65,9 @@ pub(super) fn screen(opts: ScreenOptions, ctx: &Ctx) -> Result<()> {
             },
             server,
             stop.clone(),
-        )?;
+        )
+        .inspect_err(|e| events.progress(Progress::Failed(Step::Browser, e.to_string())))?;
+        events.progress(Progress::Done(Step::Browser, Some(b.product.clone())));
         Ok(Box::new(b))
     };
     let rejoin = Rejoin::system(opts.share.reconnect, ctx);

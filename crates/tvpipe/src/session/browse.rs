@@ -45,7 +45,9 @@ pub(super) fn browse(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
     // Profiles (and browsers) a killed tvpipe left behind.
     launch::sweep_stale_profiles();
     let o = page;
+    let events = ctx.events.clone();
     let launcher = move |server: &ShareServer, viewport: (u32, u32)| -> Result<Box<dyn Any>> {
+        events.progress(Progress::Begin(Step::Browser));
         let h = Headless::start(
             HeadlessOptions {
                 url: url.clone(),
@@ -61,7 +63,9 @@ pub(super) fn browse(opts: ShareOptions, ctx: &Ctx) -> Result<()> {
             },
             server.handle(),
             stop.clone(),
-        )?;
+        )
+        .inspect_err(|e| events.progress(Progress::Failed(Step::Browser, e.to_string())))?;
+        events.progress(Progress::Done(Step::Browser, Some(h.product.clone())));
         Ok(Box::new(h))
     };
     let rejoin = Rejoin::system(opts.reconnect, ctx);

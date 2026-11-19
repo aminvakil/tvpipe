@@ -54,6 +54,74 @@ pub enum Event {
     End(EndInfo),
     /// The session or command failed.
     Error(ErrorInfo),
+    /// Progress for people: steps that take a while, `game play`'s links
+    /// and phones. Not part of the machine protocol: `tvpipe --machine`
+    /// does not write it (its JSON, `progress`, is for logs and tests).
+    Progress(Progress),
+}
+
+/// A step of a command that takes a while (people see it as "Starting
+/// the browser…"), in [`Progress`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Step {
+    /// Looking for a receiver by its name on the network.
+    Find(String),
+    /// Connecting to a receiver (ends with its [`ReceiverEvent`]).
+    Connect(String),
+    /// Starting tvpipe's own browser (`screen`, `share URL`, `game play`'s
+    /// TV page).
+    Browser,
+    /// Opening `game play`'s window.
+    Window,
+    /// Opening a public link (ends with a [`TunnelEvent`] or the game's
+    /// link).
+    Tunnel,
+    /// Waiting for the browser to capture (ends with a [`CaptureEvent`]).
+    Capture,
+    /// Waiting for a tab to open the player (`--wait-for-viewer`).
+    Viewer,
+    /// Looking for every receiver on the network (`discover`).
+    Discover,
+}
+
+/// A [`Step`] or `game play` news.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Progress {
+    /// The step began.
+    Begin(Step),
+    /// The step is done; the detail says with what, if anything (the
+    /// browser's name and version).
+    Done(Step, Option<String>),
+    /// The step failed (the error follows as a warning or the command's
+    /// error).
+    Failed(Step, String),
+    /// `game play` serves a game: its title and the phones' links on this
+    /// computer and on the LAN (`--lan`).
+    Game {
+        /// The manifest's title.
+        title: String,
+        /// The phones' page on this computer.
+        local: String,
+        /// The phones' page on the LAN.
+        lan: Option<String>,
+    },
+    /// `game play`'s public link for phones works.
+    GameLink {
+        /// The link.
+        url: String,
+        /// Who carries it: `cloudflare` or `opentunnel`.
+        provider: String,
+    },
+    /// `game play`: the number of phones connected changed.
+    Phones(usize),
+    /// `game play` casts its TV page to these receivers.
+    Casting(Vec<String>),
+    /// `game play`'s cast failed.
+    CastFailed(String),
+    /// `game play`'s cast stopped.
+    CastStopped,
 }
 
 /// Defines a string enum with its wire names.
@@ -369,6 +437,9 @@ pub struct Stats {
     pub audio_frames: u64,
     /// Per receiver.
     pub receivers: Vec<ReceiverStats>,
+    /// Video bytes sent so far (for a bitrate). Not in the machine
+    /// protocol: `to_json` leaves it out and `from_json` reads 0.
+    pub video_bytes: u64,
 }
 
 /// `discover`'s devices.
@@ -503,6 +574,102 @@ fn list<T>(v: &Value, key: &str, f: impl Fn(&Value) -> Result<T>) -> Result<Vec<
     v.require_array(key)?.iter().map(f).collect()
 }
 
+impl Step {
+    fn wire(&self) -> (&'static str, Option<&str>) {
+        match self {
+            Step::Find(n) => ("find", Some(n)),
+            Step::Connect(n) => ("connect", Some(n)),
+            Step::Browser => ("browser", None),
+            Step::Window => ("window", None),
+            Step::Tunnel => ("tunnel", None),
+            Step::Capture => ("capture", None),
+            Step::Viewer => ("viewer", None),
+            Step::Discover => ("discover", None),
+        }
+    }
+
+    fn from_wire(step: &str, name: Option<String>) -> Result<Step> {
+        let name = || {
+            name.clone()
+                .ok_or_else(|| Error::malformed("event: step without name"))
+        };
+        Ok(match step {
+            "find" => Step::Find(name()?),
+            "connect" => Step::Connect(name()?),
+            "browser" => Step::Browser,
+            "window" => Step::Window,
+            "tunnel" => Step::Tunnel,
+            "capture" => Step::Capture,
+            "viewer" => Step::Viewer,
+            "discover" => Step::Discover,
+            other => return Err(Error::malformed(format!("event: unknown step {other:?}"))),
+        })
+    }
+}
+
+fn progress_value(p: &Progress, v: Value) -> Value {
+    let step = |v: Value, kind: &str, s: &Step| {
+        let (step, name) = s.wire();
+        v.with("kind", kind)
+            .with("step", step)
+            .with_opt("name", name)
+    };
+    match p {
+        Progress::Begin(s) => step(v, "begin", s),
+        Progress::Done(s, d) => step(v, "done", s).with_opt("detail", d.as_deref()),
+        Progress::Failed(s, e) => step(v, "failed", s).with("error", e.as_str()),
+        Progress::Game { title, local, lan } => v
+            .with("kind", "game")
+            .with("title", title.as_str())
+            .with("local", local.as_str())
+            .with_opt("lan", lan.as_deref()),
+        Progress::GameLink { url, provider } => v
+            .with("kind", "game-link")
+            .with("url", url.as_str())
+            .with("provider", provider.as_str()),
+        Progress::Phones(n) => v.with("kind", "phones").with("count", *n as u64),
+        Progress::Casting(to) => v
+            .with("kind", "casting")
+            .with("to", Value::array(to.iter().map(String::as_str))),
+        Progress::CastFailed(e) => v.with("kind", "cast-failed").with("error", e.as_str()),
+        Progress::CastStopped => v.with("kind", "cast-stopped"),
+    }
+}
+
+fn progress_from(v: &Value) -> Result<Progress> {
+    let step = || Step::from_wire(v.require_str("step")?, opt_str(v, "name"));
+    Ok(match v.require_str("kind")? {
+        "begin" => Progress::Begin(step()?),
+        "done" => Progress::Done(step()?, opt_str(v, "detail")),
+        "failed" => Progress::Failed(step()?, v.require_str("error")?.to_owned()),
+        "game" => Progress::Game {
+            title: v.require_str("title")?.to_owned(),
+            local: v.require_str("local")?.to_owned(),
+            lan: opt_str(v, "lan"),
+        },
+        "game-link" => Progress::GameLink {
+            url: v.require_str("url")?.to_owned(),
+            provider: v.require_str("provider")?.to_owned(),
+        },
+        "phones" => Progress::Phones(
+            usize::try_from(v.require_u64("count")?)
+                .map_err(|_| Error::malformed("event: phones"))?,
+        ),
+        "casting" => Progress::Casting(list(v, "to", |r| {
+            r.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| Error::malformed("event: receiver name not a string"))
+        })?),
+        "cast-failed" => Progress::CastFailed(v.require_str("error")?.to_owned()),
+        "cast-stopped" => Progress::CastStopped,
+        other => {
+            return Err(Error::malformed(format!(
+                "event: unknown progress {other:?}"
+            )))
+        }
+    })
+}
+
 impl Event {
     /// The event's `type` on the wire.
     pub fn type_name(&self) -> &'static str {
@@ -525,7 +692,14 @@ impl Event {
             Event::Unpaired(_) => "unpaired",
             Event::End(_) => "end",
             Event::Error(_) => "error",
+            Event::Progress(_) => "progress",
         }
+    }
+
+    /// Whether the machine interface writes it (everything but
+    /// [`Event::Progress`]).
+    pub fn is_machine(&self) -> bool {
+        !matches!(self, Event::Progress(_))
     }
 
     /// The event as a JSON value (one machine-interface line).
@@ -624,6 +798,7 @@ impl Event {
                 .with_opt("code", e.code.as_deref())
                 .with("message", e.message.as_str())
                 .with_opt("device", e.device.as_deref()),
+            Event::Progress(p) => progress_value(p, v),
         }
     }
 
@@ -722,6 +897,7 @@ impl Event {
                 video_frames: v.require_u64("video_frames")?,
                 audio_frames: v.require_u64("audio_frames")?,
                 receivers: list(v, "receivers", stats_from)?,
+                video_bytes: 0,
             }),
             "devices" => Event::Devices(DevicesEvent {
                 devices: list(v, "devices", crate::net::discover::DeviceInfo::from_value)?,
@@ -758,6 +934,7 @@ impl Event {
                 message: v.require_str("message")?.to_owned(),
                 device: opt_str(v, "device"),
             }),
+            "progress" => Event::Progress(progress_from(v)?),
             other => return Err(Error::unsupported(format!("event: unknown type {other:?}"))),
         })
     }
@@ -796,6 +973,11 @@ impl Events {
         if let Some(f) = &self.0 {
             f(e);
         }
+    }
+
+    /// A [`Progress`] event.
+    pub(crate) fn progress(&self, p: Progress) {
+        self.emit(Event::Progress(p));
     }
 
     /// A [`ReceiverEvent`].

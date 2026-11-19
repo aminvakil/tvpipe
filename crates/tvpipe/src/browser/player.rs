@@ -42,7 +42,7 @@ use crate::codec::json::Value;
 use crate::ctx::Ctx;
 use crate::error::{Error, ErrorKind, Result};
 use crate::events::{
-    Event, Events, PlayerEvent, TunnelEvent, TunnelPage, ViewerEvent, ViewerState,
+    Event, Events, PlayerEvent, Progress, Step, TunnelEvent, TunnelPage, ViewerEvent, ViewerState,
 };
 use crate::media::clock::{SessionClock, SinkClock, Tolerance};
 use crate::media::h264;
@@ -664,7 +664,11 @@ impl BrowserSink {
         }
         let tunnel = if let Some(provider) = opts.tunnel {
             info!("{}: starting a public tunnel", opts.name);
-            let t = tunnel::start(port, provider, &|| stop.requested())?;
+            ctx.events.progress(Progress::Begin(Step::Tunnel));
+            let t = tunnel::start(port, provider, &|| stop.requested()).inspect_err(|e| {
+                ctx.events
+                    .progress(Progress::Failed(Step::Tunnel, e.to_string()))
+            })?;
             let token = shared
                 .access
                 .publish(t.host(), opts.tunnel_ttl, t.peer_lookup())?;
@@ -708,6 +712,7 @@ impl BrowserSink {
         };
         if opts.wait_for_viewer {
             info!("{}: waiting for a viewer", opts.name);
+            ctx.events.progress(Progress::Begin(Step::Viewer));
             let mut st = sink.shared.lock();
             while st.tabs.is_empty() {
                 if stop.requested() {

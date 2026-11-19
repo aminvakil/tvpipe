@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
+use crate::events::{Events, Progress};
 use crate::net::tunnel::PeerLookup;
 use crate::net::websocket::Message;
 use crate::util::stop::Stop;
@@ -120,6 +121,8 @@ pub struct Hub {
     pub(super) backend: Box<dyn Backend>,
     st: Mutex<St>,
     pub(super) surfaces: Mutex<super::surface::Surfaces>,
+    /// The run's progress for people (the CLI's terminal UI), set once.
+    pub events: OnceLock<Events>,
 }
 
 /// `{"t":"event","type":…,"data":…}`.
@@ -184,6 +187,7 @@ impl Hub {
             version: env!("CARGO_PKG_VERSION"),
             backend,
             surfaces: Mutex::default(),
+            events: OnceLock::new(),
             st: Mutex::new(St {
                 next_conn: 0,
                 next_api: 0,
@@ -244,6 +248,13 @@ impl Hub {
     fn broadcast(&self, st: &St, text: &str) {
         for a in st.apis.values() {
             a.out.text(text.to_owned());
+        }
+    }
+
+    /// A progress event for the program's front end.
+    pub fn progress(&self, p: Progress) {
+        if let Some(e) = self.events.get() {
+            e.progress(p);
         }
     }
 
@@ -624,6 +635,7 @@ impl Hub {
                     c.stop();
                 }
                 self.event("cast", Value::object().with("state", "stopped"));
+                self.progress(Progress::CastStopped);
                 Ok(Value::object())
             }
             "qr" => {
@@ -737,6 +749,7 @@ impl Hub {
                 .with("to", to.clone()),
         );
         info!("playshare: casting to {}", to.join(", "));
+        self.progress(Progress::Casting(to.clone()));
         match self.backend.cast(&url, &to, self.bundle.manifest.tv_size) {
             Ok(mut job) => {
                 if self.stop.requested() {
@@ -749,6 +762,7 @@ impl Hub {
             }
             Err(e) => {
                 warn!("playshare: cast: {e}");
+                self.progress(Progress::CastFailed(e.message().to_owned()));
                 self.event(
                     "cast",
                     Value::object()
@@ -800,9 +814,24 @@ impl Hub {
         for d in done {
             st.pairs.remove(&d);
         }
+        let mut progress = None;
         if let Some((job, last)) = st.cast.as_mut() {
             let v = job.status();
             if v != *last {
+                let was = last.get("state").and_then(Value::as_str).map(str::to_owned);
+                let state = v.get("state").and_then(Value::as_str).unwrap_or("");
+                if was.as_deref() != Some(state) {
+                    progress = match state {
+                        "failed" => Some(Progress::CastFailed(
+                            v.get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or("the cast failed")
+                                .to_owned(),
+                        )),
+                        "stopped" => Some(Progress::CastStopped),
+                        _ => None,
+                    };
+                }
                 *last = v.clone();
                 events.push(event("cast", v));
             }
@@ -811,6 +840,9 @@ impl Hub {
             self.broadcast(&st, e);
         }
         drop(st);
+        if let Some(p) = progress {
+            self.progress(p);
+        }
         self.surfaces_tick();
     }
 

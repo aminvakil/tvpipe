@@ -178,9 +178,7 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
         Command::Playshare(_) if global.machine => Err(error::Error::usage(
             "game play is for people: run it without --machine",
         )),
-        Command::Playshare(o) => {
-            tvpipe::__cli::playshare::run(&o, ctx.stop.clone(), ctx.storage.clone())
-        }
+        Command::Playshare(o) => tvpipe::__cli::playshare::run(&o, &ctx),
         Command::GameTool(o) if global.machine => Err(error::Error::usage(format!(
             "{} prints a report: run it without --machine",
             o.action.command()

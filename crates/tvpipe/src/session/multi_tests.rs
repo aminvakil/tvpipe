@@ -295,7 +295,29 @@ fn unreachable_receiver_is_left_out() {
         "cast:127.0.0.1:1".into(),
         format!("airplay:{}", fake.addr),
     ]);
-    play_with(o, no_io(), &connect, &never()).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut ctx = never();
+    let s = seen.clone();
+    ctx.events = Events::to(move |e| s.lock().unwrap().push(e));
+    play_with(o, no_io(), &connect, &ctx).unwrap();
+    // People's front ends see each receiver connecting (addresses are
+    // not looked up), and how it went.
+    let seen = seen.lock().unwrap();
+    let connecting = seen
+        .iter()
+        .filter(|e| matches!(e, Event::Progress(Progress::Begin(Step::Connect(_)))))
+        .count();
+    assert_eq!(connecting, 3, "{seen:?}");
+    assert!(!seen
+        .iter()
+        .any(|e| matches!(e, Event::Progress(Progress::Begin(Step::Find(_))))));
+    assert!(
+        seen.iter().any(|e| matches!(
+            e,
+            Event::Receiver(r) if r.name == "127.0.0.1:1" && r.state == ReceiverState::Failed
+        )),
+        "{seen:?}"
+    );
     let state = rx.shutdown();
     let st = state.lock().unwrap();
     assert!(st.stopped);

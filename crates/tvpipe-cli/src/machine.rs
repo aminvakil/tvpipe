@@ -47,8 +47,12 @@ pub fn events() -> Events {
     Events::to(|e| emit(&e))
 }
 
-/// Writes one event line.
+/// Writes one event line (nothing for events outside the machine
+/// protocol, [`Event::is_machine`]).
 pub fn emit(e: &Event) {
+    if !e.is_machine() {
+        return;
+    }
     if matches!(e, Event::End(_)) {
         END_SENT.store(true, Ordering::SeqCst);
     }

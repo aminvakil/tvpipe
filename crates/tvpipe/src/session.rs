@@ -44,8 +44,9 @@ use crate::cast::{self, CastOptions};
 use crate::ctx::Ctx;
 use crate::error::{Error, Result};
 use crate::events::{
-    self, AudioStarted, CaptureEvent, ConnectedEvent, EndInfo, Event, Events, ReceiverEnd,
-    ReceiverEndInfo, ReceiverState, ReceiverStats, SharePageEvent, Started, Stats, VideoStarted,
+    self, AudioStarted, CaptureEvent, ConnectedEvent, EndInfo, Event, Events, Progress,
+    ReceiverEnd, ReceiverEndInfo, ReceiverState, ReceiverStats, SharePageEvent, Started, Stats,
+    Step, VideoStarted,
 };
 #[cfg(feature = "h264")]
 use crate::media::builtin::{BuiltinInput, BuiltinOptions, VideoOut};
@@ -742,10 +743,23 @@ fn resolve_all(
         Some(r) => &*r.resolve,
         None => &resolve_target,
     };
+    // Names are looked up on the network (seconds); `browser` and
+    // addresses are not.
+    let finds = |q: &str| {
+        !q.eq_ignore_ascii_case(BROWSER_TARGET) && {
+            let (forced, rest) = parse_target(q);
+            address_target(forced, rest).is_none()
+        }
+    };
     let results = std::thread::scope(|s| {
         let handles: Vec<_> = queries
             .iter()
-            .map(|q| s.spawn(move || resolve(q)))
+            .map(|q| {
+                if finds(q) {
+                    events.progress(Progress::Begin(Step::Find(q.clone())));
+                }
+                s.spawn(move || resolve(q))
+            })
             .collect();
         queries
             .iter()
@@ -754,8 +768,12 @@ fn resolve_all(
                 let r = h
                     .join()
                     .unwrap_or_else(|_| Err(Error::process("resolve thread panicked")));
-                if let Err(e) = &r {
-                    events.receiver(q, None, ReceiverState::Failed, Some(e));
+                match &r {
+                    Err(e) => events.receiver(q, None, ReceiverState::Failed, Some(e)),
+                    Ok(_) if finds(q) => {
+                        events.progress(Progress::Done(Step::Find(q.clone()), None))
+                    }
+                    Ok(_) => {}
                 }
                 (q.clone(), r)
             })
@@ -778,6 +796,11 @@ fn connect_all(
         let handles: Vec<_> = targets
             .iter()
             .map(|t| {
+                // The browser's page binds at once (its `player` event
+                // says where).
+                if !matches!(t, Target::Browser(_)) {
+                    events.progress(Progress::Begin(Step::Connect(target_name(t).to_owned())));
+                }
                 s.spawn(move || {
                     let sink = connect(t, opts, mirror)?;
                     Ok(match rejoin {
@@ -1540,7 +1563,13 @@ fn share_rejoin(
     }
     if let (Some(provider), ShareKind::Page) = (opts.tunnel, kind) {
         info!("share: starting a public tunnel");
-        let url = server.expose(provider, opts.tunnel_ttl, &|| stop.requested())?;
+        ctx.events.progress(Progress::Begin(Step::Tunnel));
+        let url = server
+            .expose(provider, opts.tunnel_ttl, &|| stop.requested())
+            .inspect_err(|e| {
+                ctx.events
+                    .progress(Progress::Failed(Step::Tunnel, e.to_string()))
+            })?;
         info!(
             "share: someone with {url} can ask to share their screen to the receivers \
              (the link is new every run{}; you confirm each share here{})",
@@ -1577,6 +1606,7 @@ fn share_rejoin(
         receivers: names.clone(),
     });
     server.set_status("waiting", "Press Share and pick what to show.", &names);
+    ctx.events.progress(Progress::Begin(Step::Capture));
     // A capture over the tunnel waits for the local user's yes.
     let cap = loop {
         let Some(cap) = server.wait_capture(stop) else {
@@ -2044,6 +2074,7 @@ fn stream(
         .emit(Event::Started(started_event(route, &info, latency_ms)));
     let t0 = Instant::now();
     let mut frames = [0u64; 2];
+    let mut video_bytes = 0u64;
     let mut input_error = None;
     let mut next_stats = t0 + STATS_INTERVAL;
     let end = loop {
@@ -2055,12 +2086,16 @@ fn stream(
             ctx.events.emit(Event::Stats(stats_event(
                 t0.elapsed(),
                 frames,
+                video_bytes,
                 &fanout.stats(),
             )));
         }
         match input.next_frame() {
             Ok(Some(f)) => {
                 frames[(f.track != TrackKind::Video) as usize] += 1;
+                if f.track == TrackKind::Video {
+                    video_bytes += f.data.len() as u64;
+                }
                 fanout.push(&f);
                 if fanout.keyframe_wanted() {
                     input.request_keyframe();
@@ -2194,6 +2229,7 @@ fn receiver_stats(name: &str, st: &crate::media::fanout::SinkStats) -> ReceiverS
 fn stats_event(
     elapsed: Duration,
     frames: [u64; 2],
+    video_bytes: u64,
     stats: &[(String, crate::media::fanout::SinkStats)],
 ) -> Stats {
     Stats {
@@ -2201,6 +2237,7 @@ fn stats_event(
         video_frames: frames[0],
         audio_frames: frames[1],
         receivers: stats.iter().map(|(n, st)| receiver_stats(n, st)).collect(),
+        video_bytes,
     }
 }
 

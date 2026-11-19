@@ -56,6 +56,13 @@ fn stream_raw_frames_and_audio_to_a_browser_receiver() {
     assert_eq!(r[0].state, ReceiverState::Connected);
     let events = s.poll_events();
     assert!(events.iter().any(|e| matches!(e, Event::Connected(_))));
+    // The bytes behind a bitrate (not on the machine interface's wire).
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Stats(st) if st.video_bytes > 0)),
+        "{events:?}"
+    );
     // A wrong size is the caller's error, not a panic.
     assert!(s.write_video(&[0; 10], s.elapsed()).is_err());
     let end = s.finish().unwrap();

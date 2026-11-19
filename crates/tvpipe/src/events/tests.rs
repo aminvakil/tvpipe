@@ -31,6 +31,8 @@ fn variant(e: &Event) -> &'static str {
         Event::Unpaired(_) => "unpaired",
         Event::End(_) => "end",
         Event::Error(_) => "error",
+        // Not in the machine protocol: no vector (see `progress_round_trips`).
+        Event::Progress(_) => "progress",
     }
 }
 
@@ -307,6 +309,7 @@ fn examples() -> Vec<(&'static str, Event)> {
                 video_frames: 60,
                 audio_frames: 273,
                 receivers: vec![stats("Living Room", 333)],
+                video_bytes: 0,
             }),
         ),
         (
@@ -440,6 +443,54 @@ fn every_variant_has_a_vector_and_round_trips() {
         let e = Event::from_json(b.str("json")).unwrap();
         assert_eq!(e.type_name(), b.str("type"));
     }
+}
+
+#[test]
+fn progress_round_trips_and_is_not_machine() {
+    let steps = [
+        Step::Find(s("Living Room")),
+        Step::Connect(s("Living Room")),
+        Step::Browser,
+        Step::Window,
+        Step::Tunnel,
+        Step::Capture,
+        Step::Viewer,
+        Step::Discover,
+    ];
+    let mut all: Vec<Progress> = Vec::new();
+    for st in steps {
+        all.push(Progress::Begin(st.clone()));
+        all.push(Progress::Done(st.clone(), Some(s("Chrome 157"))));
+        all.push(Progress::Done(st.clone(), None));
+        all.push(Progress::Failed(st, s("refused")));
+    }
+    all.extend([
+        Progress::Game {
+            title: s("drawbluff"),
+            local: s("http://127.0.0.1:1/"),
+            lan: Some(s("http://192.168.1.2:7420/")),
+        },
+        Progress::GameLink {
+            url: s("https://x.example/"),
+            provider: s("opentunnel"),
+        },
+        Progress::Phones(3),
+        Progress::Casting(vec![s("TV"), s("Bedroom")]),
+        Progress::CastFailed(s("no")),
+        Progress::CastStopped,
+    ]);
+    for p in all {
+        let e = Event::Progress(p);
+        assert!(!e.is_machine());
+        assert_eq!(Event::from_json(&e.to_json()).unwrap(), e);
+    }
+    assert!(Event::Keyframe.is_machine());
+    // Stats' byte count stays off the wire.
+    let st = Event::Stats(Stats {
+        video_bytes: 5,
+        ..Stats::default()
+    });
+    assert!(!st.to_json().contains("bytes"));
 }
 
 #[test]
