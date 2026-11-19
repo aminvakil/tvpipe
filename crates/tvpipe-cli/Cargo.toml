@@ -10,6 +10,10 @@ description = "Low-latency mirroring of video and audio to AirPlay and Google Ca
 # The source; the built binary includes tvpipe-fairplay (LGPL-3.0-or-later)
 # and is distributed under its terms.
 license = "Apache-2.0"
+readme = "README.md"
+keywords = ["airplay", "chromecast", "mirroring", "streaming", "cli"]
+categories = ["multimedia::video", "command-line-utilities"]
+include = ["/Cargo.toml", "/README.md", "/LICENSE", "/LICENSES/", "/src/", "/tests/"]
 
 [[bin]]
 name = "tvpipe"

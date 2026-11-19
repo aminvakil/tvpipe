@@ -6,8 +6,24 @@ rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "Stream video and audio to AirPlay and Google Cast receivers and browser tabs, in process"
+description = "Stream a program's frames and sound, files, web pages or the screen to Apple TVs, Chromecasts and browser tabs with low latency, in process"
 license = "Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/tvpipe"
+keywords = ["airplay", "chromecast", "mirroring", "streaming", "gamedev"]
+categories = ["multimedia::video", "network-programming", "game-development"]
+include = [
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE",
+    "/LICENSES/",
+    "/src/",
+    "/examples/",
+    "/tests/",
+]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = ["airplay", "cast", "player", "h264"]

@@ -11,6 +11,16 @@ homepage.workspace = true
 keywords = ["airplay", "fairplay", "mirroring"]
 categories = ["multimedia", "network-programming"]
 readme = "README.md"
+documentation = "https://docs.rs/tvpipe-fairplay"
+include = [
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE-LGPL-3.0",
+    "/LICENSE-GPL-3.0",
+    "/LICENSE-APACHE-2.0",
+    "/src/",
+    "/tests/",
+]
 
 [dependencies]
 ring = "0.17"
