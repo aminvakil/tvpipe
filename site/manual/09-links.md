@@ -55,19 +55,9 @@ $ tvpipe tunnel 8080
 $ tvpipe tunnel 8080 --tunnel=opentunnel
 ```
 
-Your server answers everything that comes in, so it decides who may do what. The [party games](party.md) library uses this for the players' phones.
+Your server answers everything that comes in, so it decides who may do what.
 
-## Your own server
-
-:::aside QR codes
-`tvpipe qr TEXT` prints a QR code of any text or link. `--svg` writes it as SVG.
-:::
-
-`tvpipe tunnel PORT` puts any server on this computer, at `127.0.0.1:PORT`, on a public https link, with the same providers. The [party games](party.md) use it for the phones.
-
-```sh
-$ tvpipe tunnel 8080
-```
+[Party games](party.md) do not need this: `tvpipe playshare` starts its own link for the phones, OpenTunnel, else Cloudflare, reusing the last quick tunnel.
 
 ## Providers
 
