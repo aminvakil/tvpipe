@@ -66,6 +66,8 @@ The game never sends events to phones. It sets what each phone shows: `party.roo
 
 For a stick or a tilt, `party.input(data)` on the phone sends continuous input: never answered, the latest wins. The host gets it as the `input` event.
 
+Joining mid-game is the game's choice. While `party.inProgress` is set, `party.lateJoin` decides what happens to a new name: `"closed"` refuses it with `in-progress` (players who were already in still come back), while `"wait"` (the default) and `"open"` let it in as a waiting player (`player.waiting`). The game deals them in with `party.activate(player)` when it wants. Screens see the setting in `join.lateJoin`, so the TV can say "join anytime" under the QR code. In Rust: `set_in_progress`, `set_late_join`, `activate`.
+
 ## In Rust
 
 :::aside One binary
@@ -143,5 +145,7 @@ $ node main.ts --to browser --bots 3 --fast # alone, with fake players
 $ cargo run --release -p drawbluff -- --to "Living Room"                # video drawn in Rust
 $ cargo run --release -p drawbluff -- --to "Living Room" --web-screen   # the screen page
 ```
+
+The VIP picks on their phone in the lobby whether latecomers join at the next round, at the next drawing, or not at all (default with `--late-join=wait|open|closed`). Each round deals prompts of different kinds: odd pairs, idioms taken literally, feelings, "the moment…", the secret lives of things and more.
 
 The protocol is in [docs/party-protocol.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/party-protocol.md), the designs in [docs/party-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/party-design.md) and [docs/multiscreen-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/multiscreen-design.md).
