@@ -3,7 +3,8 @@ title: From Rust
 summary: Stream from your own Rust program, a game for example, with the tvpipe crate.
 group: Use
 spec:
-  Crate: `tvpipe`
+  Crate: `tvpipe` (crates.io)
+  Docs: [docs.rs/tvpipe](https://docs.rs/tvpipe)
   Rust: 1.85 or newer
   Example: `crates/tvpipe/examples/stream.rs`
 ---
@@ -11,10 +12,8 @@ spec:
 The `tvpipe` crate is tvpipe itself, linked into your program. There is no binary to ship and no async runtime: sessions run on threads of their own. A game streams the frames it renders and the sound it mixes. Any program can also play files, the test pattern or a web page.
 
 ```sh
-$ cargo add tvpipe --git https://github.com/mitsuhiko/tvpipe
+$ cargo add tvpipe
 ```
-
-From 0.2.0 the crate is on crates.io, and `cargo add tvpipe` is enough.
 
 :::aside Debug builds
 The built-in H.264 encoder is too slow without optimizations. Add `[profile.dev.package.tvpipe]` and `[profile.dev.package.ring]` with `opt-level = 3` to your `Cargo.toml`.
@@ -46,7 +45,7 @@ loop {
 - **Sound from a callback.** `audio_writer()` gives a writer for your audio thread (cpal and the like) that timestamps by sample count.
 - **Your own H.264.** With a hardware encoder, use `Options::h264(w, h, fps)` and `write_h264()`. When a receiver needs a keyframe, `take_keyframe_request()` returns true: make the next picture an IDR.
 
-The crate's documentation has recipes for wgpu readbacks, Bevy, macroquad and cpal.
+The [crate's documentation](https://docs.rs/tvpipe) has recipes for wgpu readbacks, Bevy, macroquad and cpal.
 
 ## Play something
 

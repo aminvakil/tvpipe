@@ -68,11 +68,17 @@ The Linux binaries are static and run on any distribution.
 
 Delete the `tvpipe` binary and the [config directory](config.md).
 
-## Building from source
+## With Cargo
 
 :::aside Needs
 Rust 1.85 or newer and a C compiler.
 :::
+
+```sh
+$ cargo install tvpipe-cli
+```
+
+This builds tvpipe from crates.io and puts it into `~/.cargo/bin`. To build from the source code instead:
 
 ```sh
 $ git clone https://github.com/mitsuhiko/tvpipe
