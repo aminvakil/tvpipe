@@ -58,7 +58,7 @@ pub fn run(
     ctx: &crate::ctx::Ctx,
 ) -> Result<()> {
     let devices = discover(timeout, interfaces)?;
-    let store = stored_pairings();
+    let store = stored_pairings(&ctx.storage);
     if ctx.events.active() {
         ctx.events
             .emit(crate::events::Event::Devices(crate::events::DevicesEvent {
@@ -158,14 +158,13 @@ fn to_json_with(devices: &[Device], store: Option<&Store>) -> String {
     format!("{list:#}\n")
 }
 
-/// The AirPlay pairings, if the credentials file exists (discovery never
-/// creates it).
-fn stored_pairings() -> Option<Store> {
-    let path = crate::airplay::credentials::default_path().ok()?;
-    let text = std::fs::read_to_string(&path).ok()?;
-    Store::parse(&path, &text)
+/// The AirPlay pairings, if there are any (discovery never creates the
+/// store).
+pub(crate) fn stored_pairings(storage: &crate::storage::Storage) -> Option<Store> {
+    Store::load(storage)
         .map_err(|e| debug!("discover: {e}"))
         .ok()
+        .flatten()
 }
 
 /// Whether `store` has a pairing for `d` (by key, device id or name).

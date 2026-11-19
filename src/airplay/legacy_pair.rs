@@ -310,7 +310,7 @@ mod tests {
             legacy: Some(([0; 16], [0; 16])),
             ..Behaviour::default()
         });
-        let path = temp_dir("legacy-connect").join("credentials.txt");
+        let path = crate::storage::Storage::dir(temp_dir("legacy-connect"));
         let mut store = Store::open(&path).unwrap();
         let mut dev = crate::net::device::tests::lan_devices()
             .into_iter()

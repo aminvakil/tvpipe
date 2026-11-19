@@ -595,7 +595,9 @@ fn connect_one(
                 device: device.as_deref().cloned(),
             };
             Ok(Box::new(crate::airplay::sink::connect_mirror(
-                &target, mirror,
+                &target,
+                mirror,
+                &ctx.storage,
             )?))
         }
         Target::Browser(o) => Ok(Box::new(BrowserSink::bind(o, ctx)?)),
@@ -611,13 +613,19 @@ fn target_name(t: &Target) -> &str {
 
 /// Sets up the `--to browser` targets: the page's options, the session's
 /// playout budget and whether audio goes there.
-fn configure_browsers(targets: &mut [Target], opts: &BrowserOptions, latency_ms: u32, audio: bool) {
+fn configure_browsers(
+    targets: &mut [Target],
+    opts: &BrowserOptions,
+    latency_ms: u32,
+    audio: bool,
+    storage: &crate::storage::Storage,
+) {
     if !targets.iter().any(|t| matches!(t, Target::Browser(_))) {
         return;
     }
     // One URL across runs (docs/player-protocol.md); a
     // config directory we cannot write only costs that.
-    let token = match crate::browser::player::persistent_token(opts.new_token) {
+    let token = match crate::browser::player::persistent_token(storage, opts.new_token) {
         Ok(t) => Some(t),
         Err(e) => {
             warn!("browser: cannot keep the page's token ({e}); the URL is new this time");
@@ -1028,7 +1036,13 @@ fn play_rejoin(
     }
     let budget = shared_budget(opts.latency_ms, &targets);
     cast_opts.latency_ms = budget.cast_ms;
-    configure_browsers(&mut targets, &opts.browser, budget.browser_ms, audio);
+    configure_browsers(
+        &mut targets,
+        &opts.browser,
+        budget.browser_ms,
+        audio,
+        &ctx.storage,
+    );
     d.latency_ms = budget.session_ms;
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: budget.airplay_ms,
@@ -1544,6 +1558,7 @@ fn share_rejoin(
         &player_options(&opts),
         budget.browser_ms,
         audio,
+        &ctx.storage,
     );
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: budget.airplay_ms,

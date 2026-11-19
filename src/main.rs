@@ -20,6 +20,7 @@ mod machine;
 mod media;
 mod net;
 mod session;
+mod storage;
 mod types;
 mod util;
 

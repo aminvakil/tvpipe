@@ -2,8 +2,8 @@
 //! (an Ed25519 key pair plus a pairing identifier, generated once) and the
 //! receivers we paired with (their identifier and long-term public key).
 //!
-//! The store is a small line-based text file, `credentials.txt` in the
-//! config directory ([`config_dir`]):
+//! The store is a small line-based text item, `credentials` in the
+//! session's [`Storage`] (`credentials.txt` in a directory):
 //!
 //! ```text
 //! # tvpipe AirPlay credentials: private, do not share
@@ -28,97 +28,11 @@
 //! permissions 0600 on unix.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
 
 use crate::crypto::ring::{random_array, Ed25519KeyPair, ED25519_PUBLIC_KEY_LEN};
 use crate::error::{Error, Result};
+use crate::storage::{Storage, CREDENTIALS};
 use crate::util::hex;
-
-/// File name of the store inside [`config_dir`].
-pub const FILE_NAME: &str = "credentials.txt";
-
-/// Overrides the config directory (tests, portable installs).
-pub const CONFIG_DIR_ENV: &str = "TVPIPE_CONFIG_DIR";
-
-/// The platform config directory for tvpipe: `$TVPIPE_CONFIG_DIR`,
-/// else `$XDG_CONFIG_HOME/tvpipe` (or `~/.config/tvpipe`) on unix,
-/// `~/Library/Application Support/tvpipe` on macOS, and
-/// `%APPDATA%\tvpipe` on Windows. Computed from environment variables
-/// only.
-pub fn config_dir() -> Result<PathBuf> {
-    if let Some(dir) = env_path(CONFIG_DIR_ENV) {
-        return Ok(dir);
-    }
-    // Unit tests never touch the user's real credentials; the hardware
-    // tests (which set TVPIPE_ATV) do on purpose.
-    #[cfg(test)]
-    if std::env::var_os("TVPIPE_ATV").is_none() {
-        return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test-tmp")
-            .join(format!("config-{}", std::process::id())));
-    }
-    platform_config_dir()
-        .map(|d| d.join("tvpipe"))
-        .ok_or_else(|| Error::not_found("credentials: cannot determine the config directory"))
-}
-
-fn env_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-}
-
-#[cfg(target_os = "macos")]
-fn platform_config_dir() -> Option<PathBuf> {
-    env_path("HOME").map(|h| h.join("Library").join("Application Support"))
-}
-
-#[cfg(target_os = "windows")]
-fn platform_config_dir() -> Option<PathBuf> {
-    env_path("APPDATA")
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn platform_config_dir() -> Option<PathBuf> {
-    env_path("XDG_CONFIG_HOME")
-        .filter(|p| p.is_absolute())
-        .or_else(|| env_path("HOME").map(|h| h.join(".config")))
-}
-
-/// The default store path: `config_dir()/credentials.txt`.
-pub fn default_path() -> Result<PathBuf> {
-    let dir = config_dir()?;
-    // Only the platform directory has a legacy one next to it: not
-    // `$TVPIPE_CONFIG_DIR`, and not the unit tests' temporary directory
-    // (which must never take the user's real credentials).
-    if let Some(base) = platform_config_dir().filter(|b| dir == b.join("tvpipe")) {
-        migrate_legacy_dir(&base.join("streamlib"), &dir);
-    }
-    Ok(dir.join(FILE_NAME))
-}
-
-/// The project used to be called `streamlib`; move its config directory
-/// `old` (with the pairing credentials) to the new name `dir` once, so
-/// nobody has to pair again. Best effort: on failure the old directory
-/// stays and is ignored.
-fn migrate_legacy_dir(old: &Path, dir: &Path) {
-    if dir.exists() || !old.is_dir() {
-        return;
-    }
-    match std::fs::rename(old, dir) {
-        Ok(()) => info!(
-            "moved the old config directory {} to {}",
-            old.display(),
-            dir.display()
-        ),
-        Err(e) => warn!(
-            "cannot move the old config directory {} to {}: {e}",
-            old.display(),
-            dir.display()
-        ),
-    }
-}
 
 /// Our long-term controller identity.
 #[derive(Debug)]
@@ -244,7 +158,7 @@ impl Query<'_> {
 /// The credential store, loaded in memory.
 #[derive(Debug)]
 pub struct Store {
-    path: PathBuf,
+    storage: Storage,
     pub identity: Identity,
     pub receivers: Vec<Receiver>,
 }
@@ -252,35 +166,38 @@ pub struct Store {
 const HEADER: &str = "# tvpipe AirPlay credentials: private, do not share\n";
 
 impl Store {
-    /// Loads the store at `path`, creating a new identity (and saving it)
-    /// if the file does not exist.
-    pub fn open(path: &Path) -> Result<Store> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Store::parse(path, &text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let store = Store {
-                    path: path.to_owned(),
-                    identity: Identity::generate()?,
-                    receivers: Vec::new(),
-                };
-                debug!("created controller identity {}", store.identity.id);
-                store.save()?;
-                Ok(store)
-            }
-            Err(e) => Err(Error::io(
-                format!("credentials: read {}", path.display()),
-                e,
-            )),
+    /// Loads the store from `storage`, creating a new identity (and
+    /// saving it) if there is none yet.
+    pub fn open(storage: &Storage) -> Result<Store> {
+        if let Some(store) = Store::load(storage)? {
+            return Ok(store);
+        }
+        let store = Store {
+            storage: storage.clone(),
+            identity: Identity::generate()?,
+            receivers: Vec::new(),
+        };
+        debug!("created controller identity {}", store.identity.id);
+        store.save()?;
+        Ok(store)
+    }
+
+    /// Loads the store from `storage` without creating one.
+    pub fn load(storage: &Storage) -> Result<Option<Store>> {
+        match storage.load(CREDENTIALS)? {
+            Some(text) => Ok(Some(Store::parse(storage, &text)?)),
+            None => Ok(None),
         }
     }
 
-    /// [`open`](Self::open) at [`default_path`].
-    pub fn open_default() -> Result<Store> {
-        Store::open(&default_path()?)
+    /// Where the store is, for messages: the file of a directory storage.
+    pub fn location(&self) -> String {
+        self.storage.describe(CREDENTIALS)
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// The file of a directory storage.
+    pub fn file(&self) -> Option<std::path::PathBuf> {
+        self.storage.file(CREDENTIALS)
     }
 
     pub fn find(&self, q: &Query<'_>) -> Option<&Receiver> {
@@ -314,9 +231,12 @@ impl Store {
     }
 
     /// Parses the file format (see the module docs).
-    pub fn parse(path: &Path, text: &str) -> Result<Store> {
+    pub fn parse(storage: &Storage, text: &str) -> Result<Store> {
         let err = |line: usize, msg: &str| {
-            Error::malformed(format!("credentials: {}:{line}: {msg}", path.display()))
+            Error::malformed(format!(
+                "credentials: {}:{line}: {msg}",
+                storage.describe(CREDENTIALS)
+            ))
         };
         let mut identity: Option<Identity> = None;
         let mut receivers = Vec::new();
@@ -371,7 +291,7 @@ impl Store {
         }
         let identity = identity.ok_or_else(|| err(1, "no controller block"))?;
         Ok(Store {
-            path: path.to_owned(),
+            storage: storage.clone(),
             identity,
             receivers,
         })
@@ -407,10 +327,10 @@ impl Store {
         out
     }
 
-    /// Writes the store atomically (temporary file + rename), creating the
-    /// directory if needed.
+    /// Writes the store (a directory storage writes a temporary file and
+    /// renames it, creating the directory if needed).
     pub fn save(&self) -> Result<()> {
-        write_private(&self.path, self.to_text().as_bytes())
+        self.storage.save(CREDENTIALS, &self.to_text())
     }
 }
 
@@ -476,58 +396,11 @@ fn blocks(text: &str) -> Vec<Block> {
     out
 }
 
-/// Writes `data` to `path` via a temporary file in the same directory and
-/// a rename. The file is created with mode 0600 on unix. (Also used for
-/// the browser player's token, `browser::player`.)
-pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<()> {
-    use std::io::Write;
-    let dir = path
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)
-        .map_err(|e| Error::io(format!("credentials: create {}", dir.display()), e))?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| FILE_NAME.to_owned());
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let ctx = |what: &str| format!("credentials: {what} {}", tmp.display());
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let result = (|| {
-        let mut f = opts.open(&tmp).map_err(|e| Error::io(ctx("create"), e))?;
-        f.write_all(data).map_err(|e| Error::io(ctx("write"), e))?;
-        f.sync_all().map_err(|e| Error::io(ctx("sync"), e))?;
-        drop(f);
-        std::fs::rename(&tmp, path)
-            .map_err(|e| Error::io(format!("credentials: rename to {}", path.display()), e))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
-    /// A fresh, empty directory under the target dir for one test.
-    pub(crate) fn temp_dir(name: &str) -> PathBuf {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test-tmp")
-            .join(format!("{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    pub(crate) use crate::storage::tests::temp_dir;
 
     fn receiver(n: u8) -> Receiver {
         Receiver {
@@ -551,7 +424,7 @@ pub(crate) mod tests {
              receiver = 41413a4242\npk = {pk}\nname = Livingroom (2)\n\
              deviceid = AA:BB:CC:00:00:0A\naddr = 192.168.1.34:7000\n"
         );
-        let store = Store::parse(Path::new("old.txt"), &old).unwrap();
+        let store = Store::parse(&Storage::memory(), &old).unwrap();
         assert_eq!(store.receivers.len(), 1);
         assert!(!store.receivers[0].raw);
         assert_eq!(store.receivers[0].name, "Livingroom (2)");
@@ -563,11 +436,11 @@ pub(crate) mod tests {
         store.upsert(r.clone());
         let text = store.to_text();
         assert!(text.contains("pairing = raw\n"));
-        let again = Store::parse(Path::new("x"), &text).unwrap();
+        let again = Store::parse(&Storage::memory(), &text).unwrap();
         assert_eq!(again.receivers[1], r);
         assert!(!again.receivers[0].raw);
         // Saved by a Windows editor: CRLF line ends read the same.
-        let crlf = Store::parse(Path::new("x"), &text.replace('\n', "\r\n")).unwrap();
+        let crlf = Store::parse(&Storage::memory(), &text.replace('\n', "\r\n")).unwrap();
         assert_eq!(crlf.receivers, again.receivers);
         assert_eq!(crlf.identity.id, again.identity.id);
     }
@@ -575,8 +448,9 @@ pub(crate) mod tests {
     #[test]
     fn create_save_reload() {
         let dir = temp_dir("credentials-roundtrip");
-        let path = dir.join("sub").join(FILE_NAME);
-        let mut store = Store::open(&path).unwrap();
+        let path = dir.join("sub").join("credentials.txt");
+        let storage = Storage::dir(dir.join("sub"));
+        let mut store = Store::open(&storage).unwrap();
         assert!(path.exists());
         assert_eq!(store.identity.id.len(), 36);
         store.upsert(receiver(1));
@@ -586,7 +460,7 @@ pub(crate) mod tests {
         store.upsert(evil);
         store.save().unwrap();
 
-        let again = Store::open(&path).unwrap();
+        let again = Store::open(&storage).unwrap();
         assert_eq!(again.identity.id, store.identity.id);
         assert_eq!(again.identity.public_key(), store.identity.public_key());
         assert_eq!(again.receivers.len(), 3);
@@ -603,13 +477,13 @@ pub(crate) mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(names, [std::ffi::OsString::from(FILE_NAME)]);
+        assert_eq!(names, [std::ffi::OsString::from("credentials.txt")]);
     }
 
     #[test]
     fn find_upsert_remove() {
         let mut store = Store {
-            path: PathBuf::from("x"),
+            storage: Storage::memory(),
             identity: Identity::generate().unwrap(),
             receivers: vec![receiver(1), receiver(2)],
         };
@@ -654,7 +528,7 @@ pub(crate) mod tests {
 
     #[test]
     fn parse_errors_are_errors() {
-        let p = Path::new("c.txt");
+        let p = &Storage::memory();
         assert!(Store::parse(p, "").is_err());
         assert!(Store::parse(p, "controller = X\nseed = zz\n").is_err());
         assert!(Store::parse(p, "controller = X\nseed = 0011\n").is_err());
@@ -665,41 +539,6 @@ pub(crate) mod tests {
         assert!(Store::parse(p, &bad_pk).is_err());
         let unknown = format!("# c\n{ok}\nfuture = 1\nx = y\n\ngarbage line\n");
         assert!(Store::parse(p, &unknown).is_ok());
-    }
-
-    /// Unit tests never use (or migrate into a scratch directory) the
-    /// user's real config directory.
-    #[test]
-    fn tests_use_a_scratch_config_dir() {
-        if std::env::var_os("TVPIPE_ATV").is_some() || env_path(CONFIG_DIR_ENV).is_some() {
-            return;
-        }
-        let path = default_path().unwrap();
-        assert!(path.starts_with(env!("CARGO_MANIFEST_DIR")), "{path:?}");
-        if let Some(real) = platform_config_dir() {
-            assert!(!path.starts_with(real), "{path:?}");
-        }
-    }
-
-    #[test]
-    fn legacy_dir_moves_once() {
-        let root = temp_dir("credentials-migrate");
-        let (old, dir) = (root.join("streamlib"), root.join("tvpipe"));
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join(FILE_NAME), "x").unwrap();
-        migrate_legacy_dir(&old, &dir);
-        assert!(!old.exists());
-        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "x");
-        // An existing new directory wins; the old one is left alone.
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join(FILE_NAME), "y").unwrap();
-        migrate_legacy_dir(&old, &dir);
-        assert_eq!(std::fs::read_to_string(old.join(FILE_NAME)).unwrap(), "y");
-        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "x");
-        // Nothing to move.
-        migrate_legacy_dir(&root.join("missing"), &root.join("new"));
-        assert!(!root.join("new").exists());
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

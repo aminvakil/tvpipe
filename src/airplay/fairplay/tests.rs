@@ -490,7 +490,7 @@ fn hardware_fp_setup() {
         return;
     };
     let target = pair::resolve(&target).unwrap();
-    let store = Store::open_default().unwrap();
+    let store = Store::open(&crate::storage::Storage::cli()).unwrap();
     let mut control = pair::connect(&target, &store).unwrap();
     eprintln!(
         "verified with {} ({:?})",

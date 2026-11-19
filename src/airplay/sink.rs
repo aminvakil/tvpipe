@@ -101,8 +101,12 @@ pub type SecureMirrorSink = MirrorSink<SecureStream<TcpStream>>;
 /// Connects to an AirPlay receiver for mirroring: pair-verify (stored
 /// credentials, else transient), FairPlay, session setup. Falls back from
 /// PTP to NTP on a fresh connection when PTP fails (§2.5).
-pub fn connect_mirror(target: &pair::Target, opts: &MirrorOptions) -> Result<AnyMirrorSink> {
-    let mut store = crate::airplay::credentials::Store::open_default()?;
+pub fn connect_mirror(
+    target: &pair::Target,
+    opts: &MirrorOptions,
+    storage: &crate::storage::Storage,
+) -> Result<AnyMirrorSink> {
+    let mut store = crate::airplay::credentials::Store::open(storage)?;
     let name = target.label();
     match legacy_pair::connect(target, &mut store)? {
         Connected::Hap(control) => {

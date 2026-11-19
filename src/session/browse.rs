@@ -136,6 +136,7 @@ fn browse_rejoin(
         &player_options(opts),
         budget.browser_ms,
         audio,
+        &ctx.storage,
     );
     let mirror = crate::airplay::session::MirrorOptions {
         latency_ms: budget.airplay_ms,

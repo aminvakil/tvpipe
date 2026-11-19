@@ -51,6 +51,7 @@ use crate::net::http::Request;
 use crate::net::httpd::{self, Reply};
 use crate::net::tunnel::{self, Tunnel};
 use crate::net::websocket::{self, close_code, Message, Role, Sender};
+use crate::storage::{Storage, PLAYER_TOKEN};
 use crate::types::{
     AudioCodec, AudioFamily, AudioFormat, AudioInfo, Capabilities, EncodedFrame, Sink, SinkStatus,
     TrackKind, VideoCodec, VideoInfo, VIDEO_CLOCK_RATE,
@@ -94,10 +95,6 @@ const STOP_WAIT: Duration = Duration::from_millis(500);
 /// The page's port without `--port`: the same every run, so the URL (with
 /// the token kept in the config directory) stays the same.
 pub const DEFAULT_PORT: u16 = 8765;
-/// The token's file in the config directory (next to the AirPlay
-/// credentials).
-pub const TOKEN_FILE: &str = "player-token";
-
 /// How a `--to browser` receiver is set up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerOptions {
@@ -152,29 +149,26 @@ fn valid_token(t: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The player page's token, kept in [`TOKEN_FILE`] in the config
-/// directory so its URL stays the same across runs (an open tab or an
+/// The player page's token, kept in the storage's `player-token` so its
+/// URL stays the same across runs (an open tab or an
 /// OBS source reconnects to the next session). Made on first use, or
 /// anew with `rotate` (`--new-token`); the file is private (0600 on
 /// unix). Unlike the share page, which captures the user's screen, the
 /// player only shows what tvpipe streams anyway, so a lasting token is
 /// an acceptable trade.
-pub fn persistent_token(rotate: bool) -> Result<String> {
-    let dir = crate::airplay::credentials::config_dir()?;
-    token_in(&dir.join(TOKEN_FILE), rotate)
-}
-
-fn token_in(path: &std::path::Path, rotate: bool) -> Result<String> {
+pub fn persistent_token(storage: &Storage, rotate: bool) -> Result<String> {
     if !rotate {
-        match std::fs::read_to_string(path) {
-            Ok(t) if valid_token(t.trim()) => return Ok(t.trim().to_owned()),
-            Ok(_) => warn!("{}: not a token; making a new one", path.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::io(format!("read {}", path.display()), e)),
+        match storage.load(PLAYER_TOKEN)? {
+            Some(t) if valid_token(t.trim()) => return Ok(t.trim().to_owned()),
+            Some(_) => warn!(
+                "{}: not a token; making a new one",
+                storage.describe(PLAYER_TOKEN)
+            ),
+            None => {}
         }
     }
     let t = new_token()?;
-    crate::airplay::credentials::write_private(path, format!("{t}\n").as_bytes())?;
+    storage.save(PLAYER_TOKEN, &format!("{t}\n"))?;
     if rotate {
         info!("browser: new player token (old URLs stop working)");
     }

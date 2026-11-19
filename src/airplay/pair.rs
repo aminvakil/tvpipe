@@ -285,7 +285,7 @@ pub fn pair(
     get_pin: &mut dyn FnMut(&PinRequest) -> Result<String>,
 ) -> Result<()> {
     let target = resolve(target)?;
-    let mut store = Store::open_default()?;
+    let mut store = Store::open(&ctx.storage)?;
     let label = target.label();
     info!("pairing with {label} at {}", target.addr);
     let record = pair_with(&target, &mut store, pin, || {
@@ -300,7 +300,7 @@ pub fn pair(
         "paired with {} (receiver id {}); credentials in {}",
         record.name,
         record.id_display(),
-        store.path().display()
+        store.location()
     );
     // Prove the pairing works: verify on a fresh connection and fetch the
     // full /info over the encrypted channel.
@@ -311,7 +311,7 @@ pub fn pair(
         ctx.events.emit(Event::Paired(Paired {
             name: label,
             model: info.model.clone(),
-            file: Some(store.path().display().to_string()),
+            file: store.file().map(|f| f.display().to_string()),
         }));
         return Ok(());
     }
@@ -328,7 +328,7 @@ pub fn pair(
 
 /// The `unpair` command body: forgets the stored pairing.
 pub fn unpair(target: &str, ctx: &Ctx) -> Result<()> {
-    let mut store = Store::open_default()?;
+    let mut store = Store::open(&ctx.storage)?;
     let removed = forget(&mut store, target, resolve)?;
     for r in &removed {
         if ctx.events.active() {
@@ -377,8 +377,8 @@ pub fn forget(
 mod tests {
     use super::*;
     use crate::airplay::credentials::tests::temp_dir;
-    use crate::airplay::credentials::FILE_NAME;
     use crate::airplay::pairing::fake::{Config, FakeReceiver};
+    use crate::storage::Storage;
 
     fn target(fake: &FakeReceiver) -> Target {
         Target {
@@ -393,7 +393,7 @@ mod tests {
             allow_transient: false,
             ..Config::default()
         });
-        let path = temp_dir("pair-pin").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-pin"));
         let mut store = Store::open(&path).unwrap();
         let record = pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
         assert_eq!(record.id, fake.config.id);
@@ -424,7 +424,7 @@ mod tests {
     #[test]
     fn fixed_pin_skips_pin_start() {
         let fake = FakeReceiver::start(Config::default());
-        let path = temp_dir("pair-fixed-pin").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-fixed-pin"));
         let mut store = Store::open(&path).unwrap();
         pair_with(&target(&fake), &mut store, Some("1234"), || {
             panic!("not asked")
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn wrong_pin_is_auth_error() {
         let fake = FakeReceiver::start(Config::default());
-        let path = temp_dir("pair-wrong-pin").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-wrong-pin"));
         let mut store = Store::open(&path).unwrap();
         let err = pair_with(&target(&fake), &mut store, None, || Ok("9999".into())).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Auth, "{err}");
@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn transient_when_unpaired() {
         let fake = FakeReceiver::start(Config::default());
-        let path = temp_dir("pair-transient").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-transient"));
         let store = Store::open(&path).unwrap();
         let mut control = connect(&target(&fake), &store).unwrap();
         assert_eq!(control.auth, Auth::Transient);
@@ -533,7 +533,7 @@ mod tests {
             addr: fake.addr,
             device: Some(dev),
         };
-        let path = temp_dir("pair-family").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-family"));
         let store = Store::open(&path).unwrap();
         assert!(legacy_preferring(&t));
         connect(&t, &store).unwrap();
@@ -547,7 +547,7 @@ mod tests {
             allow_transient: false,
             ..Config::default()
         });
-        let path = temp_dir("pair-required").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-required"));
         let store = Store::open(&path).unwrap();
         let err = connect(&target(&fake), &store).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Auth);
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn forget_by_name_address_or_discovery() {
         let fake = FakeReceiver::start(Config::default());
-        let path = temp_dir("pair-forget").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-forget"));
         let mut store = Store::open(&path).unwrap();
         pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
         let no_browse = |_: &str| -> Result<Target> { panic!("should not browse") };
@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn repeated_verify_and_repair() {
         let fake = FakeReceiver::start(Config::default());
-        let path = temp_dir("pair-repeat").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-repeat"));
         let mut store = Store::open(&path).unwrap();
         pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
         let mut secrets = Vec::new();
@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn verify_fails_when_receiver_forgot_us() {
         let fake = FakeReceiver::start(Config::default());
-        let path = temp_dir("pair-forgotten").join(FILE_NAME);
+        let path = Storage::dir(temp_dir("pair-forgotten"));
         let mut store = Store::open(&path).unwrap();
         pair_with(&target(&fake), &mut store, None, || Ok("1234".into())).unwrap();
         fake.state.lock().unwrap().pairings.clear();
@@ -643,7 +643,7 @@ mod hardware {
     #[ignore]
     fn hardware_pair() {
         let Some(t) = atv() else { return };
-        let mut store = Store::open_default().unwrap();
+        let mut store = Store::open(&crate::storage::Storage::cli()).unwrap();
         let r = pair_with(&t, &mut store, None, || {
             eprint!("PIN: ");
             let mut line = String::new();
@@ -661,7 +661,7 @@ mod hardware {
     #[ignore]
     fn hardware_verify() {
         let Some(t) = atv() else { return };
-        let store = Store::open_default().unwrap();
+        let store = Store::open(&crate::storage::Storage::cli()).unwrap();
         let mut control = connect(&t, &store).unwrap();
         eprintln!(
             "verified with {} at {}",

@@ -489,7 +489,7 @@ pub fn identity_dir() -> Result<PathBuf> {
     if let Some(d) = std::env::var_os(DIR_ENV).filter(|d| !d.is_empty()) {
         return Ok(PathBuf::from(d));
     }
-    Ok(crate::airplay::credentials::config_dir()?.join("opentunnel"))
+    Ok(crate::storage::cli_dir()?.join("opentunnel"))
 }
 
 fn read(dir: &Path, name: &str) -> Result<String> {
@@ -498,7 +498,7 @@ fn read(dir: &Path, name: &str) -> Result<String> {
 }
 
 fn write(dir: &Path, name: &str, data: &str) -> Result<()> {
-    crate::airplay::credentials::write_private(&dir.join(name), data.as_bytes())
+    crate::storage::write_private(&dir.join(name), data.as_bytes())
 }
 
 /// Whether a tunnel ID and hostname are what the service makes (they end

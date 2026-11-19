@@ -558,7 +558,9 @@ fn annexb_when_the_input_has_no_avcc() {
 #[test]
 fn the_token_is_kept_and_rotated() {
     let dir = crate::airplay::credentials::tests::temp_dir("player-token");
-    let path = dir.join(TOKEN_FILE);
+    let path = dir.join("player-token");
+    let storage = Storage::dir(&dir);
+    let token_in = |_: &std::path::PathBuf, rotate| persistent_token(&storage, rotate);
     let t1 = token_in(&path, false).unwrap();
     assert!(valid_token(&t1), "{t1}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{t1}\n"));
