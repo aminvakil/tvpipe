@@ -19,7 +19,7 @@ phones join with the QR code.
 |---|---|---|
 | `tvpipe.json` | the manifest | pages, 3–8 players, the TV's size; `root: dist` |
 | `game/` | the rules (`rules.ts`), the clue matcher (`match.ts`), the game (`game.ts`), bots (`bots.ts`), the views (`views.ts`: the contract between host, TV and phones) | TypeScript on `@tvpipe/party`, tested in Node |
-| `host/` | the host page | the party, the TVs, the players, bots, settings (rounds, writing time, words), a muted preview of the TV |
+| `host/` | the host page | the party, the TVs, the players, settings (rounds, writing time, words), a muted preview of the TV |
 | `screen/` | the TV page | the table seen from above |
 | `phone/` | the phone page | faces, clues, cards, the guess |
 | `data/words.txt`, `data/dict.txt` | the secret words (with difficulty, category, accepted guesses, banned clues), the dictionary for typos | fetched by the host page; `design/` has how they were made |
@@ -36,10 +36,7 @@ npm run zip                                 # jinx.zip (tvpipe game pack)
 ```
 
 Pick the TVs in tvpipe's launcher, then Start: the window becomes the host
-page. "Add a bot" / "Add 3 bots" add fake players to try it alone (they
-write the word's category or another word from the word list, so they
-jinx now and then, and they peek at the word to guess). Scan the QR code on the
-TV; the first player is the VIP and starts from their phone once three
+page. Scan the QR code on the TV; the first player is the VIP and starts from their phone once three
 are in (or the host page's Start), and offers "Play again" at the end.
 
 Settings: rounds (auto: every player guesses twice with 3–5 players, once
@@ -63,4 +60,7 @@ phone.
 `npm run build`; not part of `npm test`): a whole game on the real `tvpipe
 game play` with headless Chrome as the host window, the TV and a phone, bots
 for the others; screenshots of every phase, layout checks, and checks that
-no phone shows a jinx or the word before the TV does.
+no phone shows a jinx or the word before the TV does. Bots write the
+word's category or another word from the word list, so they jinx now and
+then, and they peek at the word to guess. They are for tests: the host
+page's bot buttons show only with `?bots` in its URL.

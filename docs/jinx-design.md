@@ -352,7 +352,8 @@ difficulty), `screen/` (the TV page), `phone/` (the phone page), `data/`
 - The guess draft: the guesser's phone sends its field's text as an
   action on every change (throttled to about 20 per second); the host
   copies it into the screen view. Only the submitted guess is judged.
-- Bots (for tests and for trying the game alone) write clues from a
+- Bots (for tests; the host page shows their buttons only with
+  `?bots`) write clues from a
   per-word list of plausible clues, so jinxes happen, and guess the word
   after a random number of cards.
 

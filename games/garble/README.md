@@ -37,7 +37,7 @@ phones join with the QR code.
 |---|---|---|
 | `tvpipe.json` | the manifest | pages, 4–12 players, the TV's size; `root: dist` |
 | `game/` | the rules (`rules.ts`: drawings, seating, the word matcher, points), the game (`game.ts`), bots (`bots.ts`) | TypeScript on `@tvpipe/party`, tested in Node |
-| `host/` | the host page | the party, the TVs, the players, bots, settings, a preview of the TV; `strings.ts` |
+| `host/` | the host page | the party, the TVs, the players, settings, a preview of the TV; `strings.ts` |
 | `screen/` | the TV page | the lobby, the round's secrets, the ring of players passing slips, each chain on its thread and its verdict, the hunt, the ledger, the podium; `strings.js` |
 | `phone/` | the phone page | joining, the lobby (the VIP's settings), the secret card, the pad, guessing with the twist, judging, accusing, reactions; `strings.js`, `ink.js` (the strokes, shared with the TV) |
 | `data/` | prompts and secret words, English and German | fetched by the host page |
@@ -51,10 +51,7 @@ cd games/garble && npm install && npm run build
 ../../target/release/tvpipe game play .
 ```
 
-Pick the TVs (or "A browser tab on this computer"), then Start. The host
-page has "Add a bot": bots play by themselves (they cannot see drawings;
-the host page tells them what a drawing was meant to be, and they still
-get it wrong now and then, or fall for a smuggled word).
+Pick the TVs (or "A browser tab on this computer"), then Start.
 
 ## Checking it
 
@@ -64,5 +61,9 @@ node test/live/play.ts             # a live game: tvpipe, headless Chrome, a pho
 node test/live/play.ts --lang de --length 8 --undo
 ```
 
-The live check needs Chrome and a built tvpipe; it also checks every phone
+Bots are for tests: the host page's bot buttons show only with `?bots`
+in its URL, and the live check adds them through `garble.addBots`. They
+cannot see drawings: the host page tells them what a drawing was meant
+to be, and they still get it wrong now and then, or fall for a smuggled
+word. The live check needs Chrome and a built tvpipe; it also checks every phone
 screen for text running out of its box at 390 and 320 px.

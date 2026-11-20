@@ -3,9 +3,10 @@
  * window (docs/playshare-design.md). It makes the party on tvpipe's
  * relay, puts the TV page on the TVs the launcher chose, runs the rules
  * (`game/`), and shows the room: the QR code, the TVs,
- * the players (bots to try it alone), the settings and a preview of the
- * TV. The room's language (default: this browser's) is a setting: the
- * prompts, every phone, the TV and this page follow it.
+ * the players, the settings and a preview of the TV. Bots are for tests:
+ * their buttons show only with `?bots` in the page's URL. The room's
+ * language (default: this browser's) is a setting: the prompts, every
+ * phone, the TV and this page follow it.
  */
 
 import { qrSvg, Tvpipe, type CastStatus, type HostedParty, type LateJoin, type SurfaceEncoder } from "@tvpipe/party";
@@ -336,6 +337,8 @@ async function main(): Promise<void> {
   setting("undo", "undo");
   setting("colormode", "colorMode");
   setting("adult", "adult");
+  // Bots are for tests, not for players: their buttons show only with ?bots.
+  $("bots").hidden = !new URLSearchParams(location.search).has("bots");
   $("bot1").onclick = () => void addBots(1);
   $("bot3").onclick = () => void addBots(3);
   $("start").onclick = () => {

@@ -2,9 +2,10 @@
  * Jinx's host page: the game runs here, in tvpipe's window
  * (docs/playshare-design.md). It makes the party on tvpipe's relay, puts
  * the TV page on the TVs the launcher chose, runs the rules (`game/`), and
- * shows the room: the join code and QR code, the TVs, the players (bots
- * to try it alone), the settings (rounds, writing time, words) and a
- * muted preview of the TV. The room's dealt words are kept in
+ * shows the room: the join code and QR code, the TVs, the players, the
+ * settings (rounds, writing time, words) and a muted preview of the TV.
+ * Bots are for tests: their buttons show only with `?bots` in the page's
+ * URL. The room's dealt words are kept in
  * `localStorage`, so no word comes twice until all were dealt.
  */
 
@@ -280,6 +281,8 @@ async function main(): Promise<void> {
     game.configure({ difficulty: difficulty.value as Difficulty });
     save();
   };
+  // Bots are for tests, not for players: their buttons show only with ?bots.
+  $("bots").hidden = !new URLSearchParams(location.search).has("bots");
   $("bot1").onclick = () => void addBots(1);
   $("bot3").onclick = () => void addBots(3);
   $("start").onclick = () => {

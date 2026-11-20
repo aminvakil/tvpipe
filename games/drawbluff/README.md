@@ -49,7 +49,7 @@ phones join with the QR code.
 |---|---|---|
 | `tvpipe.json` | the manifest | pages, 3–50 players, the TV's size; `root: dist` |
 | `game/` | the rules (`rules.ts`), the game (`game.ts`), bots (`bots.ts`) | TypeScript on `@tvpipe/party`, tested in Node |
-| `host/` | the host page | the party, the TV, the players, bots, settings (the language), a preview of the TV; `strings.ts` |
+| `host/` | the host page | the party, the TV, the players, settings (the language), a preview of the TV; `strings.ts` |
 | `screen/` | the TV page | the screen view (`{ roster, screen, join }`); `strings.js` |
 | `phone/` | the phone page | drawing, lies, votes; `strings.js`, `i18n.js` (languages, `Intl`) |
 | `data/prompts.txt`, `data/prompts.de.txt` | the prompts, English and German | fetched by the host page |
@@ -70,9 +70,8 @@ tvpipe opens a window with its launcher: pick the TVs (or "A browser tab
 on this computer"), then Start. The window becomes the host page: the
 room code and QR code, the TVs, the players, rounds and timers, and who
 may join during a game (from the next round, anytime, or not at all).
-"Add a bot" adds fake players to try it alone. Scan the QR code on the
-TV; the first player is the VIP and starts the game from their phone
-once three are in (or the host page's Start). The TV picture comes
+Scan the QR code on the TV; the first player is the VIP and starts the
+game from their phone once three are in (or the host page's Start). The TV picture comes
 from tvpipe's own browser showing the TV page (the default), or, with
 **TV picture: drawn here** in Chrome 157+, from the TV page drawn into a
 canvas in the window (HTML-in-Canvas) and streamed as a surface: no
@@ -96,7 +95,9 @@ playshare` on the bundle (or the zip), a headless Chrome as the window
 (the launcher, the host page), as a phone (it joins, draws with touch
 events, lies and votes) and as the TV (the `browser` receiver's player
 page: the TV page went through tvpipe's own headless Chrome and the
-stream), bots through the phones' listener, and screenshots of the
+stream), bots through the phones' listener (the host page's bot
+buttons are for tests: they show only with `?bots` in its URL), and
+screenshots of the
 launcher, the host window, the TV and the phone (also at 320 px wide)
 per phase, each checked for text out of its box and, with `--lang de`
 (a German room and phone, shots in `/tmp/drawbluff-de`), for English
