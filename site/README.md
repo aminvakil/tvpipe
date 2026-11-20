@@ -35,6 +35,4 @@ Needs Node 22+ and Chrome.
 The site lives at https://tvpipe.party/: `.github/workflows/tvpipe-party.yml`
 builds it and deploys it with the Worker in `apps/tvpipe-party/` (which
 also serves the short join links) on pushes to `main` that touch it, and
-on manual dispatch. `.github/workflows/site.yml` still deploys the same
-build to GitHub Pages (https://mitsuhiko.github.io/tvpipe/), so links and
-installer commands from older releases keep working.
+on manual dispatch.
