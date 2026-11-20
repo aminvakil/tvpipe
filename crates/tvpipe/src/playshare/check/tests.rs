@@ -525,12 +525,15 @@ fn scripts_that_cannot_run() {
 fn reserved_and_odd_names() {
     let c = check(&game("reserved", &[("_tvpipe/lib/index.js", Some("x"))])).unwrap();
     only(&c, Level::Error, &["_tvpipe: /_tvpipe/ is tvpipe's own"]);
-    let c = check(&game("windows", &[("img/what?.png", Some("x"))])).unwrap();
-    only(
-        &c,
-        Level::Warning,
-        &["img/what?.png: the name cannot be unpacked on Windows"],
-    );
+    // Windows cannot even write such a file: the check runs elsewhere.
+    if cfg!(not(windows)) {
+        let c = check(&game("windows", &[("img/what?.png", Some("x"))])).unwrap();
+        only(
+            &c,
+            Level::Warning,
+            &["img/what?.png: the name cannot be unpacked on Windows"],
+        );
+    }
     let c = check(&game("nm", &[("node_modules/x/index.js", Some("x"))])).unwrap();
     only(&c, Level::Warning, &["node_modules is served and packed"]);
 }

@@ -131,7 +131,7 @@ pub const DEFAULT_DISPLAY_ASPECT: (u32, u32) = (16, 9);
 /// layout and is rendered at a device scale factor that fills this box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Resolution {
-    /// What the receivers take, at most [`AUTO_MAX`].
+    /// What the receivers take, at most 1920x1080.
     #[default]
     Auto,
     /// 1280x720.

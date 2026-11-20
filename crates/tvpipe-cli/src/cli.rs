@@ -391,9 +391,7 @@ static GAME_FETCH: Cli<GameToolArg> = Cli::new("fetch")
 
 static GAME_LIST: Cli<GameToolArg> = Cli::new("list")
     .about("List the games downloaded from the internet")
-    .after_help(
-        "The games list of games to play: https://tvpipe.party/manual/game-list/",
-    );
+    .after_help("The games list of games to play: https://tvpipe.party/manual/game-list/");
 
 const fn game_smoke(id: GameToolArg) -> Opt<GameToolArg> {
     Opt::new(id).long("smoke").help(
