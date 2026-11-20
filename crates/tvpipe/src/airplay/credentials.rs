@@ -22,6 +22,16 @@
 //! without that line a receiver is a HAP pairing, so older files load
 //! unchanged.
 //!
+//! A receiver whose PTP setup failed (spec §2.5) gets a block of its own,
+//! keyed by its `/info` `deviceID` and `sourceVersion`, so later sessions
+//! use NTP with it at once (a software update makes it try PTP again):
+//!
+//! ```text
+//! ptp-failed = AA:BB:CC:00:00:0B
+//! srcvers = 377.40.00
+//! name = Frame
+//! ```
+//!
 //! Blocks are separated by blank lines; `#` starts a comment line. Unknown
 //! keys are ignored, so later versions can add fields. Saving writes a
 //! temporary file next to the store and renames it over the old one, with
@@ -29,6 +39,7 @@
 
 use std::fmt::Write as _;
 
+use crate::airplay::options::ReceiverKey;
 use crate::crypto::ring::{random_array, Ed25519KeyPair, ED25519_PUBLIC_KEY_LEN};
 use crate::error::{Error, Result};
 use crate::storage::{Storage, CREDENTIALS};
@@ -155,12 +166,21 @@ impl Query<'_> {
     }
 }
 
+/// A receiver PTP failed with (spec §2.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PtpFailed {
+    pub key: ReceiverKey,
+    /// Its name then, for people reading the file.
+    pub name: String,
+}
+
 /// The credential store, loaded in memory.
 #[derive(Debug)]
 pub struct Store {
     storage: Storage,
     pub identity: Identity,
     pub receivers: Vec<Receiver>,
+    pub ptp_failed: Vec<PtpFailed>,
 }
 
 const HEADER: &str = "# tvpipe AirPlay credentials: private, do not share\n";
@@ -176,6 +196,7 @@ impl Store {
             storage: storage.clone(),
             identity: Identity::generate()?,
             receivers: Vec::new(),
+            ptp_failed: Vec::new(),
         };
         debug!("created controller identity {}", store.identity.id);
         store.save()?;
@@ -230,6 +251,22 @@ impl Store {
         removed
     }
 
+    /// Whether PTP failed with this receiver (this software version).
+    pub fn ptp_failed(&self, key: &ReceiverKey) -> bool {
+        self.ptp_failed.iter().any(|p| p.key == *key)
+    }
+
+    /// Records that PTP failed with it (replacing an older version's
+    /// record); [`save`](Store::save) persists it.
+    pub fn remember_ptp_failed(&mut self, key: &ReceiverKey, name: &str) {
+        self.ptp_failed
+            .retain(|p| !p.key.device_id.eq_ignore_ascii_case(&key.device_id));
+        self.ptp_failed.push(PtpFailed {
+            key: key.clone(),
+            name: name.to_owned(),
+        });
+    }
+
     /// Parses the file format (see the module docs).
     pub fn parse(storage: &Storage, text: &str) -> Result<Store> {
         let err = |line: usize, msg: &str| {
@@ -240,6 +277,7 @@ impl Store {
         };
         let mut identity: Option<Identity> = None;
         let mut receivers = Vec::new();
+        let mut ptp_failed = Vec::new();
         for block in blocks(text) {
             let line = block.line;
             let (first, _) = &block.entries[0];
@@ -284,6 +322,20 @@ impl Store {
                         raw: block.get("pairing") == Some("raw"),
                     });
                 }
+                "ptp-failed" => {
+                    let device_id = block.get("ptp-failed").unwrap_or_default();
+                    if device_id.is_empty() {
+                        debug!("credentials: ignoring empty ptp-failed at line {line}");
+                        continue;
+                    }
+                    ptp_failed.push(PtpFailed {
+                        key: ReceiverKey {
+                            device_id: device_id.to_owned(),
+                            source_version: block.get("srcvers").unwrap_or_default().to_owned(),
+                        },
+                        name: block.get("name").unwrap_or_default().to_owned(),
+                    });
+                }
                 other => {
                     debug!("credentials: ignoring unknown block {other:?} at line {line}");
                 }
@@ -294,6 +346,7 @@ impl Store {
             storage: storage.clone(),
             identity,
             receivers,
+            ptp_failed,
         })
     }
 
@@ -323,6 +376,15 @@ impl Store {
             if r.raw {
                 out.push_str("pairing = raw\n");
             }
+        }
+        for p in &self.ptp_failed {
+            let _ = write!(
+                out,
+                "\nptp-failed = {}\nsrcvers = {}\nname = {}\n",
+                clean(&p.key.device_id),
+                clean(&p.key.source_version),
+                clean(&p.name)
+            );
         }
         out
     }
@@ -446,6 +508,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn ptp_failures_round_trip() {
+        let mut store = Store::open(&Storage::memory()).unwrap();
+        let frame = ReceiverKey {
+            device_id: "AA:BB:CC:00:00:0B".into(),
+            source_version: "377.40.00".into(),
+        };
+        assert!(!store.ptp_failed(&frame));
+        store.remember_ptp_failed(&frame, "Frame");
+        let text = store.to_text();
+        assert!(
+            text.ends_with("\nptp-failed = AA:BB:CC:00:00:0B\nsrcvers = 377.40.00\nname = Frame\n")
+        );
+        let again = Store::parse(&Storage::memory(), &text).unwrap();
+        assert!(again.ptp_failed(&frame));
+        assert_eq!(again.to_text(), text);
+        // A new software version replaces the record (and gets PTP again).
+        let updated = ReceiverKey {
+            source_version: "380.1.0".into(),
+            ..frame.clone()
+        };
+        assert!(!again.ptp_failed(&updated));
+        store.remember_ptp_failed(&updated, "Frame");
+        assert_eq!(store.ptp_failed.len(), 1);
+        assert!(store.ptp_failed(&updated) && !store.ptp_failed(&frame));
+    }
+
+    #[test]
     fn create_save_reload() {
         let dir = temp_dir("credentials-roundtrip");
         let path = dir.join("sub").join("credentials.txt");
@@ -486,6 +575,7 @@ pub(crate) mod tests {
             storage: Storage::memory(),
             identity: Identity::generate().unwrap(),
             receivers: vec![receiver(1), receiver(2)],
+            ptp_failed: Vec::new(),
         };
         let by_pk = Query {
             public_key: Some(&[2; 32]),

@@ -3105,7 +3105,7 @@ mod tests {
         Ok(Box::new(crate::airplay::sink::connect_with(
             name.into(),
             mirror,
-            || {
+            |_| {
                 let tcp = std::net::TcpStream::connect(addr)
                     .map_err(|e| Error::io("fake airplay connect", e))?;
                 Ok((

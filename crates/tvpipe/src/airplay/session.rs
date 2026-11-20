@@ -162,6 +162,47 @@ fn plist_of(resp: &Response, what: &str) -> Result<Plist> {
 
 pub use crate::airplay::options::MirrorOptions;
 
+pub use crate::airplay::options::ReceiverKey;
+
+/// The receiver's [`ReceiverKey`], if its `/info` has a `deviceID`.
+fn receiver_key(info: &Info, version: Option<&str>) -> Option<ReceiverKey> {
+    Some(ReceiverKey {
+        device_id: info.device_id.clone().filter(|d| !d.is_empty())?,
+        source_version: version.unwrap_or_default().to_owned(),
+    })
+}
+
+/// Receivers whose PTP setup failed (§2.5): later sessions use NTP from
+/// the start, without the reconnect that some receivers do not survive.
+pub trait PtpMemory {
+    /// Whether PTP failed with this receiver before.
+    fn ptp_failed(&self, key: &ReceiverKey) -> bool;
+    /// PTP failed with it (`name` is for people reading the store).
+    fn remember_ptp_failed(&mut self, key: &ReceiverKey, name: &str);
+}
+
+/// Remembers nothing.
+pub struct NoMemory;
+
+impl PtpMemory for NoMemory {
+    fn ptp_failed(&self, _: &ReceiverKey) -> bool {
+        false
+    }
+    fn remember_ptp_failed(&mut self, _: &ReceiverKey, _: &str) {}
+}
+
+/// Remembers for as long as it lives.
+impl PtpMemory for Vec<ReceiverKey> {
+    fn ptp_failed(&self, key: &ReceiverKey) -> bool {
+        self.contains(key)
+    }
+    fn remember_ptp_failed(&mut self, key: &ReceiverKey, _: &str) {
+        if !self.contains(key) {
+            self.push(key.clone());
+        }
+    }
+}
+
 /// Why [`Session::establish`] failed.
 #[derive(Debug)]
 pub enum SetupError {
@@ -390,12 +431,15 @@ impl<S: ControlStream> Session<S> {
     /// Runs the setup up to and including the audio SETUP (§4.1–§4.6,
     /// §4.12) on an authenticated control connection. `secret` is the
     /// pair-verify shared secret; `hap` selects the crypto profile.
+    /// `memory` says which receivers get NTP at once and learns about
+    /// PTP failures.
     pub fn establish(
         client: RtspClient<S>,
         peer: SocketAddr,
         secret: Vec<u8>,
         hap: bool,
         opts: &MirrorOptions,
+        memory: &mut dyn PtpMemory,
     ) -> std::result::Result<Session<S>, SetupError> {
         let mut control = Control::new(client);
         let local_ip = control
@@ -445,11 +489,15 @@ impl<S: ControlStream> Session<S> {
         // `/info` the PTP SETUP would fail and need a new connection, which
         // some receivers do not answer after the abandoned session (§2.5).
         let anchors = anchor_from_headers(&resp.headers).is_some();
-        let ptp = opts.ptp && policy::use_ptp(hap, features, version.as_deref());
+        let key = receiver_key(&info, version.as_deref());
+        let mut ptp = opts.ptp && policy::use_ptp(hap, features, version.as_deref());
         if ptp && !anchors {
             debug!("airplay: receiver advertises PTP but sends no timing headers; using NTP");
+            ptp = false;
+        } else if ptp && key.as_ref().is_some_and(|k| memory.ptp_failed(k)) {
+            debug!("airplay: PTP failed with this receiver before; using NTP");
+            ptp = false;
         }
-        let ptp = ptp && anchors;
         let sockets = bind_sockets(peer.is_ipv6())?;
         let ntp = if ptp {
             None
@@ -517,6 +565,10 @@ impl<S: ControlStream> Session<S> {
                 )))
             }
             Err(e) => {
+                if let (SetupError::PtpFailed(_), Some(k)) = (&e, &key) {
+                    let name = session.info.name.as_deref().unwrap_or_default();
+                    memory.remember_ptp_failed(k, name);
+                }
                 session.cleanup();
                 Err(e)
             }

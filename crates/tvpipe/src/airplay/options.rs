@@ -41,5 +41,14 @@ impl Default for MirrorOptions {
     }
 }
 
+/// A receiver as its `/info` names it (`deviceID`, `sourceVersion`): what
+/// the PTP memory keeps (docs/airplay-mirroring.md §2.5). A software
+/// update gives it a new key, so it gets PTP again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiverKey {
+    pub device_id: String,
+    pub source_version: String,
+}
+
 /// Samples per ALAC frame on the wire.
 pub const ALAC_FRAME_SAMPLES: u32 = 352;

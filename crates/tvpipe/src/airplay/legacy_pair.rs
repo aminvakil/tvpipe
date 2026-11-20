@@ -334,9 +334,16 @@ mod tests {
             let reloaded = Store::open(&path).unwrap();
             assert_eq!(reloaded.receivers.len(), 1);
             assert!(reloaded.receivers[0].raw);
-            let s = Session::establish(client, addr, secret, false, &MirrorOptions::default())
-                .map_err(|e| e.into_error())
-                .unwrap();
+            let s = Session::establish(
+                client,
+                addr,
+                secret,
+                false,
+                &MirrorOptions::default(),
+                &mut crate::airplay::session::NoMemory,
+            )
+            .map_err(|e| e.into_error())
+            .unwrap();
             assert!(!s.hap);
             drop(s);
             let setups = fake

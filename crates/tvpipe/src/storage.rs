@@ -1,8 +1,8 @@
 //! Where pairings and the player page's token live ([`Storage`]).
 //!
 //! Two items, both text and both secret: `credentials` (the AirPlay
-//! controller identity and one block per paired receiver, the format of
-//! `airplay::credentials`) and `player-token` (the browser player page's
+//! controller identity, one block per paired receiver and one per
+//! receiver PTP failed with, the format of `airplay::credentials`) and `player-token` (the browser player page's
 //! token, so its URL stays the same across runs).
 //!
 //! A program keeps them in its own directory by default

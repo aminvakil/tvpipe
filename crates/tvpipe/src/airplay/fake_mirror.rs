@@ -18,7 +18,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::airplay::keys;
 use crate::airplay::secure::SecureStream;
@@ -80,6 +80,10 @@ pub struct Behaviour {
     /// Omit them only on SETUP responses: PTP fails although `/info`
     /// promised anchors (exercises the §2.5 reconnect).
     pub no_setup_timing_headers: bool,
+    /// After answering a PTP session SETUP, answer nothing for this long,
+    /// on any connection (the reported Samsung Frame: TEARDOWN and the
+    /// next pair-verify go unanswered, §10).
+    pub deaf_after_ptp: Option<Duration>,
     /// Accept the data connection but never read from it.
     pub stall_data: bool,
     /// Legacy profile with these FairPlay keys (`K`, `eiv`): plaintext
@@ -128,6 +132,7 @@ impl Default for Behaviour {
             force_keyframe: false,
             no_timing_headers: false,
             no_setup_timing_headers: false,
+            deaf_after_ptp: None,
             stall_data: false,
             legacy: None,
             raw_pairing: None,
@@ -157,6 +162,8 @@ struct Ctx {
     /// Bumped by `vanish`: connections of older generations are dark.
     generation: AtomicUsize,
     refusing: AtomicBool,
+    /// Requests until then go unanswered (`deaf_after_ptp`).
+    deaf_until: Mutex<Option<Instant>>,
 }
 
 impl Ctx {
@@ -183,6 +190,7 @@ impl FakeMirror {
             raw: Mutex::new(behaviour_raw.map(crate::airplay::legacy_pair::fake::RawReceiver::new)),
             generation: AtomicUsize::new(0),
             refusing: AtomicBool::new(false),
+            deaf_until: Mutex::new(None),
         });
         let accept = ctx.clone();
         thread::spawn(move || {
@@ -250,6 +258,7 @@ fn info(display: Option<Display>, fairplay: bool) -> Plist {
     let mut p = Plist::dict()
         .with("model", "AppleTV6,2")
         .with("name", "Fake TV")
+        .with("deviceID", "AA:BB:CC:00:00:0A")
         .with("features", features as i64)
         .with("sourceVersion", "960.13.1")
         .with("initialVolume", 0.0)
@@ -295,6 +304,14 @@ fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
                 return Ok(());
             }
         }
+        if ctx
+            .deaf_until
+            .lock()
+            .unwrap()
+            .is_some_and(|t| Instant::now() < t)
+        {
+            continue;
+        }
         let mut resp = handle(&req, ctx);
         if ctx.behaviour.no_timing_headers
             || (ctx.behaviour.no_setup_timing_headers && req.method == "SETUP")
@@ -303,6 +320,14 @@ fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
             resp.headers.remove("X-Apple-ProcessingTime");
         }
         conn.send_response(&resp)?;
+        if let Some(d) = ctx.behaviour.deaf_after_ptp {
+            let ptp_session = req.method == "SETUP"
+                && Plist::from_bytes(&req.body)
+                    .is_ok_and(|b| b.get("timingProtocol").and_then(Plist::as_str) == Some("PTP"));
+            if ptp_session {
+                *ctx.deaf_until.lock().unwrap() = Some(Instant::now() + d);
+            }
+        }
     }
 }
 

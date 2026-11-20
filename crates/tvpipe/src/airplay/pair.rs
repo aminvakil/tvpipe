@@ -121,11 +121,16 @@ pub fn resolve(target: &str) -> Result<Target> {
 
 /// Opens a plain control connection with timeouts set.
 pub fn open(addr: SocketAddr) -> Result<RtspClient<TcpStream>> {
-    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
+    open_within(addr, IO_TIMEOUT)
+}
+
+/// [`open`] with `io` as the read and write timeout.
+fn open_within(addr: SocketAddr, io: Duration) -> Result<RtspClient<TcpStream>> {
+    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT.min(io))
         .map_err(|e| Error::io(format!("airplay: connect to {addr}"), e))?;
     stream
-        .set_read_timeout(Some(IO_TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
+        .set_read_timeout(Some(io))
+        .and_then(|()| stream.set_write_timeout(Some(io)))
         .and_then(|()| stream.set_nodelay(true))
         .map_err(|e| Error::io("airplay: socket options", e))?;
     Ok(RtspClient::new(stream))
@@ -150,7 +155,7 @@ pub fn encrypt(mut client: RtspClient<TcpStream>, shared: &Shared) -> Result<Sec
 /// Connects and authenticates: pair-verify with `receiver`, else
 /// transient pair-setup.
 pub fn connect_with(addr: SocketAddr, identity: &Identity, auth: Auth) -> Result<Control> {
-    connect_auth(addr, identity, auth, false)
+    connect_auth(addr, identity, auth, false, IO_TIMEOUT)
 }
 
 /// Whether discovery says the receiver prefers legacy pairing (no
@@ -170,8 +175,9 @@ fn connect_auth(
     identity: &Identity,
     auth: Auth,
     legacy_preferring: bool,
+    io: Duration,
 ) -> Result<Control> {
-    let mut client = open(addr)?;
+    let mut client = open_within(addr, io)?;
     let shared = match &auth {
         Auth::Verified(r) => {
             debug!("pair-verify with {} at {addr}", r.name);
@@ -194,6 +200,11 @@ fn connect_auth(
 /// Connects to a resolved target with the credentials in `store`: stored
 /// pairing first, transient pair-setup otherwise.
 pub fn connect(target: &Target, store: &Store) -> Result<Control> {
+    connect_within(target, store, IO_TIMEOUT)
+}
+
+/// [`connect`] that has to authenticate within `io` (per read).
+pub fn connect_within(target: &Target, store: &Store, io: Duration) -> Result<Control> {
     let found = store.find(&target.query()).or_else(|| {
         let ip = target.addr.ip().to_string();
         store.find(&Query {
@@ -203,12 +214,19 @@ pub fn connect(target: &Target, store: &Store) -> Result<Control> {
     });
     // Legacy raw pairings are verified by `airplay::legacy_pair` (W7).
     match found.filter(|r| !r.raw) {
-        Some(r) => connect_with(target.addr, &store.identity, Auth::Verified(r.clone())),
+        Some(r) => connect_auth(
+            target.addr,
+            &store.identity,
+            Auth::Verified(r.clone()),
+            false,
+            io,
+        ),
         None => connect_auth(
             target.addr,
             &store.identity,
             Auth::Transient,
             legacy_preferring(target),
+            io,
         )
         .map_err(|e| {
             if e.kind() == ErrorKind::Auth {
@@ -485,6 +503,7 @@ mod tests {
             &Identity::generate().unwrap(),
             Auth::Transient,
             true,
+            IO_TIMEOUT,
         )
         .unwrap();
         get_info(&mut c.client).unwrap();

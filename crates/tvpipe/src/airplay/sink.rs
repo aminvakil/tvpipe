@@ -46,8 +46,8 @@ use crate::airplay::pair::{self, SecureClient};
 use crate::airplay::policy::{self, bit};
 use crate::airplay::secure::SecureStream;
 use crate::airplay::session::{
-    lock_control, ControlStream, MirrorOptions, Session, SetupError, DEFAULT_TIMEOUT,
-    STOP_TEARDOWN_TIMEOUT,
+    lock_control, ControlStream, MirrorOptions, NoMemory, PtpMemory, ReceiverKey, Session,
+    SetupError, DEFAULT_TIMEOUT, STOP_TEARDOWN_TIMEOUT,
 };
 use crate::airplay::setup::AudioCodecId;
 use crate::airplay::timing::{
@@ -100,26 +100,35 @@ pub type SecureMirrorSink = MirrorSink<SecureStream<TcpStream>>;
 
 /// Connects to an AirPlay receiver for mirroring: pair-verify (stored
 /// credentials, else transient), FairPlay, session setup. Falls back from
-/// PTP to NTP on a fresh connection when PTP fails (§2.5).
+/// PTP to NTP on a fresh connection when PTP fails (§2.5), and remembers
+/// that in the credential store so the next session uses NTP at once.
 pub fn connect_mirror(
     target: &pair::Target,
     opts: &MirrorOptions,
     storage: &crate::storage::Storage,
 ) -> Result<AnyMirrorSink> {
-    let mut store = crate::airplay::credentials::Store::open(storage)?;
+    let store = std::cell::RefCell::new(crate::airplay::credentials::Store::open(storage)?);
     let name = target.label();
-    match legacy_pair::connect(target, &mut store)? {
+    let first = legacy_pair::connect(target, &mut store.borrow_mut())?;
+    match first {
         Connected::Hap(control) => {
             let mut first = Some(*control);
-            connect_with(name, opts, || {
-                let control = match first.take() {
-                    Some(c) => c,
-                    None => pair::connect(target, &store)?,
-                };
-                let secret = control.shared.secret().to_vec();
-                let client: SecureClient = control.client;
-                Ok((client, control.addr, secret, true))
-            })
+            connect_full(
+                name,
+                opts,
+                &RECONNECT,
+                &mut StoreMemory(&store),
+                |timeout| {
+                    let control = match (first.take(), timeout) {
+                        (Some(c), _) => c,
+                        (None, Some(t)) => pair::connect_within(target, &store.borrow(), t)?,
+                        (None, None) => pair::connect(target, &store.borrow())?,
+                    };
+                    let secret = control.shared.secret().to_vec();
+                    let client: SecureClient = control.client;
+                    Ok((client, control.addr, secret, true))
+                },
+            )
             .map(AnyMirrorSink::Hap)
         }
         Connected::Legacy {
@@ -129,12 +138,28 @@ pub fn connect_mirror(
         } => {
             warn!("airplay: {name}: legacy profile (untested on hardware)");
             let mut first = Some((client, addr, secret));
-            connect_with(name, opts, || match first.take() {
+            connect_with(name, opts, |_| match first.take() {
                 Some((client, addr, secret)) => Ok((client, addr, secret, false)),
                 // The legacy profile never uses PTP, so there is no retry.
                 None => Err(Error::protocol("airplay: legacy session cannot be retried")),
             })
             .map(AnyMirrorSink::Legacy)
+        }
+    }
+}
+
+/// [`PtpMemory`] in the credential store (saved at once).
+struct StoreMemory<'a>(&'a std::cell::RefCell<crate::airplay::credentials::Store>);
+
+impl PtpMemory for StoreMemory<'_> {
+    fn ptp_failed(&self, key: &ReceiverKey) -> bool {
+        self.0.borrow().ptp_failed(key)
+    }
+    fn remember_ptp_failed(&mut self, key: &ReceiverKey, name: &str) {
+        let mut store = self.0.borrow_mut();
+        store.remember_ptp_failed(key, name);
+        if let Err(e) = store.save() {
+            debug!("airplay: could not remember the PTP failure: {e}");
         }
     }
 }
@@ -184,26 +209,90 @@ impl Sink for AnyMirrorSink {
 /// secret, HAP profile.
 pub type Fresh<S> = (crate::net::rtsp::RtspClient<S>, SocketAddr, Vec<u8>, bool);
 
-/// [`connect_mirror`] over any connector: establishes the session, and
-/// when PTP fails tears it down and retries once with NTP on a new
-/// connection (§2.5).
+/// How [`connect_full`] reconnects after a PTP failure (§2.5).
+#[derive(Debug, Clone, Copy)]
+pub struct Reconnect {
+    /// The pause before each attempt.
+    pub pauses: &'static [Duration],
+    /// What an attempt has to authenticate in.
+    pub timeout: Duration,
+}
+
+/// Up to three attempts, 5 s each, over about 22 s: a receiver may ignore
+/// a new connection while it is still busy with the abandoned session
+/// (the Samsung Frame, §10), and one that answers at all answers pairing
+/// in well under a second.
+pub const RECONNECT: Reconnect = Reconnect {
+    pauses: &[
+        Duration::from_millis(500),
+        Duration::from_secs(2),
+        Duration::from_secs(5),
+    ],
+    timeout: Duration::from_secs(5),
+};
+
+/// [`connect_full`] without memory and with [`RECONNECT`].
 pub fn connect_with<S: ControlStream>(
     name: String,
     opts: &MirrorOptions,
-    mut connect: impl FnMut() -> Result<Fresh<S>>,
+    connect: impl FnMut(Option<Duration>) -> Result<Fresh<S>>,
+) -> Result<MirrorSink<S>> {
+    connect_full(name, opts, &RECONNECT, &mut NoMemory, connect)
+}
+
+/// [`connect_mirror`] over any connector: establishes the session, and
+/// when PTP fails tears it down and retries with NTP on a new connection
+/// (§2.5). `connect(None)` gives the first connection, `connect(Some(t))`
+/// a new one that has to authenticate within `t`.
+pub fn connect_full<S: ControlStream>(
+    name: String,
+    opts: &MirrorOptions,
+    reconnect: &Reconnect,
+    memory: &mut dyn PtpMemory,
+    mut connect: impl FnMut(Option<Duration>) -> Result<Fresh<S>>,
 ) -> Result<MirrorSink<S>> {
     let mut opts = opts.clone();
+    let mut fresh = connect(None)?;
     loop {
-        let (client, peer, secret, hap) = connect()?;
-        match Session::establish(client, peer, secret, hap, &opts) {
+        let (client, peer, secret, hap) = fresh;
+        match Session::establish(client, peer, secret, hap, &opts, memory) {
             Ok(s) => return Ok(MirrorSink::new(name, s, &opts)),
             Err(SetupError::PtpFailed(e)) if opts.ptp => {
-                warn!("airplay: PTP setup failed ({e}); retrying with NTP");
+                // Not a warning: NTP works, and the receiver gets it at
+                // once from now on.
+                info!("airplay: {name}: no PTP timing ({e}); using NTP");
                 opts.ptp = false;
+                fresh = reconnect_after_ptp(&name, reconnect, &mut connect)?;
             }
             Err(e) => return Err(e.into_error()),
         }
     }
+}
+
+/// The new connection after a PTP failure, within `r`'s attempts.
+fn reconnect_after_ptp<S: ControlStream>(
+    name: &str,
+    r: &Reconnect,
+    connect: &mut impl FnMut(Option<Duration>) -> Result<Fresh<S>>,
+) -> Result<Fresh<S>> {
+    let mut last = None;
+    for (i, pause) in r.pauses.iter().enumerate() {
+        std::thread::sleep(*pause);
+        match connect(Some(r.timeout)) {
+            Ok(f) => return Ok(f),
+            // Refused credentials do not get better by waiting.
+            Err(e) if e.kind() == crate::error::ErrorKind::Auth => return Err(e),
+            Err(e) => {
+                debug!("airplay: {name}: reconnect {} failed: {e}", i + 1);
+                last = Some(e);
+            }
+        }
+    }
+    let why = last.map_or_else(String::new, |e| format!(" ({e})"));
+    Err(Error::timeout(format!(
+        "airplay: {name} did not take a new connection after its PTP setup failed{why}; \
+         the next attempt uses NTP from the start: try again in a minute"
+    )))
 }
 
 /// The private clock's rule (a sink used without a fanout).
@@ -1262,11 +1351,51 @@ mod tests {
     }
 
     fn try_connect(fake: &FakeMirror, opts: &MirrorOptions) -> Result<MirrorSink<TcpStream>> {
-        connect_with("fake".into(), opts, || {
-            let tcp = TcpStream::connect(fake.addr).unwrap();
-            Ok((RtspClient::new(tcp), fake.addr, fake.secret.clone(), true))
-        })
+        connect_with("fake".into(), opts, connector(fake))
     }
+
+    /// Connections to `fake`; a reconnect stands in for pair-verify with a
+    /// request the fake has to answer within the attempt's timeout.
+    fn connector(
+        fake: &FakeMirror,
+    ) -> impl FnMut(Option<Duration>) -> Result<Fresh<TcpStream>> + '_ {
+        |timeout| {
+            let tcp = TcpStream::connect(fake.addr).unwrap();
+            let mut client = RtspClient::new(tcp);
+            if let Some(t) = timeout {
+                client.conn().get_ref().set_read_timeout(Some(t)).unwrap();
+                client.request("POST", "/pair-verify", &[], None)?;
+            }
+            Ok((client, fake.addr, fake.secret.clone(), true))
+        }
+    }
+
+    /// The fake's `/info` key.
+    fn fake_key() -> ReceiverKey {
+        ReceiverKey {
+            device_id: "AA:BB:CC:00:00:0A".into(),
+            source_version: "960.13.1".into(),
+        }
+    }
+
+    fn timing_protocols(fake: &FakeMirror) -> Vec<String> {
+        fake.rec()
+            .setup_bodies
+            .iter()
+            .filter_map(|b| b.get("timingProtocol").and_then(Plist::as_str))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Quick reconnects for tests.
+    const FAST: Reconnect = Reconnect {
+        pauses: &[
+            Duration::from_millis(50),
+            Duration::from_millis(300),
+            Duration::from_millis(1000),
+        ],
+        timeout: Duration::from_millis(400),
+    };
 
     fn avcc() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let b = vectors::load("airplay-mirror/video.txt")
@@ -1747,6 +1876,101 @@ mod tests {
     }
 
     #[test]
+    fn ptp_failure_is_remembered() {
+        let fake = FakeMirror::start(Behaviour {
+            no_setup_timing_headers: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let opts = MirrorOptions::default();
+        let mut memory: Vec<ReceiverKey> = Vec::new();
+        let mut sink =
+            connect_full("fake".into(), &opts, &FAST, &mut memory, connector(&fake)).unwrap();
+        sink.stop().unwrap();
+        assert_eq!(memory, [fake_key()]);
+        assert_eq!(timing_protocols(&fake), ["PTP", "NTP"]);
+        // The next session asks for NTP at once, on one connection.
+        let mut sink =
+            connect_full("fake".into(), &opts, &FAST, &mut memory, connector(&fake)).unwrap();
+        assert!(matches!(sink.session.timeline, Timeline::Ntp));
+        sink.stop().unwrap();
+        assert_eq!(timing_protocols(&fake), ["PTP", "NTP", "NTP"]);
+        // Another software version tries PTP again.
+        let mut other = vec![ReceiverKey {
+            source_version: "960.14.0".into(),
+            ..fake_key()
+        }];
+        let mut sink =
+            connect_full("fake".into(), &opts, &FAST, &mut other, connector(&fake)).unwrap();
+        sink.stop().unwrap();
+        assert_eq!(timing_protocols(&fake)[3], "PTP");
+    }
+
+    #[test]
+    fn reconnect_waits_out_a_busy_receiver() {
+        // Like the reported Samsung Frame: after the PTP SETUP it answers
+        // neither the TEARDOWN nor the next connection's pairing for a
+        // while. The cleanup TEARDOWN gives up after 2 s; the first two
+        // reconnects fall into the remaining second, the third gets in.
+        let fake = FakeMirror::start(Behaviour {
+            no_setup_timing_headers: true,
+            deaf_after_ptp: Some(Duration::from_secs(3)),
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut memory: Vec<ReceiverKey> = Vec::new();
+        let mut sink = connect_full(
+            "fake".into(),
+            &MirrorOptions::default(),
+            &FAST,
+            &mut memory,
+            connector(&fake),
+        )
+        .unwrap();
+        assert!(matches!(sink.session.timeline, Timeline::Ntp));
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 3);
+        sink.stop().unwrap();
+        assert_eq!(timing_protocols(&fake), ["PTP", "NTP"]);
+        let verifies = fake
+            .rec()
+            .requests
+            .iter()
+            .filter(|q| *q == "POST /pair-verify")
+            .count();
+        assert_eq!(verifies, 3);
+        assert_eq!(memory, [fake_key()]);
+    }
+
+    #[test]
+    fn unreachable_after_ptp_failure_says_to_retry() {
+        let fake = FakeMirror::start(Behaviour {
+            no_setup_timing_headers: true,
+            deaf_after_ptp: Some(Duration::from_secs(30)),
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        const QUICK: Reconnect = Reconnect {
+            pauses: &[Duration::from_millis(10), Duration::from_millis(10)],
+            timeout: Duration::from_millis(200),
+        };
+        let mut memory: Vec<ReceiverKey> = Vec::new();
+        let e = connect_full(
+            "fake".into(),
+            &MirrorOptions::default(),
+            &QUICK,
+            &mut memory,
+            connector(&fake),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(e.kind(), crate::error::ErrorKind::Timeout);
+        assert!(e.message().contains("uses NTP from the start"), "{e}");
+        // Remembered before the reconnect, so the next run skips PTP.
+        assert_eq!(memory, [fake_key()]);
+    }
+
+    #[test]
     fn stalled_receiver_fails_the_sink() {
         let fake = FakeMirror::start(Behaviour {
             stall_data: true,
@@ -1799,6 +2023,7 @@ mod tests {
             fake.secret.clone(),
             false,
             &opts,
+            &mut NoMemory,
         )
         .map_err(SetupError::into_error)
         .unwrap();
@@ -1858,6 +2083,7 @@ mod tests {
             fake.secret.clone(),
             false,
             &opts,
+            &mut NoMemory,
         )
         .map_err(SetupError::into_error)
         .unwrap();
@@ -1919,6 +2145,7 @@ mod tests {
             fake.secret.clone(),
             false,
             &MirrorOptions::default(),
+            &mut NoMemory,
         )
         .map_err(SetupError::into_error);
         if crate::airplay::session::FAIRPLAY_BUILT {
@@ -1949,6 +2176,7 @@ mod tests {
             fake.secret.clone(),
             true,
             &MirrorOptions::default(),
+            &mut NoMemory,
         )
         .map_err(SetupError::into_error)
         .err()

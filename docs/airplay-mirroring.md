@@ -214,6 +214,19 @@ receiver rejects the PTP session SETUP with 400/406/415/455/501), tear the
 partial session down, close the control connection, reconnect, redo
 pair-verify and FairPlay, and run the whole setup once more with NTP [REF].
 
+The reconnect is the fragile part: the reported Samsung Frame (§10) answers
+neither the TEARDOWN nor the new connection's pair-verify for at least
+15 s. So the sender (a) waits 2 s for the TEARDOWN (§4.14), then closes;
+(b) reconnects up to three times, after pauses of 0.5, 2 and 5 s, each
+attempt given 5 s to authenticate (about 22 s in all); (c) remembers the
+failure by the receiver's `/info` `deviceID` and `sourceVersion` before
+reconnecting, so every later session uses NTP from the start even if the
+reconnect fails (a software update makes it try PTP again). If no attempt
+gets in, the error says to try again. tvpipe keeps the memory in its
+credential store (`ptp-failed` blocks). Reusing the first connection for
+an NTP SETUP is not attempted: a receiver that does not answer the
+TEARDOWN would not answer that either.
+
 [HW] The Apple TV accepts both: with PTP it returns a clock id and anchor
 headers; with NTP it probes the sender's timing port (§7.3). PTP needs no
 inbound UDP on the sender, NTP does (a host firewall that drops the probes
@@ -1258,7 +1271,7 @@ not the session.
 | Apple TV 3rd gen (AppleTV3,2, sourceVersion 220.68) [MODEL] | legacy raw pairing, plaintext control | media-first | NTP, receiver probes | layout P, no shk, AES-CBC | needs `ekey`/`eiv`/`et` in the session SETUP; no `supportedFormats` (use feature bits); video AES-CTR |
 | Roku (Streaming Stick 4K 3820R2, sourceVersion 377.40.00) [MODEL; Roku/TCL Roku reported working] | legacy (HKP 3) | media-first | advertises PTP (feature 41, `PTPInfo`), uses NTP with receiver probes | layout P | omits `supportedFormats`; AAC-ELD |
 | LG (75UP75009LC, sourceVersion 377.25.06) [MODEL; LG not in the reference's tested list] | HKP 3 but TLV8/HAP, encrypted control | media-first (rejects control-only SETUP) | advertises PTP but sends no timing headers → NTP from the start (§2.5) | — | ALAC only (`screenStream` 0x40000); third-party TV family |
-| Samsung The Frame 43" (LS03B, sourceVersion 377.40.00) [USER: issue #5] | HAP pair-verify; no FairPlay (feature 14 clear) | control-first, SETUP #1 accepted | advertises PTP (feature 41), accepts the PTP SETUP #1 but its response has no timing headers (that `/info` lacks them too is assumed, not reported); after that abandoned session it answers neither TEARDOWN nor a new connection's pair-verify (15 s timeout) → NTP from the start (§2.5) | ALAC | 1080p60 canvas; third-party TV family |
+| Samsung The Frame 43" (LS03B, sourceVersion 377.40.00) [USER: issue #5] | HAP pair-verify; no FairPlay (feature 14 clear) | control-first, SETUP #1 accepted | advertises PTP (feature 41), accepts the PTP SETUP #1 but its response has no timing headers (that `/info` lacks them too is assumed, not reported); after that abandoned session it answers neither TEARDOWN nor a new connection's pair-verify (15 s timeout); for how long is unknown → NTP from the start (no timing headers on `/info`, or remembered), else the §2.5 reconnect attempts | ALAC | 1080p60 canvas; third-party TV family |
 | Samsung TU8300, Hisense, TCL Google TV [REF: reported working] | — | — | — | — | no per-family facts recorded; third-party TVs need an explicit initial volume |
 | UxPlay (open-source receiver, advertises AppleTV3,2) [MODEL] | legacy raw pairing | control-first | NTP, receiver probes | ALAC, layout P | no `eventPort`; AES-CTR video keyed from `K = SHA-512(K_fp ‖ S)[0..16]`, because the legacy pair-verify sent `X-Apple-PD: 1` (§2.2, §5.2) |
 | AirServer / Airtame [MODEL] | legacy raw pairing | control-first | NTP, **sender-initiated** (SETUP response has `timingPort`) | AAC-ELD only (`screenStream` 0x1000000) | |
@@ -1266,8 +1279,8 @@ not the session.
 
 Generic rules that cover these without model checks: §4.1 (fall back to
 media-first on 400/405/406/415/455/501), §4.6 (retry the other audio
-layout once), §2.5 (NTP when `/info` has no timing headers; PTP → NTP on
-a fresh connection), §4.4 (RECORD later on
+layout once), §2.5 (NTP when `/info` has no timing headers or PTP failed
+with the receiver before; PTP → NTP on a fresh connection), §4.4 (RECORD later on
 455), §4.13 (no GET_PARAMETER keep-alive).
 
 ---
