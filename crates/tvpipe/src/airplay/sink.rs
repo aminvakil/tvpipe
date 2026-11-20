@@ -1911,10 +1911,19 @@ mod tests {
         // Like the reported Samsung Frame: after the PTP SETUP it answers
         // neither the TEARDOWN nor the next connection's pairing for a
         // while. The cleanup TEARDOWN gives up after 2 s; the first two
-        // reconnects fall into the remaining second, the third gets in.
+        // reconnects start by 2.5 s, inside the 4 s, the third after 5 s
+        // gets in (wide margins: a loaded CI runner is slow).
+        const WAIT: Reconnect = Reconnect {
+            pauses: &[
+                Duration::from_millis(50),
+                Duration::from_millis(50),
+                Duration::from_millis(2500),
+            ],
+            timeout: Duration::from_millis(400),
+        };
         let fake = FakeMirror::start(Behaviour {
             no_setup_timing_headers: true,
-            deaf_after_ptp: Some(Duration::from_secs(3)),
+            deaf_after_ptp: Some(Duration::from_secs(4)),
             nack_after: None,
             ..Behaviour::default()
         });
@@ -1922,7 +1931,7 @@ mod tests {
         let mut sink = connect_full(
             "fake".into(),
             &MirrorOptions::default(),
-            &FAST,
+            &WAIT,
             &mut memory,
             connector(&fake),
         )
@@ -1938,7 +1947,7 @@ mod tests {
             .iter()
             .filter(|q| *q == "POST /pair-verify")
             .count();
-        assert_eq!(verifies, 3);
+        assert_eq!(verifies, 3, "{:?}", fake.rec().requests);
         assert_eq!(memory, [fake_key()]);
     }
 

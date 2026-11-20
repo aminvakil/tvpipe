@@ -38,7 +38,11 @@ fn stream_raw_frames_and_audio_to_a_browser_receiver() {
     let t0 = Instant::now();
     let mut queued = 0;
     let mut i = 0;
-    while t0.elapsed() < Duration::from_millis(1500) {
+    // At least 1.5 s, and on until a slow machine's encoder (a loaded CI
+    // runner's ffmpeg) has taken some frames.
+    while t0.elapsed() < Duration::from_millis(1500)
+        || (queued <= 10 && t0.elapsed() < Duration::from_secs(30))
+    {
         let pts = s.elapsed();
         if s.write_video(&bars(160, 90, i), pts).unwrap() == Written::Queued {
             queued += 1;
