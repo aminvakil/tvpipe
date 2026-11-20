@@ -14,6 +14,6 @@ export { Emitter } from "./emitter.js";
 export { StateBox, diff, applyDiff, toJson } from "./sync.js";
 export { cleanText, graphemes, nameKey } from "./names.js";
 export { TokenBucket, WindowCounter } from "./limits.js";
-export { PartyClient, PartyActionError, memoryStorage, qrSvg, drawQr, } from "./client.js";
+export { PartyClient, PartyActionError, memoryStorage, qrSvg, drawQr, joinText, } from "./client.js";
 export { memoryRelay, MemoryRelay } from "./testing.js";
 export { SurfaceEncoder, captureAudio, slrwRecord, wallMicros, } from "./surface.js";

@@ -438,3 +438,72 @@ fn silence_times_out_and_stop_ends_a_transfer() {
         .unwrap_err();
     assert!(e.message().contains("stopped"), "{e}");
 }
+
+#[test]
+fn send_methods_bodies_and_no_redirects() {
+    let s = TestServer::plain(Arc::new(|r: &Request| match r.target.as_str() {
+        "/moved" => response(302, &[("Location", "/elsewhere")], b""),
+        "/big" => response(200, &[], &[b'x'; 100]),
+        "/err" => response(500, &[], &[b'e'; 100]),
+        _ => response(
+            201,
+            &[],
+            format!("{} {}", r.method, r.body.len()).as_bytes(),
+        ),
+    }));
+    let c = s.client();
+    let url = |p: &str| Url::parse(&format!("{}{p}", s.base(""))).unwrap();
+    let (status, body) = c
+        .send(
+            "POST",
+            &url("/api"),
+            &[("Authorization", "Bearer x")],
+            Some(("application/json", b"{\"a\":1}".to_vec())),
+            1024,
+        )
+        .unwrap();
+    assert_eq!((status, body.as_slice()), (201, &b"POST 7"[..]));
+    {
+        let reqs = s.requests.lock().unwrap();
+        let r = &reqs[0];
+        assert_eq!(r.headers.get("authorization"), Some("Bearer x"));
+        assert_eq!(r.headers.get("content-type"), Some("application/json"));
+        assert_eq!(r.headers.get("content-length"), Some("7"));
+        assert_eq!(r.body, b"{\"a\":1}");
+    }
+    let (status, body) = c.send("DELETE", &url("/api"), &[], None, 1024).unwrap();
+    assert_eq!((status, body.as_slice()), (201, &b"DELETE 0"[..]));
+    // A redirect is only a status.
+    let (status, _) = c.send("GET", &url("/moved"), &[], None, 1024).unwrap();
+    assert_eq!(status, 302);
+    assert_eq!(s.targets().len(), 3);
+    // Too big a 2xx answer is an error; an error's body is cut.
+    assert!(c.send("GET", &url("/big"), &[], None, 10).is_err());
+    let (status, body) = c.send("GET", &url("/err"), &[], None, 10).unwrap();
+    assert_eq!((status, body.len()), (500, 10));
+    // Plain http only to loopback.
+    let far = Url::parse("http://example.com/").unwrap();
+    assert!(c.send("GET", &far, &[], None, 10).is_err());
+}
+
+#[test]
+fn send_over_tls() {
+    let s = TestServer::tls(Arc::new(|r: &Request| {
+        response(200, &[], format!("{} {}", r.method, r.target).as_bytes())
+    }));
+    let url = Url::parse(&format!("{}/api/links/BCDF", s.base(HOST_A))).unwrap();
+    let (status, body) = s
+        .client()
+        .send(
+            "PUT",
+            &url,
+            &[],
+            Some(("application/json", b"{}".to_vec())),
+            1024,
+        )
+        .unwrap();
+    assert_eq!(
+        (status, body.as_slice()),
+        (200, &b"PUT /api/links/BCDF"[..])
+    );
+}

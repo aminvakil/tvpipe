@@ -258,6 +258,12 @@ export interface JoinInfo {
   qr: { size: number; rows: string[] } | null;
   /** How phones reach the party: a tunnel, the LAN (Rust hosts), this computer. */
   mode?: "tunnel" | "lan" | "local";
+  /**
+   * A short link to `url` for people to type (`https://tvpipe.party/BCDF`,
+   * docs/short-links.md): only with a tunnel, when tvpipe registered one.
+   * Show it with `joinText(join)`.
+   */
+  short?: string | undefined;
 }
 
 export interface PartyLimits {

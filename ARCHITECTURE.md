@@ -243,6 +243,12 @@ naming its host, TV and phone pages. Design and protocols:
   (TEARDOWN/STOP), the browsers quit, the tunnel closes.
 - **Tunnels**: OpenTunnel first (its identity is made once and reused, so
   frequent runs create nothing), Cloudflare if it fails; `--no-tunnel`.
+- **Short links** (`playshare/shortlink.rs`): the host page asks for
+  `tvpipe.party/CODE` for the tunnel's join link (`shortlink` on the API);
+  tvpipe registers it with the service (`apps/tvpipe-party`, over
+  `net::fetch`), refreshes it every 6 h and deletes it at the end;
+  `--no-short-link`, `TVPIPE_PARTY_URL`. Design:
+  [`docs/short-links.md`](docs/short-links.md).
 - **`tvpipe game pack`, `check`, `new`** (`playshare/check.rs`, `scan.rs`, `smoke.rs`,
   `tool.rs`; [`docs/games.md`](docs/games.md)) checks a game the way
   playshare loads it, plus what its pages load: tolerant scanners for

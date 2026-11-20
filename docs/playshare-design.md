@@ -165,6 +165,7 @@ ignored, or `unknown-method`.
 | `cast.stop` | | the TVs get TEARDOWN; the headless browser quits |
 | `qr` | `{text}` → `{size, rows}` | tvpipe's QR encoder (`util::qr`): `rows` of `"0"`/`"1"` |
 | `relay.attach` | `{}` → `{public, local}` | this socket becomes the relay host (§6); a newer attach replaces it |
+| `shortlink` | `{url, code}` → `{url, code}` | a short link (`https://tvpipe.party/BCDF`) for the tunnel's join link `url` (only `https://TUNNEL-HOST/…`: else `bad-url`), `code` the room code to propose; `unavailable` without a tunnel, with `--no-short-link`/`TVPIPE_PARTY_URL=off` or when the service fails. One registration per run (the same url: no request), refreshed every 6 h, deleted at the end: [`short-links.md`](short-links.md) |
 | `quit` | | ends playshare (§10) |
 
 Events also include `tunnel` (`{state: up|reconnecting, url}`) and
@@ -316,7 +317,9 @@ or `memoryRelay()` in tests) instead of a Node server. `party.links`:
 `join` (public, in the QR code), `tv` (the local TV page with the screen
 key), `watch` (a read-only screen, local: the host page may show it in
 an `<iframe>` as a preview). `party.cast(to?)`, `party.stopCast()`;
-`party.joinInfo` gets the QR rows from tvpipe's `qr`.
+`party.joinInfo` gets the QR rows from tvpipe's `qr` and, with a tunnel,
+the short link from `shortlink` (`joinInfo.short`, docs/short-links.md;
+`joinText()` is what pages show).
 
 ### 8.2 Client side
 

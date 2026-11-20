@@ -1,7 +1,8 @@
 // The TV page: tvpipe renders it in a headless browser and casts it. It
 // connects as the screen (its link has #r=…&k=…&role=screen) and draws
-// view.screen (what the host page sets) and view.join (the QR code).
-import { PartyClient, qrSvg } from "/_tvpipe/lib/client.js";
+// view.screen (what the host page sets) and view.join (the QR code and the
+// short link to type, tvpipe.party/CODE, when there is one).
+import { PartyClient, joinText, qrSvg } from "/_tvpipe/lib/client.js";
 
 const $ = (id) => document.getElementById(id);
 const client = PartyClient.fromLocation();
@@ -9,7 +10,7 @@ const client = PartyClient.fromLocation();
 client.on("view", (view) => {
   const s = view.screen ?? {};
   $("qr").innerHTML = qrSvg(view.join?.qr);
-  $("code").textContent = view.join?.code ?? "";
+  $("code").textContent = joinText(view.join) ?? "";
   $("status").textContent = !s.round ? "Scan to join, then the host starts a round" : `Round ${s.round}: buzz!`;
   $("buzzed").replaceChildren(...(s.buzzed ?? []).map((name) => item(name)));
   $("scores").replaceChildren(...(s.scores ?? []).map((p) => item(`${p.name}: ${p.points}`)));

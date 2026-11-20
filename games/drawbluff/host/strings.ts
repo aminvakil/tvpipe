@@ -18,7 +18,6 @@ type Format = ReturnType<typeof format>;
 const en = (f: Format) => ({
   /** The page's fixed texts, by `data-t`. */
   page: {
-    room: "Room",
     joinAt: "Phones join at",
     onTv: "On the TV",
     noTv: "No TV: open the preview on a screen yourself.",
@@ -53,6 +52,7 @@ const en = (f: Format) => ({
     previewNote: "What the TV shows (a preview, no sound). The VIP's phone can start the game too.",
   },
   lanOnly: "On this Wi-Fi only",
+  scanQr: "Phones join with the QR code",
   opening: "Opening a public link…",
   localOnly: "This computer only (no public link)",
   vip: "VIP",
@@ -83,7 +83,6 @@ type Strings = ReturnType<typeof en>;
 
 const de = (f: Format): Strings => ({
   page: {
-    room: "Raum",
     joinAt: "Mitspielen über",
     onTv: "Auf dem Fernseher",
     noTv: "Kein Fernseher: Öffne die Vorschau selbst auf einem Bildschirm.",
@@ -118,6 +117,7 @@ const de = (f: Format): Strings => ({
     previewNote: "Was der Fernseher zeigt (Vorschau, ohne Ton). Der VIP kann das Spiel auch am Handy starten.",
   },
   lanOnly: "Nur in diesem WLAN",
+  scanQr: "Mitspielen über den QR-Code",
   opening: "Öffentlicher Link wird eingerichtet…",
   localOnly: "Nur dieser Computer (kein öffentlicher Link)",
   vip: "VIP",

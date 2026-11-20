@@ -64,6 +64,7 @@ enum PlayshareArg {
     Offline,
     Tunnel,
     NoTunnel,
+    NoShortLink,
     Lan,
     Window,
     Browser,
@@ -320,6 +321,9 @@ static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
         Opt::new(PlayshareArg::NoTunnel)
             .long("no-tunnel")
             .help("No public link: phones on the Wi-Fi (--lan) or this computer only"),
+        Opt::new(PlayshareArg::NoShortLink)
+            .long("no-short-link")
+            .help("Do not register a short link at tvpipe.party (the TV shows only the QR code then); also TVPIPE_PARTY_URL=off"),
         Opt::new(PlayshareArg::Lan)
             .long("lan")
             .optional_value("IP")
@@ -1074,6 +1078,7 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
                 })
             }
             PlayshareArg::NoTunnel => no_tunnel = true,
+            PlayshareArg::NoShortLink => o.no_short_link = true,
             PlayshareArg::Lan => {
                 o.lan = Some(match p.optional_value::<String>()? {
                     None => None,

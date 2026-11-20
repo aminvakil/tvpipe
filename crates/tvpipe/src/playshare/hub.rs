@@ -126,6 +126,8 @@ pub struct Hub {
     pub(super) surfaces: Mutex<super::surface::Surfaces>,
     /// The run's progress for people (the CLI's terminal UI), set once.
     pub events: OnceLock<Events>,
+    /// Short join links (`shortlink`), set once; unset: none.
+    pub shortlinks: OnceLock<Arc<super::shortlink::ShortLinks>>,
 }
 
 /// `{"t":"event","type":…,"data":…}`.
@@ -198,6 +200,7 @@ impl Hub {
             backend,
             surfaces: Mutex::default(),
             events: OnceLock::new(),
+            shortlinks: OnceLock::new(),
             st: Mutex::new(St {
                 next_conn: 0,
                 next_api: 0,
@@ -528,11 +531,12 @@ impl Hub {
                 let n = msg.get("n").cloned().unwrap_or(Value::Null);
                 let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
                 let params = msg.get("params").cloned().unwrap_or_else(Value::object);
-                if method == "cast.start" || method == "surface.open" {
-                    // Starting a cast takes seconds: not on the reader.
+                if matches!(method, "cast.start" | "surface.open" | "shortlink") {
+                    // Starting a cast takes seconds, a short link a
+                    // request to the service: not on the reader.
                     let (hub, out, method) = (self.clone(), out.clone(), method.to_owned());
                     let _ = std::thread::Builder::new()
-                        .name("playshare-cast".into())
+                        .name(format!("playshare-{method}"))
                         .spawn(move || {
                             let r = hub.call(api, &method, &params);
                             out.text(match r {
@@ -698,6 +702,7 @@ impl Hub {
                     .ok_or_else(|| Error::usage("surface.close: id"))?;
                 self.surface_close(id)
             }
+            "shortlink" => self.shortlink(params),
             "quit" => {
                 info!("playshare: the page asked to quit");
                 self.stop.request();
@@ -705,6 +710,44 @@ impl Hub {
             }
             _ => Err(unknown()),
         }
+    }
+
+    /// `shortlink {url, code}`: a short link for the tunnel's join link
+    /// (docs/short-links.md), `{url, code}`.
+    fn shortlink(&self, params: &Value) -> Result<Value> {
+        let url = params
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::usage("shortlink: url (the join link)"))?;
+        let code = params.get("code").and_then(Value::as_str);
+        let unavailable = |m: &'static str| Error::unsupported(m).with_code("unavailable");
+        let host =
+            {
+                let t = self.tunnel.read().unwrap_or_else(|e| e.into_inner());
+                match (&t.host, t.state) {
+                    (Some(h), "up") => h.clone(),
+                    _ => return Err(unavailable(
+                        "short links are only for the tunnel's join link, and there is no tunnel",
+                    )),
+                }
+            };
+        let ours = url
+            .strip_prefix("https://")
+            .and_then(|r| r.strip_prefix(host.as_str()))
+            .is_some_and(|r| r.starts_with('/'));
+        if !ours {
+            return Err(Error::usage(format!(
+                "shortlink: only for the tunnel's join link (https://{host}/…)"
+            ))
+            .with_code("bad-url"));
+        }
+        let links = self
+            .shortlinks
+            .get()
+            .filter(|l| l.enabled())
+            .ok_or_else(|| unavailable("short links are off"))?;
+        let (short, code) = links.register(url, code)?;
+        Ok(Value::object().with("url", short).with("code", code))
     }
 
     /// Whether a host page attached the relay (`tvpipe game check --smoke`).

@@ -450,6 +450,79 @@ impl Client {
         Err(Error::protocol(format!("{}: too many redirects", req.url)))
     }
 
+    /// One request with any method (an API call): no redirects (a 3xx
+    /// is just its status), `body` as `(content type, bytes)` with a
+    /// `Content-Length`. Plain http only to loopback hosts. A 2xx body
+    /// over `max_body` is an error; other statuses keep its start.
+    pub fn send(
+        &self,
+        method: &str,
+        url: &Url,
+        headers: &[(&str, &str)],
+        body: Option<(&str, Vec<u8>)>,
+        max_body: usize,
+    ) -> Result<(u16, Vec<u8>)> {
+        if !url.https && !url.is_loopback() {
+            return Err(Error::usage(format!(
+                "{url}: plain http is only for this computer"
+            )));
+        }
+        if self.stopped() {
+            return Err(Error::closed("fetch: stopped"));
+        }
+        let mut r = Request::new(method, &url.target, Version::Http11)
+            .header("Host", url.authority())
+            .header("User-Agent", self.user_agent.clone())
+            .header("Accept-Encoding", "identity")
+            .header("Connection", "close");
+        for (k, v) in headers {
+            r = r.header(k, *v);
+        }
+        match body {
+            Some((content_type, bytes)) => r = r.body(content_type, bytes),
+            None if matches!(method, "POST" | "PUT" | "PATCH") => {
+                r = r.header("Content-Length", "0");
+            }
+            None => {}
+        }
+        let limits = Limits {
+            max_body: usize::MAX,
+            ..Limits::default()
+        };
+        let mut conn = Conn::with_limits(self.connect(url)?, limits);
+        conn.send_request(&r)?;
+        let head = conn.read_response_head()?;
+        let ok = (200..300).contains(&head.status);
+        if ok && head.headers.content_length()?.is_some_and(|n| n > max_body) {
+            return Err(Error::protocol(format!(
+                "{method} {url}: an answer of more than {max_body} bytes"
+            )));
+        }
+        let mut out = Vec::new();
+        let read = conn.read_body_into(&head, method == "HEAD", &mut |d| {
+            if self.stopped() {
+                return Err(Error::closed("fetch: stopped"));
+            }
+            let room = max_body.saturating_sub(out.len());
+            out.extend_from_slice(&d[..d.len().min(room)]);
+            if d.len() > room {
+                return Err(Error::closed("enough"));
+            }
+            Ok(())
+        });
+        match read {
+            Ok(()) => {}
+            Err(_) if !ok && out.len() >= max_body => {}
+            Err(e) if e.message() == "enough" => {
+                return Err(Error::protocol(format!(
+                    "{method} {url}: an answer of more than {max_body} bytes"
+                )));
+            }
+            Err(e) => return Err(e),
+        }
+        Ok((head.status, out))
+    }
+
     /// [`Client::get`] into memory: the reply and, for 2xx, the body.
     pub fn get_bytes(&self, req: &Get) -> Result<(Reply, Vec<u8>)> {
         let mut body = Vec::new();

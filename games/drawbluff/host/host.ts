@@ -2,13 +2,13 @@
  * drawbluff's host page: the game runs here, in tvpipe's
  * window (docs/playshare-design.md). It makes the party on tvpipe's
  * relay, puts the TV page on the TVs the launcher chose, runs the rules
- * (`game/`), and shows the room: the join code and QR code, the TVs,
+ * (`game/`), and shows the room: the QR code and the short link, the TVs,
  * the players (bots to try it alone), the settings and a preview of the
  * TV. The room's language (default: this browser's) is a setting: the
  * prompts, every phone, the TV and this page follow it.
  */
 
-import { qrSvg, Tvpipe, type CastStatus, type HostedParty, type LateJoin, type SurfaceEncoder } from "@tvpipe/party";
+import { joinText, qrSvg, Tvpipe, type CastStatus, type HostedParty, type LateJoin, type SurfaceEncoder } from "@tvpipe/party";
 
 import { bots, type Bot } from "../game/bots.ts";
 import { DEFAULT_TIMINGS, Drawbluff, FAST_TIMINGS } from "../game/game.ts";
@@ -46,11 +46,15 @@ function renderLang(): void {
 
 function renderJoin(): void {
   const j = party.joinInfo;
-  $("code").textContent = party.code;
-  $("link").textContent = j.url.replace(/#.*$/, "");
+  // The short link (tvpipe.party/CODE) when tvpipe has one; never the
+  // tunnel's link or the room code (too long to type, no use alone).
+  const text = joinText(j);
+  $("link").textContent = text ?? "";
+  $("join-at").hidden = !text;
   $("qr").innerHTML = qrSvg(j.qr, { quiet: 2 });
   const tunnel = party.info.tunnel;
-  $("link-note").textContent = j.mode === "tunnel" ? "" : j.mode === "lan" ? t.lanOnly : tunnel.state === "starting" ? t.opening : t.localOnly;
+  $("link-note").textContent =
+    j.mode === "tunnel" ? (text ? "" : t.scanQr) : j.mode === "lan" ? t.lanOnly : tunnel.state === "starting" ? t.opening : t.localOnly;
 }
 
 function renderPlayers(): void {

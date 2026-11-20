@@ -182,11 +182,12 @@ endButton.onclick = () => tvpipe.quit();     // ends tvpipe: TVs stop, phones ar
 The TV page:
 
 ```js
-import { PartyClient, qrSvg } from "/_tvpipe/lib/client.js";
+import { PartyClient, joinText, qrSvg } from "/_tvpipe/lib/client.js";
 
 const client = PartyClient.fromLocation();   // room, key and role from the link
 client.on("view", ({ roster, screen, join }) => {
   qrBox.innerHTML = qrSvg(join?.qr);         // the join link's QR code
+  linkBox.textContent = joinText(join) ?? ""; // tvpipe.party/BCDF to type, when there is one
   draw(screen, roster);
 });
 await client.connect();
@@ -513,6 +514,7 @@ browser; nothing is installed.
 | `--tunnel=cloudflare` / `--tunnel=opentunnel` | that provider only | |
 | `--lan` (`--lan=IP`) | also `http://IP:7420` on the Wi-Fi | no internet needed; the phones must be on the same Wi-Fi; plain HTTP, the join key crosses the Wi-Fi in clear |
 | `--no-tunnel` | nothing public: this computer only (with `--lan`: the Wi-Fi) | |
+| `--no-short-link` | no short link at tvpipe.party (also `TVPIPE_PARTY_URL=off`) | the TV shows only the QR code |
 
 The link carries the room code and a key in its fragment; only people
 who see the QR code can join. A phone that locks or loses the network

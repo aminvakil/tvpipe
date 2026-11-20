@@ -1499,3 +1499,80 @@ fn api_of(hub: &Arc<Hub>) -> Ws {
     )
     .unwrap()
 }
+
+// ---------------------------------------------------------------------
+// Short links (docs/short-links.md)
+
+#[test]
+fn shortlink_only_for_the_tunnels_link() {
+    let s = Setup::new("game");
+    let mut w = api(&s);
+    let error_code = |r: &Value| {
+        assert_eq!(r.get("ok").and_then(Value::as_bool), Some(false), "{r}");
+        r.get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let params = |url: &str| Value::object().with("url", url).with("code", "BCDF");
+    let join = "https://abc.example.com/?r=BCDF#k=0123456789abcdef";
+    // No tunnel: no short link.
+    let r = call(&mut w, "shortlink", params(join));
+    assert_eq!(error_code(&r), "unavailable");
+    {
+        let mut t = s.hub.tunnel.write().unwrap();
+        t.state = "up";
+        t.host = Some("abc.example.com".into());
+    }
+    // Only the tunnel's own links.
+    for foreign in [
+        "https://evil.example/?r=BCDF#k=0123456789abcdef",
+        "https://abc.example.com.evil.example/?r=BCDF",
+        "https://abc.example.com@evil.example/",
+        "https://abc.example.com:8443/",
+        "http://abc.example.com/?r=BCDF",
+        "javascript:alert(1)",
+    ] {
+        let r = call(&mut w, "shortlink", params(foreign));
+        assert_eq!(error_code(&r), "bad-url", "{foreign}");
+    }
+    let r = call(&mut w, "shortlink", Value::object());
+    assert_eq!(r.get("ok").and_then(Value::as_bool), Some(false), "{r}");
+
+    // A hub with a service of its own.
+    let (svc, fake) = super::shortlink::tests::service();
+    let stop = Stop::new();
+    let hub = Hub::new(
+        Bundle::open(&fixture("game")).unwrap(),
+        "token".into(),
+        Box::new(Fake {
+            log: Arc::default(),
+            fail_cast: false,
+        }),
+        stop.clone(),
+    );
+    let join = super::shortlink::tests::JOIN;
+    let p = Value::object().with("url", join).with("code", "BCDF");
+    // No short links set up (or off): unavailable.
+    {
+        let mut t = hub.tunnel.write().unwrap();
+        t.state = "up";
+        t.host = Some("abc.opentunnel.xyz".into());
+    }
+    let e = hub.call(0, "shortlink", &p).unwrap_err();
+    assert_eq!(e.code(), Some("unavailable"));
+    let _ = hub.shortlinks.set(super::shortlink::ShortLinks::new(
+        Some(&svc.base("")),
+        stop.clone(),
+    ));
+    let v = hub.call(0, "shortlink", &p).unwrap();
+    assert_eq!(
+        v.to_json(),
+        r#"{"url":"https://party.test/BCDF","code":"BCDF"}"#
+    );
+    assert_eq!(fake.lock().unwrap().links["BCDF"].0, join);
+    hub.shortlinks.get().unwrap().release();
+    assert!(fake.lock().unwrap().links.is_empty());
+    stop.request();
+}

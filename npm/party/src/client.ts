@@ -101,6 +101,19 @@ export interface QrRows {
 }
 
 /**
+ * What a TV or host page shows people to type (`view.join` on screens,
+ * `party.joinInfo` on the host): the short link without its scheme
+ * (`tvpipe.party/BCDF`), or `null` when there is none: then show only the
+ * QR code (the direct link is too long to type, and without its key it
+ * lets nobody in).
+ */
+export function joinText(join: { short?: string | null | undefined } | null | undefined): string | null {
+  const s = join?.short;
+  if (typeof s !== "string" || !/^https?:\/\/[^/?#\s]+\/[A-Za-z]{1,16}$/.test(s)) return null;
+  return s.replace(/^https?:\/\//, "");
+}
+
+/**
  * An SVG document of a QR code (`view.join.qr` on screens): dark modules
  * on a light square with a quiet zone. Insert it as markup (it holds no
  * text from players).

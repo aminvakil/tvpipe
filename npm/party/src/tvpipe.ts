@@ -345,6 +345,16 @@ export class Tvpipe extends Emitter<TvpipeEvents> {
     await this.call("cast.stop");
   }
 
+  /**
+   * A short link to the tunnel's join link `url` (docs/short-links.md):
+   * tvpipe registers it at tvpipe.party (`code`: the code to ask for, the
+   * room's). Rejects with `unavailable` without a tunnel, with
+   * `--no-short-link` or when the service fails.
+   */
+  shortLink(url: string, code: string): Promise<{ url: string; code: string }> {
+    return this.call("shortlink", { url, code });
+  }
+
   /** A QR code made by tvpipe: `size` modules, `rows` of "0"/"1". */
   qr(text: string): Promise<{ size: number; rows: string[] }> {
     return this.call("qr", { text });
@@ -478,14 +488,33 @@ export class HostedParty extends Party {
     return `${base.endsWith("/") ? base : `${base}/`}?r=${this.code}#k=${this.joinKey}`;
   }
 
-  /** Makes the join link and its QR code (again: after the tunnel came up). */
+  #refreshes = 0;
+
+  /**
+   * Makes the join link and its QR code (again: after the tunnel came up).
+   * With a tunnel the short link (`joinInfo.short`) follows in the
+   * background: `screen-view` fires when it is there.
+   */
   async refreshJoin(): Promise<void> {
-    this.links = { ...this.links, join: this.#joinUrl(this.info.phone.url) };
+    const n = ++this.#refreshes;
+    const join = this.#joinUrl(this.info.phone.url);
+    const mode = this.info.phone.mode;
+    this.links = { ...this.links, join };
     let qr: { size: number; rows: string[] } | null = null;
     try {
-      qr = await this.tvpipe.qr(this.links.join);
+      qr = await this.tvpipe.qr(join);
     } catch {}
-    this.joinInfo = { code: this.code, url: this.links.join, qr, mode: this.info.phone.mode };
+    if (n !== this.#refreshes) return;
+    // The short link of the same link stays while it is asked for again.
+    const keep = this.joinInfo.url === join ? this.joinInfo.short : undefined;
+    this.joinInfo = { code: this.code, url: join, qr, mode, ...(keep ? { short: keep } : {}) };
+    if (mode !== "tunnel") return;
+    void this.tvpipe.shortLink(join, this.code).then(
+      (r) => {
+        if (n === this.#refreshes && r.url !== this.joinInfo.short) this.joinInfo = { ...this.joinInfo, short: r.url };
+      },
+      () => {},
+    );
   }
 
   /** Casts the TV page to `to` (default: what the launcher chose). */

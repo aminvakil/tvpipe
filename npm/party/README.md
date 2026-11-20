@@ -80,7 +80,11 @@ button.onclick = () => party.act("answer", { text: input.value }).catch((e) => s
 The TV page uses the same client; its link (`party.links.tv`, what
 `party.cast()` casts) has `#role=screen` and the screen key, and its view
 is `{ roster, screen, join }`: `qrSvg(view.join.qr)` draws the join
-link's QR code.
+link's QR code, and `joinText(view.join)` is what to show people to type:
+the short link (`tvpipe.party/BCDF`, which tvpipe registers when phones
+come through a tunnel; docs/short-links.md) or `null` (show only the QR
+code). Do not show the tunnel's link or the room code itself: too long to
+type, and the room code alone lets nobody in.
 
 ## Host API
 
@@ -145,9 +149,9 @@ storage, WebSocket })`; `join(name)`, `connect()`, `act(type, data)`
 (rejects with `PartyActionError`: `code`, `message`), `input(data)`,
 `on("view" | "msg" | "status" | "bye" | "welcome", fn)`, `view`, `you`,
 `status`, `now()`, `leave()`, `close()`; `qrSvg(qr)`, `drawQr(ctx, qr, x,
-y, size)`, `memoryStorage()`. It reconnects by itself (and when the page
-becomes visible again), keeps the player's identity in `localStorage`,
-and resends unacknowledged actions.
+y, size)`, `joinText(join)`, `memoryStorage()`. It reconnects by itself
+(and when the page becomes visible again), keeps the player's identity in
+`localStorage`, and resends unacknowledged actions.
 
 ## Tests
 

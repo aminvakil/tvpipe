@@ -60,6 +60,7 @@ export {
   memoryStorage,
   qrSvg,
   drawQr,
+  joinText,
   type PartyClientOptions,
   type QrRows,
   type StorageLike,

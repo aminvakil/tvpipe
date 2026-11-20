@@ -9,6 +9,7 @@
 //! - [`server`]: the listeners, their access rules, static files.
 //! - [`hub`]: the API, the relay, discovery/pairing/cast progress.
 //! - [`conn`]: one WebSocket with an outbox and limits.
+//! - [`shortlink`]: short join links at tvpipe.party (docs/short-links.md).
 //! - [`surface`]: canvases the pages encode, streamed without a browser.
 //! - [`backend`]: discovery, pairing, casting, surfaces (fakes in tests).
 //! - [`window`]: the app window.
@@ -28,6 +29,7 @@ pub mod remote;
 pub mod resolution;
 pub mod scan;
 pub mod server;
+pub mod shortlink;
 pub mod smoke;
 pub mod source;
 pub mod surface;
@@ -91,6 +93,8 @@ pub struct Options {
     /// `--resolution`: the TV picture's at the start (the launcher and
     /// the cast picker change it).
     pub resolution: resolution::Resolution,
+    /// `--no-short-link`: no short link at tvpipe.party.
+    pub no_short_link: bool,
 }
 
 /// A started playshare: the hub, its listeners and the tunnel.
@@ -120,9 +124,13 @@ impl Running {
         events: Events,
     ) -> Result<Running> {
         let token = crate::util::hex::encode(&crate::crypto::ring::random_array::<16>()?);
-        let hub = Hub::new(bundle, token, backend, stop);
+        let hub = Hub::new(bundle, token, backend, stop.clone());
         hub.set_resolution(opts.resolution);
         let _ = hub.events.set(events);
+        let _ = hub.shortlinks.set(shortlink::ShortLinks::from_env(
+            opts.no_short_link,
+            stop.clone(),
+        ));
         let servers = Servers::start(&hub, opts.port, opts.lan)?;
         let tunnel = start_tunnel(&hub, opts.tunnel);
         Ok(Running {
@@ -144,6 +152,10 @@ impl Running {
     /// The end (§10).
     pub(crate) fn end(self) {
         self.hub.shutdown();
+        // While the tunnel still carries the link's target.
+        if let Some(l) = self.hub.shortlinks.get() {
+            l.release();
+        }
         drop(self.tunnel);
         drop(self.servers);
     }
