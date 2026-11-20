@@ -101,7 +101,7 @@ A game is a small web app: a host page with the rules, a TV page, a phone page a
 - tvpipe only answers for the game's public link and for this computer, and limits how much and how fast every phone may send.
 - The game's own controls (tvpipe's window and its API) are not on the public link at all.
 - Names are cleaned up and must be unique. A `moderate` function can refuse words you do not want on the TV.
-- The VIP and the game can remove players.
+- The VIP and the game can remove players. The game's window also lists the players with buttons to remove one or make another the VIP, during a game too.
 
 ## The demo game
 

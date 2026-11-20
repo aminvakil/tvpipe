@@ -197,6 +197,34 @@ test("secret words never appear in the round's prompts (German too)", async () =
   }
 });
 
+test("the host page removes players and moves the VIP during a game: it plays on", async () => {
+  const { party, g, players, close } = await game(9, { rounds: 2 });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    const removed: string[] = [];
+    // One player removed in each kind of phase, the first time it comes.
+    g.on("phase", (p) => {
+      if (removed.includes(p) || !["intro", "play", "reveal", "accuse", "unmask", "scores"].includes(p)) return;
+      removed.push(p);
+      setTimeout(() => {
+        const victim = party.players.find((x) => !x.vip);
+        if (victim) party.kick(victim);
+        const next = party.players.find((x) => !x.vip);
+        if (next) party.makeVip(next);
+      }, 10);
+    });
+    await players[0]!.client.act("start");
+    await end;
+    assert.equal(removed.length, 6, "every kind of phase came");
+    assert.equal(g.phase, "final");
+    assert.equal(party.players.length, 3);
+    assert.equal(party.players.filter((p) => p.vip).length, 1);
+  } finally {
+    for (const b of players) b.close();
+    close();
+  }
+});
+
 test("settings: the VIP only, before a game", async () => {
   const { g, players, close } = await game(4);
   try {

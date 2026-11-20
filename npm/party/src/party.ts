@@ -553,6 +553,20 @@ export class Party extends Emitter<PartyEvents> {
     this.#remove(player, "kicked");
   }
 
+  /**
+   * Makes a player the VIP (the host's choice: the roster and the `vip`
+   * event follow). The VIP stays when the player is away; a player who
+   * left is ignored.
+   */
+  makeVip(player: Player): void {
+    if (player.vip || !this.#players.includes(player)) return;
+    for (const p of this.#players) p.vip = false;
+    player.vip = true;
+    this.#log("info", `party ${this.code}: ${player.name} is the VIP`);
+    this.emit("vip", player);
+    this.#changed();
+  }
+
   /** Ends the party: every client gets `bye room-closed`. */
   close(): void {
     if (this.#closed) return;

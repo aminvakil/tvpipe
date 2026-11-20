@@ -192,6 +192,37 @@ test("VIP passes on when the VIP leaves; kick removes a player", async () => {
   }
 });
 
+test("makeVip: the host picks the VIP; the roster and the vip event follow", async () => {
+  const s = await setup();
+  try {
+    const vips: (string | undefined)[] = [];
+    s.party.on("vip", (p) => vips.push(p?.name));
+    const a = s.phone();
+    await a.join("Ann");
+    const b = s.phone();
+    await b.join("Bob");
+    const bob = s.party.players.find((p) => p.name === "Bob")!;
+    s.party.makeVip(bob);
+    s.party.makeVip(bob); // already: nothing
+    assert.equal(s.party.vip, bob);
+    assert.deepEqual(
+      s.party.players.map((p) => [p.name, p.vip]),
+      [
+        ["Ann", false],
+        ["Bob", true],
+      ],
+    );
+    assert.deepEqual(vips, ["Ann", "Bob"]);
+    await until(() => a.view["roster"]?.[0]?.vip === false && a.view["roster"]?.[1]?.vip === true, 2000, "roster");
+    s.party.kick(bob);
+    assert.equal(s.party.vip?.name, "Ann");
+    s.party.makeVip(bob); // gone: ignored
+    assert.equal(s.party.vip?.name, "Ann");
+  } finally {
+    await s.close();
+  }
+});
+
 test("lock and maxPlayers refuse new players, resumes still work", async () => {
   const s = await setup({ party: { maxPlayers: 2 } });
   try {

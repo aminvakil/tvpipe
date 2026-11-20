@@ -9,7 +9,7 @@
  * `localStorage`, so no word comes twice until all were dealt.
  */
 
-import { qrSvg, Tvpipe, type CastStatus, type HostedParty } from "@tvpipe/party";
+import { qrSvg, Tvpipe, type CastStatus, type HostedParty, type Player } from "@tvpipe/party";
 
 import { bots, type Bot } from "../game/bots.ts";
 import { Jinx, type Phase } from "../game/game.ts";
@@ -65,35 +65,78 @@ function renderJoin(): void {
     j.mode === "tunnel" ? "Phones join with the QR code or the link on the TV" : j.mode === "lan" ? "On this Wi-Fi only" : tunnel.state === "starting" ? "Opening a public link…" : "This computer only (no public link)";
 }
 
+/** The player whose Remove waits for a second click (removing is for good). */
+let confirmKick: string | undefined;
+let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+/** What the players list shows now. */
+let playersKey = "";
+
+/**
+ * A player's buttons, in the lobby and during a game: make them the VIP
+ * (connected players; a tvpipe whose library has `makeVip`), and remove
+ * them, which asks once more.
+ */
+function playerButtons(p: Player): HTMLButtonElement[] {
+  const out: HTMLButtonElement[] = [];
+  if (!p.vip && p.connected && typeof party.makeVip === "function") {
+    const vip = document.createElement("button");
+    vip.className = "act";
+    vip.title = `Make ${p.name} the VIP`;
+    vip.textContent = "Make VIP";
+    vip.onclick = () => party.makeVip(p);
+    out.push(vip);
+  }
+  const kick = document.createElement("button");
+  const sure = confirmKick === p.id;
+  kick.className = sure ? "act kick sure" : "act kick";
+  kick.title = `Remove ${p.name}`;
+  kick.textContent = sure ? "Remove?" : "✕";
+  kick.onclick = () => {
+    clearTimeout(confirmTimer);
+    if (sure) {
+      confirmKick = undefined;
+      party.kick(p);
+    } else {
+      confirmKick = p.id;
+      confirmTimer = setTimeout(() => {
+        confirmKick = undefined;
+        renderPlayers();
+      }, 4000);
+    }
+    renderPlayers();
+  };
+  out.push(kick);
+  return out;
+}
+
 function renderPlayers(): void {
   const list = $("players");
   const running = game.running;
   const botIds = new Set(robots.map((b) => String(b.client.you?.["id"] ?? "")));
-  list.replaceChildren(
-    ...party.players.map((p) => {
-      const li = document.createElement("li");
-      if (!p.connected) li.className = "away";
-      const who = document.createElement("span");
-      who.className = "who";
-      who.textContent = p.name;
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = [botIds.has(p.id) ? "bot" : "", p.vip ? "VIP" : "", p.waiting ? "waiting" : "", p.connected ? "" : "away"].filter(Boolean).join(" · ");
-      const end = document.createElement("span");
-      end.className = "end";
-      end.append(tag);
-      if (!running) {
-        const kick = document.createElement("button");
-        kick.className = "kick";
-        kick.title = `Remove ${p.name}`;
-        kick.textContent = "✕";
-        kick.onclick = () => party.kick(p);
-        end.append(kick);
-      }
-      li.append(who, end);
-      return li;
-    }),
-  );
+  // Rebuilt only when it changes: views change many times a second
+  // during a game, and a rebuilt button loses the click.
+  const key = JSON.stringify([[...botIds], confirmKick, party.players.map((p) => [p.id, p.name, p.vip, p.waiting, p.connected])]);
+  if (key !== playersKey) {
+    playersKey = key;
+    list.replaceChildren(
+      ...party.players.map((p) => {
+        const li = document.createElement("li");
+        if (!p.connected) li.className = "away";
+        const who = document.createElement("span");
+        who.className = "who";
+        who.textContent = p.name;
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = [botIds.has(p.id) ? "bot" : "", p.vip ? "VIP" : "", p.waiting ? "waiting" : "", p.connected ? "" : "away"].filter(Boolean).join(" · ");
+        const end = document.createElement("span");
+        end.className = "end";
+        end.append(tag);
+        end.append(...playerButtons(p));
+        li.append(who, end);
+        return li;
+      }),
+    );
+  }
   $("count").textContent = `${party.players.length} / ${party.maxPlayers}`;
   const ready = party.connectedPlayers.length;
   const start = $<HTMLButtonElement>("start");

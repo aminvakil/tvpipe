@@ -264,7 +264,8 @@ shows*. Each client has one **view**: `{ roster, room | screen, me }`.
   game decides what that means (skip their vote at the deadline). Players
   are removed only by `leave`, `party.kick()` or the game.
 - **VIP**: the first player; passes to the next connected one when the
-  VIP leaves. The VIP starts the game ("everybody's in").
+  VIP leaves; the host may pick another (`party.makeVip(player)`, the
+  host pages' "Make VIP"). The VIP starts the game ("everybody's in").
 - `party.lock()` (the game started): new names are refused (`bye
   locked`), resumes still work. `maxPlayers` (drawbluff: 50) and
   `minPlayers` (3) are the game's. drawbluff no longer locks: a name

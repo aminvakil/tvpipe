@@ -213,6 +213,35 @@ test("VIP removes a player in the lobby", async () => {
   }
 });
 
+test("the host page removes players and moves the VIP during a game: it plays on", async () => {
+  const { server, party, g, players } = await game(7, { rounds: 2 });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    const removed: string[] = [];
+    // One player removed in each kind of phase, the first time it comes.
+    g.on("phase", (p) => {
+      if (removed.includes(p) || !["draw", "lie", "vote", "reveal", "scores"].includes(p)) return;
+      removed.push(p);
+      setTimeout(() => {
+        const victim = party.players.find((x) => !x.vip);
+        if (victim) party.kick(victim);
+        const next = party.players.find((x) => !x.vip);
+        if (next) party.makeVip(next);
+      }, 30);
+    });
+    await players[0]!.client.act("start");
+    const table = (await end) as unknown[];
+    assert.equal(removed.length, 5, "every kind of phase came");
+    assert.equal(g.phase, "final");
+    assert.equal(party.players.length, 2);
+    assert.equal(table.length, 2, "the removed are not ranked");
+    assert.equal(party.players.filter((p) => p.vip).length, 1);
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
 test("50 players: spotlights, rotating liars, pipelined lies, sampled options, every phone busy", async () => {
   const { server, party, g, players } = await game(50, { rounds: 2, think: 150 });
   try {

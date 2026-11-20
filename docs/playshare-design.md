@@ -309,7 +309,7 @@ const answers = await party.collect("answer", { until: party.now() + 60_000 });
 
 `Party` keeps the Node host's API (`room`, `screen`, `player.state`
 StateBoxes; `handle`, `collect`, `send`, `broadcast`, `players`, `vip`,
-`lock`/`unlock`, `kick`, `close`, `inProgress`, `lateJoin`, `activate`,
+`lock`/`unlock`, `kick`, `makeVip`, `close`, `inProgress`, `lateJoin`, `activate`,
 `moderate`, `now`, `stats`, `screenView()`, events `join`, `reconnect`,
 `away`, `leave`, `vip`, `active`, `screen`, `screen-view`, `input`) with
 the transport replaced: it takes connections from a `Relay` (tvpipe's,
