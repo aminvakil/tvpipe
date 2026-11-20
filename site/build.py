@@ -5,11 +5,15 @@
 
 Sources:
   site/index.md          the landing page
+  site/games.md          the games page's heading and intro; the games
+                         themselves come from site/static/games.json
   site/manual/NN-*.md    the manual, one section per file, in file order
   site/static/           CSS, JS and the logo, copied as is; install.sh,
                          install.ps1 and games.json (the games list
                          `tvpipe game play NAME` reads) are also copied to
                          the site's root
+  site/static/games/     the games' screenshots (games.json's `screenshots`),
+                         rendered on /games/ (games/index.html)
   crates/tvpipe/src/browser/fonts/  the fonts (shared with tvpipe's share page)
   site/shots/            screenshots (site/screenshots.mjs makes them)
 Output: site/_out/ (static files, serve the directory). Every page is a
@@ -42,10 +46,13 @@ Containers:
   :::install :::             the install commands, for the visitor's platform
   :::figure CAPTION ... :::  raw HTML (an inline SVG) as a numbered figure
   :::index :::               the list of manual sections
-  :::games :::               the games list (site/static/games.json)
+  :::games :::               the games list (site/static/games.json), short,
+                             linking to the games page (/games/)
+  :::covers :::              the games' covers in a row, linking to /games/
 
 Inline: `code`, **bold**, *italic*, [links](receivers.md) (a manual page by its
-slug, without the number, so renumbering does not break links).
+slug, without the number, so renumbering does not break links; /games/ from
+the site's root).
 """
 
 import html
@@ -205,22 +212,120 @@ def games_list():
         for lang in g.get("languages", []):
             if lang not in LANGUAGES:
                 raise SystemExit(f"{where}: unknown language {lang!r} (add it to LANGUAGES)")
+        check_screenshots(g.get("screenshots"), where)
     return data["games"]
 
 
+# A game's pictures (docs/game-catalog.md): `src` relative to the list's URL,
+# so static/games/NAME/… is the file site/static/games/NAME/…
+SHOT_KINDS = ("tv", "phone")
+SHOT_MAX = 400 * 1024
+
+
+def image_type(head):
+    """The image's type by its first bytes: png, jpeg, webp or None."""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def check_screenshots(shots, where):
+    if not isinstance(shots, list) or not shots:
+        raise SystemExit(f"{where}: needs screenshots, at least one")
+    for n, shot in enumerate(shots):
+        at = f"{where}: screenshot {n + 1}"
+        if not isinstance(shot, dict):
+            raise SystemExit(f"{at}: must be an object with src, alt and kind")
+        for key in ("src", "alt"):
+            if not isinstance(shot.get(key), str) or not shot[key].strip():
+                raise SystemExit(f"{at}: needs {key}")
+        if shot.get("kind") not in SHOT_KINDS:
+            raise SystemExit(f"{at}: kind must be tv or phone, not {shot.get('kind')!r}")
+        src = shot["src"]
+        if not re.fullmatch(r"static/[\w./-]+", src) or ".." in src.split("/"):
+            raise SystemExit(f"{at}: src {src!r} must be a file under static/ (static/games/NAME/FILE)")
+        path = SITE / src
+        if not path.is_file():
+            raise SystemExit(f"{at}: {src} does not exist (site/{src})")
+        size = path.stat().st_size
+        if size > SHOT_MAX:
+            raise SystemExit(f"{at}: {src} is {size // 1024} KiB, at most {SHOT_MAX // 1024}")
+        with path.open("rb") as f:
+            if image_type(f.read(12)) is None:
+                raise SystemExit(f"{at}: {src} is not a PNG, JPEG or WebP")
+
+
+def cover(g):
+    """The game's cover: its first tv picture (else its first)."""
+    return next((s for s in g["screenshots"] if s["kind"] == "tv"), g["screenshots"][0])
+
+
+def players(p):
+    return f'{p["min"]}–{p["max"]} players' if p["min"] != p["max"] else f'{p["min"]} players'
+
+
+def languages(g):
+    return ", ".join(LANGUAGES[lang] for lang in g.get("languages", []))
+
+
 def games_html(ctx):
+    """The short list (the manual's "Games to play"): a row per game, its
+    pictures on the games page."""
+    page = ctx.to("games/")
     out = []
     for g in games_list():
-        p = g["players"]
-        facts = [f'{p["min"]}–{p["max"]} players' if p["min"] != p["max"] else f'{p["min"]} players']
-        if g.get("languages"):
-            facts.append(", ".join(LANGUAGES[lang] for lang in g["languages"]))
-        if g.get("home"):
-            facts.append(f'<a href="{html.escape(g["home"])}">Source</a>')
-        out.append(f'<div class="game"><h3>{html.escape(g["title"])}</h3>'
+        facts = [players(g["players"])] + ([languages(g)] if g.get("languages") else [])
+        out.append(f'<div class="game"><h3><a href="{page}#{g["name"]}">{html.escape(g["title"])}</a></h3>'
                    f'<p>{html.escape(g["summary"])}</p><p class="facts">{" · ".join(facts)}</p>'
                    + code_block("sh", [f'$ tvpipe game play {g["name"]}']) + "</div>")
     return "".join(out)
+
+
+def covers_html(ctx):
+    """The games' covers in a row (the landing page), each a link to its block on /games/."""
+    page = ctx.to("games/")
+    out = []
+    for g in games_list():
+        c = cover(g)
+        out.append(f'<a class="cover" href="{page}#{g["name"]}"><img src="{ctx.root}{html.escape(c["src"])}" '
+                   f'alt="{html.escape(c["alt"])}" width="1280" height="720" loading="lazy">'
+                   f'<span><b>{html.escape(g["title"])}</b>{html.escape(players(g["players"]))}</span></a>')
+    return '<div class="covers">' + "".join(out) + "</div>"
+
+
+def shot_img(s, ctx, cls):
+    w, h = (1280, 720) if s["kind"] == "tv" else (390, 844)
+    return (f'<img class="{cls}" src="{ctx.root}{html.escape(s["src"])}" alt="{html.escape(s["alt"])}" '
+            f'width="{w}" height="{h}" loading="lazy">')
+
+
+def games_page(ctx):
+    """/games/: a block per game, the cover large with the phones beside it."""
+    out = []
+    for g in games_list():
+        c = cover(g)
+        phones = [s for s in g["screenshots"] if s["kind"] == "phone"]
+        more = [s for s in g["screenshots"] if s["kind"] == "tv" and s is not c]
+        # Columns in proportion to the pictures' widths at one height:
+        # 16:9 for the TV, 390:844 for each phone.
+        cols = " ".join(["minmax(0, 16fr)"] + ["minmax(0, 4.15fr)"] * len(phones))
+        pics = (f'<div class="pics" style="grid-template-columns: {cols}">' + shot_img(c, ctx, "tv")
+                + "".join(shot_img(s, ctx, "phone") for s in phones) + "</div>")
+        if more:
+            pics += '<div class="more">' + "".join(shot_img(s, ctx, "tv") for s in more) + "</div>"
+        facts = f'<dt>Players</dt><dd>{html.escape(players(g["players"]).replace(" players", ""))}</dd>'
+        if g.get("languages"):
+            facts += f"<dt>Languages</dt><dd>{html.escape(languages(g))}</dd>"
+        home = f'<a class="home" href="{html.escape(g["home"])}">Source and rules</a>' if g.get("home") else ""
+        play = code_block("sh", [f'$ tvpipe game play {g["name"]}'])
+        out.append(f'<article class="gm" id="{g["name"]}"><header><h2>{html.escape(g["title"])}</h2>'
+                   f'<p>{html.escape(g["summary"])}</p><dl>{facts}</dl></header>{pics}'
+                   f'<div class="play">{play}{home}</div></article>')
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------- blocks
@@ -250,6 +355,9 @@ class Ctx:
     def href(self, href):
         if re.match(r"^[a-z]+:", href) or href.startswith("#"):
             return href
+        if href.startswith("/"):
+            # From the site's root: /games/ is the games page from anywhere.
+            return self.root + href[1:]
         path, _, frag = href.partition("#")
         if path.endswith(".md"):
             # A page by its slug: receivers.md (or 04-receivers.md) is manual/receivers/.
@@ -465,6 +573,8 @@ def container(kind, arg, body, ctx):
         return figure('<div class="frame">' + "\n".join(body) + "</div>", arg, ctx)
     if kind == "games":
         return games_html(ctx)
+    if kind == "covers":
+        return covers_html(ctx)
     if kind == "index":
         return '<div class="index">' + "".join(
             f'<a href="{ctx.to(p["dir"])}"><span class="n">{p["num"]}</span><span><b>{html.escape(p["title"])}</b>'
@@ -604,7 +714,15 @@ def build(out):
     body = f'<main class="landing">{render(lines, ctx)}</main>'
     body += f'<footer class="lf"><div>{FOOTER_NOTE}</div><div class="r">{THEME}</div></footer>'
     write(out, "", layout(meta.get("title", "tvpipe"), "", body, ctx.root, "landing"))
-    print(f"built {len(pages) + 1} pages into {out}")
+
+    # The games page, from the games list.
+    meta, lines = read_md(SITE / "games.md")
+    ctx = Ctx("games/", None, pages)
+    body = (f'<main class="landing gamespage"><header class="gh"><h1>{html.escape(meta.get("heading", "Games"))}</h1>'
+            f'{render(lines, ctx)}</header>{games_page(ctx)}</main>'
+            f'<footer class="lf"><div>{FOOTER_NOTE}</div><div class="r">{THEME}</div></footer>')
+    write(out, "games/", layout(meta.get("title", "Games"), "", body, ctx.root, "landing"))
+    print(f"built {len(pages) + 2} pages into {out}")
 
 
 if __name__ == "__main__":

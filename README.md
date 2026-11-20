@@ -108,6 +108,7 @@ that off; never with `--machine`).
 ## Party games
 
 ```sh
+tvpipe game play                      # pick one from the games list in the window
 tvpipe game play drawbluff            # a game from the games list, downloaded
 tvpipe game play games/drawbluff      # a folder with tvpipe.json
 tvpipe game play my-game.zip          # or a zip of one
@@ -119,7 +120,7 @@ downloads the newest one made for it, keeps it in its cache and asks
 once per game and version before running it (`--yes`, or a
 `#sha256=HEX` pin; `--offline` plays what is cached). `tvpipe game fetch`
 downloads without playing, `tvpipe game list` shows what is cached. The
-names come from the [games list](https://tvpipe.party/manual/game-list/)
+names come from the [games list](https://tvpipe.party/games/)
 (`site/static/games.json`).
 
 A game is a web app: a host page (the rules), a TV page and a phone page,
@@ -129,8 +130,10 @@ it renders the TV page in a headless browser of its own and casts it,
 and relays the phones' WebSockets (through a public link: OpenTunnel by
 default, or `--lan`) to the host page. Rooms, players, reconnects and
 views live in the browser library [`@tvpipe/party`](npm/party/README.md);
-the demo is [`games/drawbluff`](games/drawbluff/) (3–50 players), released
-on its own as `drawbluff-vX.Y.Z`. Closing
+this repository's games are [`games/drawbluff`](games/drawbluff/)
+(3–50 players), [`games/jinx`](games/jinx/) (3–8) and
+[`games/garble`](games/garble/) (4–12), each released on its own as
+`NAME-vX.Y.Z`. Closing
 the window ends everything. Design: [`docs/playshare-design.md`](docs/playshare-design.md).
 
 Making one: [`docs/games.md`](docs/games.md) (layout, `tvpipe.json`,

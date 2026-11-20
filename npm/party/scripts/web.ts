@@ -1,7 +1,8 @@
 /**
  * Copies the built library and the standard launcher into the tvpipe
  * crate (`crates/tvpipe/src/playshare/web/`), which embeds them and
- * serves them at `/_tvpipe/lib/` and `/_tvpipe/launcher/`
+ * serves them at `/_tvpipe/lib/`, `/_tvpipe/launcher/` and
+ * `/_tvpipe/picker/` (the game picker)
  * (docs/playshare-design.md §8). Run by `npm run build` after `tsc`;
  * `--check` only compares (CI, `npm test`), exiting 1 when they differ.
  */
@@ -32,6 +33,9 @@ export function webFiles(): Map<string, string> {
   );
   out.set("launcher/launcher.js", launcher);
   for (const f of ["index.html", "launcher.css"]) out.set(`launcher/${f}`, readFileSync(join(src, "launcher", f), "utf8"));
+  // The game picker (docs/game-catalog.md): no imports.
+  out.set("picker/picker.js", strip(readFileSync(join(dist, "picker", "picker.js"), "utf8")));
+  for (const f of ["index.html", "picker.css"]) out.set(`picker/${f}`, readFileSync(join(src, "picker", f), "utf8"));
   return out;
 }
 
@@ -49,7 +53,8 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
       writeFileSync(p, text);
     }
   }
-  for (const dir of ["lib", "launcher"]) {
+  for (const dir of ["lib", "launcher", "picker"]) {
+    if (!existsSync(join(WEB, dir))) continue;
     for (const f of readdirSync(join(WEB, dir))) {
       if (!files.has(`${dir}/${f}`)) stale.push(`${dir}/${f} (not built: remove it)`);
     }

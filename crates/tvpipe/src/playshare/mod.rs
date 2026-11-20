@@ -18,6 +18,8 @@
 //!   packing, a run in a headless browser, the starter template).
 //! - [`source`], [`remote`], [`cache`]: games from the internet (§18): what
 //!   a source may be, fetching from GitHub and the games list, the cache.
+//! - [`picker`]: `game play` without a game: the games list in the window
+//!   first (docs/game-catalog.md).
 
 pub mod backend;
 pub mod bundle;
@@ -25,6 +27,7 @@ pub mod cache;
 pub mod check;
 pub mod conn;
 pub mod hub;
+pub mod picker;
 pub mod remote;
 pub mod resolution;
 pub mod scan;
@@ -76,7 +79,8 @@ pub enum TunnelChoice {
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     /// The game: a folder, a `.zip`, an `https://` URL, `gh:…` or a name
-    /// from the games list (§18).
+    /// from the games list (§18); empty: the window picks one from the
+    /// list (docs/game-catalog.md).
     pub game: String,
     /// `--refresh`, `--offline`.
     pub fetch: remote::FetchOptions,
@@ -202,11 +206,74 @@ pub fn open_game(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<Bundle> {
 /// Runs playshare until the window closes, the page quits or `ctx`'s
 /// stop is requested. Prints the window's URL with `--window none`. A
 /// game from the internet is first fetched and, the first time, asked
-/// about with `ask`.
+/// about with `ask`. Without a game, the window opens on the games list
+/// and the game picked there runs (docs/game-catalog.md).
 pub fn run(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<()> {
-    let stop = ctx.stop.clone();
-    let events = ctx.events.clone();
+    if opts.game.trim().is_empty() {
+        return run_picked(opts, ctx);
+    }
     let bundle = open_game(opts, ctx, ask)?;
+    let running = start_game(bundle, opts, ctx)?;
+    let url = running.start_url();
+    let window = match open_window(opts, &url, &ctx.events) {
+        Ok(w) => w,
+        Err(e) => {
+            running.end();
+            return Err(e);
+        }
+    };
+    serve(running, window, &ctx.stop, &ctx.events);
+    Ok(())
+}
+
+/// `game play` without a game: the picker in the window, then the game.
+fn run_picked(opts: &Options, ctx: &Ctx) -> Result<()> {
+    let stop = ctx.stop.clone();
+    let picker = picker::Picker::start(opts.fetch, opts.yes, opts.port, stop.clone())?;
+    let mut window = open_window(opts, &picker.start_url(), &ctx.events)?;
+    info!("playshare: pick a game in the window");
+    let bundle = loop {
+        if stop.wait(TICK) {
+            window.close();
+            return Ok(());
+        }
+        if window.owned() {
+            window.pass_out_new_pages();
+            if window.closed() {
+                info!("playshare: the window was closed");
+                window.close();
+                return Ok(());
+            }
+        }
+        if let Some(b) = picker.take() {
+            break b;
+        }
+    };
+    let source = bundle.origin.display().to_string();
+    // The game's own listener: --port was the picker's.
+    let game_opts = Options {
+        port: 0,
+        ..opts.clone()
+    };
+    let running = match start_game(bundle, &game_opts, ctx) {
+        Ok(r) => r,
+        Err(e) => {
+            picker.failed(&source, &e);
+            // Long enough for the page to show it.
+            stop.wait(Duration::from_secs(3));
+            window.close();
+            return Err(e);
+        }
+    };
+    picker.started(running.start_url());
+    serve(running, window, &stop, &ctx.events);
+    drop(picker);
+    Ok(())
+}
+
+/// Starts the game's server and tells the front end about it.
+fn start_game(bundle: Bundle, opts: &Options, ctx: &Ctx) -> Result<Running> {
+    let events = ctx.events.clone();
     info!(
         "playshare: {} from {}",
         bundle.manifest.title,
@@ -221,11 +288,14 @@ pub fn run(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<()> {
         bundle,
         Box::new(backend),
         opts,
-        stop.clone(),
+        ctx.stop.clone(),
         events.clone(),
     )?;
-    let hub = running.hub.clone();
-    let p = *hub.ports.get().ok_or_else(|| Error::closed("no ports"))?;
+    let p = *running
+        .hub
+        .ports
+        .get()
+        .ok_or_else(|| Error::closed("no ports"))?;
     let local = format!("http://127.0.0.1:{}/", p.public);
     let lan = p.lan.map(|lan| format!("http://{lan}/"));
     info!(
@@ -235,15 +305,18 @@ pub fn run(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<()> {
             .unwrap_or_default()
     );
     events.progress(Progress::Game { title, local, lan });
-    let url = running.start_url();
+    Ok(running)
+}
+
+/// Opens the window on `url` (prints it with `--window none`).
+fn open_window(opts: &Options, url: &str, events: &Events) -> Result<window::Window> {
     if opts.window != WindowMode::None {
         events.progress(Progress::Begin(Step::Window));
     }
-    let (mut window, mode) = match window::Window::open(opts.window, &url, opts.browser.as_ref()) {
+    let (window, mode) = match window::Window::open(opts.window, url, opts.browser.as_ref()) {
         Ok(w) => w,
         Err(e) => {
             events.progress(Progress::Failed(Step::Window, e.to_string()));
-            running.end();
             return Err(e);
         }
     };
@@ -253,6 +326,12 @@ pub fn run(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<()> {
     if mode == WindowMode::None {
         println!("{url}");
     }
+    Ok(window)
+}
+
+/// Runs the game until the window closes, the page quits or a stop.
+fn serve(running: Running, mut window: window::Window, stop: &Stop, events: &Events) {
+    let hub = running.hub.clone();
     let mut phones = 0;
     let why = loop {
         if stop.wait(TICK) {
@@ -277,7 +356,6 @@ pub fn run(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<()> {
     // The pages first (goodbyes to phones), then the window.
     running.end();
     window.close();
-    Ok(())
 }
 
 /// The listeners.

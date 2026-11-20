@@ -1,0 +1,8 @@
+---
+title: Games to play · tvpipe
+heading: Games to play
+---
+
+Party games for the TV and everyone's phones. The TV shows the game and a QR code; everyone scans it, types a name and plays on their own phone. Nobody installs anything.
+
+`tvpipe game play NAME` downloads a game and starts it; `tvpipe game play` alone shows these games in its window to pick one. How playing works: [Party games](party.md). Your own game on this page: [Adding a game](game-list.md#s3).

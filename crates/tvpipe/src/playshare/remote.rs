@@ -22,6 +22,8 @@ use crate::util::stop::Stop;
 pub const MAX_GAME: usize = 256 << 20;
 /// The games list and API answers at most.
 const MAX_JSON: usize = 16 << 20;
+/// A screenshot of the games list at most.
+pub const MAX_PICTURE: usize = 2 << 20;
 /// Where the games list is.
 pub const GAMES_LIST: &str = "https://tvpipe.party/games.json";
 
@@ -194,6 +196,19 @@ impl Release {
                 }
             ))
         })
+    }
+}
+
+/// A picture's type by its first bytes: PNG, JPEG or WebP.
+pub fn image_type(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
     }
 }
 
@@ -417,6 +432,89 @@ impl Fetcher {
                     warn!("the games list: {e}; using the copy from before");
                     parse(b)
                 }
+                _ => Err(e),
+            },
+        }
+    }
+
+    /// The games list for the picker (docs/game-catalog.md): fetched
+    /// again (its ETag) unless offline, the cached copy when the network
+    /// fails.
+    pub fn catalog(&self) -> Result<Value> {
+        let mut idx = self.cache.index();
+        let list = self.list(&mut idx)?;
+        self.cache.save(&idx)?;
+        Ok(list)
+    }
+
+    /// The list's URL (screenshots' `src` are relative to it).
+    pub fn list_url(&self) -> Result<Url> {
+        Url::parse(&self.endpoints.list)
+    }
+
+    /// Whether this source was downloaded before (its zip is in the
+    /// cache).
+    pub fn downloaded(&self, source: &str) -> bool {
+        let Ok(r) = Remote::parse(source) else {
+            return false;
+        };
+        self.cache
+            .index()
+            .sources
+            .get(&r.key())
+            .is_some_and(|rec| self.cache.blob(&rec.sha256).is_some())
+    }
+
+    /// A screenshot of the games list (`https://`, at most
+    /// [`MAX_PICTURE`], PNG, JPEG or WebP), kept in the cache
+    /// (`pics/`) and asked again with its ETag; the cached copy offline or
+    /// when the network fails.
+    pub fn picture(&self, url: &Url) -> Result<(Vec<u8>, &'static str)> {
+        let key = hex::encode(&crate::crypto::ring::sha256(url.to_string().as_bytes()));
+        let file = format!("pics/{key}");
+        let etag_file = format!("pics/{key}.etag");
+        let cached = self.cache.read(&file).filter(|b| image_type(b).is_some());
+        let from_cache = |b: Vec<u8>| {
+            let t = image_type(&b).unwrap_or("application/octet-stream");
+            (b, t)
+        };
+        if self.opts.offline {
+            return cached
+                .map(from_cache)
+                .ok_or_else(|| Error::not_found(format!("{url}: not in the cache (--offline)")));
+        }
+        let mut get = Get::new(url.clone(), MAX_PICTURE);
+        if cached.is_some() {
+            if let Some(e) = self.cache.read(&etag_file) {
+                get = get.header("If-None-Match", String::from_utf8_lossy(&e).into_owned());
+            }
+        }
+        match self.client.get_bytes(&get) {
+            Ok((reply, _)) if reply.status == 304 && cached.is_some() => {
+                Ok(from_cache(cached.unwrap_or_default()))
+            }
+            Ok((reply, body)) if reply.is_success() => {
+                let t = image_type(&body).ok_or_else(|| {
+                    Error::protocol(format!("{url}: not a PNG, JPEG or WebP picture"))
+                })?;
+                self.cache.write(&file, &body)?;
+                match reply.headers.get("etag") {
+                    Some(e) => self.cache.write(&etag_file, e.as_bytes())?,
+                    None => {
+                        let _ = std::fs::remove_file(self.cache.dir().join(&etag_file));
+                    }
+                }
+                Ok((body, t))
+            }
+            Ok((reply, _)) => match cached {
+                Some(b) => Ok(from_cache(b)),
+                None => Err(Error::not_found(format!(
+                    "{url}: {} from the server",
+                    reply.status
+                ))),
+            },
+            Err(e) => match cached {
+                Some(b) if offline_kind(&e) => Ok(from_cache(b)),
                 _ => Err(e),
             },
         }
@@ -746,4 +844,4 @@ fn api_error(reply: &Reply, what: &str) -> Error {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

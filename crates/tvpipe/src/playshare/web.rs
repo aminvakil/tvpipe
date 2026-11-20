@@ -1,6 +1,6 @@
 //! Files tvpipe serves itself under `/_tvpipe/`: the game library
-//! (`lib/`, built from `npm/party` by `npm run build`) and the standard
-//! launcher (`launcher/`). Embedded in the binary; with
+//! (`lib/`, built from `npm/party` by `npm run build`), the standard
+//! launcher (`launcher/`) and the game picker (`picker/`). Embedded in the binary; with
 //! `TVPIPE_PLAYSHARE_WEB=DIR` they are read from `DIR` instead (working
 //! on the library without rebuilding tvpipe).
 
@@ -38,6 +38,9 @@ pub static FILES: &[Asset] = web![
     "launcher/index.html",
     "launcher/launcher.css",
     "launcher/launcher.js",
+    "picker/index.html",
+    "picker/picker.css",
+    "picker/picker.js",
 ];
 
 /// The source directory (for the test and dev mode).

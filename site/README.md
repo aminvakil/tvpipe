@@ -11,11 +11,13 @@ python3 -m http.server -d site/_out    # look at it
 | Path | |
 |---|---|
 | `index.md` | the landing page |
+| `games.md` | the games page's heading and intro (`games/index.html`); the games come from `static/games.json` |
 | `manual/NN-slug.md` | one manual section per file, numbered by its prefix, built to `manual/slug/index.html` |
 | `templates/layout.html` | the page shell: header, logo symbol, scripts |
 | `static/` | `style.css`, `site.js` (theme switch, navigation without reloads, CRT figure), the logo |
 | `../crates/tvpipe/src/browser/fonts/` | the fonts, shared with tvpipe's share page (OFL-1.1, `LICENSES/OFL-1.1-fonts.txt`) |
 | `static/install.sh`, `static/install.ps1` | the installers, also copied to the site's root (`/install.sh`, `/install.ps1`) |
+| `static/games.json`, `static/games/NAME/` | the games list (also at `/games.json`, what `tvpipe game play NAME` reads) and its screenshots, taken by each game's `test/live/play.ts --shots` |
 | `shots/` | screenshots, made by `node site/screenshots.mjs` |
 | `build.py` | the generator: standard-library Python, its Markdown subset is described at the top |
 

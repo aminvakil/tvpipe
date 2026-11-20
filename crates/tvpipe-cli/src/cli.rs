@@ -302,7 +302,7 @@ static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
 
 static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
     .about("Play a game: the host window here, the TV page on TVs, phones join")
-    .usage("GAME [--yes] [--refresh | --offline] [--tunnel[=PROVIDER] | --no-tunnel] [--lan[=IP]] [--window=MODE]")
+    .usage("[GAME] [--yes] [--refresh | --offline] [--tunnel[=PROVIDER] | --no-tunnel] [--lan[=IP]] [--window=MODE]")
     .opts(&[
         Opt::new(PlayshareArg::Yes)
             .short('y')
@@ -346,9 +346,10 @@ static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
             .value("RES")
             .help("The TV picture: auto, 720p, 1080p or 4k (default auto; the window can change it)"),
     ])
-    .args(&[Pos::new(PlayshareArg::Path, "GAME").help(
+    .args(&[Pos::new(PlayshareArg::Path, "GAME").optional().help(
         "A folder or .zip with tvpipe.json, an https:// URL of a zip, gh:OWNER/REPO[/ASSET][@TAG], \
-         or a name from the games list (drawbluff); #sha256=HEX pins a download",
+         or a name from the games list (drawbluff); #sha256=HEX pins a download. \
+         Without it the window opens on the games list",
     )])
     .after_help(
         "A game from the internet is downloaded (and kept: tvpipe game list), and the first time \
@@ -391,7 +392,7 @@ static GAME_FETCH: Cli<GameToolArg> = Cli::new("fetch")
 
 static GAME_LIST: Cli<GameToolArg> = Cli::new("list")
     .about("List the games downloaded from the internet")
-    .after_help("The games list of games to play: https://tvpipe.party/manual/game-list/");
+    .after_help("The games to play: https://tvpipe.party/games/");
 
 const fn game_smoke(id: GameToolArg) -> Opt<GameToolArg> {
     Opt::new(id).long("smoke").help(
@@ -1115,12 +1116,8 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
     if o.fetch.refresh && o.fetch.offline {
         return Err(p.error("--refresh and --offline together"));
     }
-    let Some(path) = path else {
-        return Err(p.error(
-            "game play needs a GAME: a folder, a .zip, an https:// URL, gh:OWNER/REPO or a name",
-        ));
-    };
-    o.game = path;
+    // No GAME: the window opens on the games list (docs/game-catalog.md).
+    o.game = path.unwrap_or_default();
     Ok(Command::Playshare(o))
 }
 
@@ -1731,6 +1728,11 @@ mod tests {
         assert_eq!(o.window, WindowMode::App);
         assert_eq!(o.lan, None);
         assert_eq!(o.resolution, Resolution::Auto);
+        // No game: the window's picker.
+        let Ok((_, Command::Playshare(o))) = parse_from(&["game", "play"]) else {
+            panic!()
+        };
+        assert_eq!(o.game, "");
         let Ok((_, Command::Playshare(o))) = parse_from(&[
             "game",
             "play",
@@ -1768,8 +1770,7 @@ mod tests {
         assert_eq!(o.game, "gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v*");
         assert!(o.yes && o.fetch.offline);
         for bad in [
-            &["game", "play"][..],
-            &["game", "play", "--refresh", "--offline", "x"],
+            &["game", "play", "--refresh", "--offline", "x"][..],
             &["game", "play", "--tunnel", "--no-tunnel", "x"],
             &["game", "play", "--tunnel=nope", "x"],
             &["game", "play", "--window", "tab", "x"],

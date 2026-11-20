@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tvpipe · pick a game</title>
+<link rel="icon" href="data:,">
+<link rel="preload" href="/_tvpipe/fonts/plex-sans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/_tvpipe/fonts/michroma.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/_tvpipe/fonts/sixtyfour.woff2" as="font" type="font/woff2" crossorigin>
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('tvpipe-theme') || 'auto'; } catch (e) {}</script>
+<link rel="stylesheet" href="/_tvpipe/ui.css">
+<link rel="stylesheet" href="picker.css">
+<script type="module" src="picker.js"></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo" viewBox="0 0 560 520">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <g style="stroke:var(--logo-ink)" stroke-width="12"><line x1="208" y1="118" x2="152" y2="62"/><line x1="256" y1="118" x2="322" y2="40"/></g>
+      <g style="fill:var(--logo-ink)"><circle cx="152" cy="62" r="14"/><circle cx="322" cy="40" r="14"/><path d="M180 137 A52 30 0 0 1 284 137 Z"/><path d="M92 474 A19 19 0 0 0 130 474 Z"/><path d="M334 474 A19 19 0 0 0 372 474 Z"/></g>
+      <rect x="23" y="137" width="419" height="331" rx="48" style="stroke:var(--logo-ink);fill:var(--logo-screen)" stroke-width="16"/>
+      <path d="M92 180 Q211 168 330 180 Q350 182 352 202 Q360 301 352 400 Q350 420 330 422 Q211 434 92 422 Q72 420 70 400 Q62 301 70 202 Q72 182 92 180 Z" style="stroke:var(--logo-ink)" stroke-width="14"/>
+      <circle cx="390" cy="222" r="17" fill="#E8743B"/><circle cx="390" cy="272" r="12" fill="#E8743B"/>
+      <g stroke-width="14">
+        <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z" style="stroke:var(--logo-screen)" stroke-width="40"/>
+        <path d="M190 268 C265 268 325 300 393 360 L390 322 A55 13 0 0 0 500 322 C506 370 500 420 455 437 C420 446 390 440 360 412 C300 350 250 304 190 304 Z" fill="#E8743B" style="stroke:var(--logo-ink)"/>
+        <ellipse cx="445" cy="322" rx="55" ry="13" style="fill:var(--logo-screen);stroke:var(--logo-ink)"/>
+        <line x1="182" y1="262" x2="182" y2="310" style="stroke:var(--logo-ink)" stroke-width="16"/>
+      </g>
+      <g stroke="#E8743B" stroke-width="13" transform="translate(12 0)"><path d="M492 225 C492 205 464 195 464 160 C464 136 482 120 502 120 C522 120 536 135 533 155 C531 170 518 177 507 175"/><path d="M470 290 C468 262 492 252 506 242 C520 230 524 214 518 200"/></g>
+    </g>
+  </symbol>
+</svg>
+
+<header class="top">
+  <div class="mark"><svg viewBox="0 0 560 520" aria-hidden="true"><use href="#logo"/></svg><span>tv<b>pipe</b></span></div>
+  <div class="pair">tvpipe<span>Party game</span></div>
+  <div class="pair">Game<span id="game">Pick one</span></div>
+  <div class="pair">Players<span>–</span></div>
+</header>
+
+<main>
+  <section class="row ph">
+    <div class="meta"><span class="lbl">Status</span><span class="state" id="state">Loading the games…</span></div>
+    <div class="body">
+      <h1 id="title">Pick a game</h1>
+      <p class="lead" id="message">tvpipe downloads the game you pick, and asks before it runs one the first time. Everyone plays on their own phone; the TV shows the game.</p>
+      <p id="error" class="error bad" hidden></p>
+      <ul id="games" class="games" aria-label="Games"></ul>
+      <p id="empty" class="searching" hidden></p>
+    </div>
+  </section>
+
+  <section class="row sec">
+    <div class="meta"><span class="lbl">Elsewhere</span></div>
+    <form class="body other" id="other">
+      <label for="source">Or a game from elsewhere: an <code>https://</code> link to its zip, or <code>gh:OWNER/REPO</code>.</label>
+      <div class="field">
+        <input id="source" type="text" spellcheck="false" autocomplete="off" placeholder="gh:someone/their-game">
+        <button class="btn" id="open" type="submit">Open</button>
+      </div>
+    </form>
+  </section>
+</main>
+
+<footer class="foot">
+  <span id="where">tvpipe game</span>
+  <div class="theme" role="group" aria-label="Colour theme">
+    <button data-t="light" title="Light" aria-label="Light"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75"/><path d="M8 1.25v1.5M8 13.25v1.5M1.25 8h1.5M13.25 8h1.5M3.2 3.2l1.06 1.06M11.74 11.74l1.06 1.06M3.2 12.8l1.06-1.06M11.74 4.26l1.06-1.06"/></svg></button>
+    <button data-t="dark" title="Dark" aria-label="Dark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 0 1 5.8 2.4a6 6 0 1 0 7.8 7.8z"/></svg></button>
+    <button data-t="auto" title="Like the system" aria-label="Like the system"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path class="fill" d="M8 2.25a5.75 5.75 0 0 1 0 11.5z"/></svg></button>
+  </div>
+</footer>
+
+<dialog id="ask">
+  <form method="dialog" id="ask-form">
+    <span class="lbl" id="ask-label">A game from the internet</span>
+    <h2 id="ask-title"></h2>
+    <p id="ask-changed" class="bad" hidden>This game changed since you last said yes to it.</p>
+    <dl class="facts" id="ask-facts"></dl>
+    <p>It runs in this window, can cast to the TVs on this network and serves pages to phones.</p>
+    <div class="buttons">
+      <button type="submit" id="ask-yes" class="btn primary">Play it</button>
+      <button type="button" id="ask-no" class="btn">Back</button>
+    </div>
+  </form>
+</dialog>
+</body>
+</html>

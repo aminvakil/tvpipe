@@ -172,11 +172,16 @@ impl Cache {
         self.write("index.json", idx.to_json().as_bytes())
     }
 
-    /// Writes `name` in the cache directory atomically.
+    /// Writes `name` (maybe in a subdirectory: `pics/X`) in the cache
+    /// directory atomically.
     pub fn write(&self, name: &str, bytes: &[u8]) -> Result<()> {
-        self.mkdir(&self.dir)?;
         let p = self.dir.join(name);
-        let tmp = self.dir.join(format!(".{name}.{}.tmp", std::process::id()));
+        let dir = p.parent().unwrap_or(&self.dir).to_path_buf();
+        self.mkdir(&dir)?;
+        let file = p
+            .file_name()
+            .map_or_else(String::new, |f| f.to_string_lossy().into_owned());
+        let tmp = dir.join(format!(".{file}.{}.tmp", std::process::id()));
         std::fs::write(&tmp, bytes)
             .and_then(|()| std::fs::rename(&tmp, &p))
             .map_err(|e| {

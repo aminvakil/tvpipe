@@ -7,17 +7,17 @@ use super::*;
 use crate::net::fetch::tests::{response, TestServer};
 use crate::net::http::Request;
 
-const WEB: &str = "web.tvtest.opentunnel.test";
+pub(crate) const WEB: &str = "web.tvtest.opentunnel.test";
 const API: &str = "api.tvtest.opentunnel.test";
 const CDN: &str = "cdn.tvtest.opentunnel.test";
-const LIST: &str = "list.tvtest.opentunnel.test";
+pub(crate) const LIST: &str = "list.tvtest.opentunnel.test";
 
-fn series() -> String {
+pub(crate) fn series() -> String {
     check::short_version(env!("CARGO_PKG_VERSION"))
 }
 
 /// A game zip: `g/` with tvpipe.json (made for `tvpipe`) and its pages.
-fn game(title: &str, tvpipe: &str) -> Vec<u8> {
+pub(crate) fn game(title: &str, tvpipe: &str) -> Vec<u8> {
     let manifest = format!(
         r#"{{"name":"g","title":"{title}","tvpipe":"{tvpipe}","pages":{{"host":"host.html","tv":"tv.html","phone":"phone.html"}}}}"#
     );
@@ -31,19 +31,22 @@ fn game(title: &str, tvpipe: &str) -> Vec<u8> {
     crate::util::zip_write::write(&e).unwrap()
 }
 
+/// A PNG's first bytes (enough for the picker's check).
+pub(crate) const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+
 fn sha(b: &[u8]) -> String {
     hex::encode(&crate::crypto::ring::sha256(b))
 }
 
 /// The fake: releases of `o/r`, their zips on the CDN, the games list.
-struct Fake {
+pub(crate) struct Fake {
     server: TestServer,
     zips: Vec<(&'static str, Vec<u8>)>,
     cache: Cache,
 }
 
 impl Fake {
-    fn new(name: &str) -> Fake {
+    pub(crate) fn new(name: &str) -> Fake {
         let v1 = game("G one", &series());
         let v19 = game("G nine", &series());
         let v110 = game("G ten", "9.9");
@@ -139,8 +142,16 @@ impl Fake {
                         _ => response(404, &[], br#"{"message":"Not Found"}"#),
                     }
                 }
+                LIST if path == "/pics/g.png" => {
+                    if r.headers.get("if-none-match") == Some("\"pic1\"") {
+                        response(304, &[("ETag", "\"pic1\"")], b"")
+                    } else {
+                        response(200, &[("ETag", "\"pic1\"")], PNG)
+                    }
+                }
+                LIST if path == "/pics/not-a-picture.png" => response(200, &[], b"<html>"),
                 LIST => {
-                    let list = r#"{"v":1,"games":[{"name":"g","title":"G","source":"gh:o/r/g@g-v*"},{"name":"h","title":"H","source":"gh:o/r/h@h-v*"}]}"#;
+                    let list = r#"{"v":1,"games":[{"name":"g","title":"G","summary":"A game","players":{"min":2,"max":8},"languages":["en"],"source":"gh:o/r/g@g-v*","screenshots":[{"src":"pics/g.png","alt":"The TV","kind":"tv"},{"src":"pics/not-a-picture.png","alt":"x","kind":"phone"},{"src":"http://elsewhere.test/x.png","alt":"plain http","kind":"tv"}]},{"name":"h","title":"H","source":"gh:o/r/h@h-v*"},{"name":"Bad Name","title":"B","source":"gh:o/r"}]}"#;
                     if r.headers.get("if-none-match") == Some("\"list1\"") {
                         response(304, &[("ETag", "\"list1\"")], b"")
                     } else {
@@ -169,7 +180,7 @@ impl Fake {
         &self.zips.iter().find(|(t, _)| *t == tag).unwrap().1
     }
 
-    fn fetcher(&self, opts: FetchOptions, token: Option<&str>) -> Fetcher {
+    pub(crate) fn fetcher(&self, opts: FetchOptions, token: Option<&str>) -> Fetcher {
         let port = self.server.addr.port();
         let mut client = self.server.client();
         for h in [WEB, API, CDN, LIST] {
@@ -205,7 +216,7 @@ impl Fake {
             .collect()
     }
 
-    fn count(&self, host: &str) -> usize {
+    pub(crate) fn count(&self, host: &str) -> usize {
         self.requests().iter().filter(|(h, _)| h == host).count()
     }
 

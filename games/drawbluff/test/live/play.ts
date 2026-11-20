@@ -8,7 +8,7 @@
  * stream); bots join through the public listener. Screenshots of the
  * launcher, the host window, the TV and the phone per phase.
  *
- *   npm run build && node test/live/play.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--lang en|de] [--out DIR]
+ *   npm run build && node test/live/play.ts [--zip] [--bots N] [--rounds N] [--tunnel=PROVIDER] [--tv page|canvas] [--lang en|de] [--out DIR] [--shots DIR]
  *
  * `--lang de`: the host page sets the room to German (its Language
  * setting), the phone is a German one (`de-DE`); the screenshots go to
@@ -21,6 +21,13 @@
  * (HTML-in-Canvas) and streamed as a surface instead of tvpipe's own
  * browser capturing it (docs/playshare-design.md §17).
  *
+ * `--shots DIR`: the pictures for the games list (docs/game-catalog.md)
+ * into DIR: `tv-vote` (the TV page), `phone-draw` and `phone-vote`. The
+ * other players then have people's names and draw and lie like people
+ * (`actors.ts`); Phil draws a cat. With `--bots 6` the room looks alive:
+ *
+ *   node test/live/play.ts --bots 6 --shots ../../site/static/games/drawbluff
+ *
  * Needs Chrome and tvpipe built (target/release, else target/debug, or
  * TVPIPE_BINARY).
  */
@@ -32,7 +39,9 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { bots } from "../../game/bots.ts";
+import { actors, picture } from "./actors.ts";
 import { Browser, type Tab } from "./browser.ts";
+import { keep } from "./shots.ts";
 
 const { values: args } = parseArgs({
   options: {
@@ -43,6 +52,7 @@ const { values: args } = parseArgs({
     out: { type: "string" },
     tv: { type: "string", default: "page" },
     lang: { type: "string", default: "en" },
+    shots: { type: "string" },
   },
 });
 
@@ -57,6 +67,7 @@ const bundle = fileURLToPath(args.zip ? new URL("drawbluff.zip", here) : here);
 const lang = args.lang === "de" ? "de" : "en";
 const out = `${args.out ?? (lang === "de" ? "/tmp/drawbluff-de" : "/tmp/drawbluff-play")}${args.zip ? "-zip" : ""}${args.tv === "canvas" ? "-canvas" : ""}`;
 mkdirSync(out, { recursive: true });
+if (args.shots) mkdirSync(args.shots, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
 
@@ -96,8 +107,8 @@ try {
   await win.eval(`(() => { const l = document.getElementById("lang"); l.value = ${JSON.stringify(lang)}; l.dispatchEvent(new Event("change")); return true; })()`);
   await win.until(`drawbluff.game.lang === ${JSON.stringify(lang)} && document.documentElement.lang === ${JSON.stringify(lang)}`);
   log(`the room speaks ${lang}`);
-  const links = await win.eval<{ join: string; phone: string; code: string }>(
-    `({ join: drawbluff.party.links.join, phone: drawbluff.party.info.phone.url, code: drawbluff.party.code })`,
+  const links = await win.eval<{ join: string; phone: string; code: string; watch: string }>(
+    `({ join: drawbluff.party.links.join, phone: drawbluff.party.info.phone.url, code: drawbluff.party.code, watch: drawbluff.party.links.watch })`,
   );
   log(`room ${links.code}, phones join at ${links.join.replace(/#.*/, "#k=…")}`);
   // The TV: the browser receiver's player page, once the cast streams.
@@ -111,6 +122,14 @@ try {
   const playerUrl = await win.eval<string>(`document.getElementById("player").href`);
   const tv = await browser.open(playerUrl, { width: 1280, height: 720 });
   log(`TV: ${playerUrl.replace(/t=.*/, "t=…")}`);
+  // The TV page itself (the watch link, muted) for crisp pictures.
+  const screen = args.shots ? await browser.open(`${links.watch}&mute=1`, { width: 1280, height: 720 }) : undefined;
+  const kept: string[] = [];
+  const pic = async (tab: Tab, name: string, kind: "tv" | "phone", settle?: number) => {
+    if (!args.shots || kept.some((f) => f.startsWith(`${name}.`))) return;
+    kept.push(await keep(tab, args.shots, name, kind, settle));
+    log(`picture: ${kept.at(-1)}`);
+  };
   // A phone (through the phones' listener, as the QR code says).
   const phoneUrl = links.join.startsWith("https://") ? links.join : links.join;
   const PHONE = { width: 390, height: 844, mobile: true };
@@ -122,13 +141,14 @@ try {
   await phone.until(`!!document.querySelector(".card.lobby") && document.documentElement.lang === ${JSON.stringify(lang)}`);
   const ws = `${links.phone.replace(/^http/, "ws")}_tvpipe/ws`;
   const u = new URL(links.join);
-  const robots = await bots(Number(args.bots), {
+  const joinAs = {
     url: ws,
     room: u.searchParams.get("r")!,
     key: new URLSearchParams(u.hash.slice(1)).get("k")!,
     think: () => 1200 + Math.random() * 2000,
-  });
-  log(`${robots.length} bots joined through the phones' listener`);
+  };
+  const robots: { errors?: string[]; close(): void }[] = args.shots ? await actors(Number(args.bots), joinAs) : await bots(Number(args.bots), joinAs);
+  log(`${robots.length} ${args.shots ? "players" : "bots"} joined through the phones' listener`);
 
   const shots: string[] = [];
   const problems: string[] = [];
@@ -217,6 +237,17 @@ try {
       `(() => { const r = document.querySelector("canvas.pad").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width }; })()`,
     );
     const pt = (a: number, b: number): [number, number] => [box.x + a * box.w, box.y + b * box.w];
+    if (args.shots) {
+      // A cat, stroke by stroke, with the pens it names.
+      let pen = -1;
+      for (const [p, , ...xy] of picture(() => 0.5, 2, 0).strokes) {
+        if (p !== pen) await tab.eval(`document.querySelectorAll(".swatches button")[${(pen = p!)}].click(); true`);
+        const pts: [number, number][] = [];
+        for (let i = 0; i < xy.length; i += 2) pts.push(pt(xy[i]! / 1000, xy[i + 1]! / 1000));
+        await tab.drag(pts);
+      }
+      return;
+    }
     await tab.drag(Array.from({ length: 30 }, (_, i) => pt(0.5 + 0.3 * Math.cos((i / 29) * 2 * Math.PI), 0.5 + 0.3 * Math.sin((i / 29) * 2 * Math.PI))));
     await tab.eval(`document.querySelectorAll(".swatches button")[1].click(); true`);
     await tab.drag([pt(0.38, 0.4), pt(0.4, 0.42)]);
@@ -257,11 +288,16 @@ try {
     if (p === "draw") {
       await draw(phone);
       await shot(`${at}-draw`);
+      await pic(phone, "phone-draw", "phone");
       await phone.eval(`document.getElementById("done").click(); true`);
     } else if (p === "lie" || p === "vote" || p === "scores" || p === "gallery") {
       // The phone's input or options first, then its answer.
       await new Promise((r) => setTimeout(r, 400));
       await shot(`${at}-${p}`);
+      if (p === "vote" && screen) {
+        await pic(screen, "tv-vote", "tv", 2500); // the TV draws the drawing again first
+        if (await phone.eval<boolean>(`document.querySelectorAll(".options button").length > 3`)) await pic(phone, "phone-vote", "phone");
+      }
       await drivePhone();
     } else if (p === "reveal") {
       await new Promise((r) => setTimeout(r, 3000));
@@ -269,7 +305,11 @@ try {
     }
   }
   await shot("final");
-  const errors = robots.flatMap((b) => b.errors);
+  const errors = robots.flatMap((b) => b.errors ?? []);
+  if (args.shots && kept.length < 3) {
+    log(`only these pictures: ${kept.join(", ")}`);
+    failed = true;
+  }
   log(`game over: ${shots.length} screenshot sets in ${out}; bot errors: ${errors.length ? errors.join(", ") : "none"}; layout problems: ${problems.length || "none"}`);
   if (problems.length > 0) failed = true;
   // The End button: tvpipe ends, everyone is told.

@@ -567,7 +567,8 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
   imports to `/_tvpipe/lib/`; `npm run zip` writes `drawbluff.zip`
   (first `scripts/zip.ts`, deflate through Node's zlib; now `tvpipe game
   pack`, §18). The host page shows
-  the room, the TVs (with "try again"), the players (remove, bots), the
+  the room, the TVs (with "try again"), the players (remove; bots,
+  for tests, only with `?bots`), the
   rounds, timers and late joining, and a muted preview of the TV (the
   watch link in an `<iframe>`).
 - **Checked** (2026-11-19, macOS 26, Chrome 157): `node
@@ -807,7 +808,8 @@ https to http); the body streamed to a file with SHA-256, at most 256 MiB;
 `~/.cache/tvpipe`, `%LOCALAPPDATA%\tvpipe\cache`; `$TVPIPE_CACHE_DIR`):
 `games/blobs/SHA256.zip` and `games/index.json` (per source: the resolved
 URL, tag, ETag, sha256, size, name, title, series, when fetched and used,
-the sha256 the person approved), `games/list.json`. A pinned source with
+the sha256 the person approved), `games/list.json`, and the list's
+screenshots in `games/pics/` (by the URL's hash, with their ETags). A pinned source with
 its blob never touches the network; `@TAG` uses the cached copy until
 `--refresh`; moving sources (latest, `@PREFIX*`, URLs) ask again
 (`If-None-Match`), and fall back to the cached copy with a warning when
@@ -824,6 +826,21 @@ matching `#sha256=` pin or `--yes` skip the question; without a terminal
 (and neither) it is an error that names both. No source is trusted more
 than another, the games list's included. `game fetch` and `game check` run
 nothing and never ask.
+
+**Picking in the window** (`playshare/picker.rs`, `npm/party/src/picker/`;
+docs/game-catalog.md). `game play` without a game starts a small server
+of its own on 127.0.0.1 (a token and a cookie, as the local listener) and
+opens the window on the picker: the games list's entries with their
+screenshots, which tvpipe fetches and serves (`GET /_tvpipe/api/catalog`,
+`/_tvpipe/catalog/N`: `https://` pictures only, PNG, JPEG or WebP, at most
+2 MiB, cached), and a field for a source (`https://`, `gh:`, a name; never
+a path). `POST /_tvpipe/api/game` with `{"source"}` fetches in the
+background (`GET` polls: `fetching` with the bytes so far, `ask`,
+`starting`, `ready`, `failed`), `{"trust": true}` answers the question
+above in the window (remembered as in the terminal; `--yes` and pins skip
+it), `{"back": true}` returns to the list. The chosen bundle starts the
+game's own server (as with a game on the command line), and `ready`
+carries its start link, which the page opens.
 
 **Service workers** are refused on the phones' listeners (a request with
 `Service-Worker: script` gets 403, for every game): the phones' origin

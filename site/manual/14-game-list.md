@@ -5,11 +5,14 @@ group: Use
 spec:
   Command: `tvpipe game play NAME`
   The list: `games.json` on this site
+  Pictures: [the games page](/games/)
 ---
 
 Party games are not part of tvpipe. Each one comes out on its own, and `tvpipe game play NAME` downloads the newest release that fits your tvpipe, asks you once whether to run it, and keeps it for next time. [Party games](party.md) covers playing.
 
 ## The games
+
+With pictures of each: [the games page](/games/).
 
 :::games
 :::
@@ -30,4 +33,11 @@ The list comes from [games.json](https://tvpipe.party/games.json) on this site, 
 
 ## Adding a game
 
-A game on this list is a game anyone can play by name. Publish it as a release (see [Share it](making-games.md#s7)), then open a pull request that adds it to `site/static/games.json` in the [repository](https://github.com/mitsuhiko/tvpipe). Everyone can also play a game from its release without the list: `tvpipe game play gh:OWNER/REPO`.
+A game on this list is a game anyone can play by name. Publish it as a release (see [Share it](making-games.md#s7)), then open a pull request that adds it to `site/static/games.json` in the [repository](https://github.com/mitsuhiko/tvpipe), with its screenshots in `site/static/games/NAME/`: at least one, the first of the TV the cover (here and in tvpipe's window). Take them while playing a real round with a few people:
+
+| Kind | Size | |
+|---|---|---|
+| `tv` | 1280×720 | the TV page at a lively moment: a vote, a reveal, the results |
+| `phone` | 390×844 | the phone page: what a player does, one or two |
+
+Each a PNG, JPEG or WebP of at most 400 KiB, with an `alt` text that says what it shows. `python3 site/build.py` checks the entry and the pictures. Everyone can also play a game from its release without the list: `tvpipe game play gh:OWNER/REPO`.

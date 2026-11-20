@@ -30,3 +30,10 @@ The same tool and the same commands on all three.
 ### Videos and websites
 Files, URLs, cameras, the screen, a browser tab or any web page.
 :::
+
+<h2 class="lh">Party games</h2>
+
+Games on the TV that everyone plays on their own phone: scan the code, type a name, play. `tvpipe game play` downloads one and starts it. [All the games](games/)
+
+:::covers
+:::

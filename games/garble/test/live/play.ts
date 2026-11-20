@@ -7,7 +7,14 @@
  * so chains survive and die). Screenshots of the TV and the phone at
  * each moment, and a layout check of every phone screen.
  *
- *   npm run build && node test/live/play.ts [--bots N] [--rounds N] [--length 4|6|8] [--lang en|de] [--undo] [--out DIR]
+ *   npm run build && node test/live/play.ts [--bots N] [--rounds N] [--length 4|6|8] [--lang en|de] [--undo] [--out DIR] [--shots DIR]
+ *
+ * `--shots DIR`: the pictures for the games list (docs/game-catalog.md)
+ * into DIR: `tv-verdict` (the chain the phone judged, on the TV),
+ * `phone-draw` and `phone-judge`; the game ends there. The bots then have
+ * people's names:
+ *
+ *   node test/live/play.ts --bots 7 --rounds 1 --shots ../../site/static/games/garble
  *
  * Needs Chrome and tvpipe built (target/release, else target/debug, or TVPIPE_BINARY).
  */
@@ -19,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { Browser, type Tab } from "./browser.ts";
+import { keep } from "./shots.ts";
 
 const { values: args } = parseArgs({
   options: {
@@ -28,6 +36,7 @@ const { values: args } = parseArgs({
     lang: { type: "string", default: "en" },
     undo: { type: "boolean", default: false },
     out: { type: "string" },
+    shots: { type: "string" },
   },
 });
 
@@ -39,6 +48,7 @@ if (!binary) throw new Error("build tvpipe first (cargo build --release -p tvpip
 const lang = args.lang === "de" ? "de" : "en";
 const out = args.out ?? `/tmp/garble-play${lang === "de" ? "-de" : ""}`;
 mkdirSync(out, { recursive: true });
+if (args.shots) mkdirSync(args.shots, { recursive: true });
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
 
@@ -79,7 +89,21 @@ try {
   await phone.screenshot(`${out}/phone-00-join.png`);
   await phone.eval(`document.getElementById("name").value = "Phil"; document.querySelector("form button").click(); true`);
   await phone.until(`!!document.querySelector(".lobby")`);
-  await win.eval(`garble.addBots(${Number(args.bots)}).then(() => true)`);
+  if (args.shots) {
+    // As the host page adds them, but with people's names.
+    await win.eval(`(async () => {
+      const { bots } = await import(new URL("../game/bots.js", location.href).href);
+      globalThis.__people = await bots(${Number(args.bots)}, {
+        url: (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/_tvpipe/ws",
+        room: garble.party.code,
+        key: garble.party.joinKey,
+        names: ["Mia", "Jonas", "Lena", "Sam", "Noah", "Zoe", "Ben", "Ella", "Theo", "Ivy", "Max"],
+        think: () => 1500 + Math.random() * 5000,
+        oracle: (id) => garble.game.meant(id),
+      });
+      return true;
+    })()`);
+  } else await win.eval(`garble.addBots(${Number(args.bots)}).then(() => true)`);
   await phone.until(`document.querySelectorAll(".chips .chip").length === ${Number(args.bots) + 1}`, 20_000);
   log(`${args.bots} bots joined in the window`);
 
@@ -108,6 +132,13 @@ try {
       }
     }
   };
+  const kept: string[] = [];
+  const pic = async (tab: Tab, name: string, kind: "tv" | "phone", settle?: number) => {
+    if (!args.shots || kept.some((f) => f.startsWith(`${name}.`))) return;
+    kept.push(await keep(tab, args.shots, name, kind, settle));
+    log(`picture: ${kept.at(-1)}`);
+  };
+  let judged = false;
   let n = 0;
   const shot = async (name: string, tvToo = true) => {
     const at = String(++n).padStart(2, "0");
@@ -148,6 +179,7 @@ try {
   const deadline = Date.now() + 25 * 60_000;
   for (;;) {
     if (Date.now() > deadline) throw new Error("the game took too long");
+    if (args.shots && kept.length >= 3) break;
     const s = await state();
     if (s.phase === "final") break;
     if (seen.has(s.key)) {
@@ -172,6 +204,7 @@ try {
       if (task === "draw") {
         await drawOnPhone();
         await shot(tag);
+        await pic(phone, "phone-draw", "phone");
         await phone.eval(`document.getElementById("done").click(); true`);
         await sleep(700);
         await phone.screenshot(`${out}/phone-${String(++n).padStart(2, "0")}-${tag}-passed.png`);
@@ -193,11 +226,14 @@ try {
           await phone.eval(`(() => { const l = document.querySelectorAll(".judge .link"); l[Math.min(1, l.length - 1)].click(); return true; })()`);
           await sleep(300);
           await phone.screenshot(`${out}/phone-${String(++n).padStart(2, "0")}-${tag}-picked.png`);
+          await pic(phone, "phone-judge", "phone", 300);
+          judged = true;
           await phone.eval(`document.querySelector(".verdict-bar .btn").click(); true`);
         }
       } else if (stg === "verdict") {
         await sleep(2200);
         await tv.screenshot(`${out}/tv-${String(++n).padStart(2, "0")}-${tag}-a.png`);
+        if (judged) await pic(tv, "tv-verdict", "tv", 1500); // the smuggled words drop in last
         await sleep(2600);
         await tv.screenshot(`${out}/tv-${String(++n).padStart(2, "0")}-${tag}-b.png`);
       }
@@ -218,8 +254,14 @@ try {
       await shot(tag);
     }
   }
-  await sleep(2000);
-  await shot("final");
+  if (args.shots && kept.length < 3) {
+    log(`only these pictures: ${kept.join(", ")}`);
+    failed = true;
+  }
+  if (!args.shots) {
+    await sleep(2000);
+    await shot("final");
+  }
   log(`game over; layout problems: ${problems.length || "none"}; screenshots in ${out}`);
   const errors = await tv.eval<string>(`document.body.innerText.slice(0, 0)`);
   void errors;

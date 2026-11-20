@@ -82,7 +82,7 @@ drawbluff/
 {
   "name": "my-game",
   "title": "My game",
-  "tvpipe": "0.2",
+  "tvpipe": "0.3",
   "root": "dist",
   "pages": {
     "host": "host/index.html",
@@ -357,7 +357,7 @@ page is then opened without its link); a game whose join link is not
 
 ## Versions
 
-`"tvpipe": "0.2"` says which tvpipe the game is made for, and so which
+`"tvpipe": "0.3"` says which tvpipe the game is made for, and so which
 `@tvpipe/party` it uses: tvpipe serves its own copy at `/_tvpipe/lib/`,
 and the host page talks to tvpipe's API with it. `tvpipe game play`
 refuses a game made for a newer tvpipe ("update tvpipe"), and, while
@@ -373,7 +373,7 @@ library on both sides is always tvpipe's, so it matches by itself.
 Version your game however you like (a `version` field in `tvpipe.json`
 is ignored by tvpipe); the zip's bytes change only when its files do, so
 a hash of the zip identifies a release. A release's notes can say which
-series it is for (`<!-- tvpipe: 0.2 -->`, [Publishing](#publishing)), so
+series it is for (`<!-- tvpipe: 0.3 -->`, [Publishing](#publishing)), so
 an older tvpipe picks the newest release that still runs on it.
 
 ## Publishing
@@ -385,7 +385,7 @@ home, and needs no API calls when players name the asset and tag:
 1. `tvpipe game pack my-game --strict` (and `--smoke` once); note the
    `sha256` it prints.
 2. Make a release and attach `my-game.zip`. With
-   `gh release create v1.0.0 my-game.zip --notes "<!-- tvpipe: 0.2 -->"`
+   `gh release create v1.0.0 my-game.zip --notes "<!-- tvpipe: 0.3 -->"`
    the marker says the series (optional: without it the zip's own
    `tvpipe.json` decides after the download).
 3. Players run `tvpipe game play gh:you/my-game` (the latest release's
@@ -403,13 +403,21 @@ skips drafts, prereleases and releases whose marker names a series this
 tvpipe cannot run, and takes the newest.
 
 **The games list** (`site/static/games.json`, served at
-`https://tvpipe.party/games.json` and rendered on the
-manual's "Games to play" page) maps names to sources: `{"v": 1, "games":
-[{"name", "title", "summary", "players": {"min", "max"}, "languages",
-"source", "home"}]}`. A pull request adds a game; `python3 site/build.py`
-checks the file.
+`https://tvpipe.party/games.json`, rendered with its pictures on
+`https://tvpipe.party/games/` and in `tvpipe game play`'s window without a
+game) maps names to sources: `{"v": 1, "games": [{"name", "title",
+"summary", "players": {"min", "max"}, "languages", "source", "home",
+"screenshots"}]}`. `screenshots` is a list of `{"src", "alt", "kind"}`, at
+least one: `src` relative to the list's URL (`static/games/NAME/FILE`, the
+file `site/static/games/NAME/FILE`: listed games keep their pictures in the
+repository), `kind` `tv` (1280×720) or `phone` (390×844), `alt` what it
+shows; the first `tv` one is the cover. Each is a PNG, JPEG or WebP of at
+most 400 KiB. A pull request adds a game; `python3 site/build.py` checks
+the file and the pictures. This repository's games take theirs with their
+live check: `node test/live/play.ts --shots ../../site/static/games/NAME`
+(see the script's header for the bots it needs).
 
-**This repository's games** (drawbluff) release this way through
+**This repository's games** (drawbluff, jinx, garble) release this way through
 `.github/workflows/games.yml`:
 
 1. Bump `games/NAME/package.json`'s `version`; when tvpipe's series
@@ -427,7 +435,8 @@ checks the file.
    the latest release. Running it by hand (workflow_dispatch, a game
    name) is a dry run that keeps the zip as an artifact.
 4. A new game also needs its entry in `site/static/games.json`
-   (`gh:mitsuhiko/tvpipe/NAME@NAME-v*`).
+   (`gh:mitsuhiko/tvpipe/NAME@NAME-v*`) and its screenshots in
+   `site/static/games/NAME/`.
 
 tvpipe's own releases (`vX.Y.Z`, `release.yml`) mark themselves latest;
 the installers pick the highest `vX.Y.Z` tag themselves.
@@ -437,10 +446,16 @@ the installers pick the highest `vX.Y.Z` tag themselves.
 # Running a game
 
 ```sh
+tvpipe game play                          # pick one from the games list in the window
 tvpipe game play drawbluff                # a name from the games list
 tvpipe game play drawbluff.zip            # a zip
 tvpipe game play ./drawbluff              # or a folder with tvpipe.json
 ```
+
+Without a game the window opens on the games list with its pictures (or a
+field for a source from elsewhere); the game picked there is downloaded,
+asked about in the window the first time, and then runs as below
+([`game-catalog.md`](game-catalog.md)).
 
 tvpipe finds the game (a path that exists wins; else it is downloaded),
 checks it (errors before anything starts), opens a window with the

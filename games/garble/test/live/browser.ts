@@ -66,10 +66,17 @@ export class Tab {
     writeFileSync(path, await this.capture());
   }
 
-  /** A screenshot (PNG) in memory. */
-  async capture(): Promise<Buffer> {
+  /**
+   * A screenshot in memory: PNG, or WebP or JPEG at `quality`; `clip` (CSS
+   * px from the top left, times `scale`) for a picture of a fixed size.
+   */
+  async capture(o: { format?: "png" | "webp" | "jpeg"; quality?: number; clip?: { width: number; height: number; scale: number } } = {}): Promise<Buffer> {
     await this.send("Page.bringToFront");
-    const r = await this.send("Page.captureScreenshot", { format: "png" });
+    const r = await this.send("Page.captureScreenshot", {
+      format: o.format ?? "png",
+      ...(o.quality === undefined ? {} : { quality: o.quality }),
+      ...(o.clip ? { clip: { x: 0, y: 0, ...o.clip } } : {}),
+    });
     return Buffer.from(r.data, "base64");
   }
 

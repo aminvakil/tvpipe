@@ -8,7 +8,40 @@
       "players": { "min": 3, "max": 50 },
       "languages": ["en", "de"],
       "source": "gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v*",
-      "home": "https://github.com/mitsuhiko/tvpipe/tree/main/games/drawbluff"
+      "home": "https://github.com/mitsuhiko/tvpipe/tree/main/games/drawbluff",
+      "screenshots": [
+        { "src": "static/games/drawbluff/tv-vote.png", "alt": "The TV showing a drawing of a fish and six titles to vote on, one of them real", "kind": "tv" },
+        { "src": "static/games/drawbluff/phone-draw.png", "alt": "Drawing a cat for the prompt on a phone", "kind": "phone" },
+        { "src": "static/games/drawbluff/phone-vote.png", "alt": "Voting for the real title of a drawing on a phone", "kind": "phone" }
+      ]
+    },
+    {
+      "name": "jinx",
+      "title": "Jinx",
+      "summary": "One word each to make the guesser say the secret word; the same clue twice jinxes both",
+      "players": { "min": 3, "max": 8 },
+      "languages": ["en"],
+      "source": "gh:mitsuhiko/tvpipe/jinx@jinx-v*",
+      "home": "https://github.com/mitsuhiko/tvpipe/tree/main/games/jinx",
+      "screenshots": [
+        { "src": "static/games/jinx/tv-reveal.png", "alt": "The TV: two clue cards turned, the others face down, the guess being typed on a label tape", "kind": "tv" },
+        { "src": "static/games/jinx/phone-guess.png", "alt": "The guesser's phone: the turned clues, the cards left, the guess being typed", "kind": "phone" },
+        { "src": "static/games/jinx/phone-lobby.png", "alt": "Drawing your face for the table on a phone, the players listed below", "kind": "phone" }
+      ]
+    },
+    {
+      "name": "garble",
+      "title": "garble",
+      "summary": "Draw, guess, pass it on: find where each chain died, smuggle your secret word in, catch the Wrecker",
+      "players": { "min": 4, "max": 12 },
+      "languages": ["en", "de"],
+      "source": "gh:mitsuhiko/tvpipe/garble@garble-v*",
+      "home": "https://github.com/mitsuhiko/tvpipe/tree/main/games/garble",
+      "screenshots": [
+        { "src": "static/games/garble/tv-verdict.webp", "alt": "The TV unrolling a chain of drawings and guesses on a red thread, stamped alive and dead where it broke", "kind": "tv" },
+        { "src": "static/games/garble/phone-draw.png", "alt": "Drawing the prompt on a phone", "kind": "phone" },
+        { "src": "static/games/garble/phone-judge.png", "alt": "Judging on a phone where your chain died", "kind": "phone" }
+      ]
     }
   ]
 }

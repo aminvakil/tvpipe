@@ -13,7 +13,14 @@
  * screen), the secrecy of the word on the TV, and every tab's console for
  * errors.
  *
- *   npm run build && node test/live/play.ts [--bots N] [--rounds auto|1|2] [--out DIR]
+ *   npm run build && node test/live/play.ts [--bots N] [--rounds auto|1|2] [--out DIR] [--shots DIR]
+ *
+ * `--shots DIR`: the pictures for the games list (docs/game-catalog.md)
+ * into DIR: `tv-reveal` (the TV page), `phone-lobby` and `phone-guess`;
+ * the game ends there. The other players then have people's names and
+ * are not marked as bots on the TV. With `--bots 7` the table is full:
+ *
+ *   node test/live/play.ts --bots 7 --shots ../../site/static/games/jinx
  *
  * Needs Chrome and tvpipe built (target/release, else target/debug, or
  * TVPIPE_BINARY).
@@ -26,12 +33,14 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { Browser, type Tab } from "./browser.ts";
+import { keep } from "./shots.ts";
 
 const { values: args } = parseArgs({
   options: {
     bots: { type: "string", default: "3" },
     rounds: { type: "string", default: "1" },
     out: { type: "string", default: "/tmp/jinx-live" },
+    shots: { type: "string" },
   },
 });
 
@@ -45,6 +54,7 @@ if (!binary) throw new Error("build tvpipe first (cargo build --release -p tvpip
 const bundle = fileURLToPath(here);
 const out = args.out;
 mkdirSync(out, { recursive: true });
+if (args.shots) mkdirSync(args.shots, { recursive: true });
 const nBots = Number(args.bots);
 const t0 = Date.now();
 const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
@@ -197,8 +207,29 @@ try {
   await win.until(`jinx.party.screen.peek().people?.find((p) => p.name === "Phil")?.face?.strokes?.length === 3`);
   log("phone: drew a face (3 strokes on the TV's view)");
 
-  // Bots, as the host page adds them.
-  for (let left = nBots; left > 0; ) {
+  // Bots, as the host page adds them; for the pictures with people's names and unmarked (no dashed rim on the TV).
+  if (args.shots) {
+    await win.eval(`(async () => {
+      const at = (path) => new URL(path, location.href).href;
+      const { bots } = await import(at("../game/bots.js"));
+      const { parseWordList } = await import(at("../game/match.js"));
+      const words = parseWordList(await (await fetch(at("../data/words.txt"))).text());
+      const dict = words.map((w) => w.word).filter((w) => /^[a-z]{4,8}$/.test(w));
+      globalThis.__people = await bots(${nBots}, {
+        url: (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/_tvpipe/ws",
+        room: jinx.party.code,
+        key: jinx.party.joinKey,
+        names: ["Mia", "Jonas", "Lena", "Sam", "Noah", "Zoe", "Ben"],
+        think: () => 800 + Math.random() * 3000,
+        peek: () => jinx.game.secret,
+        words,
+        dict,
+      });
+      return true;
+    })()`);
+    await win.until(`jinx.party.players.length >= ${nBots + 1}`);
+  }
+  for (let left = args.shots ? 0 : nBots; left > 0; ) {
     const n = left >= 3 ? 3 : 1;
     const before = await win.eval<number>(`jinx.party.players.length`);
     await win.eval(`document.getElementById(${JSON.stringify(n === 3 ? "bot3" : "bot1")}).click(); true`);
@@ -270,6 +301,12 @@ try {
     if (new RegExp(`\\b${s.secret}\\b`, "i").test(text)) problem(`tv ${where}: the TV shows the secret word "${s.secret}" in ${s.phase}`);
   };
   const shots: string[] = [];
+  const kept: string[] = [];
+  const pic = async (tab: Tab, name: string, kind: "tv" | "phone", settle?: number) => {
+    if (!args.shots || kept.some((f) => f.startsWith(`${name}.`))) return;
+    kept.push(await keep(tab, args.shots, name, kind, settle));
+    log(`picture: ${kept.at(-1)}`);
+  };
   const shot = async (name: string, o: { secret?: boolean; wait?: number } = {}) => {
     await sleep(o.wait ?? 1500); // the TV is a stream: a little behind
     await Promise.all([
@@ -292,6 +329,7 @@ try {
     log(`screenshots: ${name}`);
   };
   await shot("lobby");
+  await pic(phone, "phone-lobby", "phone");
 
   // Timing monitors (every 40 ms, Date.now() in both tabs, one machine):
   // the host's screen phase with its deadlines and Phil's task; the phone's
@@ -425,6 +463,8 @@ try {
     await phone.type(guess.slice(half), 150);
     await win.until(`jinx.party.screen.peek().draft === ${JSON.stringify(guess)}`, 3000).catch(() => problem(`reveal: the TV's draft did not reach "${guess}"`));
     await shot(`${at}-reveal-draft`, { secret: false, wait: 1200 });
+    await pic(phone, "phone-guess", "phone");
+    await pic(screen, "tv-reveal", "tv");
     await phone.eval(`document.querySelector("form.editor button.primary").click(); true`);
     log(`phone: guessed "${guess}" (${right ? "right" : "wrong"}) after ${turn} card(s)`);
   };
@@ -436,6 +476,7 @@ try {
   const deadline = Date.now() + 20 * 60_000;
   for (;;) {
     if (Date.now() > deadline) throw new Error("the game took too long");
+    if (args.shots && kept.length >= 3) break;
     const s = await state();
     const k = `${games}:${s.phase}:${s.round ?? ""}:${s.step ?? ""}`;
     if (seen.has(k)) {
@@ -511,7 +552,9 @@ try {
         break;
     }
   }
-  await timing(win, phone);
+  if (args.shots) {
+    if (kept.length < 3) problem(`pictures: only ${kept.join(", ")}`);
+  } else await timing(win, phone);
   log(`${shots.length} screenshot sets in ${out}; problems: ${problems.length || "none"}`);
   // The End button: tvpipe ends, everyone is told. Pages trying to reconnect after that are fine.
   reportErrors();

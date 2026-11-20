@@ -251,6 +251,12 @@ impl Source {
         Source::parse_with(s, &|p| p.exists())
     }
 
+    /// Parses a source typed into the window's picker: never a path on
+    /// this computer (those are the command line's).
+    pub fn parse_remote(s: &str) -> Result<Source> {
+        Source::parse_with(s.trim(), &|_| false)
+    }
+
     fn parse_with(s: &str, exists: &dyn Fn(&Path) -> bool) -> Result<Source> {
         if s.is_empty() {
             return Err(Error::usage("an empty game"));

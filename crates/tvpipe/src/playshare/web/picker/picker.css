@@ -1,0 +1,55 @@
+/* The game picker's own parts (docs/game-catalog.md); the rest is
+   tvpipe's look (/_tvpipe/ui.css). */
+
+body { min-height: 100vh; display: flex; flex-direction: column; }
+.top, main, .foot { width: 100%; }
+main { flex: 1; }
+.ph { padding-bottom: 40px; }
+.lead { color: var(--ink-2); }
+.error { margin: 0 0 18px; font-size: 14.5px; }
+.searching { margin: 14px 0 0; font-size: 13.5px; color: var(--ink-3); }
+
+/* The games: a card each, the cover on top. */
+.games { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; }
+.game { position: relative; display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 4px;
+        background: var(--bg); overflow: hidden; cursor: pointer; transition: border-color .15s, transform .15s; }
+.game:hover, .game:focus-visible { border-color: var(--accent); outline: none; }
+.game:active { transform: translateY(1px); }
+.game .cover { aspect-ratio: 16 / 9; background: var(--panel); display: block; width: 100%; object-fit: cover; border-bottom: 1px solid var(--rule); }
+.game .text { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.game h3 { margin: 0; font: 400 13px/1.3 var(--title); letter-spacing: .06em; text-transform: uppercase; }
+.game .summary { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+.game .facts { margin: auto 0 0; padding-top: 6px; font-size: 12.5px; color: var(--ink-3); }
+.game .tag { position: absolute; top: 10px; right: 10px; font: 400 8.5px/1 var(--title); letter-spacing: .12em; text-transform: uppercase;
+             color: var(--ink); background: var(--bg); padding: 5px 7px 4px; border-radius: 2px; }
+.game .bar { height: 3px; background: var(--rule); display: none; }
+.game .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.game.busy .bar { display: block; }
+.game.busy { border-color: var(--accent); cursor: progress; }
+.games.locked .game:not(.busy) { opacity: .45; cursor: default; }
+.games.locked .game:not(.busy):hover { border-color: var(--rule); }
+
+/* A source from elsewhere. */
+.other label { display: block; font-size: 14.5px; color: var(--ink-2); margin-bottom: 12px; }
+.other code { font-size: 13px; color: var(--ink); }
+.field { display: flex; gap: 10px; max-width: 620px; }
+.field input { flex: 1; min-width: 0; padding: 11px 14px; font: 400 14px/1.2 var(--mono); color: var(--ink);
+               background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; }
+.field input:focus { outline: none; border-color: var(--accent); }
+
+/* The question before a new game runs. */
+dialog { width: min(520px, calc(100vw - 40px)); padding: 28px 32px 30px; border: 1px solid var(--rule); border-radius: 4px;
+         background: var(--bg); color: var(--ink); box-shadow: 0 18px 48px rgba(13, 24, 40, .18); }
+dialog::backdrop { background: rgba(13, 24, 40, .45); }
+dialog .lbl { display: block; margin-bottom: 12px; }
+dialog h2 { overflow-wrap: anywhere; margin-bottom: 14px; }
+dialog p { margin: 14px 0 0; color: var(--ink-2); font-size: 14.5px; }
+dialog .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13.5px; }
+dialog .facts dt { color: var(--ink-3); }
+dialog .facts dd { margin: 0; overflow-wrap: anywhere; }
+dialog .facts .hash { font: 400 12px/1.4 var(--mono); }
+dialog .buttons { margin-top: 24px; }
+
+@media (max-width: 720px) {
+  .field { flex-direction: column; }
+}

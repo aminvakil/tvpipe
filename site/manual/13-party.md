@@ -3,7 +3,7 @@ title: Party games
 summary: Games on the TV that everyone plays with their phone.
 group: Use
 spec:
-  Command: `tvpipe game play GAME`
+  Command: `tvpipe game play [GAME]`
   Package: `@tvpipe/party` (npm, for writing games)
   A game: a folder or a zip with `tvpipe.json`, here or from the internet
   Games: [Games to play](game-list.md)
@@ -12,14 +12,13 @@ spec:
 `tvpipe game play` runs games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. Nobody installs anything: a game is a small web app, and tvpipe serves it, puts its main screen on the TV and connects the phones.
 
 ```sh
+$ tvpipe game play                     # pick one from the list in the window
 $ tvpipe game play drawbluff           # a game from the list, downloaded
 $ tvpipe game play my-game             # a folder with tvpipe.json
 $ tvpipe game play my-game.zip         # or a zip of one
 ```
 
-:::aside Not released yet
-`tvpipe game` and `@tvpipe/party` come out with the next release. Until then, use them from a clone of the repository.
-:::
+Without a game, the window opens on the [list of games](game-list.md), with pictures of each. Click one: tvpipe downloads it, asks in the window before it runs a game the first time, and moves on to picking the TVs. A field below the list takes a game from elsewhere (`https://…` or `gh:OWNER/REPO`).
 
 ## Games from the internet
 
@@ -31,8 +30,8 @@ Games are not part of tvpipe: each one comes out on its own. A name from the [li
 
 ```sh
 $ tvpipe game play drawbluff
-drawbluff ("drawbluff") from gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v* ("drawbluff" in the games list), release drawbluff-v0.2.0
-  128.2 KiB, 24 files (254.5 KiB unpacked), made for tvpipe 0.2
+drawbluff ("drawbluff") from gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v* ("drawbluff" in the games list), release drawbluff-v0.3.0
+  128.2 KiB, 24 files (254.5 KiB unpacked), made for tvpipe 0.3
   sha256 67a1867955902de214916aa67a287580fda732d46008d98b7e36d763094b0dd3
   It runs in tvpipe's window, can cast to the TVs on this network and serves pages to phones.
   Play it? [y/N]
@@ -119,7 +118,7 @@ $ cd games/drawbluff && npm install && npm run build
 $ tvpipe game play .
 ```
 
-Its window shows the room code and the QR code, the TVs, the players, the number of rounds, the timers and whether latecomers join at the next round, at the next drawing, or not at all, and a preview of the TV. **Add a bot** adds fake players, to try it alone.
+Its window shows the room code and the QR code, the TVs, the players, the number of rounds, the timers and whether latecomers join at the next round, at the next drawing, or not at all, and a preview of the TV.
 
 drawbluff speaks English and German. Pick the language on the host page, which starts with your browser's, and every phone and the TV follow. A phone can switch for itself in the lobby.
 
