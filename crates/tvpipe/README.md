@@ -51,7 +51,7 @@ hardware encoder sends its own H.264 instead (`Options::h264`,
 The [`recipes`] cover wgpu readbacks, Bevy, macroquad, cpal audio and
 hardware encoders. The `tvpipe` command-line tool (the `tvpipe-cli`
 crate, and release binaries) is built on this crate:
-<https://mitsuhiko.github.io/tvpipe/>.
+<https://tvpipe.party/>.
 
 ## Debug builds
 

@@ -7,7 +7,7 @@ version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 repository = "https://github.com/mitsuhiko/tvpipe"
-homepage = "https://mitsuhiko.github.io/tvpipe/"
+homepage = "https://tvpipe.party/"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 
 [profile.release]

@@ -5,7 +5,7 @@ streams to it over a WebSocket; the page decodes and presents on tvpipe's
 shared timeline (`ARCHITECTURE.md`, "Several Receivers"). `tvpipe preview` is `play --to browser`.
 Code: `crates/tvpipe/src/browser/player.rs` (server and sink), `player.html`,
 `player.js` (the page). Version 1. Using it:
-[Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/).
+[Playing to a browser](https://tvpipe.party/manual/browser/).
 
 ## Transport
 

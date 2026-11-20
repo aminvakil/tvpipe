@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs tvpipe from its GitHub Releases on macOS and Linux.
 #
-#   curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
+#   curl -fsSL https://tvpipe.party/install.sh | sh
 #
 # Environment:
 #   TVPIPE_VERSION      version to install, e.g. 0.1.0 (default: the latest)
@@ -75,7 +75,7 @@ detect_target() {
       ;;
     Linux) printf '%s\n' "$arch-unknown-linux-musl" ;;
     MINGW* | MSYS* | CYGWIN* | Windows_NT)
-      err "on Windows, run in PowerShell: irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex" ;;
+      err "on Windows, run in PowerShell: irm https://tvpipe.party/install.ps1 | iex" ;;
     *) err "no prebuilt tvpipe for $os (build it from source: https://github.com/$REPO)" ;;
   esac
 }
@@ -150,7 +150,7 @@ main() {
     say "Optional: install ffmpeg 6 or newer to mirror files, URLs and capture devices that"
     say "tvpipe cannot send as they are (macOS: brew install ffmpeg; Linux: your package manager)."
   fi
-  say "Documentation: https://mitsuhiko.github.io/tvpipe/"
+  say "Documentation: https://tvpipe.party/"
 }
 
 main "$@"

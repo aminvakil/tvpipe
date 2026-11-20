@@ -10,7 +10,7 @@ Chromecast / Google TV) and browser tabs. It uses the real-time mirroring
 protocols of both ecosystems, not URL playback, so the picture on the TV is a
 fraction of a second behind the source.
 
-**Website and manual: <https://mitsuhiko.github.io/tvpipe/>**
+**Website and manual: <https://tvpipe.party/>**
 
 ```sh
 tvpipe discover                                        # find receivers
@@ -27,15 +27,15 @@ tvpipe game play games/drawbluff                       # a party game: TV, phone
 ## Installing
 
 ```sh
-curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh     # macOS, Linux
+curl -fsSL https://tvpipe.party/install.sh | sh     # macOS, Linux
 ```
 
 ```powershell
-irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex           # Windows
+irm https://tvpipe.party/install.ps1 | iex           # Windows
 ```
 
 Playing files, URLs and capture devices needs `ffmpeg` (and `ffprobe`); see
-[Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) for
+[Installation](https://tvpipe.party/manual/install/) for
 ffmpeg, the release archives and building from source.
 
 From Node.js, `npm install @tvpipe/sdk` installs an SDK and the binary for your
@@ -49,7 +49,7 @@ await play("movie.mp4", { to: "Living Room" });
 From Rust, `cargo add tvpipe` links tvpipe into your program (no binary,
 no async runtime); a game streams its own frames and sound
 ([`crates/tvpipe`](crates/tvpipe/README.md),
-[From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/)):
+[From Rust](https://tvpipe.party/manual/rust/)):
 
 ```rust
 let mut s = tvpipe::stream(Options::new().to("Living Room").video(1280, 720, 60, PixelFormat::Rgba))?;
@@ -135,25 +135,25 @@ tvpipe game pack my-game --smoke      # my-game.zip (deterministic), run once in
 
 | Page | Covers |
 |---|---|
-| [Overview](https://mitsuhiko.github.io/tvpipe/manual/) | what tvpipe does and does not do |
-| [Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) | the installers, ffmpeg, building from source |
-| [Quick start](https://mitsuhiko.github.io/tvpipe/manual/quick-start/) | find a TV, pair it, play a file |
-| [Receivers](https://mitsuhiko.github.io/tvpipe/manual/receivers/) | `discover`, `pair`, `unpair`, `--to`, reconnecting |
-| [Playing media](https://mitsuhiko.github.io/tvpipe/manual/play/) | files, URLs, cameras |
-| [Sharing the screen](https://mitsuhiko.github.io/tvpipe/manual/screen/) | `screen` and `share`: the screen, a window or a browser tab |
-| [A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/) | `share URL` |
-| [Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/) | `preview`, `--to browser`, OBS, video calls |
-| [Public links](https://mitsuhiko.github.io/tvpipe/manual/links/) | `--tunnel` |
-| [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/) | SLRW frames on stdin |
-| [From Node.js](https://mitsuhiko.github.io/tvpipe/manual/node/) | the `@tvpipe/sdk` npm package |
-| [From Rust](https://mitsuhiko.github.io/tvpipe/manual/rust/) | the `tvpipe` crate |
-| [Party games](https://mitsuhiko.github.io/tvpipe/manual/party/) | `tvpipe game` and `@tvpipe/party`: web games played with phones, the TV as the main screen |
-| [Commands and options](https://mitsuhiko.github.io/tvpipe/manual/options/) | every command, the shared options, encoders |
-| [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/) | the config directory, environment variables |
-| [Diagnostics](https://mitsuhiko.github.io/tvpipe/manual/diagnostics/) | `-v`, `--debug`, common problems |
-| [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/) | the test pattern, `--latency`, measuring |
-| [ffmpeg and encoding](https://mitsuhiko.github.io/tvpipe/manual/encoding/) | when ffmpeg runs |
-| [Debug commands](https://mitsuhiko.github.io/tvpipe/manual/debug-commands/) | `tvpipe debug`: the test pattern, the pipeline, a tunnel for any port, QR codes |
+| [Overview](https://tvpipe.party/manual/) | what tvpipe does and does not do |
+| [Installation](https://tvpipe.party/manual/install/) | the installers, ffmpeg, building from source |
+| [Quick start](https://tvpipe.party/manual/quick-start/) | find a TV, pair it, play a file |
+| [Receivers](https://tvpipe.party/manual/receivers/) | `discover`, `pair`, `unpair`, `--to`, reconnecting |
+| [Playing media](https://tvpipe.party/manual/play/) | files, URLs, cameras |
+| [Sharing the screen](https://tvpipe.party/manual/screen/) | `screen` and `share`: the screen, a window or a browser tab |
+| [A web page on the TV](https://tvpipe.party/manual/web-page/) | `share URL` |
+| [Playing to a browser](https://tvpipe.party/manual/browser/) | `preview`, `--to browser`, OBS, video calls |
+| [Public links](https://tvpipe.party/manual/links/) | `--tunnel` |
+| [Game input](https://tvpipe.party/manual/games/) | SLRW frames on stdin |
+| [From Node.js](https://tvpipe.party/manual/node/) | the `@tvpipe/sdk` npm package |
+| [From Rust](https://tvpipe.party/manual/rust/) | the `tvpipe` crate |
+| [Party games](https://tvpipe.party/manual/party/) | `tvpipe game` and `@tvpipe/party`: web games played with phones, the TV as the main screen |
+| [Commands and options](https://tvpipe.party/manual/options/) | every command, the shared options, encoders |
+| [Configuration](https://tvpipe.party/manual/config/) | the config directory, environment variables |
+| [Diagnostics](https://tvpipe.party/manual/diagnostics/) | `-v`, `--debug`, common problems |
+| [Latency](https://tvpipe.party/manual/latency/) | the test pattern, `--latency`, measuring |
+| [ffmpeg and encoding](https://tvpipe.party/manual/encoding/) | when ffmpeg runs |
+| [Debug commands](https://tvpipe.party/manual/debug-commands/) | `tvpipe debug`: the test pattern, the pipeline, a tunnel for any port, QR codes |
 
 ## Development
 

@@ -12,7 +12,7 @@ tvpipe play movie.mp4 --to "Living Room"
 tvpipe game play ./my-game    # a party game written as a web app
 ```
 
-Release binaries and installers: <https://mitsuhiko.github.io/tvpipe/>.
+Release binaries and installers: <https://tvpipe.party/>.
 The manual is there too. The library the command is built on is the
 [`tvpipe`](https://crates.io/crates/tvpipe) crate.
 

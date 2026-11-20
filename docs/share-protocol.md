@@ -5,8 +5,8 @@ running in a browser: tvpipe's share page (`tvpipe share`), the page
 tvpipe's own browser shows and injects the script into (`tvpipe share URL`),
 or the capture page tvpipe's own browser opens to capture the desktop
 (`tvpipe screen`, [`screen.md`](screen.md)).
-Version 1. Using them: [Sharing the screen](https://mitsuhiko.github.io/tvpipe/manual/screen/) and
-[A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/).
+Version 1. Using them: [Sharing the screen](https://tvpipe.party/manual/screen/) and
+[A web page on the TV](https://tvpipe.party/manual/web-page/).
 
 ## Transport
 

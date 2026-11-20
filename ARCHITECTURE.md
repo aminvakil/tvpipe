@@ -1,7 +1,7 @@
 # Architecture
 
 This document explains how `tvpipe` works and why it works that way. How to
-use it is in the [manual](https://mitsuhiko.github.io/tvpipe/manual/) (sources in `site/manual/`). More
+use it is in the [manual](https://tvpipe.party/manual/) (sources in `site/manual/`). More
 detail lives in `docs/`:
 
 - [`slrw.md`](docs/slrw.md): the game input format.
@@ -49,7 +49,7 @@ One more receiver lives on the same machine: `--to browser` serves a
 player page on 127.0.0.1 that decodes the stream with WebCodecs and plays
 it in a browser tab, on the same timeline as the TVs (see
 [Browser Player](#browser-player); for users:
-[Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/)).
+[Playing to a browser](https://tvpipe.party/manual/browser/)).
 
 What the receivers take:
 
@@ -128,7 +128,7 @@ single drop costs a whole GOP. `-v` logs why a file did not pass.
   overrunning Cast's window.
 - Arguments after `--` go straight to ffmpeg, which is how capture works
   without platform code in `tvpipe`. The commands for each OS are in
-  [Playing media](https://mitsuhiko.github.io/tvpipe/manual/play/).
+  [Playing media](https://tvpipe.party/manual/play/).
 
 **Built-in encoders.** The test pattern always uses them (unless an ffmpeg
 encoder is named: then ffmpeg's `testsrc2` is streamed instead). Raw game
@@ -151,7 +151,7 @@ URLs and capture always need ffmpeg when they are not passed through.
 **Game input (SLRW)** is the format a game writes to `tvpipe`'s stdin: the
 magic `"SLRW"`, then records of `u8 kind | u64le pts_us | u32le len |
 payload`. The full format is in [`docs/slrw.md`](docs/slrw.md), the
-user's view in [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/).
+user's view in [Game input](https://tvpipe.party/manual/games/).
 
 - **Raw frames** go to the built-in encoder, or to ffmpeg through two
   localhost TCP listeners. That works the same on every OS, with no fd
@@ -166,7 +166,7 @@ user's view in [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/).
 encoded SLRW over a localhost WebSocket, so it takes the same path
 (passthrough video, PCM or built-in AAC). Protocol:
 [`docs/share-protocol.md`](docs/share-protocol.md); for users:
-[Sharing the screen](https://mitsuhiko.github.io/tvpipe/manual/screen/). Receivers stretch what
+[Sharing the screen](https://tvpipe.party/manual/screen/). Receivers stretch what
 they get to fill their screen, so sinks report their screen shape
 (`Capabilities::display_aspect`: Cast from the ANSWER's `display`, else
 16:9, AirPlay from the SETUP canvas; `None` for the browser player, which
@@ -188,7 +188,7 @@ the stream, and since the page clock is wall-clock time the timeline only has a 
 re-shares, reloads crashed pages, restarts a dead browser, and quits it
 and deletes the temporary profile at the end. Nothing is disguised: sites
 that refuse automated browsers do not work. For users:
-[A web page on the TV](https://mitsuhiko.github.io/tvpipe/manual/web-page/).
+[A web page on the TV](https://tvpipe.party/manual/web-page/).
 
 **Screen capture** (`tvpipe screen`) uses the same machinery for the
 desktop: tvpipe's own browser (a small normal window, since desktop
@@ -280,7 +280,7 @@ naming its host, TV and phone pages. Design and protocols:
 
 Measured glass to glass: ~250 ms on an Apple TV 4K over Wi-Fi. Details
 and other measurements: [`docs/measurements.md`](docs/measurements.md);
-the test pattern and how to measure: [Latency](https://mitsuhiko.github.io/tvpipe/manual/latency/).
+the test pattern and how to measure: [Latency](https://tvpipe.party/manual/latency/).
 
 ## Several Receivers
 
@@ -354,7 +354,7 @@ has its own queue and writer thread, so a slow tab only drops its own
 frames. The URL (port and token) stays the same across runs, so an open
 tab or an OBS source picks up the next session. Protocol:
 [`docs/player-protocol.md`](docs/player-protocol.md); for users:
-[Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/). Presenting the tab
+[Playing to a browser](https://tvpipe.party/manual/browser/). Presenting the tab
 into video calls, and why tvpipe does not join Meet by itself:
 [`docs/meet.md`](docs/meet.md).
 
@@ -382,7 +382,7 @@ need no OS service.
 To find the local address without interface APIs, we connect a UDP socket
 (which sends nothing) and read back the address the OS picked. AirPlay, RAOP and Cast records of the
 same TV are merged into one device. Using `discover` and `--to`:
-[Receivers](https://mitsuhiko.github.io/tvpipe/manual/receivers/).
+[Receivers](https://tvpipe.party/manual/receivers/).
 
 ## AirPlay
 
@@ -395,7 +395,7 @@ The sender is built from a clean-room spec, plus pyatv (MIT) for pairing.
   - Afterwards the control channel is ChaCha20-Poly1305 framed. It
     implements `Read + Write`, so the RTSP code runs on it unchanged.
   - Credentials live in a small text file (`credentials.txt`, see
-    [Configuration](https://mitsuhiko.github.io/tvpipe/manual/config/)).
+    [Configuration](https://tvpipe.party/manual/config/)).
 - **FairPlay** is an **LGPL port of doubletake** in its own crate
   (`tvpipe-fairplay`, the `fairplay` feature), isolated behind a tiny API
   so it can be replaced later.

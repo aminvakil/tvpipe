@@ -1,2 +1,7 @@
 target/
 /npm/dist
+
+# Local secrets (apps/tvpipe-party reads the Cloudflare token from .env here)
+.env
+.env.local
+.dev.vars

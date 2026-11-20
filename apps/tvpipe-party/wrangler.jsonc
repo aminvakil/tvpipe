@@ -1,0 +1,31 @@
+// tvpipe.party: short join links and the website (docs/short-links.md).
+// No account_id here: it comes from CLOUDFLARE_ACCOUNT_ID (.env.local or CI).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tvpipe-party",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "tvpipe.party", "custom_domain": true }],
+  // The website (python3 ../../site/build.py). Files are served before the
+  // Worker runs (default routing); only what is not a file reaches it.
+  "assets": {
+    "directory": "../../site/_out",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tvpipe-party",
+      // From `wrangler d1 create tvpipe-party` (README.md).
+      "database_id": "ab53e8b5-ba81-4eae-815c-fe79bb5ff55d",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Per client IP (CF-Connecting-IP), counted per Cloudflare location.
+  "ratelimits": [
+    { "name": "LOOKUPS", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
+    { "name": "CREATES", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+    { "name": "UPDATES", "namespace_id": "1003", "simple": { "limit": 60, "period": 60 } }
+  ]
+}

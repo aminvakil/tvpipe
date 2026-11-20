@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Stream video and audio to AirPlay, Google Cast and browser tabs from Node: files, URLs, web pages, canvases and raw frames",
   "keywords": ["airplay", "chromecast", "google-cast", "apple-tv", "mirroring", "streaming", "canvas", "h264"],
-  "homepage": "https://mitsuhiko.github.io/tvpipe/",
+  "homepage": "https://tvpipe.party/",
   "bugs": "https://github.com/mitsuhiko/tvpipe/issues",
   "repository": {
     "type": "git",

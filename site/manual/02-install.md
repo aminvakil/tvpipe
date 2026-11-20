@@ -44,11 +44,11 @@ tvpipe also uses ffprobe, which comes with ffmpeg. If ffmpeg is not on your `PAT
 Run the installer again to update. To install a specific version:
 
 ```sh
-$ curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | TVPIPE_VERSION=0.1.0 sh
+$ curl -fsSL https://tvpipe.party/install.sh | TVPIPE_VERSION=0.1.0 sh
 ```
 
 ```powershell
-PS> $env:TVPIPE_VERSION = "0.1.0"; irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex
+PS> $env:TVPIPE_VERSION = "0.1.0"; irm https://tvpipe.party/install.ps1 | iex
 ```
 
 Every release has these archives, with a `SHA256SUMS` file that the installers check them against:

@@ -113,7 +113,7 @@ a person presents it with Meet's normal UI.
 ## The manual flow with `--to browser`
 
 The player page itself is described in
-[Playing to a browser](https://mitsuhiko.github.io/tvpipe/manual/browser/).
+[Playing to a browser](https://tvpipe.party/manual/browser/).
 
 1. Run `tvpipe play SOURCE --to browser` (or `tvpipe preview SOURCE`).
    tvpipe serves the player page on 127.0.0.1 and opens it (or prints its

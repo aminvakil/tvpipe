@@ -75,7 +75,7 @@ function platformPackage(platform, binary) {
     name,
     version,
     description: `The tvpipe binary for ${platform} (used by @tvpipe/sdk)`,
-    homepage: "https://mitsuhiko.github.io/tvpipe/",
+    homepage: "https://tvpipe.party/",
     repository,
     // The binary includes the LGPL FairPlay module (see LICENSES/).
     license: "Apache-2.0 AND LGPL-3.0-or-later",

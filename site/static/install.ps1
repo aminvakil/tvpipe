@@ -1,6 +1,6 @@
 # Installs tvpipe from its GitHub Releases on Windows.
 #
-#   irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex
+#   irm https://tvpipe.party/install.ps1 | iex
 #
 # Environment:
 #   TVPIPE_VERSION      version to install, e.g. 0.1.0 (default: the latest)
@@ -118,7 +118,7 @@ function Install-Tvpipe {
             Write-Host 'Optional: install ffmpeg 6 or newer to mirror files, URLs and capture devices that'
             Write-Host 'tvpipe cannot send as they are (e.g. winget install ffmpeg).'
         }
-        Write-Host 'Documentation: https://mitsuhiko.github.io/tvpipe/'
+        Write-Host 'Documentation: https://tvpipe.party/'
     } finally {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     }

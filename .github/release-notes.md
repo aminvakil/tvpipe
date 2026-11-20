@@ -3,13 +3,13 @@
 macOS and Linux:
 
 ```sh
-curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
+curl -fsSL https://tvpipe.party/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex
+irm https://tvpipe.party/install.ps1 | iex
 ```
 
 The installers download the archive for your platform from this release,

@@ -7,13 +7,13 @@ Last updated 2026-11-18 (first runs on Windows).
 
 - ffmpeg 6 or newer (tested with 6.1, 7.1 and 8.1). It is optional; see
   [Inputs](../ARCHITECTURE.md#inputs) for when it is used and
-  [Installation](https://mitsuhiko.github.io/tvpipe/manual/install/) for installing it.
+  [Installation](https://tvpipe.party/manual/install/) for installing it.
 - Windows: AirPlay receivers send timing requests to UDP ports tvpipe
   opens, so Windows Firewall may ask to allow tvpipe the first time; allow
   it on private networks.
 - Windows: pipe SLRW game input from `cmd.exe`, a program that spawns
   tvpipe, or PowerShell 7.4+. Windows PowerShell 5.1 re-encodes binary
-  pipes between programs (also in [Game input](https://mitsuhiko.github.io/tvpipe/manual/games/)).
+  pipes between programs (also in [Game input](https://tvpipe.party/manual/games/)).
 - `scripts/cross-check.sh` runs clippy for the Windows targets and builds
   a Windows `.exe` from macOS or Linux with zig as the C toolchain.
 

@@ -167,8 +167,8 @@ def code_block(lang, lines):
 def install_html():
     return ("""<div class="install" data-install>
 <div class="tabs" role="tablist"><button role="tab" data-os="unix" aria-selected="true">macOS and Linux</button><button role="tab" data-os="windows" aria-selected="false">Windows</button></div>
-<pre data-os="unix"><code>""" + shell_line("$ curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
-<pre data-os="windows" hidden><code>""" + shell_line("PS> irm https://mitsuhiko.github.io/tvpipe/install.ps1 | iex") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
+<pre data-os="unix"><code>""" + shell_line("$ curl -fsSL https://tvpipe.party/install.sh | sh") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
+<pre data-os="windows" hidden><code>""" + shell_line("PS> irm https://tvpipe.party/install.ps1 | iex") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
 </div>""")
 
 
@@ -518,7 +518,7 @@ def build(out):
     # The fonts are the ones compiled into tvpipe for its share page.
     shutil.copytree(SITE.parent / "crates" / "tvpipe" / "src" / "browser" / "fonts", out / "static" / "fonts")
     # The installers live at the root, for the one-liners:
-    # curl -fsSL https://mitsuhiko.github.io/tvpipe/install.sh | sh
+    # curl -fsSL https://tvpipe.party/install.sh | sh
     for name in INSTALLERS:
         if (SITE / "static" / name).exists():
             shutil.copy(SITE / "static" / name, out / name)

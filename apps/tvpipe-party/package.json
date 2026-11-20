@@ -1,0 +1,20 @@
+{
+  "name": "tvpipe-party",
+  "private": true,
+  "description": "tvpipe.party: short join links for tvpipe's party games and the website (a Cloudflare Worker with D1)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "python3 ../../site/build.py && wrangler d1 migrations apply tvpipe-party --local && wrangler dev",
+    "deploy": "python3 ../../site/build.py && wrangler d1 migrations apply tvpipe-party --remote --env-file ../../.env && wrangler deploy --env-file ../../.env",
+    "check": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "~5.9.3",
+    "wrangler": "^4"
+  }
+}
