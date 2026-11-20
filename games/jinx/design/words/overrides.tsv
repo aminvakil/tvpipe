@@ -1,0 +1,362 @@
+# Manual decisions on top of the LLM pass (raw/llm-all.tsv). One per line:
+#   -word<TAB>reason              drop a word the LLM kept
+#   +word<TAB>category<TAB>reason add a word the LLM rejected (or the filters missed)
+#   =word<TAB>difficulty|-<TAB>category|-   force difficulty and/or category
+-itch	weak target
+-halo	religious
+-hamburger	duplicate: burger
+-doughnut	us-uk spelling: donut
+-charger	weak target
+-projector	weak target
+-bike	duplicate: bicycle (bike = motorbike in UK)
+-pink	enough colours
+-camping	duplicate: camp
+-campfire	duplicate: camp + fire
+-haystack	duplicate: hay
+-snowball	duplicate: snow, snowman
+-grandmother	duplicate: grandma
+-grandfather	duplicate: grandpa
+-sheriff	US-centric
+-locker	weak target
+-north	vague
+-shortcut	abstract
+-kennel	weak target
+-wreath	funeral association
+-bait	weak target
+-darts	plural; dart is in
+-hypnosis	abstract
+-superpower	duplicate: superhero
+-goodbye	interjection
+-noon	weak; midnight is in
+-cyclist	duplicate family: bicycle
+-app	abbreviation
+-shin	weak target
+-crepe	spelling: crêpe
+-ginger	used to tease redheads (UK)
+-digger	UK-leaning; excavator (US)
+-comedian	duplicate family: comedy
+-magician	duplicate family: magic
++prince	fantasy	pair with princess is fine
++lipstick	clothing	compound but good
++firefly	animal	compound but good
++bowl	home	everyday object
++plate	home	everyday object
++brush	home	several senses: hair, paint
++explorer	people	good target
++trap	tool	good target
++notebook	science	school
++nail	body	finger/hammer double sense: hard
++crater	nature	moon, volcano
++haircut	event	compound but good
++teenager	people	good target
++silver	material	medal, metal
++silk	material	spider, worm
++comb	home	hair
++seaweed	nature	compound but good
++jaw	body	shark, mouth
++almond	food	nut
++cushion	home	sofa
++keyboard	tool	compound but very common
++claw	animal	cat, crab
++lettuce	food	salad
++leopard	animal	spots
++jewel	material	crown, treasure
++twin	people	same, two
++bride	people	wedding
++builder	people	house, brick
++classroom	place	school
++cone	food	ice cream / traffic / pine: several clues
++teapot	home	compound but good
++eyebrow	body	compound but good
++tusk	animal	elephant
++nickname	people	compound but good
++cloak	fantasy	cape, invisible
++staircase	place	compound but good
++villain	fantasy	hero
++dancer	people	ballet
++ankle	body	foot
++seahorse	animal	compound but good
++walnut	food	nut, brain
++sticker	home	stick: same family risk
++spotlight	music	stage
++giggle	action	laugh
++canal	place	boat, Venice
++briefcase	home	office
++bookmark	home	book
++village	place	small town
++vegetable	food	salad
++goose	animal	honk
++dive	action	swim
++mammoth	animal	ice age
++howl	action	wolf, moon
++podium	sport	winner
++pottery	material	clay
++dishwasher	home	compound but good
++runway	transport	plane, model
++wheelbarrow	tool	garden
++sunset	nature	compound but good
++newspaper	home	compound but good
++sunflower	nature	compound but good
++chandelier	home	crystal, ceiling
++surfboard	sport	wave
++slide	sport	filtered out (pooled known 0.89); playground
++lavender	nature	purple, smell
++heartbeat	body	compound but good
++hairdresser	people	scissors
++horseshoe	sport	luck
++student	people	school
++moonlight	nature	compound but good
++armchair	home	compound but good
++goalkeeper	sport	compound but good
++handshake	action	compound but good
++toe	body	foot
++honeycomb	food	bee
++trombone	music	slide, brass
++bonfire	event	fire: same family risk
++copycat	people	compound but good
++knife	home	kitchen
++jigsaw	sport	puzzle
++bug	animal	insect, computer
++meteor	nature	space
++breeze	nature	wind
++bedroom	place	bed
++bathtub	home	bath
++kitten	animal	cat
++moss	nature	green
++pine	nature	tree, cone
++raincoat	clothing	rain
++freezer	home	cold
++bathroom	place	bath
++toothbrush	home	tooth
++mattress	home	bed
++riddle	sport	puzzle
++siren	tool	ambulance, mermaid
++beehive	nature	bee
++shoelace	clothing	shoe
++crossword	sport	puzzle
++stopwatch	tool	time, race
++earring	clothing	ear
++pinball	sport	arcade
++horn	music	car, unicorn
++fan	home	cool / supporter
++spring	nature	season / coil
++leg	body	walk
++sail	transport	boat
++tape	home	sticky
++goldfish	animal	bowl
++raspberry	food	berry
++stove	home	cook
++climb	action	mountain
++bow	sport	arrow / ribbon / bend
++wallpaper	home	wall
++autumn	nature	leaves (US: fall; both know autumn)
++dragonfly	animal	compound but good
++cupboard	home	kitchen
++bark	animal	dog / tree
++match	home	fire / game
++cream	food	milk
+-slow	final read: weak target
+-messy	final read: weak target
+-cousin	final read: weak target
+-guest	final read: weak target
+-groom	final read: weak target
+-world	final read: weak target
+-air	final read: weak target
+-temperature	final read: weak target
+-invitation	final read: weak target
+-lid	final read: weak target
+-poster	final read: weak target
+-scroll	final read: weak target
+-doormat	final read: weak target
+-tinsel	final read: weak target
+-bun	final read: weak target
+-funnel	final read: weak target
+-ladle	final read: weak target
+-spatula	final read: weak target
+-bib	final read: weak target
+-veil	final read: weak target
+-splinter	final read: weak target
+-canvas	final read: weak target
+-sesame	final read: weak target
+-nugget	final read: weak target
+-twig	final read: weak target
+-maple	final read: weak target
+-rib	final read: weak target
+-lung	final read: weak target
+-nap	final read: weak target
+-sparkler	final read: weak target
+-hut	final read: weak target
+-pillar	final read: weak target
+# difficulty fixes after reading the computed split (data rank + LLM call)
+=adventure	hard	-
+=dream	hard	-
+=voice	hard	-
+=story	hard	-
+=surprise	hard	-
+=space	medium	-
+=friend	medium	-
+=dark	medium	-
+=cold	medium	-
+=music	medium	-
+=smile	medium	-
+=gift	medium	-
+=money	medium	-
+=wall	medium	-
+=box	medium	-
+=seed	medium	-
+=rock	medium	-
+=sleep	medium	-
+=arm	medium	-
+=wood	medium	-
+=glass	medium	-
+=gym	medium	-
+=bank	medium	-
+=police	medium	-
+=autumn	medium	-
+=petal	medium	-
+=wool	medium	-
+=barn	medium	-
+=spy	medium	-
+=tail	medium	-
+=leg	medium	-
+=thumb	medium	-
+=pond	medium	-
+=elf	medium	-
+=dance	medium	-
+=paint	medium	-
+=photo	medium	-
+=wing	medium	-
+=wave	medium	-
+=pocket	medium	-
+=pigeon	medium	-
+=roof	medium	-
+=earth	medium	-
+=ring	medium	-
+=bakery	medium	-
+=calculator	medium	-
+=yoga	medium	-
+=exam	medium	-
+=lawyer	medium	-
+=plumber	medium	-
+=mechanic	medium	-
+=makeup	medium	-
+=napkin	medium	-
+=mop	medium	-
+=passport	medium	-
+=marathon	medium	-
+=bonfire	medium	-
+=armchair	medium	-
+=archery	medium	-
+=aquarium	medium	-
+=skyscraper	medium	-
+=treehouse	medium	-
+=slipper	medium	-
+=firefly	medium	-
+=lifeguard	medium	-
+=teenager	medium	-
+=hairdresser	medium	-
+=tuna	medium	-
+=vanilla	medium	-
+=cinnamon	medium	-
+=caramel	medium	-
+=croissant	medium	-
+=stapler	medium	-
+=printer	medium	-
+=rake	medium	-
+=raft	medium	-
+=dart	medium	-
+=sticker	medium	-
+=ponytail	medium	-
+=cartoon	easy	-
+=popcorn	easy	-
+=cookie	easy	-
+=cupcake	easy	-
+=watermelon	easy	-
+=marshmallow	easy	-
+=lollipop	easy	-
+=panda	easy	-
+=koala	easy	-
+=flamingo	easy	-
+=igloo	easy	-
+=pyramid	easy	-
+=jellyfish	easy	-
+=iceberg	easy	-
+=cactus	easy	-
+=trampoline	easy	-
+=skateboard	easy	-
+=chess	easy	-
+=microwave	easy	-
+=shower	easy	-
+=soap	easy	-
+=superhero	easy	-
+=zombie	easy	-
+=sushi	easy	-
+=homework	easy	-
+=internet	easy	-
+=laptop	easy	-
+=sneeze	easy	-
+=yawn	easy	-
+=tickle	easy	-
+=snowflake	easy	-
+=sunflower	easy	-
+=hippo	easy	-
+=playground	easy	-
+=backpack	easy	-
+=ninja	easy	-
+=genie	easy	-
+=firefighter	easy	-
+-lasso	judgement: cowboy-specific, not known to many UK players
+-tuba	judgement: too niche an instrument for kids (trumpet, trombone stay)
+-fin	judgement: weak target, a part rather than a thing
+-warthog	judgement: obscure animal
+-yeti	judgement: obscure creature for many players
+-dam	judgement: weak target, homophone of damn
+-sumo	judgement: niche sport, culturally specific
+-herd	final read: weak or regional
+-shepherd	final read: weak or regional
+-yak	final read: weak or regional
+-dew	final read: weak or regional
+-magma	final read: weak or regional
+-cyborg	final read: weak or regional
+-leash	final read: weak or regional
+-beret	final read: weak or regional
+-ravioli	final read: weak or regional
+-thunderstorm	final read: too many compounds of the same family (storm, moon, rain, bath, sun)
+-moonlight	final read: too many compounds of the same family (storm, moon, rain, bath, sun)
+-raincoat	final read: too many compounds of the same family (storm, moon, rain, bath, sun)
+-bathtub	final read: too many compounds of the same family (storm, moon, rain, bath, sun)
+-sunscreen	final read: too many compounds of the same family (storm, moon, rain, bath, sun)
+-makeup	us-uk spelling: make-up (UK)
+=spell	hard	-
+=bark	hard	-
+=bow	hard	-
+=spring	hard	-
+=match	hard	-
+=fan	hard	-
+-piranha	judgement: obscure animal, hard to spell
+-puffin	judgement: obscure animal outside the UK
+=cucumber	medium	-
+# compounds: the part-clue is rejected at submit (snow for snowman), so the next-best clues decide
+=goldfish	medium	-
+=snowman	medium	-
+=sunflower	medium	-
+=firefighter	medium	-
+=waterfall	medium	-
+=spaceship	medium	-
+=lighthouse	medium	-
+=superhero	medium	-
+=cupcake	medium	-
+=homework	medium	-
+=necklace	medium	-
+=toothbrush	hard	-
+=eyebrow	hard	-
+=doorbell	hard	-
+=teapot	hard	-
+=starfish	hard	-
+=seahorse	hard	-
+=treehouse	hard	-
+=bedroom	hard	-
+=newspaper	hard	-
+
+# short secrets: all 25 flagged by short-secrets.ts stay; none of their plausible
+# clues (plausible-clues.tsv) is rejected by accident (plausible-rejected.tsv)

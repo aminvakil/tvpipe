@@ -1,0 +1,324 @@
+/* Jinx — "tactile tabletop" TV mockup. Layout: 1280x720 CSS px, scaled to fit the window. */
+@font-face { font-family: "Plex Sans"; src: url("fonts/plex-sans.woff2") format("woff2"); font-weight: 100 700; }
+@font-face { font-family: "Plex Mono"; src: url("fonts/plex-mono-500.woff2") format("woff2"); font-weight: 500; }
+
+:root {
+  --felt: #1f4744;        /* the play mat */
+  --felt-print: #2a5b57;  /* what is printed on the mat */
+  --felt-deep: #173936;   /* shadows of printed zones */
+  --paper: #fbf1dc;       /* cards, notes, the score pad */
+  --paper-2: #efe0bf;     /* the card's printed frame */
+  --kraft: #d9b98a;       /* envelope, wooden tiles */
+  --wood: #f1d29a;
+  --ink: #1d1a2b;
+  --ink-2: #5d5244;       /* secondary ink on paper (5.6:1 on --paper) */
+  --tomato: #df4a3c;      /* card backs, JINX */
+  --gold: #f6b93b;        /* the pot, bold, MVP */
+  --gold-2: #c9861b;
+  --leaf: #2f9e57;        /* right */
+  --dymo: #c9252c;        /* the guess tape */
+  --cream-on-felt: #fff6e2;
+  font-family: "Plex Sans", system-ui, sans-serif;
+  color: var(--cream-on-felt);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #0d1716; overflow: hidden; }
+body { display: flex; flex-direction: column; align-items: center; }
+
+/* ---------------------------------------------------------------- the stage */
+#viewport { flex: 1; width: 100%; position: relative; min-height: 0; }
+#stage {
+  width: 1280px; height: 720px; position: absolute; left: 50%; top: 50%; overflow: hidden;
+  background: var(--felt); transform-origin: center center;
+  font-size: 28px; line-height: 1.15;
+}
+#table { position: absolute; inset: 0; }
+#fx { position: absolute; inset: 0; pointer-events: none; }
+.abs { position: absolute; }
+
+/* The printed play mat: a rounded frame, corner pips, a huge low-contrast logo. Flat colours, hard edges: they encode cleanly. */
+.mat { position: absolute; inset: 18px; border: 4px solid var(--felt-print); border-radius: 30px; }
+.mat::before, .mat::after {
+  content: ""; position: absolute; width: 22px; height: 22px; background: var(--felt-print);
+  transform: rotate(45deg); top: 16px; left: 16px;
+}
+.mat::after { left: auto; right: 16px; }
+.mat-logo {
+  position: absolute; left: 0; right: 0; top: 230px; text-align: center; font-weight: 700;
+  font-size: 300px; letter-spacing: .08em; color: #224d4a; line-height: 1; user-select: none;
+}
+.zone { position: absolute; border: 4px dashed var(--felt-print); border-radius: 22px; }
+.zone-label { position: absolute; font-size: 24px; font-weight: 700; letter-spacing: .14em; color: #4f8781; text-transform: uppercase; }
+
+#safe { position: absolute; inset: 36px 64px; border: 2px dashed #ff00aa; pointer-events: none; z-index: 99; }
+#safe::after { content: "5% safe area"; position: absolute; right: 8px; top: 4px; font-size: 16px; color: #ff00aa; }
+
+/* ---------------------------------------------------------------- tokens (avatars) */
+.token {
+  --s: 80px; position: absolute; width: var(--s); height: var(--s); border-radius: 50%;
+  background: var(--c); box-shadow: 0 0 0 3px var(--ink), 0 6px 0 3px rgba(0,0,0,.28);
+}
+.token::before { /* poker-chip notches */
+  content: ""; position: absolute; inset: calc(var(--s) * .045); border-radius: 50%;
+  border: calc(var(--s) * .07) dashed rgba(255, 248, 230, .9);
+}
+.token svg { position: absolute; inset: 17%; width: 66%; height: 66%; border-radius: 50%; background: var(--paper); box-shadow: 0 0 0 calc(var(--s) * .03) var(--ink); }
+.token.ghost { background: transparent; box-shadow: none; border: 4px dashed #4f8781; }
+.token.ghost::before { display: none; }
+.token .blindfold {
+  position: absolute; left: -6%; right: -6%; top: 36%; height: 20%; background: var(--ink); border-radius: 6px;
+  transform: rotate(-8deg); box-shadow: 0 3px 0 rgba(0,0,0,.25);
+}
+.token .crown {
+  position: absolute; left: 50%; top: -34%; width: 52%; height: 32%; transform: translateX(-50%) rotate(8deg);
+  background: var(--gold); clip-path: polygon(0 100%, 0 20%, 25% 60%, 50% 0, 75% 60%, 100% 20%, 100% 100%);
+}
+.check {
+  position: absolute; width: 40px; height: 40px; border-radius: 50%; background: var(--leaf); color: #fff; right: -10px; top: -8px;
+  font-size: 26px; font-weight: 700; display: grid; place-items: center; box-shadow: 0 0 0 3px var(--ink);
+}
+.pencil { position: absolute; right: -14px; top: -14px; width: 40px; height: 40px; }
+
+/* ---------------------------------------------------------------- paper bits */
+.paper { background: var(--paper); color: var(--ink); border-radius: 10px; box-shadow: 0 5px 0 rgba(0,0,0,.25), 0 10px 18px rgba(0,0,0,.18); }
+.tab { /* the round tab, top-left */
+  position: absolute; left: 64px; top: 36px; padding: 10px 20px; font-weight: 700; font-size: 26px; letter-spacing: .06em;
+  text-transform: uppercase; transform: rotate(-1.5deg);
+}
+.tally { position: absolute; right: 64px; top: 36px; display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 26px; letter-spacing: .06em; text-transform: uppercase; }
+.tally .mini { width: 30px; height: 42px; border-radius: 5px; box-shadow: 0 0 0 3px var(--ink); }
+.tally .mini.won { background: var(--paper); }
+.tally .mini.lost { background: var(--tomato); }
+.tally .mini.todo { background: transparent; box-shadow: none; border: 3px dashed #4f8781; }
+.who-guesses { position: absolute; left: 330px; top: 36px; display: flex; align-items: center; gap: 14px; font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; height: 52px; }
+
+.tape { /* masking tape label: reason for a jinx */
+  position: absolute; white-space: nowrap; background: #f4e4a6; color: var(--ink); font-weight: 700; font-size: 26px;
+  letter-spacing: .06em; text-transform: uppercase; padding: 8px 22px;
+  clip-path: polygon(0 0, 100% 0, 98.5% 20%, 100% 40%, 98.5% 60%, 100% 80%, 98.5% 100%, 0 100%, 1.5% 80%, 0 60%, 1.5% 40%, 0 20%);
+}
+.tapebit { position: absolute; width: 90px; height: 30px; background: rgba(244, 228, 166, .9); }
+
+.stamp {
+  position: absolute; padding: 6px 26px; border-radius: 14px; font-weight: 700; font-size: 64px; letter-spacing: .06em;
+  background: var(--tomato); color: var(--paper); box-shadow: inset 0 0 0 5px var(--paper), 0 0 0 4px var(--ink), 0 8px 0 rgba(0,0,0,.3);
+  white-space: nowrap; text-transform: uppercase; line-height: 1.1;
+}
+.stamp.green { background: var(--leaf); }
+.stamp.ink { background: var(--ink); }
+.stamp.gold { background: var(--gold); color: var(--ink); box-shadow: inset 0 0 0 5px var(--ink), 0 0 0 4px var(--ink), 0 8px 0 rgba(0,0,0,.3); }
+
+.banner { /* a strip of paper with copy, bottom center */
+  position: absolute; left: 50%; padding: 10px 28px; font-size: 28px; font-weight: 600; white-space: nowrap; transform: translateX(-50%);
+}
+.banner b { font-weight: 700; }
+.float { position: absolute; font-weight: 700; font-size: 40px; white-space: nowrap; text-shadow: 0 3px 0 var(--ink); }
+.float.plus { color: #8ff0a8; }
+.float.minus { color: #ff9b8f; }
+
+/* ---------------------------------------------------------------- cards */
+.card { position: absolute; width: 220px; height: 150px; perspective: 1000px; }
+.card .flip { position: absolute; inset: 0; transform-style: preserve-3d; }
+.card.down .flip { transform: rotateY(180deg); }
+.card .face {
+  position: absolute; inset: 0; border-radius: 14px; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  box-shadow: 0 6px 0 rgba(0,0,0,.28), 0 12px 20px rgba(0,0,0,.2);
+}
+.card .front { background: var(--paper); color: var(--ink); display: grid; place-items: center; }
+.card .front::before { content: ""; position: absolute; inset: 9px; border: 3px solid var(--paper-2); border-radius: 9px; }
+.card .word { position: relative; font-weight: 700; font-size: 40px; letter-spacing: .02em; white-space: nowrap; text-transform: uppercase; padding: 0 8px; }
+.card .back { background: var(--tomato); transform: rotateY(180deg); }
+.card .back::before { content: ""; position: absolute; inset: 10px; border: 4px solid var(--paper); border-radius: 9px; }
+.card .back .emblem {
+  position: absolute; left: 50%; top: 50%; width: 74px; height: 74px; transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--paper); border-radius: 12px; display: grid; place-items: center;
+}
+.card .back .emblem span { transform: rotate(-45deg); font-weight: 700; font-size: 44px; color: var(--tomato); }
+.card.bold .back { background: var(--ink); }
+.card.bold .back::before { border-color: var(--gold); }
+.card.bold .back .emblem { background: var(--gold); }
+.card.bold .back .emblem span { color: var(--ink); }
+.card .sticker { position: absolute; left: -16px; top: -16px; --s: 56px; z-index: 2; }
+.card .face .sticker { left: -14px; top: -14px; }
+.card .flame { position: absolute; right: -14px; top: -16px; width: 58px; height: 58px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 3px var(--ink); display: grid; place-items: center; z-index: 2; }
+.card .flame svg { width: 38px; height: 38px; }
+.card .who {
+  position: absolute; left: 50%; top: calc(100% + 12px); transform: translateX(-50%); background: var(--ink); color: var(--cream-on-felt);
+  font-size: 24px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 3px 14px; border-radius: 8px; white-space: nowrap;
+}
+.card .order {
+  position: absolute; right: -12px; bottom: -12px; width: 46px; height: 46px; border-radius: 50%; background: var(--ink); color: var(--gold);
+  font-weight: 700; font-size: 26px; display: grid; place-items: center; box-shadow: 0 0 0 3px var(--gold); z-index: 3;
+}
+.card .hl { /* highlighter swipe under the word */
+  position: absolute; left: 18px; right: 18px; top: 58%; height: 22px; background: #ffe066; border-radius: 4px; transform-origin: left; opacity: .85;
+}
+.card .strike { position: absolute; inset: -6px; z-index: 4; overflow: visible; }
+.card .crack { position: absolute; inset: 0; z-index: 3; }
+.card .shine { position: absolute; inset: 0; border-radius: 14px; overflow: hidden; z-index: 5; pointer-events: none; }
+.card .shine i { position: absolute; top: -20%; bottom: -20%; width: 60px; background: rgba(255,255,255,.75); transform: skewX(-20deg) translateX(-120px); }
+.shard { position: absolute; border-radius: 14px; }
+.dust { position: absolute; width: 34px; height: 34px; border-radius: 50%; background: var(--paper); }
+.confetti { position: absolute; width: 22px; height: 22px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.25); }
+.confetti.sq { border-radius: 3px; width: 18px; height: 28px; }
+
+/* ---------------------------------------------------------------- the pot */
+.pot { position: absolute; left: 1010px; top: 140px; width: 206px; height: 520px; }
+.pot .base { position: absolute; left: 3px; right: 3px; bottom: 116px; height: 96px; border-radius: 50%; border: 4px dashed var(--felt-print); }
+.pot .chips { position: absolute; left: 38px; bottom: 150px; width: 130px; }
+.chip {
+  position: absolute; left: 0; width: 130px; height: 26px; border-radius: 13px; background: var(--gold);
+  box-shadow: inset 0 -7px 0 var(--gold-2), 0 0 0 3px var(--ink);
+  background-image: linear-gradient(90deg, transparent 18px, #fff3cf 18px, #fff3cf 32px, transparent 32px, transparent 58px, #fff3cf 58px, #fff3cf 72px, transparent 72px, transparent 98px, #fff3cf 98px, #fff3cf 112px, transparent 112px);
+}
+.pot .label { position: absolute; left: 10px; right: 10px; bottom: 0; padding: 8px 10px 12px; text-align: center; }
+.pot .label small { display: block; font-size: 24px; font-weight: 700; letter-spacing: .14em; color: var(--ink-2); }
+.pot .label b { display: block; font-size: 64px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- the guess (Dymo tape) */
+.guess { position: absolute; left: 64px; width: 916px; top: 540px; height: 140px; }
+.guess .lbl { position: absolute; left: 0; right: 0; top: 0; text-align: center; font-size: 24px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #a8d3cd; }
+.guess .slot { position: absolute; left: 50%; top: 40px; height: 84px; transform: translateX(-50%); border: 4px dashed var(--felt-print); border-radius: 12px; width: 560px; display: grid; place-items: center; font-size: 26px; color: #7fb3ac; font-weight: 600; }
+.dymo {
+  position: absolute; left: 50%; top: 40px; height: 84px; min-width: 120px; transform: translateX(-50%); display: flex; align-items: center;
+  background: var(--dymo); padding: 0 34px; box-shadow: 0 6px 0 rgba(0,0,0,.3);
+  clip-path: polygon(0 0, 100% 0, 97% 50%, 100% 100%, 0 100%, 3% 50%);
+  font-family: "Plex Mono", monospace; font-weight: 500; font-size: 54px; letter-spacing: .12em; color: #fff;
+}
+.dymo .l { display: inline-block; text-shadow: 0 -2px 0 rgba(255,255,255,.35), 0 3px 0 rgba(0,0,0,.45); }
+.dymo .caret { width: 6px; height: 54px; background: #fff; margin-left: 6px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.dymo.done .caret { display: none; }
+.sign { /* "SHHH" sign hanging from the top edge */
+  position: absolute; left: 640px; top: -8px; width: 0; height: 0; transform-origin: 0 0;
+}
+.sign .strings { position: absolute; left: -110px; top: 0; width: 220px; height: 60px; }
+.sign .board { position: absolute; left: -170px; top: 52px; width: 340px; padding: 8px 14px; text-align: center; border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 0 0 4px var(--ink), 0 8px 0 rgba(0,0,0,.3); }
+.sign .board b { display: block; font-size: 44px; line-height: 1; color: var(--tomato); letter-spacing: .08em; }
+.sign .board span { font-size: 24px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.bubble {
+  position: absolute; padding: 8px 18px; border-radius: 14px; background: var(--paper); color: var(--ink); font-size: 26px; font-weight: 700;
+  white-space: nowrap; transform: translateX(-50%); box-shadow: 0 0 0 3px var(--ink), 0 6px 0 rgba(0,0,0,.3);
+}
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -16px; width: 22px; height: 18px; background: var(--paper); transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 50% 100%); }
+
+/* ---------------------------------------------------------------- envelope and the secret word */
+.envelope { position: absolute; width: 300px; height: 190px; perspective: 900px; }
+.envelope .body { position: absolute; inset: 0; background: var(--kraft); border-radius: 10px; box-shadow: 0 0 0 4px var(--ink), 0 8px 0 rgba(0,0,0,.3); }
+.envelope .pocket { position: absolute; inset: 0; border-radius: 10px; overflow: hidden; z-index: 3; }
+.envelope .pocket::before { content: ""; position: absolute; inset: 0; background: #e6c999; clip-path: polygon(0 0, 50% 58%, 100% 0, 100% 100%, 0 100%); }
+.envelope .pocket::after { content: ""; position: absolute; inset: 0; background: #ccab79; clip-path: polygon(0 100%, 50% 50%, 100% 100%); }
+.envelope .flapwrap { position: absolute; left: 0; right: 0; top: 0; height: 120px; transform-origin: top center; z-index: 4; transform-style: preserve-3d; }
+.envelope .flap { position: absolute; inset: 0; background: #d1ad77; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.envelope .seal {
+  position: absolute; left: 50%; top: 88px; width: 70px; height: 70px; margin-left: -35px; border-radius: 50%; background: var(--tomato); z-index: 5;
+  box-shadow: 0 0 0 5px #b8382c, 0 4px 0 rgba(0,0,0,.3); display: grid; place-items: center; color: var(--paper); font-weight: 700; font-size: 40px;
+}
+.envelope .inside { position: absolute; left: 20px; right: 20px; top: 14px; height: 150px; z-index: 2; }
+.secret { position: absolute; width: 520px; height: 170px; border-radius: 16px; display: grid; place-items: center; }
+.secret .w { font-size: 88px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.secret small { position: absolute; top: 10px; font-size: 24px; font-weight: 700; letter-spacing: .16em; color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- timer (kitchen dial) */
+.dial { position: absolute; width: 170px; height: 170px; }
+.dial svg { width: 100%; height: 100%; overflow: visible; }
+.dial .num { position: absolute; inset: 0; display: grid; place-items: center; font-family: "Plex Mono", monospace; font-size: 40px; color: var(--paper); }
+
+/* ---------------------------------------------------------------- lobby */
+.logo { position: absolute; display: flex; gap: 12px; }
+.tile {
+  width: 96px; height: 104px; border-radius: 14px; background: var(--wood); color: var(--ink); display: grid; place-items: center;
+  font-weight: 700; font-size: 72px; box-shadow: inset 0 -10px 0 #d7ae6a, 0 0 0 4px var(--ink), 0 8px 0 rgba(0,0,0,.3); position: relative;
+}
+.tile sub { position: absolute; right: 9px; bottom: 12px; font-size: 22px; line-height: 1; }
+.tagline { position: absolute; font-size: 30px; font-weight: 600; color: var(--cream-on-felt); }
+.qrcard { position: absolute; width: 300px; padding: 22px 22px 16px; text-align: center; }
+.qrcard svg { width: 256px; height: 256px; display: block; }
+.qrcard .roomlbl { margin-top: 10px; font-size: 24px; font-weight: 700; letter-spacing: .14em; color: var(--ink-2); }
+.qrcard .code { font-family: "Plex Mono", monospace; font-size: 46px; letter-spacing: .18em; line-height: 1.1; }
+.url { position: absolute; font-size: 26px; color: #b9dcd6; }
+.seat { position: absolute; width: 150px; height: 190px; }
+.seat .token { left: 25px; top: 0; --s: 100px; }
+.placecard { position: absolute; left: 0; right: 0; top: 122px; height: 50px; display: grid; place-items: center; font-size: 26px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; transform-origin: bottom center; }
+.seat.empty .placecard { background: transparent; box-shadow: none; color: #5f958f; font-weight: 600; }
+
+/* ---------------------------------------------------------------- writing */
+.seatrow .token { --s: 84px; }
+.seatname { position: absolute; width: 150px; text-align: center; font-size: 26px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pile { position: absolute; }
+
+/* ---------------------------------------------------------------- score pad */
+.pad { position: absolute; left: 64px; top: 50px; width: 640px; height: 630px; border-radius: 12px; overflow: hidden; }
+.pad .binding { position: absolute; left: 0; right: 0; top: 0; height: 56px; background: var(--ink); }
+.pad .binding i { position: absolute; top: 18px; width: 22px; height: 22px; border-radius: 50%; background: var(--felt); }
+.pad h2 { position: absolute; left: 92px; top: 66px; margin: 0; font-size: 34px; letter-spacing: .12em; }
+.pad h2 span { color: var(--ink-2); font-size: 24px; letter-spacing: .1em; margin-left: 12px; }
+.pad .margin { position: absolute; left: 76px; top: 56px; bottom: 0; width: 3px; background: #e88c80; }
+.prow { position: absolute; left: 0; right: 0; height: 64px; border-bottom: 3px solid #bcd3e6; display: flex; align-items: center; }
+.prow .rank { width: 76px; text-align: center; font-weight: 700; font-size: 30px; color: var(--ink-2); }
+.prow .token { position: relative; --s: 46px; margin: 0 18px 0 16px; box-shadow: 0 0 0 3px var(--ink); flex: none; }
+.prow .n { flex: 1; font-size: 32px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prow .d { width: 110px; text-align: right; font-size: 30px; font-weight: 700; }
+.prow .d.plus { color: var(--leaf); }
+.prow .d.minus { color: var(--tomato); }
+.prow .t { width: 120px; text-align: right; padding-right: 28px; font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.prow.first { background: #fde7a6; }
+.room { position: absolute; left: 760px; top: 60px; width: 456px; text-align: center; }
+.room .k { font-size: 26px; font-weight: 700; letter-spacing: .14em; color: #a8d3cd; }
+.room .big { font-size: 128px; font-weight: 700; line-height: 1; margin: 8px 0 0; }
+.room .sub { font-size: 28px; font-weight: 600; }
+.slots { display: grid; grid-template-columns: repeat(5, 62px); gap: 18px 22px; justify-content: center; margin-top: 28px; }
+.slots i { height: 84px; border-radius: 8px; box-shadow: 0 0 0 3px var(--ink), 0 4px 0 rgba(0,0,0,.3); display: grid; place-items: center; font-style: normal; font-weight: 700; font-size: 34px; }
+.slots i.won { background: var(--paper); color: var(--leaf); }
+.slots i.lost { background: var(--tomato); color: var(--paper); }
+.slots i.todo { background: transparent; box-shadow: none; border: 3px dashed #4f8781; }
+.next { margin-top: 36px; display: flex; align-items: center; justify-content: center; gap: 18px; font-size: 30px; font-weight: 700; }
+.next .token { position: relative; --s: 76px; }
+
+/* ---------------------------------------------------------------- end */
+.ministack .mc { position: absolute; width: 150px; height: 92px; border-radius: 10px; display: grid; place-items: center; font-size: 26px; font-weight: 700; text-transform: uppercase; box-shadow: 0 0 0 3px var(--ink), 0 6px 0 rgba(0,0,0,.3); white-space: nowrap; }
+.mc.won { background: var(--paper); color: var(--ink); }
+.mc.lost { background: #b9ab93; color: var(--ink); }
+.mc.lost::after { content: ""; position: absolute; left: 14px; right: 14px; top: 50%; height: 4px; background: var(--tomato); transform: rotate(-6deg); }
+.bigtiles { position: absolute; display: flex; gap: 14px; justify-content: center; left: 0; right: 0; }
+.bigtiles .tile { width: 130px; height: 150px; font-size: 110px; }
+.bigtiles .of { align-self: center; font-size: 56px; font-weight: 700; margin: 0 10px; }
+.spot { position: absolute; border-radius: 50%; background: #2b5f5a; }
+.pedestal { position: absolute; width: 300px; height: 70px; border-radius: 50%; background: var(--wood); box-shadow: inset 0 -16px 0 #d7ae6a, 0 0 0 4px var(--ink), 0 10px 0 rgba(0,0,0,.3); }
+.ribbon { position: absolute; left: 50%; transform: translateX(-50%); padding: 14px 80px; background: var(--tomato); color: var(--paper); font-weight: 700; font-size: 50px; letter-spacing: .08em; white-space: nowrap; clip-path: polygon(0 0, 100% 0, 95% 50%, 100% 100%, 0 100%, 5% 50%); }
+.caption { position: absolute; left: 0; right: 0; text-align: center; font-size: 30px; font-weight: 600; }
+
+.award { position: absolute; width: 320px; height: 460px; perspective: 1200px; }
+.award .flip { position: absolute; inset: 0; transform-style: preserve-3d; transform: rotateY(180deg); }
+.award .face { position: absolute; inset: 0; border-radius: 20px; backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 0 0 4px var(--ink), 0 10px 0 rgba(0,0,0,.3); }
+.award .front { background: var(--paper); color: var(--ink); text-align: center; padding: 26px 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.award .front::before { content: ""; position: absolute; inset: 12px; border: 4px solid var(--paper-2); border-radius: 12px; pointer-events: none; }
+.award .back { background: var(--ink); transform: rotateY(180deg); }
+.award .back::before { content: ""; position: absolute; inset: 14px; border: 4px solid var(--gold); border-radius: 12px; }
+.award .back b { position: absolute; inset: 0; display: grid; place-items: center; font-size: 140px; color: var(--gold); font-weight: 700; }
+.award h3 { margin: 6px 0 0; font-size: 40px; letter-spacing: .06em; text-transform: uppercase; line-height: 1; }
+.award .icon { width: 110px; height: 90px; }
+.award .winners { display: flex; gap: 14px; justify-content: center; height: 72px; }
+.award .winners .token { position: relative; --s: 68px; }
+.award .names { font-size: 30px; font-weight: 700; }
+.award .stat { font-size: 25px; font-weight: 600; color: var(--ink-2); line-height: 1.25; }
+.burst { position: absolute; width: 520px; height: 520px; border-radius: 50%; background: repeating-conic-gradient(#285650 0 15deg, transparent 15deg 30deg); }
+
+/* ---------------------------------------------------------------- word web */
+.web svg { position: absolute; inset: 0; width: 1280px; height: 720px; overflow: visible; }
+.wcard { position: absolute; width: 196px; height: 70px; margin: -35px 0 0 -98px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; font-size: 32px; letter-spacing: .03em; text-transform: uppercase; box-shadow: 0 0 0 3px var(--ink), 0 6px 0 rgba(0,0,0,.3); white-space: nowrap; }
+.wcard.won { background: var(--paper); color: var(--ink); }
+.wcard.lost { background: #b9ab93; color: var(--ink); }
+.wcard.lost::after { content: "missed"; position: absolute; right: -8px; bottom: -16px; font-size: 24px; font-weight: 700; background: var(--tomato); color: var(--paper); padding: 0 8px; border-radius: 6px; transform: rotate(-4deg); text-transform: none; letter-spacing: 0; }
+.wtag { position: absolute; transform: translate(-50%, -50%); padding: 4px 14px; font-size: 26px; font-weight: 700; letter-spacing: .06em; background: #f4e4a6; color: var(--ink); border-radius: 4px; box-shadow: 0 4px 0 rgba(0,0,0,.3); white-space: nowrap; text-transform: uppercase; }
+.wtag .pin { position: absolute; left: 50%; top: -12px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; background: var(--tomato); box-shadow: 0 0 0 3px var(--ink); }
+.webtitle { position: absolute; left: 64px; top: 36px; }
+
+/* ---------------------------------------------------------------- the mockup's controls (outside the TV picture) */
+#controls { flex: none; width: 100%; padding: 8px 12px 10px; background: #0d1716; color: #cfe3df; font: 14px/1.3 system-ui, sans-serif; display: flex; flex-direction: column; gap: 6px; }
+#controls .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; }
+#controls button { font: inherit; background: #23403d; color: #eaf6f3; border: 1px solid #3c6b66; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+#controls button.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }
+#controls button kbd { font: 12px/1 ui-monospace, monospace; opacity: .7; margin-right: 4px; }
+#controls .hint { opacity: .65; }
+body.nocontrols #controls { display: none; }

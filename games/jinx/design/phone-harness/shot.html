@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jinx phone shot</title>
+<!-- For headless screenshots: one scenario in an exact 360-wide frame (shot.html?s=write&do=reject&h=420&w=320). -->
+<style>html, body { margin: 0; background: #000; } iframe { display: block; width: 360px; border: 0; }</style>
+</head>
+<body>
+<iframe id="f" title="phone"></iframe>
+<script>
+  const q = new URLSearchParams(location.search);
+  const f = document.getElementById("f");
+  f.style.height = `${q.get("h") ?? 740}px`;
+  f.style.width = `${q.get("w") ?? 360}px`;
+  q.delete("h");
+  q.delete("w");
+  f.src = `frame.html?${q}`;
+</script>
+</body>
+</html>

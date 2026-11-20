@@ -1,0 +1,465 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+
+import { Party } from "@tvpipe/party";
+import { MemoryRelay } from "@tvpipe/party/testing";
+
+import { Bot, type BotOptions } from "../game/bots.ts";
+import { Jinx, type Timings } from "../game/game.ts";
+import { dictionary, parseWordList } from "../game/match.ts";
+import { seeded } from "../game/rules.ts";
+import type { ScreenView } from "../game/views.ts";
+
+const WORDS = parseWordList(readFileSync(new URL("../data/words.txt", import.meta.url), "utf8"));
+const DICT_TEXT = readFileSync(new URL("../data/dict.txt", import.meta.url), "utf8");
+const known = dictionary(DICT_TEXT);
+const DICT = DICT_TEXT.split("\n").filter((w) => /^[a-z]{4,8}$/.test(w));
+
+const fast: Partial<Timings> = {
+  hotseat: 10,
+  write: 1500,
+  jinxBase: 10,
+  jinxGroup: 5,
+  decide: 400,
+  typing: 300,
+  verdict: 10,
+  mvp: 400,
+  replay: 10,
+  replayHold: 10,
+  scores: 10,
+  endRoom: 10,
+  endMvp: 10,
+  endAwards: 10,
+  draftEvery: 20,
+};
+
+async function until(cond: () => boolean, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+const NAMES = ["Ada", "Bea", "Cy", "Dot", "Eli", "Fay", "Gus", "Hal"];
+const URL_ = "ws://party.test/_tvpipe/ws";
+
+type BotOpts = Partial<Omit<BotOptions, "url" | "room" | "key" | "name">>;
+
+async function setup(n: number, o: { rounds?: "auto" | 1 | 2; bot?: (i: number) => BotOpts; timings?: Partial<Timings> } = {}) {
+  const relay = new MemoryRelay();
+  const party = new Party({ grace: 100, maxPlayers: 8 }).listen(relay);
+  const g = new Jinx(party, { words: WORDS, known, rounds: o.rounds ?? "auto", timings: { ...fast, ...o.timings }, rng: seeded(n + 1) });
+  g.open();
+  const phases: string[] = [];
+  g.on("phase", (p) => phases.push(p));
+  const screens: ScreenView[] = [];
+  let last = "";
+  party.on("screen-view", (v) => {
+    // The event follows every flush (phones' states too): keep changes only.
+    const json = JSON.stringify(v["screen"]);
+    if (json !== last) screens.push(JSON.parse(json) as ScreenView);
+    last = json;
+  });
+  const players: Bot[] = [];
+  const add = async (name: string, i: number) => {
+    const b = new Bot({
+      url: URL_,
+      WebSocket: relay.WebSocket,
+      room: party.code,
+      key: party.joinKey,
+      name,
+      rng: seeded(100 + i),
+      think: () => 5,
+      peek: () => g.secret,
+      words: WORDS,
+      dict: DICT,
+      ...o.bot?.(i),
+    });
+    await b.join();
+    g.markBot(b.client.you!["id"]);
+    players.push(b);
+    return b;
+  };
+  for (let i = 0; i < n; i++) await add(NAMES[i]!, i);
+  const close = () => {
+    g.close();
+    for (const b of players) b.close();
+    party.close();
+  };
+  return { party, g, players, phases, screens, add, close };
+}
+
+const of = <P extends ScreenView["phase"]>(screens: ScreenView[], phase: P) => screens.filter((s): s is Extract<ScreenView, { phase: P }> => s.phase === phase);
+
+/** The secrecy rule: no word on the TV before the verdict, no clue word unless turned. */
+function checkSecrecy(screens: ScreenView[]): void {
+  for (const s of screens) {
+    if (s.phase === "hotseat" || s.phase === "write" || s.phase === "jinx" || s.phase === "reveal") {
+      assert.equal("word" in s, false, `word on the TV in ${s.phase}`);
+      if ("cards" in s) for (const c of s.cards) assert.equal(c.word !== undefined, c.turned !== undefined, `clue word shown in ${s.phase}`);
+    }
+  }
+}
+
+test("a whole game with 4 bots: every player guesses twice, scores add up, the end in steps", async () => {
+  const { party, g, players, phases, screens, close } = await setup(4);
+  try {
+    // The guesser's phone never has the word.
+    const leaks: string[] = [];
+    for (const b of players) {
+      b.client.on("view", (v) => {
+        const me = v["me"] ?? {};
+        if (["hotseat", "blind", "check", "guess", "mvp"].includes(me.task) && "word" in me) leaks.push(`${b.name}: ${me.task}`);
+        if ("word" in (v["room"] ?? {})) leaks.push("room");
+      });
+    }
+    const end = new Promise<unknown[]>((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    const lines = (await end) as { id: string; score: number }[];
+    assert.deepEqual(leaks, []);
+    assert.equal(lines.length, 4);
+    assert.equal(phases.filter((p) => p === "hotseat").length, 8);
+    assert.equal(phases.filter((p) => p === "verdict").length, 8);
+    const verdicts = of(screens, "verdict");
+    const guessers = verdicts.map((v) => v.guesser);
+    for (const p of players) assert.equal(guessers.filter((x) => x === p.client.you!["id"]).length, 2);
+    // Points: the payouts at the verdicts, plus 3 per MVP clue.
+    const atVerdict = verdicts.reduce((s, v) => s + v.payouts.reduce((x, p) => x + p.delta, 0), 0);
+    const mvps = new Set(of(screens, "replay").filter((r) => r.mvp).map((r) => `${r.round}:${r.mvp}`)).size;
+    assert.ok(mvps > 0, "MVP clues picked");
+    assert.equal(
+      lines.reduce((s, l) => s + l.score, 0),
+      atVerdict + mvps * 3,
+    );
+    assert.ok(verdicts.some((v) => v.result === "right"), "some right guesses");
+    checkSecrecy(screens);
+    // The dials' start times, the cards per giver, the replay's payouts.
+    const writes = of(screens, "write");
+    assert.ok(writes.every((w) => w.started < w.deadline && Object.values(w.sentBy).reduce((a, b) => a + b, 0) === w.sent));
+    assert.ok(writes.some((w) => w.sent > 0 && Object.keys(w.sentBy).every((id) => w.givers.includes(id))));
+    assert.ok(of(screens, "reveal").every((x) => x.started < x.deadline));
+    assert.ok(of(screens, "verdict").every((v) => typeof v.pot === "number"));
+    for (const rp of of(screens, "replay").filter((x) => x.mvp)) assert.ok(rp.payouts.some((p) => p.why === "mvp"));
+    // The draft went to the TV while typing.
+    assert.ok(of(screens, "reveal").some((s) => s.typing && s.draft.length > 0), "a live draft");
+    // The end: steps up to the web, which stays.
+    await until(() => (party.screen.peek() as { step?: string }).step === "web");
+    const e = party.screen.peek() as unknown as Extract<ScreenView, { phase: "end" }>;
+    assert.equal(e.tally.played, 8);
+    assert.equal(e.words.length, 8);
+    assert.equal(e.web.words.length, 8);
+    assert.ok(e.people.every((p) => p.bot));
+    await until(() => players.every((b) => b.client.view["me"]?.task === "final"));
+    const vip = players[0]!.client.view["me"];
+    assert.equal(vip.canRestart, true);
+    assert.equal(vip.total, 8);
+    assert.equal(players[1]!.client.view["me"].canRestart, false);
+    assert.equal(party.inProgress, false);
+    assert.deepEqual(
+      players.map((b) => b.errors),
+      [[], [], [], []],
+    );
+    // Play again: a new game, rotated by one.
+    const end2 = new Promise((r) => g.once("end", r));
+    await assert.rejects(players[1]!.client.act("again"), (e: { code: string }) => e.code === "not-vip");
+    await players[0]!.client.act("again");
+    await until(() => g.phase === "hotseat");
+    assert.equal((party.screen.peek() as { guesser: string }).guesser, players[1]!.client.you!["id"]);
+    await end2;
+    const words = new Set(of(screens, "verdict").map((v) => v.word));
+    assert.equal(words.size, 16, "no word twice in a room");
+  } finally {
+    close();
+  }
+});
+
+test("3 players write two clues each; 6 rounds", async () => {
+  const { g, players, phases, screens, close } = await setup(3);
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await until(() => g.phase === "write");
+    await until(() => players.some((b) => b.client.view["me"]?.task === "write"));
+    const giver = players.find((b) => b.client.view["me"]?.task === "write")!;
+    assert.equal(giver.client.view["me"].each, 2);
+    assert.equal(giver.client.view["me"].sent.length, 2);
+    await end;
+    assert.equal(phases.filter((p) => p === "verdict").length, 6);
+    const jinx = of(screens, "jinx");
+    assert.ok(jinx.some((j) => j.cards.length === 4), "two cards per giver");
+    checkSecrecy(screens);
+  } finally {
+    close();
+  }
+});
+
+test("clue checks: too close, own clue, replacing, late; guess rules", async () => {
+  const { party, g, players, close } = await setup(3, { bot: () => ({ silent: true }) });
+  try {
+    await players[0]!.client.act("start");
+    await until(() => g.phase === "write");
+    const word = g.secret!;
+    const guesserId = (party.screen.peek() as { guesser: string }).guesser;
+    const [a, b] = players.filter((p) => p.client.you!["id"] !== guesserId);
+    const guesser = players.find((p) => p.client.you!["id"] === guesserId)!;
+    await assert.rejects(a!.client.act("clue", { text: word, bold: false, slot: 0 }), (e: { code: string }) => e.code === "too-close");
+    await assert.rejects(a!.client.act("clue", { text: "", bold: false, slot: 0 }), (e: { code: string }) => e.code === "empty");
+    await assert.rejects(a!.client.act("clue", { text: "one two three", bold: false, slot: 0 }), (e: { code: string }) => e.code === "too-many-words");
+    await assert.rejects(guesser.client.act("clue", { text: "zebra", bold: false, slot: 0 }), (e: { code: string }) => e.code === "not-asked");
+    const ok = await a!.client.act("clue", { text: "Zebra", bold: true, slot: 0 });
+    assert.deepEqual(ok, { text: "Zebra", bold: true });
+    await assert.rejects(a!.client.act("clue", { text: "zebras", bold: false, slot: 1 }), (e: { code: string }) => e.code === "own-clue");
+    await a!.client.act("clue", { text: "stripes", bold: false, slot: 0 }); // replaced
+    await until(() => a!.client.view["me"]?.sent?.[0]?.text === "stripes");
+    assert.equal(guesser.client.view["me"].task, "blind");
+    await a!.client.act("clue", { text: "Zebra", bold: false, slot: 1 });
+    await b!.client.act("clue", { text: "stripes", bold: true, slot: 0 });
+    await b!.client.act("clue", { text: "horse", bold: false, slot: 1 });
+    // All in: on to the jinx check (stripes ×2 jinxed, b's bold one too).
+    await until(() => g.phase === "jinx");
+    const j = party.screen.peek() as unknown as Extract<ScreenView, { phase: "jinx" }>;
+    assert.equal(j.groups.length, 1);
+    assert.equal(j.groups[0]!.pairs[0]!.reason, "same word");
+    assert.equal(j.pot, 8);
+    await until(() => guesser.client.view["me"]?.task === "check");
+    assert.deepEqual({ ...guesser.client.view["me"] }, { task: "check", survived: 2, jinxed: 2 });
+    await until(() => a!.client.view["me"]?.task === "fate");
+    const fate = a!.client.view["me"].cards as { text: string; fate: string; with: string[]; reason?: string }[];
+    assert.deepEqual(fate.find((c) => c.text === "stripes"), { text: "stripes", bold: false, fate: "jinxed", with: [b!.name], reason: "same word" });
+    await assert.rejects(a!.client.act("clue", { text: "late", bold: false, slot: 0 }), (e: { code: string }) => e.code === "late");
+    // The reveal: guess before a card, pick, the draft, a guess.
+    await until(() => g.phase === "reveal");
+    await assert.rejects(guesser.client.act("guess", { text: word }), (e: { code: string }) => e.code === "no-card");
+    await assert.rejects(a!.client.act("pass"), (e: { code: string }) => e.code === "not-guesser");
+    const cards = guesser.client.view["me"].cards as { id: string; word?: string }[];
+    assert.ok(cards.every((c) => c.word === undefined));
+    await guesser.client.act("pick", { card: cards[0]!.id });
+    await assert.rejects(guesser.client.act("pick", { card: cards[0]!.id }), (e: { code: string }) => e.code === "bad-card");
+    await until(() => (party.screen.peek() as { cards: { word?: string }[] }).cards.some((c) => c.word));
+    guesser.client.input({ draft: word.slice(0, 2) });
+    await until(() => (party.screen.peek() as { typing?: boolean }).typing === true);
+    assert.equal((party.screen.peek() as { draft: string }).draft, word.slice(0, 2));
+    await guesser.client.act("guess", { text: word.toUpperCase() });
+    await until(() => g.phase === "verdict");
+    const v = party.screen.peek() as unknown as Extract<ScreenView, { phase: "verdict" }>;
+    assert.equal(v.result, "right");
+    assert.equal(v.word, word);
+    assert.equal(v.near, undefined);
+    // Pot 8 (2 jinxed, one card); the turned card's author +2 (or bold +4); b's bold jinxed −2.
+    assert.deepEqual(
+      v.payouts.find((p) => p.id === guesserId),
+      { id: guesserId, delta: 8, why: "pot" },
+    );
+    assert.ok(v.payouts.some((p) => p.id === b!.client.you!["id"] && p.why === "bold-jinxed" && p.delta === -2));
+    await until(() => guesser.client.view["me"]?.task === "mvp");
+    const mvp = guesser.client.view["me"].cards as { id: string; word: string }[];
+    assert.equal(mvp.length, 2);
+    assert.ok(mvp.every((c) => typeof c.word === "string"));
+    await guesser.client.act("mvp", { card: mvp[1]!.id });
+    await until(() => (party.screen.peek() as { mvp?: string }).mvp === mvp[1]!.id);
+  } finally {
+    close();
+  }
+});
+
+test("all jinxed: straight to the verdict, the word is lost", async () => {
+  const { g, players, screens, close } = await setup(4, { rounds: 1, bot: () => ({ clues: "category", bold: 0 }) });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await end;
+    const lost = of(screens, "verdict").filter((v) => v.result === "lost");
+    assert.ok(lost.length >= 2, `lost rounds: ${lost.length}`);
+    for (const v of lost) assert.deepEqual(v.payouts, []);
+    const rounds = new Set(lost.map((v) => v.round));
+    for (const s of screens) if (s.phase === "reveal") assert.ok(!rounds.has(s.round), "no reveal when all are jinxed");
+    const replay = of(screens, "replay").find((r) => r.result === "lost")!;
+    assert.equal(replay.picking, false);
+    assert.ok(replay.cards.every((c) => c.fate === "jinxed" && c.word));
+  } finally {
+    close();
+  }
+});
+
+test("wrong guesses cost 2, passes nothing", async () => {
+  for (const style of ["wrong", "pass"] as const) {
+    const { g, players, screens, close } = await setup(4, { rounds: 1, bot: () => ({ guess: style, clues: "random", bold: 0 }) });
+    try {
+      const end = new Promise((r) => g.once("end", r));
+      await players[0]!.client.act("start");
+      const lines = (await end) as { score: number }[];
+      const vs = of(screens, "verdict").filter((v) => v.result !== "lost");
+      assert.ok(vs.length > 0);
+      for (const v of vs) {
+        assert.equal(v.result, style);
+        assert.deepEqual(v.payouts, style === "wrong" ? [{ id: v.guesser, delta: -2, why: "wrong" }] : []);
+        if (style === "wrong") assert.ok(typeof v.guess === "string");
+      }
+      assert.ok(of(screens, "replay").every((r) => !r.picking));
+      if (style === "pass") assert.ok(lines.every((l) => l.score === 0));
+      const e = of(screens, "end").at(-1)!;
+      assert.equal(e.title, "total jinx");
+      assert.equal(e.mvp, undefined);
+    } finally {
+      close();
+    }
+  }
+});
+
+test("timeouts: a silent guesser gets random cards, then a pass; a silent giver has no card", async () => {
+  const { g, party, players, screens, close } = await setup(4, {
+    rounds: 1,
+    timings: { write: 400, decide: 200 },
+    bot: (i) => (i === 1 ? { silent: true } : { clues: "random", bold: 0, guess: "right" }),
+  });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await end;
+    const silentId = players[1]!.client.you!["id"];
+    const mine = of(screens, "verdict").filter((v) => v.guesser === silentId);
+    assert.equal(mine.length, 1);
+    assert.equal(mine[0]!.result, "pass");
+    const turned = mine[0]!.cards.filter((c) => c.turned !== undefined).length;
+    assert.equal(turned, mine[0]!.cards.filter((c) => c.fate === "alive").length, "every card turned by the timer");
+    for (const j of of(screens, "jinx")) assert.ok(j.cards.every((c) => c.author !== silentId), "no card for the silent giver");
+    assert.equal(party.players.length, 4);
+  } finally {
+    close();
+  }
+});
+
+test("a disconnected guesser: the timers go on", async () => {
+  const { g, party, players, screens, close } = await setup(4, { rounds: 1, timings: { write: 300 } });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await until(() => g.phase === "hotseat");
+    // The next guesser's phone goes away (without leaving) for the rest of the game.
+    const nextId = (party.screen.peek() as { guesser: string }).guesser;
+    const order = players.map((p) => p.client.you!["id"]);
+    const away = players[(order.indexOf(nextId) + 1) % 4]!;
+    away.client.close();
+    await end;
+    const v = of(screens, "verdict").filter((x) => x.guesser === away.client.you!["id"]);
+    assert.equal(v.length, 1);
+    assert.ok(v[0]!.result === "pass" || v[0]!.result === "lost");
+    assert.equal(party.players.length, 4);
+  } finally {
+    close();
+  }
+});
+
+test("too few, non-VIP start, kick; a late joiner plays from the next round, rounds grow", async () => {
+  const { party, g, players, screens, add, close } = await setup(2, { bot: () => ({ clues: "random" }) });
+  try {
+    await assert.rejects(players[0]!.client.act("start"), (e: { code: string }) => e.code === "too-few");
+    const k = await add("Kick", 7);
+    await until(() => players[0]!.client.view["me"]?.canStart === true);
+    await players[0]!.client.act("kick", { id: k.client.you!["id"] });
+    await until(() => party.players.length === 2);
+    players.pop();
+    await add("Cy", 2);
+    await assert.rejects(players[1]!.client.act("start"), (e: { code: string }) => e.code === "not-vip");
+    // Faces and colours: distinct colours, a drawn face.
+    await players[1]!.client.act("face", { strokes: [[100, 100, 900, 900]] });
+    await until(() => (party.screen.peek() as { people: { face: unknown }[] }).people.some((p) => "strokes" in (p.face as object)));
+    const people = (party.screen.peek() as unknown as Extract<ScreenView, { phase: "lobby" }>).people;
+    assert.equal(new Set(people.map((p) => p.color)).size, 3);
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await until(() => g.phase === "write");
+    const late = await add("Late", 3);
+    await until(() => late.client.view["me"]?.task === "wait");
+    assert.equal(party.players.find((p) => p.name === "Late")!.waiting, true);
+    await until(() => late.client.view["me"]?.task === "hotseat" || late.client.view["me"]?.task === "write", 15_000);
+    await end;
+    const vs = of(screens, "verdict");
+    assert.equal(vs.length, 8, "6 rounds + 2 for the late joiner");
+    assert.equal(vs.filter((v) => v.guesser === late.client.you!["id"]).length, 2);
+    assert.equal(vs[0]!.guesser === late.client.you!["id"], false);
+    assert.equal(of(screens, "write").find((w) => w.round === 1)!.each, 2);
+    assert.ok(of(screens, "write").some((w) => w.each === 1), "one clue each with 4 players");
+  } finally {
+    close();
+  }
+});
+
+test("a player who leaves: skipped as guesser, kept on the TV as left", async () => {
+  const { party, g, players, screens, close } = await setup(4, { rounds: 1, bot: () => ({ clues: "random" }) });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await until(() => (of(screens, "scores").length >= 1));
+    const gone = players[3]!;
+    const goneId = gone.client.you!["id"];
+    const guessedBefore = of(screens, "verdict").some((v) => v.guesser === goneId);
+    gone.client.leave();
+    await until(() => party.players.length === 3);
+    const people = (party.screen.peek() as { people: { id: string; left?: boolean; connected: boolean }[] }).people;
+    assert.deepEqual(
+      people.filter((p) => p.left).map((p) => [p.id, p.connected]),
+      [[goneId, false]],
+    );
+    await end;
+    const vs = of(screens, "verdict");
+    if (!guessedBefore) assert.ok(vs.every((v) => v.guesser !== goneId));
+    assert.equal(vs.length, guessedBefore ? 4 : 3);
+    const e = of(screens, "end").at(-1)!;
+    assert.ok(e.people.some((p) => p.id === goneId && p.left));
+    assert.ok(e.lines.every((l) => l.id !== goneId));
+  } finally {
+    close();
+  }
+});
+
+test("the guesser leaves mid-round: the round is dropped", async () => {
+  const { party, g, players, screens, close } = await setup(4, { rounds: 1, bot: (i) => (i === 0 ? { guess: "silent" } : { clues: "random" }), timings: { decide: 2000 } });
+  try {
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await until(() => g.phase === "reveal");
+    const guesserId = (party.screen.peek() as { guesser: string }).guesser;
+    assert.equal(guesserId, players[0]!.client.you!["id"]);
+    players[0]!.client.leave();
+    await end;
+    const vs = of(screens, "verdict");
+    assert.equal(vs.length, 3);
+    assert.ok(vs.every((v) => v.guesser !== guesserId));
+    assert.equal(vs[0]!.round, 1, "the next round counts as round 1");
+  } finally {
+    close();
+  }
+});
+
+test("no spoilers on phones: fate after the TV's slams, the result after the envelope", async () => {
+  const { g, players, screens, close } = await setup(4, {
+    rounds: 1,
+    bot: () => ({ clues: "random" }),
+    timings: { jinxBase: 1700, jinxGroup: 0, verdict: 700, resultAfter: 500, fateBefore: 1500 },
+  });
+  try {
+    const giver = players[1]!; // Ada guesses first
+    const tasks: { task: string; at: number }[] = [];
+    giver.client.on("view", (v) => {
+      const t = v["me"]?.task;
+      if (t && tasks.at(-1)?.task !== t) tasks.push({ task: t, at: Date.now() });
+    });
+    await players[0]!.client.act("start");
+    const first = of(screens, "hotseat")[0];
+    await until(() => tasks.some((t) => t.task === "result") || g.phase === "replay", 10_000);
+    await until(() => tasks.some((t) => t.task === "result"), 5000);
+    assert.equal(first?.tally.total, 4, "the total from the first hot seat");
+    const seq = tasks.map((t) => t.task);
+    const at = (task: string) => tasks.find((t) => t.task === task)!.at;
+    assert.ok(seq.indexOf("tv") < seq.indexOf("fate"), seq.join(" "));
+    assert.ok(at("fate") - tasks[seq.indexOf("tv")]!.at >= 150, "fate only near the end of the jinx check");
+    const last = seq.lastIndexOf("tv");
+    assert.ok(last > seq.indexOf("fate") && last < seq.indexOf("result"), seq.join(" "));
+    assert.ok(at("result") - tasks[last]!.at >= 400, "the result after the envelope");
+  } finally {
+    close();
+  }
+});

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jinx phone harness</title>
+<!--
+  A dev harness for games/jinx/phone/ (not shipped): every task with a fake
+  view, in a 360×740 frame. Serve games/jinx over HTTP (ES modules do not
+  load from file://), e.g. `cd games/jinx && python3 -m http.server 8077`,
+  then open http://localhost:8077/design/phone-harness/.
+  One scenario full size (for headless screenshots): frame.html?s=write&do=reject.
+-->
+<style>
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #111; color: #ddd; display: flex; gap: 20px; padding: 16px; }
+  #list { width: 220px; display: flex; flex-direction: column; gap: 4px; }
+  #list button { text-align: left; background: #222; color: #ddd; border: 1px solid #333; border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  #list button.on { background: #f6b93b; color: #111; }
+  .frame { display: flex; flex-direction: column; gap: 8px; }
+  iframe { width: 360px; height: 740px; border: 0; border-radius: 22px; box-shadow: 0 0 0 8px #000, 0 0 0 9px #444; background: #1f4744; }
+  iframe.kb { height: 420px; }
+  #log { flex: 1; min-width: 200px; max-height: 92vh; overflow: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; background: #000; padding: 10px; border-radius: 8px; }
+  label { display: flex; gap: 6px; align-items: center; }
+  select { font: inherit; }
+</style>
+</head>
+<body>
+<div id="list"></div>
+<div class="frame">
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <label><input type="checkbox" id="kb"> keyboard up (360×420)</label>
+    <label>step <select id="step">
+      <option value="">—</option>
+      <option>focus</option><option>reject</option><option>reject3</option><option>bold</option>
+      <option>draft</option><option>play</option><option>pick</option><option>pass</option><option>mvp</option><option>kick</option><option>draw</option><option>scroll</option>
+    </select></label>
+  </div>
+  <iframe id="phone" title="phone"></iframe>
+</div>
+<pre id="log"></pre>
+<script type="module">
+  import { SCENARIO_NAMES } from "./fake-client.js";
+  const list = document.getElementById("list");
+  const frame = document.getElementById("phone");
+  const kb = document.getElementById("kb");
+  const stepSel = document.getElementById("step");
+  const log = document.getElementById("log");
+  let current = location.hash.slice(1) || "lobby-vip";
+  function load() {
+    const step = stepSel.value;
+    frame.src = `frame.html?s=${encodeURIComponent(current)}${step ? `&do=${step}` : ""}`;
+    frame.classList.toggle("kb", kb.checked);
+    for (const b of list.children) b.classList.toggle("on", b.textContent === current);
+    location.hash = current;
+    log.textContent = "";
+  }
+  for (const name of SCENARIO_NAMES) {
+    const b = document.createElement("button");
+    b.textContent = name;
+    b.onclick = () => { current = name; load(); };
+    list.append(b);
+  }
+  kb.onchange = load;
+  stepSel.onchange = load;
+  addEventListener("message", (e) => {
+    if (!e.data?.harness) return;
+    log.textContent = `${e.data.kind} ${JSON.stringify(e.data.data)}\n` + log.textContent;
+  });
+  load();
+</script>
+</body>
+</html>

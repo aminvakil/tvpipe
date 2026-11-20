@@ -1,0 +1,113 @@
+# Extra columns for words.txt, merged by assemble.mjs. word<TAB>also_right<TAB>banned
+# also_right: guesses accepted as right (spellings, short forms, US/UK names);
+#   the matcher also rejects them as clues.
+# banned: clues rejected as "too close": obvious translations (es, fr, de, it;
+#   accents optional, the matcher folds them), skipping forms that are
+#   English words a player might fairly use (pan, pain, latte, stern, sale).
+bicycle	bike	bicicleta,velo,fahrrad,bicicletta
+hippo	hippopotamus	
+rhino	rhinoceros	
+dinosaur	dino	
+fridge	refrigerator,refridgerator	
+phone	telephone,cellphone,mobile	telefono
+plane	airplane,aeroplane	avion,flugzeug,aereo
+barbecue	bbq,barbeque	
+email	e-mail	
+ketchup	catsup	
+ukulele	uke,ukelele	
+hiccup	hiccough	
+grandma	granny,grandmother,nan,nana,gran	abuela,oma,nonna
+grandpa	grandad,granddad,grandfather	abuelo,opa,nonno
+mother	mom,mum,mommy,mummy	madre,mutter
+father	dad,daddy	padre,vater
+taxi	cab	
+sofa	couch	
+motorcycle	motorbike	moto,motorrad
+photo	photograph	foto
+burger	hamburger	
+microphone	mic	
+vet	veterinarian	
+sweater	jumper	
+wardrobe	closet	
+backpack	rucksack	mochila,zaino
+truck	lorry	camion,lastwagen
+vacuum	hoover	
+autumn	fall	otono,automne,herbst,autunno
+luggage	baggage	
+astronaut	cosmonaut,spaceman	astronauta
+firefighter	fireman	bombero,pompier,feuerwehrmann,pompiere
+spaceship	spacecraft	
+rabbit	bunny	conejo,lapin,hase,kaninchen,coniglio
+kitten	kitty	
+lollipop	lolly	
+gift	present	regalo,cadeau,geschenk
+money	cash	dinero,argent,geld,soldi
+cat		gato,chat,katze,gatto
+dog		perro,chien,hund
+house		casa,maison,haus
+water		agua,eau,wasser,acqua
+sun		sol,soleil,sonne
+moon		luna,lune,mond
+book		libro,livre,buch
+apple		manzana,pomme,apfel,mela
+milk		leche,lait,milch
+bread		brot
+cheese		queso,fromage,kase,formaggio
+king		rey,roi,konig
+queen		reina,reine,konigin,regina
+school		escuela,ecole,schule,scuola
+friend		amigo,ami,freund,amico
+flower		flor,fleur,blume,fiore
+tree		arbol,arbre,baum,albero
+fire		fuego,feu,feuer,fuoco
+snow		nieve,neige,schnee,neve
+rain		lluvia,pluie,regen,pioggia
+star		estrella,etoile
+heart		corazon,coeur,herz,cuore
+baby		bebe,bambino
+fish		pez,pescado,poisson,fisch,pesce
+bird		pajaro,oiseau,vogel,uccello
+horse		caballo,cheval,pferd,cavallo
+cow		vaca,vache,kuh,mucca
+mouse		raton,souris,maus
+bear		oso,ours,orso
+wolf		lobo,loup,lupo
+door		puerta,porte,porta
+window		ventana,fenetre,fenster,finestra
+table		mesa,tisch,tavolo
+chair		silla,chaise,stuhl,sedia
+bed		cama,bett,letto
+egg		huevo,oeuf,uovo
+cake		kuchen,gateau,torta
+night		noche,nuit,nacht,notte
+winter		invierno,hiver,inverno
+ghost		fantasma,fantome,gespenst
+tomato		tomate,pomodoro
+carrot		zanahoria,carotte,karotte,carota
+lemon		limon,citron,zitrone,limone
+rice		arroz,riz,reis,riso
+soup		sopa,soupe,suppe,zuppa
+sugar		azucar,sucre,zucker,zucchero
+garden		jardin,garten,giardino
+beach		playa,plage,spiaggia
+river		rio,fleuve,fluss,fiume
+island		isla,ile,insel,isola
+forest		bosque,foret,wald,bosco
+city		ciudad,ville,stadt,citta
+train		tren,zug,treno
+butterfly		mariposa,papillon,schmetterling,farfalla
+spider		arana,araignee,spinne,ragno
+frog		rana,grenouille,frosch
+duck		pato,canard,ente,anatra
+owl		buho,hibou,eule,gufo
+castle		castillo,chateau,schloss,castello
+bridge		puente,pont,brucke,ponte
+clock		reloj,horloge,uhr,orologio
+tiger		tigre
+elephant		elefante,elefant
+car		coche,voiture
+sea		mar,mer,meer
+key		llave,cle,schlussel,chiave
+lion		leon,leone,lowe
+ice		hielo,glace,eis,ghiaccio
+dice	die	

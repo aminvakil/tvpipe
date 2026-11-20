@@ -1,0 +1,29 @@
+# Plausible one-word clues for the short secrets the containment sweep flagged
+# (short-secrets.tsv). short-secrets.ts runs checkSubmit on each; a secret is
+# dropped only if a natural, fair clue here is rejected by accident.
+# word<TAB>clues (comma-separated)
+elf	christmas,santa,pointy,ears,shelf,helper,workshop,toys,tolkien,legolas,small,magic,green,north,dobby,hobbit,fairy,gnome
+ice	cold,cube,frozen,freeze,skate,skating,rink,hockey,winter,slippery,glacier,iceberg,drink,cream,water,snow,melt,polar,crystal
+ant	insect,small,tiny,colony,hill,anthill,queen,picnic,sugar,worker,six,legs,strong,bug,elephant,giant,march,army,nest,plant
+pen	ink,write,paper,pencil,ballpoint,sign,signature,author,blue,letter,desk,school,cap,click,biro,quill,pig,marker
+car	drive,wheel,road,engine,vehicle,garage,driver,traffic,taxi,petrol,gas,race,park,parking,motor,ford,key
+pig	pink,mud,farm,oink,bacon,pork,snout,piglet,sty,greedy,fat,hog,ham,sausage,peppa,truffle,bank,piggy,curly
+sea	ocean,water,wave,waves,salt,salty,beach,blue,fish,ship,sail,shore,coast,tide,deep,swim,boat,mermaid,seaside,seashell
+ear	hear,hearing,listen,sound,head,earring,lobe,deaf,music,headphones,earphones,ring,elephant,rabbit,wax,pierce
+key	lock,door,unlock,open,keyhole,keyboard,piano,house,car,chain,keychain,metal,turn,secret,answer,code,safe
+bow	arrow,archer,archery,ribbon,tie,gift,present,bend,violin,rainbow,crossbow,hair,knot,curtsy,shoot,target,robin,hood,cello
+ham	pig,pork,meat,sandwich,bacon,cheese,slice,christmas,cooked,salty,pink,deli,spam,eggs
+pea	green,pod,vegetable,small,round,peas,soup,frozen,princess,peanut,garden,carrot,mushy,shoot,sweet,tiny,bean
+leg	foot,knee,walk,run,body,limb,thigh,shin,calf,leggings,table,chair,kick,toe,ankle,arm,hip,pants,trousers
+corn	maize,yellow,cob,popcorn,field,farm,corny,cornflakes,cereal,flour,kernel,crop,husk,maze,grain,butter,sweetcorn
+ship	boat,sea,ocean,sail,captain,titanic,cruise,vessel,deck,anchor,navy,pirate,shipwreck,spaceship,port,harbour,crew,dock
+tent	camp,camping,sleeping,outdoors,canvas,pole,pitch,festival,scout,circus,shelter,zip,tepee,wigwam,outdoor,stakes
+tail	dog,wag,cat,fox,monkey,end,back,ponytail,fish,kite,comet,peacock,horse,coin,heads,lizard,mouse,rabbit
+sand	beach,desert,castle,sandcastle,grain,sandal,sandals,hourglass,sandbox,dune,yellow,sahara,sea,shore,sandy,quicksand,bucket,paper
+lion	king,mane,roar,jungle,africa,cat,big,brave,simba,zoo,pride,savanna,leo,lioness,tiger,predator,hunt
+hand	finger,fingers,palm,glove,arm,wave,clap,five,thumb,handshake,hold,wrist,help,write,left,right,touch,grab,nail
+pier	beach,sea,seaside,boat,dock,jetty,wooden,walk,ocean,fishing,arcade,brighton,harbour,boardwalk,end
+cape	superhero,superman,batman,cloak,red,vampire,dracula,coat,fly,hero,cap,coast,cod,town,costume,shoulders,flying
+nest	bird,egg,eggs,tree,twigs,home,baby,chicks,hatch,empty,straw,robin,branch,cosy,hive,wasp,nesting
+disco	dance,dancing,ball,glitter,music,party,club,night,lights,seventies,funk,fever,dancefloor,disc,groove,mirror,boogie,abba
+fence	wall,garden,wood,wooden,post,gate,border,barrier,picket,white,farm,neighbour,fencing,sword,climb,jump,hedge,yard

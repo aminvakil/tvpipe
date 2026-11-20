@@ -1,0 +1,539 @@
+/**
+ * A live check of Jinx on `tvpipe game play` (not part of `npm test`):
+ * tvpipe serves the bundle (`dist/`); a headless Chrome plays the window
+ * (the launcher, then the host page, which adds the bots), one phone
+ * (joining, drawing a face, starting as the VIP, writing clues with a
+ * refusal and a bold one, turning cards, typing a guess letter by letter,
+ * picking the MVP clue, playing again) and the TV: the `browser`
+ * receiver's player page, so the picture went through tvpipe's own
+ * headless Chrome, the capture and the stream. Screenshots of the host
+ * window, the TV (the stream, and the TV page itself) and the phone per
+ * phase; every shot also checks the layout (the phone, also at 320 px wide,
+ * and the TV page: no text running out of its box, nothing off the
+ * screen), the secrecy of the word on the TV, and every tab's console for
+ * errors.
+ *
+ *   npm run build && node test/live/play.ts [--bots N] [--rounds auto|1|2] [--out DIR]
+ *
+ * Needs Chrome and tvpipe built (target/release, else target/debug, or
+ * TVPIPE_BINARY).
+ */
+
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+import { Browser, type Tab } from "./browser.ts";
+
+const { values: args } = parseArgs({
+  options: {
+    bots: { type: "string", default: "3" },
+    rounds: { type: "string", default: "1" },
+    out: { type: "string", default: "/tmp/jinx-live" },
+  },
+});
+
+const here = new URL("../../", import.meta.url);
+const repo = new URL("../../", here);
+const exe = process.platform === "win32" ? "tvpipe.exe" : "tvpipe";
+const binary =
+  process.env["TVPIPE_BINARY"] ??
+  ["release", "debug"].map((p) => fileURLToPath(new URL(`target/${p}/${exe}`, repo))).find((p) => existsSync(p));
+if (!binary) throw new Error("build tvpipe first (cargo build --release -p tvpipe-cli)");
+const bundle = fileURLToPath(here);
+const out = args.out;
+mkdirSync(out, { recursive: true });
+const nBots = Number(args.bots);
+const t0 = Date.now();
+const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1).padStart(6)} ${m}`);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// tvpipe game play, the window left to us (--window none prints its URL).
+const proc = spawn(binary, ["-v", "game", "play", bundle, "--window", "none", "--no-tunnel"], { stdio: ["ignore", "pipe", "pipe"] });
+const exited = new Promise<number | null>((r) => proc.on("exit", (c) => r(c)));
+const tvpipeLog: string[] = [];
+const tvpipeProblems: string[] = [];
+createInterface({ input: proc.stderr! }).on("line", (l) => {
+  tvpipeLog.push(l);
+  if (/ (WARN|ERROR) /.test(l)) tvpipeProblems.push(l);
+  if (/ (WARN|ERROR) |playshare: /.test(l)) log(`tvpipe: ${l.replace(/^\s*\S+ /, "")}`);
+});
+const start = await new Promise<string>((resolve, reject) => {
+  createInterface({ input: proc.stdout! }).once("line", resolve);
+  exited.then(() => reject(new Error(`tvpipe exited:\n${tvpipeLog.join("\n")}`)));
+});
+log(`tvpipe game play games/jinx: ${start.replace(/t=.*/, "t=…")}`);
+
+const browser = await Browser.launch();
+let failed = false;
+const problems: string[] = [];
+const problem = (p: string) => {
+  if (problems.includes(p)) return;
+  problems.push(p);
+  log(`PROBLEM ${p}`);
+};
+const tabs: [string, Tab][] = [];
+const reportErrors = () => {
+  for (const [name, tab] of tabs) {
+    for (const e of tab.errors.splice(0)) problem(`${name} console: ${e.replace(/:\d+\/favicon/, ":PORT/favicon")}`);
+  }
+};
+type HostMon = { at: number; phase: string; round: number; until: number; task: string; secret: string; guesser: boolean };
+type PhoneMon = { at: number; fate: boolean; result: boolean; text: string };
+/**
+ * The phones' secrecy over time: no jinx fate (the fate screen, or the
+ * guesser's "survived"/"jinxed" counts) before the TV's jinx `until` − 1.5 s,
+ * no word or result before the verdict's start + 3 s; on the host (Phil's
+ * task) and on the phone's screen.
+ */
+async function timing(win: Tab, phone: Tab): Promise<void> {
+  const FATE_BEFORE = 1500;
+  const RESULT_AFTER = 3000;
+  const SLACK = 120; // the monitors' poll and the view's way to the phone
+  const verdictMs = await win.eval<number>(`jinx.game.timings.verdict`);
+  const host = await win.eval<HostMon[]>(`globalThis.__mon`);
+  const ph = await phone.eval<PhoneMon[]>(`globalThis.__mon`);
+  // The windows: per round, from the jinx (or verdict) start to its limit.
+  const windows: { what: string; from: number; to: number; secret: string; round: number }[] = [];
+  for (let i = 0; i < host.length; i++) {
+    const e = host[i]!;
+    const prev = host[i - 1];
+    if (prev && prev.phase === e.phase && prev.round === e.round) continue;
+    if (e.phase === "jinx" && e.until) windows.push({ what: "jinx", from: e.at, to: e.until - FATE_BEFORE, secret: e.secret, round: e.round });
+    if (e.phase === "verdict" && e.until) {
+      const start = e.until - verdictMs;
+      windows.push({ what: "verdict", from: e.at, to: start + RESULT_AFTER, secret: e.secret, round: e.round });
+    }
+  }
+  let seenFate = 0;
+  let seenResult = 0;
+  for (const w of windows) {
+    const early = (at: number) => at >= w.from && at < w.to - SLACK;
+    for (const e of host) {
+      if (!early(e.at)) continue;
+      if (w.what === "jinx" && (e.task === "fate" || e.task === "check")) problem(`timing: round ${w.round}: Phil's task was ${e.task} ${w.to - e.at} ms before the TV's jinx until − 1.5 s`);
+      if (w.what === "verdict" && e.task === "result") problem(`timing: round ${w.round}: Phil's task was result ${w.to - e.at} ms before verdict start + 3 s`);
+    }
+    // The phone's screen, sampled every 40 ms (after 400 ms: the new view's way to the phone).
+    for (let t = w.from + 400; t < w.to - SLACK; t += 40) {
+      const e = ph.filter((x) => x.at <= t).at(-1);
+      if (!e) continue;
+      const ms = w.to - t;
+      const say = (what: string) => problem(`timing: round ${w.round}: the phone showed ${what} ${ms} ms early: ${JSON.stringify(e.text.slice(0, 80))}`);
+      if (w.what === "jinx" && (e.fate || /survived|jinxed/i.test(e.text))) {
+        say("the jinx fate");
+        break;
+      }
+      if (w.what === "verdict" && (e.result || /right!|not it|got it|missed it|passed|all jinxed/i.test(e.text))) {
+        say("the result");
+        break;
+      }
+      if (w.what === "verdict" && w.secret && new RegExp(`\\b${w.secret}\\b`, "i").test(e.text)) {
+        say(`the word "${w.secret}"`);
+        break;
+      }
+    }
+    const after = ph.filter((e) => e.at >= w.to && e.at < w.to + 4000);
+    if (w.what === "jinx" && after.some((e) => e.fate || /survived/i.test(e.text))) seenFate++;
+    if (w.what === "verdict" && after.some((e) => e.result)) seenResult++;
+  }
+  const jinxes = windows.filter((w) => w.what === "jinx").length;
+  const verdicts = windows.filter((w) => w.what === "verdict").length;
+  log(`timing: ${jinxes} jinx checks (the phone's fate came after the limit in ${seenFate}), ${verdicts} verdicts (the result came after the limit in ${seenResult})`);
+  if (seenFate < jinxes || seenResult < verdicts) problem(`timing: the phone did not show every fate (${seenFate}/${jinxes}) or result (${seenResult}/${verdicts}) once allowed`);
+}
+
+try {
+  // The window: the launcher first.
+  const win = await browser.open(start, { width: 1280, height: 800 });
+  tabs.push(["host window", win]);
+  await win.until(`document.querySelectorAll("#devices .device").length > 0`);
+  await sleep(1500); // a discovery round: real TVs show up too
+  await win.screenshot(`${out}/launcher.png`);
+  const listed = await win.eval<string[]>(`[...document.querySelectorAll("#devices .device")].map((d) => d.dataset.name)`);
+  log(`launcher lists: ${listed.join(", ")}`);
+  // Only the browser receiver (no real TV without asking).
+  await win.eval(`document.querySelector('#devices .device[data-name="browser"]').click(); true`);
+  await win.until(`!document.getElementById("start").disabled`);
+  await win.eval(`document.getElementById("start").click(); true`);
+  await win.until(`location.pathname.endsWith("/host/index.html") && !!globalThis.jinx`, 20_000);
+  log("the host page runs the game");
+  // Settings, as the host page sets them.
+  await win.eval(
+    `(() => { const r = document.getElementById("rounds"); r.value = ${JSON.stringify(args.rounds)}; r.dispatchEvent(new Event("change")); const w = document.getElementById("write"); w.value = "30"; w.dispatchEvent(new Event("change")); return true; })()`,
+  );
+  await win.until(`jinx.game.rounds === ${JSON.stringify(args.rounds === "auto" ? "auto" : Number(args.rounds))} && jinx.game.timings.write === 30000`);
+  const links = await win.eval<{ join: string; watch: string; code: string }>(`({ join: jinx.party.links.join, watch: jinx.party.links.watch, code: jinx.party.code })`);
+  log(`room ${links.code}, phones join at ${links.join.replace(/#.*/, "#k=…")}`);
+  // The TV: the browser receiver's player page, once the cast streams.
+  await win.until(`!document.getElementById("player").hidden`, 60_000);
+  const playerUrl = await win.eval<string>(`document.getElementById("player").href`);
+  const tv = await browser.open(playerUrl, { width: 1280, height: 720 });
+  tabs.push(["tv stream", tv]);
+  log(`TV: ${playerUrl.replace(/t=.*/, "t=…")}`);
+  // The TV page itself (the watch link, muted, as the host's preview): crisp shots and layout checks.
+  const screen = await browser.open(`${links.watch}&mute=1`, { width: 1280, height: 720 });
+  tabs.push(["tv page", screen]);
+  // A phone (through the phones' listener, as the QR code says).
+  const PHONE = { width: 390, height: 844, mobile: true };
+  const phone = await browser.open(links.join, { ...PHONE, locale: "en-US" });
+  tabs.push(["phone", phone]);
+  await phone.until(`!!document.getElementById("name")`, 20_000);
+  await phone.screenshot(`${out}/phone-join.png`);
+  await phone.eval(`document.getElementById("name").value = "Phil"; document.querySelector("form.join button").click(); true`);
+  await phone.until(`!!document.querySelector("canvas.pad")`);
+  log("phone: joined as Phil (the VIP)");
+
+  // Draws a face on the lobby's pad (touch).
+  const box = await phone.eval<{ x: number; y: number; w: number }>(
+    `(() => { const r = document.querySelector("canvas.pad").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width }; })()`,
+  );
+  const pt = (a: number, b: number): [number, number] => [box.x + a * box.w, box.y + b * box.w];
+  await phone.drag([pt(0.36, 0.38), pt(0.38, 0.42), pt(0.36, 0.44)]);
+  await phone.drag([pt(0.62, 0.38), pt(0.64, 0.42), pt(0.62, 0.44)]);
+  await phone.drag(Array.from({ length: 14 }, (_, i) => pt(0.3 + (0.4 * i) / 13, 0.62 + 0.1 * Math.sin((i / 13) * Math.PI))));
+  await win.until(`jinx.party.screen.peek().people?.find((p) => p.name === "Phil")?.face?.strokes?.length === 3`);
+  log("phone: drew a face (3 strokes on the TV's view)");
+
+  // Bots, as the host page adds them.
+  for (let left = nBots; left > 0; ) {
+    const n = left >= 3 ? 3 : 1;
+    const before = await win.eval<number>(`jinx.party.players.length`);
+    await win.eval(`document.getElementById(${JSON.stringify(n === 3 ? "bot3" : "bot1")}).click(); true`);
+    await win.until(`jinx.party.players.length >= ${before + n}`);
+    left -= n;
+  }
+  log(`${nBots} bots joined from the host page`);
+
+  /**
+   * Layout problems in the page: text running out of the box it is drawn
+   * on (the nearest ancestor with a background or a border, or one that
+   * clips), text or buttons off the screen. Text being animated is skipped
+   * (cards flying in), and so is text clipped with an ellipsis on purpose.
+   */
+  const layout = `(() => {
+    const out = [];
+    const W = innerWidth, H = innerHeight;
+    if (document.documentElement.scrollWidth > W + 1) out.push("the page is wider than the screen: " + document.documentElement.scrollWidth);
+    const visual = (e) => {
+      const cs = getComputedStyle(e);
+      return cs.overflowX !== "visible" || cs.backgroundImage !== "none" || !/rgba\\(.*, 0\\)$|transparent/.test(cs.backgroundColor) || parseFloat(cs.borderLeftWidth) > 0 && parseFloat(cs.borderRightWidth) > 0;
+    };
+    const animated = (e) => { for (let p = e; p; p = p.parentElement) if (p.getAnimations().some((x) => x.playState === "running" && !(x.effect?.getComputedTiming().iterations === Infinity))) return true; return false; };
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const seen = new Set();
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      const el = t.parentElement;
+      if (!el || !t.textContent.trim() || seen.has(el)) continue;
+      seen.add(el);
+      if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+      if (el.closest("svg, script, style, option, select")) continue;
+      const cs = getComputedStyle(el);
+      if (cs.textOverflow === "ellipsis" || cs.webkitLineClamp !== "none") continue;
+      const range = document.createRange();
+      range.selectNodeContents(t);
+      const r = range.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      if (animated(el)) continue;
+      const text = JSON.stringify(t.textContent.trim().slice(0, 40));
+      const what = el.localName + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\\s+/).join(".") : "");
+      let box = el;
+      while (box && box !== document.body && !visual(box)) box = box.parentElement;
+      if (box && box !== document.body) {
+        const b = box.getBoundingClientRect();
+        const bs = getComputedStyle(box);
+        const scrolls = /auto|scroll/.test(bs.overflowX + bs.overflowY);
+        if (!scrolls && (r.left < b.left - 2 || r.right > b.right + 2)) out.push("text out of its box: " + what + " " + text + " in " + box.localName + "." + String(box.className).trim().split(/\\s+/).join(".") + " (" + Math.round(r.left - b.left) + ", " + Math.round(b.right - r.right) + " px)");
+      }
+      let scroller = el.parentElement;
+      while (scroller && !/auto|scroll/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+      if (r.right > W + 2 || r.left < -2 || (!scroller && (r.top < -2 || r.bottom > H + 2))) out.push("text off the screen: " + what + " " + text + " " + [r.left, r.top, r.right, r.bottom].map(Math.round).join(","));
+    }
+    for (const el of document.querySelectorAll("button, input")) {
+      if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) || animated(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && (r.right > W + 2 || r.left < -2)) out.push("off the side: " + el.localName + "." + el.className + " " + JSON.stringify((el.innerText || el.value || "").trim().slice(0, 30)));
+    }
+    return out;
+  })()`;
+  const check = async (where: string, tab: Tab) => {
+    const found = await tab.eval<string[]>(layout).catch((e: Error) => [`cannot check: ${e.message.slice(0, 120)}`]);
+    for (const f of found) problem(`${where}: ${f}`);
+  };
+  /** The TV page must not show the secret word before the verdict. */
+  const secrecy = async (where: string) => {
+    const s = await win.eval<{ phase: string; secret?: string }>(`({ phase: jinx.game.phase, secret: jinx.game.secret })`);
+    if (!s.secret || !["hotseat", "write", "jinx", "reveal"].includes(s.phase)) return;
+    const text = await screen.eval<string>(`document.body.innerText`);
+    if (new RegExp(`\\b${s.secret}\\b`, "i").test(text)) problem(`tv ${where}: the TV shows the secret word "${s.secret}" in ${s.phase}`);
+  };
+  const shots: string[] = [];
+  const shot = async (name: string, o: { secret?: boolean; wait?: number } = {}) => {
+    await sleep(o.wait ?? 1500); // the TV is a stream: a little behind
+    await Promise.all([
+      tv.screenshot(`${out}/tv-${name}.png`),
+      screen.screenshot(`${out}/screen-${name}.png`),
+      win.screenshot(`${out}/host-${name}.png`),
+      phone.screenshot(`${out}/phone-${name}.png`),
+    ]);
+    if (o.secret !== false) await secrecy(name);
+    await check(`phone ${name}`, phone);
+    await check(`tv ${name}`, screen);
+    // A small phone (320 px wide, an iPhone SE).
+    await phone.resize({ width: 320, height: 568, mobile: true });
+    await sleep(300);
+    await phone.screenshot(`${out}/phone-small-${name}.png`);
+    await check(`small phone ${name}`, phone);
+    await phone.resize(PHONE);
+    reportErrors();
+    shots.push(name);
+    log(`screenshots: ${name}`);
+  };
+  await shot("lobby");
+
+  // Timing monitors (every 40 ms, Date.now() in both tabs, one machine):
+  // the host's screen phase with its deadlines and Phil's task; the phone's
+  // screen. Checked after the game (see `timing`).
+  await win.eval(`(() => {
+    const log = (globalThis.__mon = []);
+    let last = "";
+    setInterval(() => {
+      const s = jinx.party.screen.peek();
+      const phil = jinx.party.players.find((p) => p.name === "Phil");
+      const task = phil?.state.peek()?.task ?? "";
+      const off = Date.now() - jinx.party.now();
+      const e = { phase: s.phase, round: s.round ?? 0, until: typeof s.until === "number" ? Math.round(s.until + off) : 0, task, secret: jinx.game.secret ?? "", guesser: s.guesser === phil?.id };
+      const k = JSON.stringify(e);
+      if (k !== last) { last = k; log.push({ at: Date.now(), ...e }); }
+    }, 40);
+    return true;
+  })()`);
+  await phone.eval(`(() => {
+    const log = (globalThis.__mon = []);
+    let last = "";
+    setInterval(() => {
+      const main = document.querySelector("#main");
+      const e = { fate: !!document.querySelector(".fates"), result: !!document.querySelector("#main .points"), text: (main?.innerText ?? "").replace(/\\s+/g, " ").slice(0, 400) };
+      const k = JSON.stringify(e);
+      if (k !== last) { last = k; log.push({ at: Date.now(), ...e }); }
+    }, 40);
+    return true;
+  })()`);
+  log("timing monitors on the host and the phone");
+
+  // Phil (the VIP) starts from the phone.
+  await phone.until(`(() => { const b = [...document.querySelectorAll("#dock button.primary")].find((b) => !b.hidden); return b && !b.disabled; })()`);
+  log(`phone: "${await phone.eval<string>(`[...document.querySelectorAll("#dock button.primary")].find((b) => !b.hidden).textContent`)}"`);
+  await phone.eval(`[...document.querySelectorAll("#dock button.primary")].find((b) => !b.hidden).click(); true`);
+
+  const state = () =>
+    win.eval<{ phase: string; round?: number; step?: string; guesser?: string; phil?: string; secret?: string; draft?: string }>(
+      `(() => { const s = jinx.party.screen.peek(); const phil = jinx.party.players.find((p) => p.name === "Phil"); return { phase: s.phase, round: s.round, step: s.step, guesser: s.guesser, phil: phil?.id, secret: jinx.game.secret, draft: s.draft }; })()`,
+    );
+  // The words' categories (the bots write them now and then): the phone writes one too, to jinx with a bot.
+  const category = new Map(
+    readFileSync(new URL("dist/data/words.txt", here), "utf8")
+      .split("\n")
+      .map((l) => l.split("\t"))
+      .filter((f) => f.length >= 3)
+      .map((f) => [f[0]!, f[2]!]),
+  );
+  let writeRounds = 0;
+  const clueWords = ["galaxy", "whisper", "pickle", "lantern", "velvet", "thunder", "compass", "biscuit", "orbit", "meadow"];
+  let clueN = 0;
+  let boldDone = false;
+  let rejected = false;
+  let guesserRounds = 0;
+
+  /** The phone writes its clue(s): the secret word first (refused), then real ones, one bold. */
+  const writeClues = async (at: string) => {
+    await phone.until(`!!document.querySelector(".slot input")`, 10_000);
+    const word = await phone.eval<string>(`document.querySelector(".index .word").textContent`);
+    const slots = await phone.eval<number>(`document.querySelectorAll(".slot").length`);
+    writeRounds++;
+    for (let i = 0; i < slots; i++) {
+      const sel = `document.querySelectorAll(".slot")[${i}]`;
+      if (!(await phone.eval<boolean>(`!!${sel}`))) break;
+      if (!rejected) {
+        // The word itself: refused, the reason on the phone.
+        await phone.eval(`${sel}.querySelector("input").focus(); true`);
+        await phone.type(word.toUpperCase().slice(0, 1) + word.slice(1) + "s", 40);
+        await phone.eval(`${sel}.querySelector("button.send").click(); true`);
+        await phone.until(`${sel}.querySelector(".line").classList.contains("error") && ${sel}.querySelector(".line").textContent.length > 0`);
+        const why = await phone.eval<string>(`${sel}.querySelector(".line").textContent`);
+        log(`phone: "${word}s" refused: ${why}`);
+        await shot(`${at}-write-refused`, { wait: 300 });
+        rejected = true;
+      }
+      for (let attempt = 0; attempt < 4; attempt++) {
+        // From the second writing round on, the word's category first (bots write it too: a jinx, likely).
+        let clue = writeRounds >= 2 && attempt === 0 && i === 0 && category.get(word) ? category.get(word)! : clueWords[clueN++ % clueWords.length]!;
+        if (clue === word) clue = clueWords[clueN++ % clueWords.length]!;
+        await phone.eval(`(() => { const i = ${sel}.querySelector("input"); i.value = ""; i.focus(); return true; })()`);
+        await phone.type(clue, 30);
+        const bold = !boldDone;
+        if (bold) await phone.eval(`${sel}.querySelector(".boldtoggle").click(); true`);
+        await phone.eval(`${sel}.querySelector("button.send").click(); true`);
+        // Accepted: the sent card, or (the last clue in) the phase moves on and the slot is gone.
+        const ok = await phone
+          .until(`!${sel} || !${sel}.querySelector(".sent").hidden || ${sel}.querySelector(".line").classList.contains("error")`, 5000)
+          .then(() => phone.eval<boolean>(`!${sel} || !${sel}.querySelector(".sent").hidden`));
+        if (ok) {
+          if (bold) boldDone = true;
+          log(`phone: clue ${i + 1} "${clue}"${bold ? " (bold)" : ""} for "${word}"`);
+          break;
+        }
+        log(`phone: "${clue}" refused: ${await phone.eval<string>(`${sel}.querySelector(".line").textContent`)}`);
+        if (bold) await phone.eval(`${sel}.querySelector(".boldtoggle").click(); true`);
+      }
+    }
+  };
+
+  /** The phone guesses: turns one or two cards, types the guess letter by letter (a typo fixed with backspace), guesses. */
+  const playGuesser = async (at: string) => {
+    guesserRounds++;
+    await phone.until(`!!document.querySelector(".cards") && document.querySelectorAll(".cards .card").length > 0`, 10_000);
+    await shot(`${at}-reveal-start`);
+    const cards = await phone.eval<number>(`document.querySelectorAll(".cards .card").length`);
+    const turn = Math.min(cards, 2);
+    for (let i = 0; i < turn; i++) {
+      await phone.until(`!!document.querySelector(".cards button.card.down:not([disabled])")`);
+      await phone.eval(`document.querySelector(".cards button.card.down").click(); true`);
+      await phone.until(`document.querySelectorAll(".cards .card.turned").length === ${i + 1}`);
+      await win.until(`jinx.party.screen.peek().cards?.filter((c) => c.turned).length === ${i + 1}`);
+      log(`phone: turned card ${i + 1} of ${cards}: "${await phone.eval<string>(`[...document.querySelectorAll(".cards .card.turned .word")].at(-1).textContent`)}"`);
+      if (i === 0) await shot(`${at}-reveal-turned`, { wait: 2500 });
+    }
+    const secret = (await state()).secret!;
+    // The first time right (a wrong letter first, deleted), later a wrong guess.
+    const right = guesserRounds === 1;
+    const guess = right ? secret : secret === "elephant" ? "giraffe" : "elephant";
+    await phone.eval(`document.querySelector("input.tape-field").focus(); true`);
+    const half = Math.ceil(guess.length / 2);
+    await phone.type(guess.slice(0, half), 150);
+    await phone.type("x", 0);
+    await sleep(400);
+    await phone.backspace();
+    await sleep(300);
+    const draftNow = await win.eval<string>(`jinx.party.screen.peek().draft`);
+    if (draftNow !== guess.slice(0, half)) problem(`reveal: the TV's draft is "${draftNow}" after typing "${guess.slice(0, half)}x" and a backspace`);
+    await shot(`${at}-reveal-draft-half`, { secret: false, wait: 1200 });
+    const tape = await screen.eval<string>(`[...document.querySelectorAll(".dymo .l:not(.gone)")].map((l) => l.textContent).join("")`);
+    if (tape !== guess.slice(0, half).toUpperCase()) problem(`tv reveal: the label tape says "${tape}", the draft is "${guess.slice(0, half)}"`);
+    await phone.type(guess.slice(half), 150);
+    await win.until(`jinx.party.screen.peek().draft === ${JSON.stringify(guess)}`, 3000).catch(() => problem(`reveal: the TV's draft did not reach "${guess}"`));
+    await shot(`${at}-reveal-draft`, { secret: false, wait: 1200 });
+    await phone.eval(`document.querySelector("form.editor button.primary").click(); true`);
+    log(`phone: guessed "${guess}" (${right ? "right" : "wrong"}) after ${turn} card(s)`);
+  };
+
+  const seen = new Set<string>();
+  let n = 0;
+  let again = false;
+  let games = 1;
+  const deadline = Date.now() + 20 * 60_000;
+  for (;;) {
+    if (Date.now() > deadline) throw new Error("the game took too long");
+    const s = await state();
+    const k = `${games}:${s.phase}:${s.round ?? ""}:${s.step ?? ""}`;
+    if (seen.has(k)) {
+      await sleep(150);
+      continue;
+    }
+    seen.add(k);
+    const at = `${games}-${String(++n).padStart(2, "0")}`;
+    const mine = s.guesser === s.phil;
+    if (games === 2 && s.phase !== "lobby") {
+      // The second game started: one look, then the End button.
+      await shot(`${at}-again-${s.phase}`);
+      break;
+    }
+    switch (s.phase) {
+      case "hotseat":
+        log(`round ${s.round}: ${mine ? "Phil guesses" : "Phil writes"}`);
+        await shot(`${at}-hotseat`, { wait: 2600 });
+        break;
+      case "write":
+        if (mine) {
+          await shot(`${at}-write-blind`);
+        } else {
+          await writeClues(at);
+          await shot(`${at}-write`, { wait: 500 });
+        }
+        break;
+      case "jinx": {
+        const j = await win.eval<{ groups: number; cards: number; jinxed: number; until: number; now: number }>(
+          `(() => { const s = jinx.party.screen.peek(); return { groups: s.groups.length, cards: s.cards.length, jinxed: s.cards.filter((c) => c.fate === "jinxed").length, until: s.until, now: jinx.party.now() }; })()`,
+        );
+        log(`jinx check: ${j.cards} cards, ${j.groups} groups, ${j.jinxed} jinxed`);
+        await shot(`${at}-jinx`, { wait: 2500 });
+        if (j.groups > 0) await shot(`${at}-jinx-late`, { wait: Math.max(0, j.until - j.now - 6000) });
+        break;
+      }
+      case "reveal":
+        if (mine) await playGuesser(at);
+        else await shot(`${at}-reveal`, { wait: 2500 });
+        break;
+      case "verdict": {
+        const v = await win.eval<{ result: string; word: string; guess?: string; near?: string }>(`jinx.party.screen.peek()`);
+        log(`verdict: ${v.result} (word "${v.word}", guess ${JSON.stringify(v.guess ?? null)}${v.near ? `, near: ${v.near}` : ""})`);
+        await shot(`${at}-verdict`, { wait: 1500 });
+        await shot(`${at}-verdict-late`, { wait: 2500 });
+        break;
+      }
+      case "replay":
+        if (mine && (await phone.until(`!!document.querySelector(".cards button.card")`, 4000).then(() => true, () => false))) {
+          await shot(`${at}-replay-mvp-pick`, { wait: 800 });
+          await phone.eval(`document.querySelector(".cards button.card").click(); true`);
+          await win.until(`!!jinx.party.screen.peek().mvp`, 5000);
+          log(`phone: picked the MVP clue`);
+          await shot(`${at}-replay-mvp`, { wait: 1800 });
+        } else {
+          await shot(`${at}-replay`, { wait: 2500 });
+        }
+        break;
+      case "scores":
+        await shot(`${at}-scores`, { wait: 3800 });
+        break;
+      case "end":
+        await shot(`${at}-end-${s.step}`, { wait: s.step === "web" ? 7000 : s.step === "room" ? 3500 : 5000 });
+        if (s.step === "web" && !again) {
+          again = true;
+          await phone.until(`(() => { const b = [...document.querySelectorAll("#dock button.primary")].find((b) => !b.hidden); return b && /again/i.test(b.textContent); })()`, 10_000);
+          await phone.eval(`[...document.querySelectorAll("#dock button.primary")].find((b) => !b.hidden).click(); true`);
+          log("phone: Play again");
+          games = 2;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  await timing(win, phone);
+  log(`${shots.length} screenshot sets in ${out}; problems: ${problems.length || "none"}`);
+  // The End button: tvpipe ends, everyone is told. Pages trying to reconnect after that are fine.
+  reportErrors();
+  await win.eval(`document.getElementById("quit").click(); true`);
+  const code = await Promise.race([exited, new Promise<string>((r) => setTimeout(() => r("still running"), 15_000))]);
+  await phone.until(`document.body.innerText.toLowerCase().includes("over")`, 5000).catch(() => {});
+  await phone.screenshot(`${out}/phone-after-end.png`);
+  log(`tvpipe exited: ${code}; the phone says: ${(await phone.eval<string>(`document.body.innerText.slice(0, 80)`)).replace(/\n/g, " / ")}`);
+  if (code !== 0) failed = true;
+  for (const [, tab] of tabs) tab.errors.splice(0, tab.errors.length, ...tab.errors.filter((e) => !/ERR_CONNECTION_REFUSED|WebSocket connection/.test(e)));
+  reportErrors();
+  for (const p of tvpipeProblems) problem(`tvpipe: ${p}`);
+} catch (err) {
+  failed = true;
+  log(`FAILED: ${(err as Error).stack ?? String(err)}`);
+  reportErrors();
+} finally {
+  writeFileSync(`${out}/tvpipe.log`, tvpipeLog.join("\n"));
+  writeFileSync(`${out}/problems.txt`, problems.join("\n") + "\n");
+  browser.close();
+  proc.kill();
+}
+if (problems.length > 0) failed = true;
+log(failed ? `FAILED (${problems.length} problems, ${out}/problems.txt)` : "ok");
+process.exit(failed ? 1 : 0);

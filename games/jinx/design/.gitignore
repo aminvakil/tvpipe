@@ -1,0 +1,4 @@
+shots/
+matching/dict.txt
+matching/sweep-*.tsv
+words/candidates.tsv

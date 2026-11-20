@@ -1,0 +1,1110 @@
+/**
+ * Jinx on a party (docs/jinx-design.md): the lobby (faces, colours), then
+ * per round the hot seat, the clue-givers write, the jinx check, the
+ * guesser turns cards and guesses (the draft typed live on the TV), the
+ * verdict, the replay with the MVP clue, the scores; the end in steps
+ * (the room, the MVP of the night, the awards, the word web). The host is
+ * the only authority: phones and the TV only get views (`views.ts`, the
+ * contract) and send actions.
+ */
+
+import { Emitter, PartyError, type Json, type Party, type Player } from "@tvpipe/party";
+
+import { checkSubmit, clean, groupClues, judgeGuess, type Clue, type MatchOptions, type WordEntry } from "./match.ts";
+import {
+  addLate,
+  awards,
+  guesserOrder,
+  guessesEach,
+  mvpOfNight,
+  mvpPayout,
+  pairKey,
+  payouts,
+  pot,
+  POT,
+  rank,
+  roomTitle,
+  validateFace,
+  web,
+  wordClue,
+  WordDeck,
+  type Difficulty,
+  type PlayerStats,
+  type Result,
+  type RoundsSetting,
+  type Turn,
+} from "./rules.ts";
+import type { Card, Face, JinxGroup, Payout, People, Person, PlayerState, Reason, RoomView, ScoreLine, ScreenView, Tally } from "./views.ts";
+
+export interface Timings {
+  /** The round intro. */
+  hotseat: number;
+  /** Writing (the host setting: 30/45/60/90 s). */
+  write: number;
+  /** The jinx check: this, plus `jinxGroup` per group (a group of 3+ cards counts 1.5). */
+  jinxBase: number;
+  jinxGroup: number;
+  /** Each reveal decision (turn a card or guess). */
+  decide: number;
+  /** Left at least, once the guesser starts typing. */
+  typing: number;
+  verdict: number;
+  /** Phones learn their cards' fate this long before the jinx check ends (the TV slams first). */
+  fateBefore: number;
+  /** Phones get the verdict this long into it (the TV opens the envelope first). */
+  resultAfter: number;
+  /** Picking the MVP clue. */
+  mvp: number;
+  /** The replay when there is no MVP clue to pick. */
+  replay: number;
+  /** The replay after the MVP clue was picked. */
+  replayHold: number;
+  scores: number;
+  /** The end's steps (the web stays). */
+  endRoom: number;
+  endMvp: number;
+  endAwards: number;
+  /** At most one draft update of the TV per this many ms. */
+  draftEvery: number;
+}
+
+export const DEFAULT_TIMINGS: Timings = {
+  hotseat: 4000,
+  write: 45_000,
+  jinxBase: 4000,
+  jinxGroup: 4500,
+  decide: 30_000,
+  typing: 15_000,
+  verdict: 6000,
+  fateBefore: 1500,
+  resultAfter: 3000,
+  mvp: 20_000,
+  replay: 8000,
+  replayHold: 4000,
+  scores: 5000,
+  endRoom: 8000,
+  endMvp: 7000,
+  endAwards: 8000,
+  draftEvery: 50,
+};
+
+/** The writing times the host page offers, seconds. */
+export const WRITE_TIMES = [30, 45, 60, 90] as const;
+
+/** Longest draft the TV shows. */
+export const MAX_DRAFT = 24;
+
+export interface JinxOptions {
+  /** The secret words (`data/words.txt` through `parseWordList`). */
+  words: readonly WordEntry[];
+  /** The dictionary (`data/dict.txt` through `dictionary`): typo matching. */
+  known?: ((word: string) => boolean) | undefined;
+  /** Words this room dealt before (the host page's `localStorage`); see the `dealt` event. */
+  dealt?: readonly string[] | undefined;
+  rounds?: RoundsSetting | undefined;
+  difficulty?: Difficulty | undefined;
+  timings?: Partial<Timings> | undefined;
+  rng?: (() => number) | undefined;
+  minPlayers?: number | undefined;
+}
+
+export type Phase = ScreenView["phase"];
+
+export interface JinxEvents {
+  phase: [phase: Phase];
+  /** A word was dealt: the room's dealt words so far (to keep). */
+  dealt: [used: string[]];
+  end: [lines: ScoreLine[]];
+}
+
+interface Profile {
+  color: number;
+  face: Face;
+  bot: boolean;
+}
+
+interface Slot {
+  clue: Clue;
+  bold: boolean;
+}
+
+interface RoundCard {
+  id: string;
+  author: string;
+  bold: boolean;
+  clue: Clue;
+  fate: "alive" | "jinxed";
+  turned?: number;
+}
+
+interface Outcome {
+  result: Result;
+  guess?: string;
+  near?: Reason;
+}
+
+interface Round {
+  /** 1-based, counting rounds played this game. */
+  n: number;
+  guesser: Player;
+  givers: Player[];
+  each: 1 | 2;
+  entry: WordEntry;
+  secret: Clue;
+  slots: Map<string, (Slot | null)[]>;
+  deadline: number;
+  cards: RoundCard[];
+  groups: JinxGroup[];
+  jinxed: number;
+  pot: number;
+  turns: number;
+  picked?: string;
+  draft: string;
+  typing: boolean;
+  outcome?: Outcome;
+  payouts: Payout[];
+  picking: boolean;
+  mvp?: string;
+  /** Scores before the round. */
+  before: Map<string, number>;
+  abort: AbortController;
+  signal: AbortSignal;
+}
+
+interface Played {
+  entry: WordEntry;
+  found: boolean;
+  guesser: string;
+  clues: { display: string; key: string }[];
+}
+
+const obj = (d: Json): Record<string, Json> => (typeof d === "object" && d !== null && !Array.isArray(d) ? d : {});
+
+export class Jinx extends Emitter<JinxEvents> {
+  readonly party: Party;
+  readonly minPlayers: number;
+  rounds: RoundsSetting;
+  difficulty: Difficulty;
+  timings: Timings;
+  readonly #rng: () => number;
+  readonly #opt: MatchOptions;
+  readonly #deck: WordDeck;
+  readonly #profiles = new Map<string, Profile>();
+  /** Players who left during this game (kept in `people`). */
+  #left: Person[] = [];
+  /** This game's points, per player id (players in the game). */
+  readonly #scores = new Map<string, number>();
+  readonly #stats = new Map<string, PlayerStats>();
+  readonly #pairs = new Map<string, number>();
+  #played: Played[] = [];
+  #history: Tally["history"] = [];
+  #queue: Turn[] = [];
+  #times: 1 | 2 = 1;
+  #games = 0;
+  #phase: Phase = "lobby";
+  #running = false;
+  #gameAbort = new AbortController();
+  #endAbort = new AbortController();
+  #round: Round | undefined;
+  /** The screen view without `people` (added on every set). */
+  #view: Record<string, unknown> = {};
+  readonly #wakers = new Set<() => void>();
+  #draftAt = 0;
+  #draftTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(party: Party, options: JinxOptions) {
+    super();
+    this.party = party;
+    this.minPlayers = options.minPlayers ?? 3;
+    this.rounds = options.rounds ?? "auto";
+    this.difficulty = options.difficulty ?? "normal";
+    this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
+    this.#rng = options.rng ?? Math.random;
+    this.#opt = options.known ? { known: options.known } : {};
+    this.#deck = new WordDeck(options.words, this.#rng, options.dealt ?? [], this.#opt);
+  }
+
+  get phase(): Phase {
+    return this.#phase;
+  }
+
+  get running(): boolean {
+    return this.#running;
+  }
+
+  /** The secret word of the round (for the host page's bots, which cheat), if any. */
+  get secret(): string | undefined {
+    return this.#round?.entry.word;
+  }
+
+  /** The room's dealt words (to keep in `localStorage`). */
+  get dealt(): string[] {
+    return this.#deck.used;
+  }
+
+  /** Marks a player as a bot (the TV draws a dashed rim). */
+  markBot(id: string): void {
+    const pr = this.#profiles.get(id);
+    if (pr) pr.bot = true;
+    this.#peopleChanged();
+  }
+
+  /** Changes the settings between games. */
+  configure(o: { rounds?: RoundsSetting | undefined; difficulty?: Difficulty | undefined; write?: number | undefined; timings?: Partial<Timings> | undefined }): void {
+    if (this.#running) throw new PartyError("running", "Not during a game");
+    if (o.rounds !== undefined) this.rounds = o.rounds;
+    if (o.difficulty !== undefined) this.difficulty = o.difficulty;
+    if (o.timings) this.timings = { ...this.timings, ...o.timings };
+    if (o.write !== undefined) this.timings = { ...this.timings, write: o.write };
+  }
+
+  /** Ends the game and its timers (the party stays). */
+  close(): void {
+    this.#gameAbort.abort();
+    this.#endAbort.abort();
+  }
+
+  /** Shows the lobby and handles the phones' actions. */
+  open(): void {
+    const party = this.party;
+    party.handle("face", (d, from) => {
+      if (from.role !== "player") throw new PartyError("not-player", "Players only");
+      const face = validateFace(d);
+      if (!face) throw new PartyError("bad-face", "That's not a face");
+      this.#profile(from).face = face;
+      if (this.#phase === "lobby" || this.#phase === "end") this.#passiveState(from);
+      this.#peopleChanged();
+      return null;
+    });
+    party.handle("start", (_d, from) => {
+      if (from.role !== "player" || !from.vip) throw new PartyError("not-vip", "Only the VIP can start");
+      if (this.#running) throw new PartyError("running", "The game is on");
+      if (this.#phase !== "lobby") throw new PartyError("not-lobby", "Play again from the end screen");
+      this.#checkEnough();
+      void this.play();
+      return null;
+    });
+    party.handle("again", (_d, from) => {
+      if (from.role !== "player" || !from.vip) throw new PartyError("not-vip", "Only the VIP can start again");
+      if (this.#running || this.#phase !== "end") throw new PartyError("running", "The game is on");
+      this.#checkEnough();
+      void this.play();
+      return null;
+    });
+    party.handle("kick", (d, from) => {
+      if (from.role !== "player" || !from.vip) throw new PartyError("not-vip", "Only the VIP can remove players");
+      if (this.#running) throw new PartyError("running", "Not during a game");
+      const id = obj(d)["id"];
+      const p = typeof id === "string" ? party.player(id) : undefined;
+      if (!p || p === from) throw new PartyError("no-player", "No such player");
+      party.kick(p);
+      return null;
+    });
+    party.handle("clue", (d, from) => this.#onClue(d, from as Player));
+    party.handle("pick", (d, from) => this.#onPick(d, from as Player));
+    party.handle("guess", (d, from) => this.#onGuess(d, from as Player));
+    party.handle("pass", (_d, from) => this.#onPass(from as Player));
+    party.handle("mvp", (d, from) => this.#onMvp(d, from as Player));
+    party.on("input", (p, data) => this.#onInput(p, data));
+    party.on("join", (p) => {
+      this.#profile(p);
+      if (this.#running) p.state.replace(this.#s({ task: "wait" }));
+      else for (const x of party.players) this.#passiveState(x);
+      this.#peopleChanged();
+    });
+    party.on("leave", (p) => this.#onLeave(p));
+    for (const ev of ["away", "reconnect", "vip", "active"] as const) {
+      party.on(ev, () => {
+        this.#peopleChanged();
+        if (!this.#running) for (const p of party.players) this.#passiveState(p);
+        this.#wake();
+      });
+    }
+    for (const p of party.players) this.#profile(p);
+    this.#setPhase("lobby");
+    this.#screen({ phase: "lobby", minPlayers: this.minPlayers, maxPlayers: party.maxPlayers });
+    this.#roomView({ phase: "lobby" });
+    for (const p of party.players) this.#passiveState(p);
+  }
+
+  #checkEnough(): void {
+    const ready = this.party.connectedPlayers.length;
+    if (ready < this.minPlayers) {
+      const n = this.minPlayers - ready;
+      throw new PartyError("too-few", `Wait for ${n} more player${n === 1 ? "" : "s"}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // People
+
+  #profile(p: Player): Profile {
+    let pr = this.#profiles.get(p.id);
+    if (pr) return pr;
+    const taken = new Set([...this.party.players.filter((x) => x !== p).map((x) => this.#profiles.get(x.id)?.color), ...this.#left.map((l) => l.color)]);
+    let color = [0, 1, 2, 3, 4, 5, 6, 7].find((c) => !taken.has(c));
+    if (color === undefined) {
+      const present = new Set(this.party.players.filter((x) => x !== p).map((x) => this.#profiles.get(x.id)?.color));
+      color = [0, 1, 2, 3, 4, 5, 6, 7].find((c) => !present.has(c)) ?? this.party.players.indexOf(p) % 8;
+    }
+    const usedFaces = new Set([...this.#profiles.values()].map((x) => ("preset" in x.face ? x.face.preset : -1)));
+    const free = [0, 1, 2, 3, 4, 5, 6, 7].filter((f) => !usedFaces.has(f));
+    const pool = free.length > 0 ? free : [0, 1, 2, 3, 4, 5, 6, 7];
+    pr = { color, face: { preset: pool[Math.floor(this.#rng() * pool.length)]! }, bot: false };
+    this.#profiles.set(p.id, pr);
+    return pr;
+  }
+
+  #person(p: Player): Person {
+    const pr = this.#profile(p);
+    const out: Person = { id: p.id, name: p.name, color: pr.color, face: pr.face, vip: p.vip, connected: p.connected, score: this.#scores.get(p.id) ?? 0 };
+    if (pr.bot) out.bot = true;
+    return out;
+  }
+
+  #people(): People {
+    return [...this.party.players.map((p) => this.#person(p)), ...this.#left];
+  }
+
+  #peopleChanged(): void {
+    const people = this.#people();
+    this.party.screen.set({ people });
+    this.party.room.set({ people });
+  }
+
+  #onLeave(p: Player): void {
+    const pr = this.#profiles.get(p.id);
+    this.#queue = this.#queue.filter((t) => t.id !== p.id);
+    if ((this.#running || this.#phase === "end") && this.#scores.has(p.id) && pr) {
+      this.#left.push({ id: p.id, name: p.name, color: pr.color, face: pr.face, vip: false, connected: false, score: this.#scores.get(p.id) ?? 0, ...(pr.bot ? { bot: true } : {}), left: true });
+    }
+    if (!this.#left.some((l) => l.id === p.id)) this.#profiles.delete(p.id);
+    const r = this.#round;
+    if (r && r.guesser === p && !r.outcome && this.#running) r.abort.abort();
+    if (this.#running) this.#roundsChanged();
+    this.#peopleChanged();
+    if (!this.#running) for (const x of this.party.players) this.#passiveState(x);
+    this.#wake();
+  }
+
+  // -------------------------------------------------------------------------
+  // Views
+
+  #s(state: PlayerState): Record<string, unknown> {
+    return state as unknown as Record<string, unknown>;
+  }
+
+  #setPhase(phase: Phase): void {
+    this.#phase = phase;
+    this.emit("phase", phase);
+  }
+
+  #screen(view: Record<string, unknown>): void {
+    this.#view = view;
+    this.party.screen.replace({ ...view, people: this.#people() });
+  }
+
+  #screenSet(fields: Record<string, unknown>): void {
+    Object.assign(this.#view, fields);
+    for (const [k, v] of Object.entries(fields)) if (v === undefined) delete this.#view[k];
+    this.party.screen.set(fields);
+  }
+
+  #roomView(fields: Partial<RoomView>): void {
+    const r = this.#round;
+    const base: Record<string, unknown> = { people: this.#people(), minPlayers: this.minPlayers, maxPlayers: this.party.maxPlayers };
+    if (this.#running && r) Object.assign(base, { round: r.n, rounds: this.#total(), guesser: r.guesser.id });
+    this.party.room.replace({ ...base, ...fields });
+  }
+
+  /** Lobby and end states (they follow the roster). */
+  #passiveState(p: Player): void {
+    if (this.#running) return;
+    if (this.#phase === "end" && this.#scores.has(p.id)) {
+      p.state.replace(this.#s(this.#finalState(p)));
+      return;
+    }
+    const pr = this.#profile(p);
+    const canStart = this.#phase === "lobby" && p.vip && this.party.connectedPlayers.length >= this.minPlayers;
+    p.state.replace(this.#s({ task: "lobby", face: pr.face, color: pr.color, canStart }));
+  }
+
+  #tally(): Tally {
+    return { found: this.#history.filter((h) => h === "found").length, played: this.#history.length, total: this.#total(), history: [...this.#history] };
+  }
+
+  /** Rounds in this game: played, the current one (until counted), the queue. */
+  #total(): number {
+    const r = this.#round;
+    return this.#history.length + (r && this.#history.length < r.n ? 1 : 0) + this.#queue.length;
+  }
+
+  #roundsChanged(): void {
+    if (!this.#round) return;
+    const rounds = this.#total();
+    if ("tally" in this.#view) this.#screenSet({ rounds, tally: this.#tally() });
+    this.party.room.set({ rounds });
+  }
+
+  /** The base of a round's screen view. */
+  #inRound(r: Round): Record<string, unknown> {
+    return { round: r.n, rounds: this.#total(), guesser: r.guesser.id, tally: this.#tally() };
+  }
+
+  #cardView(c: RoundCard, word: boolean): Card {
+    const out: Card = { id: c.id, author: c.author, bold: c.bold, fate: c.fate };
+    if (word || c.turned !== undefined) out.word = c.clue.display;
+    if (c.turned !== undefined) out.turned = c.turned;
+    return out;
+  }
+
+  #inGame(): Player[] {
+    return this.party.players.filter((p) => this.#scores.has(p.id));
+  }
+
+  #lines(before?: ReadonlyMap<string, number>): ScoreLine[] {
+    return rank(this.#inGame().map((p) => ({ id: p.id, score: this.#scores.get(p.id) ?? 0, delta: (this.#scores.get(p.id) ?? 0) - (before?.get(p.id) ?? this.#scores.get(p.id) ?? 0) })));
+  }
+
+  // -------------------------------------------------------------------------
+  // Waiting
+
+  #wake(): void {
+    for (const w of [...this.#wakers]) w();
+  }
+
+  /** Until `at` (host clock), the signal, or (wakeable) a wake-up. */
+  #until(at: number, signal: AbortSignal, wakeable = false): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) return resolve();
+      const done = () => {
+        clearTimeout(t);
+        signal.removeEventListener("abort", done);
+        this.#wakers.delete(done);
+        resolve();
+      };
+      const t = setTimeout(done, Math.max(0, at - this.party.now()));
+      signal.addEventListener("abort", done, { once: true });
+      if (wakeable) this.#wakers.add(done);
+    });
+  }
+
+  #sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return this.#until(this.party.now() + ms, signal);
+  }
+
+  // -------------------------------------------------------------------------
+  // A game
+
+  /** Plays a whole game with the players there (and those who join). */
+  async play(): Promise<ScoreLine[]> {
+    if (this.#running) throw new PartyError("running", "The game is on");
+    const party = this.party;
+    this.#endAbort.abort();
+    this.#gameAbort = new AbortController();
+    const signal = this.#gameAbort.signal;
+    this.#running = true;
+    party.inProgress = true;
+    this.#scores.clear();
+    this.#stats.clear();
+    this.#pairs.clear();
+    this.#played = [];
+    this.#history = [];
+    this.#left = [];
+    this.#round = undefined;
+    for (const [id] of this.#profiles) if (!party.player(id)) this.#profiles.delete(id);
+    for (const p of party.players) party.activate(p);
+    const players = [...party.players];
+    for (const p of players) this.#join(p);
+    this.#times = guessesEach(this.rounds, players.length);
+    this.#queue = guesserOrder(
+      players.map((p) => p.id),
+      this.#games++,
+      this.#times,
+    );
+    this.#peopleChanged();
+    try {
+      let n = 0;
+      while (!signal.aborted) {
+        this.#dealIn();
+        if (this.#inGame().length < this.minPlayers) break;
+        const turn = this.#queue.shift();
+        if (!turn) break;
+        const guesser = party.player(turn.id);
+        if (!guesser || !this.#scores.has(guesser.id)) continue;
+        await this.#playRound(++n, guesser, signal);
+        if (this.#history.length < n) n--; // dropped (the guesser left)
+      }
+    } finally {
+      this.#round = undefined;
+      this.#running = false;
+      party.inProgress = false;
+      for (const p of party.players) party.activate(p);
+    }
+    if (signal.aborted) return this.#lines();
+    return this.#end();
+  }
+
+  #join(p: Player): void {
+    this.#scores.set(p.id, 0);
+    this.#stats.set(p.id, { id: p.id, score: 0, mvpClues: 0, jinxed: 0, turnedRight: 0 });
+  }
+
+  /** Late joiners: in from this round, their turns at the end of each pass. */
+  #dealIn(): void {
+    for (const p of this.party.players) {
+      if (this.#scores.has(p.id)) continue;
+      this.party.activate(p);
+      this.#join(p);
+      this.#queue = addLate(this.#queue, p.id, this.#times);
+    }
+  }
+
+  async #playRound(n: number, guesser: Player, gameSignal: AbortSignal): Promise<void> {
+    const party = this.party;
+    const givers = this.#inGame().filter((p) => p !== guesser);
+    const entry = this.#deck.deal(
+      this.difficulty,
+      this.#played.map((x) => x.entry),
+    );
+    this.emit("dealt", this.#deck.used);
+    const secret = wordClue(entry.word) ?? { display: entry.word, key: entry.word, parts: [entry.word], kind: "word" as const };
+    const abort = new AbortController();
+    const r: Round = {
+      n,
+      guesser,
+      givers,
+      each: givers.length === 2 ? 2 : 1,
+      entry,
+      secret,
+      slots: new Map(),
+      deadline: 0,
+      cards: [],
+      groups: [],
+      jinxed: 0,
+      pot: POT.start,
+      turns: 0,
+      draft: "",
+      typing: false,
+      payouts: [],
+      picking: false,
+      before: new Map(this.#scores),
+      abort,
+      signal: AbortSignal.any([gameSignal, abort.signal]),
+    };
+    this.#round = r;
+    for (const p of party.players) if (!this.#scores.has(p.id)) p.state.replace(this.#s({ task: "wait" }));
+
+    // The hot seat.
+    this.#setPhase("hotseat");
+    this.#screen({ phase: "hotseat", ...this.#inRound(r), until: party.now() + this.timings.hotseat });
+    this.#roomView({ phase: "hotseat" });
+    for (const p of this.#inGame()) p.state.replace(this.#s({ task: "hotseat", guesser: p === guesser }));
+    await this.#sleep(this.timings.hotseat, r.signal);
+    if (r.signal.aborted) return;
+
+    await this.#write(r);
+    if (r.signal.aborted) return;
+    await this.#jinx(r);
+    if (r.signal.aborted) return;
+    if (r.cards.some((c) => c.fate === "alive")) await this.#reveal(r);
+    else r.outcome = { result: "lost" };
+    if (r.signal.aborted && !r.outcome) return;
+    if (gameSignal.aborted) return;
+    this.#verdict(r);
+    const resultAfter = Math.min(this.timings.resultAfter, this.timings.verdict);
+    await this.#sleep(resultAfter, gameSignal);
+    if (gameSignal.aborted) return;
+    this.#results(r);
+    await this.#sleep(this.timings.verdict - resultAfter, gameSignal);
+    await this.#replay(r, gameSignal);
+    if (gameSignal.aborted) return;
+    await this.#scoresPhase(r, gameSignal);
+  }
+
+  // -------------------------------------------------------------------------
+  // Writing
+
+  #full(r: Round, p: Player): boolean {
+    const s = r.slots.get(p.id);
+    return !!s && s.every((x) => x !== null);
+  }
+
+  #writeView(r: Round): { done: string[]; sent: number; sentBy: Record<string, number> } {
+    const done = r.givers.filter((p) => this.#full(r, p)).map((p) => p.id);
+    const sentBy: Record<string, number> = {};
+    for (const [id, a] of r.slots) sentBy[id] = a.filter((x) => x !== null).length;
+    const sent = Object.values(sentBy).reduce((s, n) => s + n, 0);
+    return { done, sent, sentBy };
+  }
+
+  async #write(r: Round): Promise<void> {
+    const party = this.party;
+    const started = party.now();
+    r.deadline = started + this.timings.write;
+    for (const g of r.givers) r.slots.set(g.id, new Array<Slot | null>(r.each).fill(null));
+    this.#setPhase("write");
+    this.#screen({ phase: "write", ...this.#inRound(r), givers: r.givers.map((g) => g.id), each: r.each, ...this.#writeView(r), started, deadline: r.deadline });
+    this.#roomView({ phase: "write" });
+    for (const g of r.givers) g.state.replace(this.#s(this.#writeState(r, g)));
+    r.guesser.state.replace(this.#s({ task: "blind", givers: r.givers.length, done: 0, deadline: r.deadline }));
+    const end = r.deadline + party.grace;
+    while (!r.signal.aborted && party.now() < end) {
+      const live = r.givers.filter((g) => party.players.includes(g));
+      if (live.length === 0) break;
+      if (live.some((g) => this.#full(r, g)) && live.every((g) => this.#full(r, g) || !g.connected)) break;
+      await this.#until(end, r.signal, true);
+    }
+    // A giver who is gone has no card.
+    let i = 0;
+    for (const g of r.givers) {
+      if (!party.players.includes(g)) continue;
+      for (const s of r.slots.get(g.id) ?? []) {
+        if (s) r.cards.push({ id: `c${i++}`, author: g.id, bold: s.bold, clue: s.clue, fate: "alive" });
+      }
+    }
+  }
+
+  #writeState(r: Round, g: Player): PlayerState {
+    const sent = (r.slots.get(g.id) ?? []).map((s) => (s ? { text: s.clue.display, bold: s.bold } : null));
+    return { task: "write", word: r.entry.word, each: r.each, sent, deadline: r.deadline };
+  }
+
+  #onClue(d: Json, from: Player): unknown {
+    const r = this.#round;
+    if (from.role !== "player") throw new PartyError("not-player", "Players only");
+    if (!r || this.#phase !== "write" || this.party.now() > r.deadline + this.party.grace) throw new PartyError("late", "Too late: writing is over");
+    const slots = r.slots.get(from.id);
+    if (!slots) throw new PartyError("not-asked", "You're not writing this round");
+    const o = obj(d);
+    const text = o["text"];
+    const slot = o["slot"] ?? 0;
+    if (typeof text !== "string" || text.length > 200) throw new PartyError("empty", "Type a clue");
+    if (typeof slot !== "number" || !Number.isInteger(slot) || slot < 0 || slot >= r.each) throw new PartyError("bad-slot", "No such clue slot");
+    const bold = o["bold"] === true;
+    const own = slots.filter((s, i): s is Slot => s !== null && i !== slot).map((s) => s.clue);
+    const res = checkSubmit(text, r.secret, { ...this.#opt, banned: r.entry.banned, alsoRight: r.entry.alsoRight, own });
+    if (!res.ok) throw new PartyError(res.code, res.message);
+    slots[slot] = { clue: res.clue, bold };
+    from.state.replace(this.#s(this.#writeState(r, from)));
+    const v = this.#writeView(r);
+    this.#screenSet(v);
+    r.guesser.state.set({ done: v.done.length });
+    this.#wake();
+    return { text: res.clue.display, bold };
+  }
+
+  // -------------------------------------------------------------------------
+  // The jinx check
+
+  async #jinx(r: Round): Promise<void> {
+    const party = this.party;
+    const res = groupClues(
+      r.cards.map((c) => c.clue),
+      r.secret,
+      this.#opt,
+      [...r.entry.banned, ...r.entry.alsoRight],
+    );
+    for (const x of res.invalid) r.cards[x.index]!.fate = "jinxed";
+    r.groups = res.groups.map((g) => ({
+      cards: g.members.map((i) => r.cards[i]!.id),
+      pairs: g.links.map((l) => ({ a: r.cards[l.a]!.id, b: r.cards[l.b]!.id, reason: l.reason })),
+    }));
+    for (const g of res.groups) for (const i of g.members) r.cards[i]!.fate = "jinxed";
+    r.jinxed = r.cards.filter((c) => c.fate === "jinxed").length;
+    r.pot = pot(r.jinxed, 0);
+    const weight = r.groups.reduce((s, g) => s + (g.cards.length >= 3 ? 1.5 : 1), 0);
+    const until = party.now() + this.timings.jinxBase + Math.round(this.timings.jinxGroup * weight);
+    this.#setPhase("jinx");
+    this.#screen({ phase: "jinx", ...this.#inRound(r), cards: r.cards.map((c) => this.#cardView(c, false)), groups: r.groups, potBefore: POT.start, pot: r.pot, until });
+    this.#roomView({ phase: "jinx" });
+    // Phones watch the TV until the slams are done.
+    for (const p of this.#inGame()) p.state.replace(this.#s({ task: "tv" }));
+    await this.#until(until - this.timings.fateBefore, r.signal);
+    if (r.signal.aborted) return;
+    const name = (id: string) => party.player(id)?.name ?? this.#left.find((l) => l.id === id)?.name ?? "someone";
+    for (const g of r.givers) {
+      if (!party.players.includes(g)) continue;
+      const cards = r.cards
+        .filter((c) => c.author === g.id)
+        .map((c) => {
+          const group = r.groups.find((x) => x.cards.includes(c.id));
+          const pair = group?.pairs.find((p) => p.a === c.id || p.b === c.id);
+          const others = group ? [...new Set(group.cards.map((id) => r.cards.find((x) => x.id === id)!.author).filter((a) => a !== g.id))] : [];
+          const out: { text: string; bold: boolean; fate: "alive" | "jinxed"; with: string[]; reason?: Reason } = { text: c.clue.display, bold: c.bold, fate: c.fate, with: others.map(name) };
+          if (pair) out.reason = pair.reason;
+          return out;
+        });
+      g.state.replace(this.#s({ task: "fate", word: r.entry.word, cards }));
+    }
+    r.guesser.state.replace(this.#s({ task: "check", survived: r.cards.length - r.jinxed, jinxed: r.jinxed }));
+    await this.#until(until, r.signal);
+  }
+
+  // -------------------------------------------------------------------------
+  // The reveal
+
+  #alive(r: Round): RoundCard[] {
+    return r.cards.filter((c) => c.fate === "alive");
+  }
+
+  #revealStates(r: Round): void {
+    const cards = this.#alive(r).map((c) => this.#cardView(c, false));
+    r.guesser.state.replace(this.#s({ task: "guess", cards, pot: r.pot, deadline: r.deadline, jinxed: r.jinxed }));
+    for (const g of r.givers) if (this.party.players.includes(g)) g.state.replace(this.#s({ task: "watch", word: r.entry.word, cards, pot: r.pot }));
+  }
+
+  async #reveal(r: Round): Promise<void> {
+    const party = this.party;
+    const started = party.now();
+    r.deadline = started + this.timings.decide;
+    this.#setPhase("reveal");
+    this.#screen({
+      phase: "reveal",
+      ...this.#inRound(r),
+      cards: this.#alive(r).map((c) => this.#cardView(c, false)),
+      jinxed: r.jinxed,
+      pot: r.pot,
+      draft: "",
+      typing: false,
+      started,
+      deadline: r.deadline,
+    });
+    this.#roomView({ phase: "reveal" });
+    this.#revealStates(r);
+    while (!r.outcome && !r.signal.aborted) {
+      await this.#until(r.deadline, r.signal, true);
+      if (r.outcome || r.signal.aborted) break;
+      if (party.now() >= r.deadline) this.#timeout(r);
+    }
+    clearTimeout(this.#draftTimer);
+    this.#draftTimer = undefined;
+  }
+
+  /** A decision ran out: the draft as the guess, else a random card, else a pass. */
+  #timeout(r: Round): void {
+    if (r.typing && r.turns > 0) {
+      const c = clean(r.draft);
+      if (c.ok) return this.#judge(r, c.clue);
+      return this.#finish(r, { result: "pass" });
+    }
+    const down = this.#alive(r).filter((c) => c.turned === undefined);
+    const card = down[Math.floor(this.#rng() * down.length)];
+    if (card) this.#turn(r, card);
+    else this.#finish(r, { result: "pass" });
+  }
+
+  #turn(r: Round, card: RoundCard): void {
+    card.turned = ++r.turns;
+    r.pot = pot(r.jinxed, r.turns);
+    r.picked = card.id;
+    r.typing = false;
+    const started = this.party.now();
+    r.deadline = started + this.timings.decide;
+    this.#screenSet({ cards: this.#alive(r).map((c) => this.#cardView(c, false)), pot: r.pot, picked: card.id, typing: false, started, deadline: r.deadline });
+    this.#revealStates(r);
+    this.#wake();
+  }
+
+  #finish(r: Round, o: Outcome): void {
+    r.outcome = o;
+    this.#wake();
+  }
+
+  #judge(r: Round, guess: Clue): void {
+    const near = judgeGuess(guess, r.secret, this.#opt, r.entry.alsoRight);
+    const o: Outcome = { result: near ? "right" : "wrong", guess: guess.display };
+    if (near && near !== "same word") o.near = near;
+    this.#finish(r, o);
+  }
+
+  #revealTurn(from: Player): Round {
+    const r = this.#round;
+    if (from.role !== "player") throw new PartyError("not-player", "Players only");
+    if (!r || this.#phase !== "reveal" || r.outcome) throw new PartyError("late", "Not now");
+    if (from !== r.guesser) throw new PartyError("not-guesser", "Only the guesser can do that");
+    return r;
+  }
+
+  #onPick(d: Json, from: Player): unknown {
+    const r = this.#revealTurn(from);
+    const id = obj(d)["card"];
+    const card = this.#alive(r).find((c) => c.id === id);
+    if (!card || card.turned !== undefined) throw new PartyError("bad-card", "Pick a face-down card");
+    this.#turn(r, card);
+    return null;
+  }
+
+  #onGuess(d: Json, from: Player): unknown {
+    const r = this.#revealTurn(from);
+    if (r.turns === 0) throw new PartyError("no-card", "Turn a card first");
+    const text = obj(d)["text"];
+    const c = clean(typeof text === "string" ? text.slice(0, 200) : "");
+    if (!c.ok) throw new PartyError(c.error, c.error === "empty" ? "Type a guess" : c.message);
+    r.draft = [...c.clue.display].slice(0, MAX_DRAFT).join("");
+    this.#judge(r, c.clue);
+    return null;
+  }
+
+  #onPass(from: Player): unknown {
+    const r = this.#revealTurn(from);
+    this.#finish(r, { result: "pass" });
+    return null;
+  }
+
+  #onInput(p: Player, data: Json): void {
+    const r = this.#round;
+    if (!r || this.#phase !== "reveal" || r.outcome || p !== r.guesser) return;
+    const raw = obj(data)["draft"];
+    if (typeof raw !== "string") return;
+    // eslint-disable-next-line no-control-regex
+    const draft = [...raw.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, "")].slice(0, MAX_DRAFT).join("");
+    if (draft === r.draft) return;
+    r.draft = draft;
+    if (draft !== "" && !r.typing) {
+      // Once typing, at least `typing` ms left.
+      r.typing = true;
+      r.deadline = Math.max(r.deadline, this.party.now() + this.timings.typing);
+      clearTimeout(this.#draftTimer);
+      this.#draftTimer = undefined;
+      this.#draftAt = Date.now();
+      this.#screenSet({ draft, typing: true, deadline: r.deadline });
+      r.guesser.state.set({ deadline: r.deadline });
+      this.#wake();
+      return;
+    }
+    const wait = this.#draftAt + this.timings.draftEvery - Date.now();
+    if (wait <= 0) {
+      this.#draftAt = Date.now();
+      this.#screenSet({ draft });
+    } else if (!this.#draftTimer) {
+      this.#draftTimer = setTimeout(() => {
+        this.#draftTimer = undefined;
+        this.#draftAt = Date.now();
+        if (this.#round === r && this.#phase === "reveal" && !r.outcome) this.#screenSet({ draft: r.draft });
+      }, wait);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Verdict, replay, scores
+
+  #verdict(r: Round): void {
+    const party = this.party;
+    const o = r.outcome!;
+    r.payouts = payouts(
+      r.guesser.id,
+      o.result,
+      r.pot,
+      r.cards.map((c) => ({ author: c.author, bold: c.bold, fate: c.fate, turned: c.turned !== undefined })),
+    );
+    for (const p of r.payouts) this.#addScore(p.id, p.delta);
+    // The game's record.
+    const found = o.result === "right";
+    this.#history.push(found ? "found" : "missed");
+    this.#played.push({ entry: r.entry, found, guesser: r.guesser.id, clues: r.cards.map((c) => ({ display: c.clue.display, key: c.clue.key })) });
+    for (const c of r.cards) {
+      const st = this.#stats.get(c.author);
+      if (!st) continue;
+      if (c.fate === "jinxed") st.jinxed++;
+      else if (found && c.turned !== undefined) st.turnedRight++;
+    }
+    for (const g of r.groups) {
+      const authors = [...new Set(g.cards.map((id) => r.cards.find((c) => c.id === id)!.author))];
+      for (let i = 0; i < authors.length; i++) {
+        for (let j = i + 1; j < authors.length; j++) {
+          const k = pairKey(authors[i]!, authors[j]!);
+          this.#pairs.set(k, (this.#pairs.get(k) ?? 0) + 1);
+        }
+      }
+    }
+    const view: Record<string, unknown> = {
+      phase: "verdict",
+      ...this.#inRound(r),
+      word: r.entry.word,
+      result: o.result,
+      cards: r.cards.map((c) => this.#cardView(c, true)),
+      payouts: r.payouts,
+      pot: r.pot,
+      until: party.now() + this.timings.verdict,
+    };
+    if (o.guess !== undefined && (o.result === "right" || o.result === "wrong")) view["guess"] = o.guess;
+    if (o.near) view["near"] = o.near;
+    this.#setPhase("verdict");
+    this.#screen(view);
+    this.#roomView({ phase: "verdict" });
+    // Phones watch the TV until the envelope is open.
+    for (const p of this.#inGame()) p.state.replace(this.#s({ task: "tv" }));
+    this.#peopleChanged();
+  }
+
+  /** The verdict on the phones (after `resultAfter`). */
+  #results(r: Round): void {
+    for (const p of this.#inGame()) p.state.replace(this.#s(this.#resultState(r, p)));
+  }
+
+  #addScore(id: string, delta: number): void {
+    const s = (this.#scores.get(id) ?? 0) + delta;
+    if (this.#scores.has(id)) this.#scores.set(id, s);
+    const st = this.#stats.get(id);
+    if (st) st.score = s;
+    const l = this.#left.find((x) => x.id === id);
+    if (l) l.score = s;
+  }
+
+  #resultState(r: Round, p: Player): PlayerState {
+    const mine = r.payouts.filter((x) => x.id === p.id);
+    return {
+      task: "result",
+      word: r.entry.word,
+      result: r.outcome!.result,
+      guesser: p === r.guesser,
+      delta: mine.reduce((s, x) => s + x.delta, 0),
+      why: mine.map((x) => x.why),
+    };
+  }
+
+  async #replay(r: Round, signal: AbortSignal): Promise<void> {
+    const party = this.party;
+    const right = r.outcome!.result === "right" && party.players.includes(r.guesser);
+    const choices = this.#alive(r);
+    r.picking = right && choices.length > 0;
+    const deadline = party.now() + this.timings.mvp;
+    const view: Record<string, unknown> = {
+      phase: "replay",
+      ...this.#inRound(r),
+      word: r.entry.word,
+      result: r.outcome!.result,
+      cards: r.cards.map((c) => this.#cardView(c, true)),
+      groups: r.groups,
+      picking: r.picking,
+      payouts: r.payouts,
+      pot: r.pot,
+    };
+    if (r.picking) view["deadline"] = deadline;
+    this.#setPhase("replay");
+    this.#screen(view);
+    this.#roomView({ phase: "replay" });
+    if (!r.picking) {
+      await this.#sleep(this.timings.replay, signal);
+      return;
+    }
+    r.guesser.state.replace(this.#s({ task: "mvp", cards: choices.map((c) => this.#cardView(c, true)), deadline }));
+    while (r.picking && !signal.aborted && party.now() < deadline + party.grace && party.players.includes(r.guesser)) {
+      await this.#until(deadline + party.grace, signal, true);
+    }
+    if (r.picking) {
+      r.picking = false;
+      this.#screenSet({ picking: false, deadline: undefined });
+      if (party.players.includes(r.guesser)) r.guesser.state.replace(this.#s(this.#resultState(r, r.guesser)));
+      return;
+    }
+    await this.#sleep(this.timings.replayHold, signal);
+  }
+
+  #onMvp(d: Json, from: Player): unknown {
+    const r = this.#round;
+    if (from.role !== "player") throw new PartyError("not-player", "Players only");
+    if (!r || this.#phase !== "replay" || !r.picking) throw new PartyError("late", "Not now");
+    if (from !== r.guesser) throw new PartyError("not-guesser", "Only the guesser picks");
+    const id = obj(d)["card"];
+    const card = this.#alive(r).find((c) => c.id === id);
+    if (!card) throw new PartyError("bad-card", "Pick one of the clues");
+    r.picking = false;
+    r.mvp = card.id;
+    const pay = mvpPayout(card.author);
+    r.payouts.push(pay);
+    this.#addScore(pay.id, pay.delta);
+    const st = this.#stats.get(card.author);
+    if (st) st.mvpClues++;
+    this.#screenSet({ picking: false, mvp: card.id, deadline: undefined, payouts: r.payouts });
+    r.guesser.state.replace(this.#s(this.#resultState(r, r.guesser)));
+    const author = this.party.player(card.author);
+    if (author) author.state.replace(this.#s(this.#resultState(r, author)));
+    this.#peopleChanged();
+    this.#wake();
+    return null;
+  }
+
+  async #scoresPhase(r: Round, signal: AbortSignal): Promise<void> {
+    const party = this.party;
+    const lines = this.#lines(r.before);
+    const next = this.#queue.find((t) => party.player(t.id));
+    const view: Record<string, unknown> = { phase: "scores", ...this.#inRound(r), lines, until: party.now() + this.timings.scores };
+    if (next) view["next"] = next.id;
+    this.#setPhase("scores");
+    this.#screen(view);
+    this.#roomView({ phase: "scores" });
+    for (const p of this.#inGame()) {
+      const l = lines.find((x) => x.id === p.id)!;
+      p.state.replace(this.#s({ task: "scores", score: l.score, rank: l.rank, of: lines.length, next: next?.id === p.id }));
+    }
+    await this.#sleep(this.timings.scores, signal);
+  }
+
+  // -------------------------------------------------------------------------
+  // The end
+
+  #finalState(p: Player): PlayerState {
+    const lines = this.#lines();
+    const l = lines.find((x) => x.id === p.id);
+    const view = this.#view as { awards?: { kind: string; ids: string[] }[] };
+    const award = (view.awards ?? []).find((a) => a.ids.includes(p.id));
+    const found = this.#history.filter((h) => h === "found").length;
+    const out: PlayerState = {
+      task: "final",
+      score: l?.score ?? 0,
+      rank: l?.rank ?? lines.length + 1,
+      of: lines.length,
+      canRestart: p.vip,
+      found,
+      total: this.#history.length,
+      title: roomTitle(found, this.#history.length),
+    };
+    if (award) out.award = award.kind as "mind meld" | "lone wolf" | "kamikaze";
+    return out;
+  }
+
+  async #end(): Promise<ScoreLine[]> {
+    const party = this.party;
+    this.#endAbort = new AbortController();
+    const signal = this.#endAbort.signal;
+    const present = this.#inGame().map((p) => this.#stats.get(p.id)!);
+    const best = mvpOfNight(present);
+    const aw = awards(present, this.#pairs);
+    const lines = this.#lines();
+    const found = this.#history.filter((h) => h === "found").length;
+    const view: Record<string, unknown> = {
+      phase: "end",
+      step: "room",
+      tally: this.#tally(),
+      title: roomTitle(found, this.#history.length),
+      words: this.#played.map((x) => ({ word: x.entry.word, found: x.found, guesser: x.guesser })),
+      awards: aw,
+      web: web(this.#played.map((x) => ({ word: x.entry.word, found: x.found, clues: x.clues }))),
+      lines,
+    };
+    if (best) view["mvp"] = { id: best.id, score: best.score, mvpClues: best.mvpClues, jinxed: best.jinxed };
+    this.#setPhase("end");
+    this.#screen(view);
+    this.#roomView({ phase: "end" });
+    for (const p of party.players) this.#passiveState(p);
+    this.emit("end", lines);
+    void (async () => {
+      await this.#sleep(this.timings.endRoom, signal);
+      if (signal.aborted) return;
+      if (best) {
+        this.#screenSet({ step: "mvp" });
+        await this.#sleep(this.timings.endMvp, signal);
+        if (signal.aborted) return;
+      }
+      if (aw.length > 0) {
+        this.#screenSet({ step: "awards" });
+        await this.#sleep(this.timings.endAwards, signal);
+        if (signal.aborted) return;
+      }
+      this.#screenSet({ step: "web" });
+    })();
+    return lines;
+  }
+}

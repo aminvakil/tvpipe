@@ -1,0 +1,177 @@
+# Words removed before curation, with a reason. The pipeline drops them even
+# if every dataset filter passes. Reasons: us-uk (meaning or usage differs
+# between US and UK English), sensitive (sexual, violent, tragic, drugs,
+# alcohol, religion, politics, insult), regional (unit/currency/institution of
+# one country).
+pants	us-uk: trousers (US) vs underwear (UK)
+chips	us-uk: crisps (US) vs fries (UK)
+chip	us-uk: crisp vs fry
+crisp	us-uk: potato chip (UK)
+biscuit	us-uk: cookie (UK) vs savoury scone (US)
+football	us-uk: soccer vs American football
+soccer	us-uk: used mostly in US
+jumper	us-uk: sweater (UK) vs dress / person who jumps (US)
+vest	us-uk: undershirt (UK) vs waistcoat (US)
+boot	us-uk: car trunk (UK) and footwear
+trunk	us-uk: car boot (US), elephant trunk, chest
+bonnet	us-uk: car hood (UK) vs hat
+pavement	us-uk: sidewalk (UK) vs road surface (US)
+sidewalk	us-uk: pavement (US only)
+rubber	us-uk: eraser (UK) vs condom (US slang)
+purse	us-uk: wallet (UK) vs handbag (US)
+flat	us-uk: apartment (UK)
+lift	us-uk: elevator (UK)
+torch	us-uk: flashlight (UK) vs flaming torch (US)
+flashlight	us-uk: US only
+trainer	us-uk: sneaker (UK) vs coach
+sneaker	us-uk: US only
+nappy	us-uk: diaper (UK)
+diaper	us-uk: nappy (US)
+dummy	us-uk: pacifier (UK); also an insult
+pacifier	us-uk: US only
+pram	us-uk: UK only
+stroller	us-uk: US only
+buggy	us-uk: stroller (UK) vs cart (US)
+lorry	us-uk: UK only
+petrol	us-uk: UK only
+gas	us-uk: petrol (US) vs gas
+rubbish	us-uk: garbage (UK); "nonsense"
+mate	us-uk: friend (UK) vs partner (US)
+hockey	us-uk: ice hockey (US) vs field hockey (UK)
+jelly	us-uk: jam (US) vs jello (UK)
+pudding	us-uk: dessert (UK) vs custard-like (US)
+sweet	us-uk: candy (UK); also adjective
+mobile	us-uk: cell phone (UK) vs hanging toy (US)
+tap	us-uk: faucet (UK) vs touch
+faucet	us-uk: US only
+queue	us-uk: UK usage
+holiday	us-uk: vacation (UK) vs public holiday (US)
+vacation	us-uk: US usage
+postbox	us-uk: mailbox (UK)
+mailbox	us-uk: postbox (US)
+postman	us-uk: mailman (UK)
+mailman	us-uk: postman (US)
+zip	us-uk: zipper (UK); zip code (US)
+chemist	us-uk: pharmacy (UK) vs scientist
+cinema	us-uk: movie theater (UK)
+flannel	us-uk: washcloth (UK) vs fabric
+tights	us-uk: pantyhose (UK)
+plaster	us-uk: band-aid (UK) vs wall plaster
+ladybird	us-uk: ladybug (UK)
+ladybug	us-uk: ladybird (US)
+yard	us-uk: garden (US) vs paved area / unit (UK)
+cot	us-uk: crib (UK) vs camp bed (US)
+crib	us-uk: cot (US); Christmas crib (UK)
+courgette	us-uk: zucchini (UK)
+zucchini	us-uk: courgette (US)
+aubergine	us-uk: eggplant (UK)
+eggplant	us-uk: aubergine (US)
+coriander	us-uk: cilantro (UK)
+cilantro	us-uk: coriander (US)
+mince	us-uk: ground meat (UK)
+porridge	us-uk: oatmeal (UK)
+oatmeal	us-uk: porridge (US)
+scone	us-uk: different bakes
+entree	us-uk: main course (US) vs starter (UK)
+bill	us-uk: check (US restaurant) / banknote (US) / bird's bill
+cheque	us-uk: check (UK)
+motorway	us-uk: UK only
+freeway	us-uk: US only
+windscreen	us-uk: windshield (UK)
+windshield	us-uk: windscreen (US)
+curb	us-uk: kerb (UK spelling of the street edge)
+math	us-uk: maths (UK)
+maths	us-uk: math (US)
+grade	us-uk: school year (US) vs mark (UK)
+semester	us-uk: term (UK)
+freshman	us-uk: US school system
+sophomore	us-uk: US school system
+prom	us-uk: US school dance vs UK promenade / concert
+quarter	regional: US coin
+dime	regional: US coin
+nickel	regional: US coin
+penny	regional: currency
+cent	regional: currency
+dollar	regional: currency
+pound	regional: currency and weight
+buck	regional: dollar slang; also male deer
+county	regional: government unit
+subway	us-uk: metro (US) vs pedestrian underpass (UK); also a brand
+underground	us-uk: subway (UK)
+cop	us-uk: police officer (US slang)
+pint	regional: different sizes
+gallon	regional: different sizes
+butt	sensitive: rude (and us-uk: bum)
+bum	sensitive: rude; tramp (US)
+fanny	sensitive: rude (UK) vs buttocks (US)
+bitch	sensitive: insult
+booze	sensitive: alcohol
+beer	sensitive: alcohol
+wine	sensitive: alcohol
+brandy	sensitive: alcohol
+whisky	sensitive: alcohol
+whiskey	sensitive: alcohol
+vodka	sensitive: alcohol
+alcohol	sensitive: alcohol
+cocktail	sensitive: alcohol
+pub	sensitive: alcohol (and us-uk)
+bar	sensitive: alcohol; also many senses
+drunk	sensitive: alcohol
+cigarette	sensitive: tobacco
+cigar	sensitive: tobacco
+tobacco	sensitive: tobacco
+drug	sensitive: drugs
+pill	sensitive: drugs/medicine
+gun	sensitive: violence
+shotgun	sensitive: violence
+rifle	sensitive: violence
+pistol	sensitive: violence
+bullet	sensitive: violence
+bomb	sensitive: violence
+bomber	sensitive: violence
+grenade	sensitive: violence
+kill	sensitive: violence
+murder	sensitive: violence
+stab	sensitive: violence
+blood	sensitive: gore
+bleeding	sensitive: gore
+corpse	sensitive: death
+coffin	sensitive: death
+grave	sensitive: death
+graveyard	sensitive: death
+cemetery	sensitive: death
+funeral	sensitive: death
+war	sensitive: war
+soldier	sensitive: war
+army	sensitive: war
+tank	sensitive: war (also fish tank)
+prison	sensitive: crime
+jail	sensitive: crime
+criminal	sensitive: crime
+naked	sensitive: nudity
+nude	sensitive: nudity
+kiss	sensitive: romance/sexual (borderline for a family party)
+sexy	sensitive: sexual
+bra	sensitive: underwear
+underwear	sensitive: underwear
+knickers	sensitive: underwear
+bikini	sensitive: body/clothing
+church	sensitive: religion
+pope	sensitive: religion
+priest	sensitive: religion
+nun	sensitive: religion
+bible	sensitive: religion
+prayer	sensitive: religion
+god	sensitive: religion
+devil	sensitive: religion
+hell	sensitive: religion
+heaven	sensitive: religion
+cross	sensitive: religion; also verb/adjective
+cripple	sensitive: slur
+fat	sensitive: body shaming
+ugly	sensitive: insult
+stupid	sensitive: insult
+idiot	sensitive: insult
+fool	sensitive: insult
+spanking	sensitive: corporal punishment
+slave	sensitive: slavery

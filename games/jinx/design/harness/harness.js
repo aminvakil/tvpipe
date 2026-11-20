@@ -1,0 +1,137 @@
+// @ts-check
+/**
+ * The TV harness (not shipped): the TV's renderer (../../screen/app.js)
+ * with a fake clock and fake QR code, fed a scripted round (script.js).
+ *
+ *   python3 -m http.server -d games/jinx 8791 --bind 127.0.0.1
+ *   http://127.0.0.1:8791/design/harness/?n=8&step=reveal&mode=warm&controls=1
+ *
+ * Query: n (3 or 8), step (a step name, see script.js; default: play the
+ * whole script), mode (`cold`: the step's view as the first one; `warm`:
+ * the step before cold, then this step and its updates), jinx, wrong,
+ * pass, long, web (few, none), controls, sound.
+ */
+
+import { createTv } from "../../screen/app.js";
+import { script } from "./script.js";
+
+const q = new URLSearchParams(location.search);
+const errors = /** @type {HTMLElement} */ (document.getElementById("errors"));
+/** @param {string} s */
+function fail(s) {
+  errors.hidden = false;
+  errors.textContent += s + "\n";
+}
+addEventListener("error", (e) => fail(`${e.message} (${e.filename}:${e.lineno})`));
+addEventListener("unhandledrejection", (e) => fail(`unhandled: ${e.reason?.stack ?? e.reason}`));
+const origError = console.error;
+console.error = (...a) => {
+  fail(a.map((x) => (x instanceof Error ? x.stack : String(x))).join(" "));
+  origError(...a);
+};
+
+/** A fake QR code (the TV only draws what it gets). */
+function fakeQr(n = 29) {
+  let seed = 1234567;
+  const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const rows = [];
+  for (let y = 0; y < n; y++) {
+    let row = "";
+    for (let x = 0; x < n; x++) {
+      const f = (/** @type {number} */ fx, /** @type {number} */ fy) => {
+        const dx = x - fx;
+        const dy = y - fy;
+        if (dx < 0 || dy < 0 || dx > 6 || dy > 6) return null;
+        return dx === 0 || dy === 0 || dx === 6 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+      };
+      const on = f(0, 0) ?? f(n - 7, 0) ?? f(0, n - 7) ?? r() < 0.48;
+      row += on ? "1" : "0";
+    }
+    rows.push(row);
+  }
+  return { size: n, rows };
+}
+
+/** @param {any} qr @param {{ quiet?: number }} o */
+function qrSvg(qr, o = {}) {
+  if (!qr) return "";
+  const quiet = o.quiet ?? 4;
+  const n = qr.size + 2 * quiet;
+  let d = "";
+  qr.rows.forEach((/** @type {string} */ row, /** @type {number} */ y) => {
+    for (let x = 0; x < row.length; x++) if (row[x] === "1") d += `M${x + quiet} ${y + quiet}h1v1h-1z`;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges"><rect width="${n}" height="${n}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+const join = { code: "KQZM", url: "https://tvp.link/?r=KQZM#k=3f9a2c71d0", qr: fakeQr(), lateJoin: "wait", inProgress: false };
+const root = /** @type {HTMLElement} */ (document.getElementById("viewport"));
+const tv = createTv({ root, now: () => Date.now(), qrSvg, muted: q.get("sound") !== "1" });
+const steps = script({ n: Number(q.get("n") ?? 8), jinx: q.get("jinx") ?? "one", wrong: q.get("wrong") === "1", pass: q.get("pass") === "1", long: q.get("long") === "1", web: q.get("web") ?? "" });
+
+/** @param {import("../../game/views.ts").ScreenView} screen */
+const feed = (screen) => tv.update({ screen: JSON.parse(JSON.stringify(screen)), join });
+
+/** @type {ReturnType<typeof setTimeout>[]} */
+let timers = [];
+/** @param {number} i @param {boolean} cold */
+function show(i, cold) {
+  timers.forEach(clearTimeout);
+  timers = [];
+  const step = steps[i];
+  if (!step) return;
+  if (cold) tv.cold();
+  feed(step.make(Date.now()));
+  for (const [ms, make] of step.then ?? []) timers.push(setTimeout(() => feed(make(Date.now())), ms));
+  renderControls(i);
+}
+
+/** Plays from step i to the end, each step for its time. @param {number} i */
+async function play(i) {
+  for (let k = i; k < steps.length; k++) {
+    show(k, false);
+    const s = steps[k];
+    const last = Math.max(0, ...(s?.then ?? []).map(([ms]) => ms));
+    const name = s?.name ?? "";
+    const hold = name.startsWith("jinx") ? 9000 : name === "verdict" ? 7000 : name.startsWith("end") ? 5500 : name === "scores" ? 5000 : 3500;
+    await new Promise((r) => setTimeout(r, last + hold));
+  }
+}
+
+/** @param {number} cur */
+function renderControls(cur) {
+  const c = /** @type {HTMLElement} */ (document.getElementById("controls"));
+  c.hidden = q.get("controls") !== "1";
+  if (c.hidden) return;
+  c.replaceChildren(
+    ...steps.map((s, i) => {
+      const b = document.createElement("button");
+      b.textContent = s.name;
+      if (i === cur) b.className = "on";
+      b.onclick = () => show(i, false);
+      return b;
+    }),
+  );
+  const cold = document.createElement("button");
+  cold.textContent = "cold";
+  cold.onclick = () => show(cur, true);
+  c.append(cold);
+}
+
+document.fonts.ready.then(() => {
+  const name = q.get("step");
+  const i = name ? steps.findIndex((s) => s.name === name) : -1;
+  if (i < 0) {
+    if (name) fail(`no step ${name}: ${steps.map((s) => s.name).join(", ")}`);
+    void play(0);
+    return;
+  }
+  if (q.get("mode") === "warm" && i > 0) {
+    // the previous step as it ended (its last update), cold, then this one
+    const before = /** @type {import("./script.js").Step} */ (steps[i - 1]);
+    const last = before.then?.[before.then.length - 1]?.[1] ?? before.make;
+    tv.cold();
+    feed(last(Date.now()));
+    timers.push(setTimeout(() => show(i, false), 300));
+  } else show(i, true);
+});
