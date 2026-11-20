@@ -74,8 +74,12 @@ pub struct Behaviour {
     pub teardown_eof: bool,
     /// Send `forceKeyFrame` on the event channel once video flows.
     pub force_keyframe: bool,
-    /// Omit the `X-Apple-*` timing headers (like the modelled LG).
+    /// Omit the `X-Apple-*` timing headers (like the modelled LG and the
+    /// reported Samsung Frame).
     pub no_timing_headers: bool,
+    /// Omit them only on SETUP responses: PTP fails although `/info`
+    /// promised anchors (exercises the §2.5 reconnect).
+    pub no_setup_timing_headers: bool,
     /// Accept the data connection but never read from it.
     pub stall_data: bool,
     /// Legacy profile with these FairPlay keys (`K`, `eiv`): plaintext
@@ -123,6 +127,7 @@ impl Default for Behaviour {
             teardown_eof: false,
             force_keyframe: false,
             no_timing_headers: false,
+            no_setup_timing_headers: false,
             stall_data: false,
             legacy: None,
             raw_pairing: None,
@@ -291,7 +296,9 @@ fn serve(stream: TcpStream, ctx: &Arc<Ctx>) -> crate::error::Result<()> {
             }
         }
         let mut resp = handle(&req, ctx);
-        if ctx.behaviour.no_timing_headers {
+        if ctx.behaviour.no_timing_headers
+            || (ctx.behaviour.no_setup_timing_headers && req.method == "SETUP")
+        {
             resp.headers.remove("X-Apple-RequestReceivedTimestamp");
             resp.headers.remove("X-Apple-ProcessingTime");
         }

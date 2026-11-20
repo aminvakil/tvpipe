@@ -1679,9 +1679,41 @@ mod tests {
     }
 
     #[test]
-    fn ptp_without_anchor_falls_back_to_ntp() {
+    fn no_timing_headers_means_ntp_from_the_start() {
+        // Third-party TVs (LG, Samsung Frame) advertise PTP but send no
+        // timing headers, and may ignore a second pair-verify after an
+        // abandoned PTP session (issue #5): NTP on the first connection.
         let fake = FakeMirror::start(Behaviour {
             no_timing_headers: true,
+            nack_after: None,
+            ..Behaviour::default()
+        });
+        let mut sink = connect(&fake, &MirrorOptions::default());
+        assert!(matches!(sink.session.timeline, Timeline::Ntp));
+        sink.start(&video_info(), Some(&audio_info())).unwrap();
+        stream(&mut sink, 3);
+        sink.stop().unwrap();
+        let r = fake.rec();
+        let protocols: Vec<&str> = r
+            .setup_bodies
+            .iter()
+            .filter_map(|b| b.get("timingProtocol").and_then(Plist::as_str))
+            .collect();
+        assert_eq!(protocols, ["NTP"]);
+        let infos = r.requests.iter().filter(|q| *q == "GET /info").count();
+        let teardowns = r
+            .requests
+            .iter()
+            .filter(|q| q.starts_with("TEARDOWN"))
+            .count();
+        assert_eq!((infos, teardowns), (2, 1), "{:?}", r.requests);
+        assert!(r.video.iter().any(|p| p.kind == 0));
+    }
+
+    #[test]
+    fn ptp_without_anchor_falls_back_to_ntp() {
+        let fake = FakeMirror::start(Behaviour {
+            no_setup_timing_headers: true,
             nack_after: None,
             ..Behaviour::default()
         });

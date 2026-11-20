@@ -440,7 +440,16 @@ impl<S: ControlStream> Session<S> {
             )));
         };
 
+        // PTP anchors on the `X-Apple-*` timing headers (§7.2), which a
+        // receiver that has them puts on every response. Without them on
+        // `/info` the PTP SETUP would fail and need a new connection, which
+        // some receivers do not answer after the abandoned session (§2.5).
+        let anchors = anchor_from_headers(&resp.headers).is_some();
         let ptp = opts.ptp && policy::use_ptp(hap, features, version.as_deref());
+        if ptp && !anchors {
+            debug!("airplay: receiver advertises PTP but sends no timing headers; using NTP");
+        }
+        let ptp = ptp && anchors;
         let sockets = bind_sockets(peer.is_ipv6())?;
         let ntp = if ptp {
             None
