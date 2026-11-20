@@ -20,6 +20,18 @@ export const PROMPTS_BY_LANG: Record<Lang, readonly Prompt[]> = {
   de: parsePrompts(readFileSync(PROMPT_FILE.de, "utf8")),
 };
 
+/** A language's adult prompts file (the room's "adult" setting). */
+export const ADULT_FILE: Record<Lang, URL> = {
+  en: new URL("../data/prompts.adult.txt", import.meta.url),
+  de: new URL("../data/prompts.adult.de.txt", import.meta.url),
+};
+
+/** The adult prompts per language. */
+export const ADULT_BY_LANG: Record<Lang, readonly Prompt[]> = {
+  en: parsePrompts(readFileSync(ADULT_FILE.en, "utf8")),
+  de: parsePrompts(readFileSync(ADULT_FILE.de, "utf8")),
+};
+
 /** The English prompts. */
 export const PROMPT_LIST: readonly Prompt[] = PROMPTS_BY_LANG.en;
 

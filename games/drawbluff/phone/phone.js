@@ -43,6 +43,7 @@ const banner = /** @type {HTMLElement} */ (document.getElementById("banner"));
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const who = /** @type {HTMLElement} */ (document.getElementById("who"));
 const langButton = /** @type {HTMLButtonElement} */ (document.getElementById("lang"));
+const header = /** @type {HTMLElement} */ (document.querySelector("header"));
 
 // ---------------------------------------------------------------------------
 // The language: the phone's own choice, else the room's, else the browser's.
@@ -226,13 +227,20 @@ function render(view) {
   const mine = roster.find((/** @type {any} */ r) => r.id === client.you?.id);
   if (useLang()) shown = "";
   const rank = typeof me.rank === "number" && typeof me.of === "number" && me.of > 0 && me.task !== "lobby" ? ` · ${t.rankShort(me.rank, me.of)}` : "";
-  who.textContent = mine ? `${mine.vip ? "★ " : ""}${mine.name}${rank}` : "";
+  const dot = typeof me.color === "number" && Array.isArray(room.colors) ? room.colors[me.color] : undefined;
+  who.replaceChildren(
+    ...(mine && typeof dot === "string" ? [h("span", { class: "dot", style: `background:${dot}` })] : []),
+    mine ? `${mine.vip ? "★ " : ""}${mine.name}${rank}` : "",
+  );
   const key = screenKey(me, room);
   if (key !== shown) {
     showSwitch(me.task === "lobby" || me.task === "final");
     shown = key;
     refresh = null;
     pad = null;
+    // The pad takes the whole screen; everything else has the header (and the clock in it).
+    document.body.classList.toggle("drawing", me.task === "draw" && !me.done);
+    if (timer.parentElement !== header) header.append(timer);
     build(view);
   }
   refresh?.();
@@ -266,9 +274,9 @@ function build(view) {
     case "lobby":
       return lobby(view);
     case "draw":
-      return me.done ? waiting(t.drawDone) : draw(me.prompt);
+      return me.done ? waiting(t.drawDone) : draw(me);
     case "wait":
-      return waiting(me.note === "drawing" ? t.waitDrawing : me.note === "game" ? t.waitGame : t.waitRound);
+      return waiting(me.note === "drawing" ? t.waitDrawing : me.note === "game" ? t.waitGame : t.waitRound, colorPicker(h("p", { class: "error" })).box);
     case "artist":
       return waiting(t.artist);
     case "lie":
@@ -286,9 +294,12 @@ function build(view) {
   }
 }
 
-/** @param {string} text */
-function waiting(text) {
-  show(h("section", { class: "card" }, h("p", { class: "big" }, text)));
+/**
+ * @param {string} text
+ * @param {...Node} extra
+ */
+function waiting(text, ...extra) {
+  show(h("section", { class: "card" }, h("p", { class: "big" }, text), ...extra));
 }
 
 /**
@@ -365,6 +376,80 @@ function lateJoin(err) {
   return { box, update };
 }
 
+/**
+ * Your colour: the swatches to pick from (a colour someone else has is
+ * marked; the host refuses it while one is free) and the pens it gives.
+ * It updates itself on every view while it is on screen.
+ * @param {HTMLElement} err
+ */
+function colorPicker(err) {
+  const grid = h("div", { class: "colors" });
+  const pens = h("div", { class: "pens" });
+  const box = h("div", { class: "picker" }, h("h2", {}, t.yourColour), grid, h("div", { class: "pens-line" }, h("span", { class: "muted" }, t.yourPens), pens), err);
+  /** @type {HTMLButtonElement[]} */
+  let buttons = [];
+  let last = "";
+  const update = () => {
+    const v = client.view;
+    const colors = /** @type {string[]} */ (Array.isArray(v.room?.colors) ? v.room.colors : []);
+    const taken = /** @type {number[]} */ (Array.isArray(v.room?.taken) ? v.room.taken : []);
+    const mine = v.me?.color;
+    const palette = /** @type {string[]} */ (Array.isArray(v.me?.palette) ? v.me.palette : []);
+    const key = JSON.stringify([colors, taken, mine, palette]);
+    if (key === last) return;
+    last = key;
+    box.hidden = colors.length === 0;
+    if (buttons.length !== colors.length) {
+      buttons = colors.map((c, i) => /** @type {HTMLButtonElement} */ (h("button", { style: `background:${c}`, "aria-label": t.colourNames[i] ?? t.colour(i + 1), onclick: () => act("color", { color: i }, err).catch(() => {}) })));
+      grid.replaceChildren(...buttons);
+    }
+    buttons.forEach((b, i) => {
+      b.classList.toggle("chosen", i === mine);
+      b.classList.toggle("taken", i !== mine && (taken[i] ?? 0) > 0);
+    });
+    pens.replaceChildren(...palette.map((c) => h("span", { class: "pen", style: `background:${c}` })));
+  };
+  const was = refresh;
+  refresh = () => {
+    was?.();
+    update();
+  };
+  update();
+  return { box, update };
+}
+
+/**
+ * The room's rules: the VIP's buttons (undo, colours, adult prompts), a
+ * line each for everybody.
+ * @param {HTMLElement} err
+ */
+function rules(err) {
+  /** @type {{ key: "undo" | "colorMode" | "adult", row: HTMLElement, buttons: HTMLButtonElement[], line: HTMLElement }[]} */
+  const items = [];
+  const box = h("div", { class: "rules" }, h("h2", {}, t.rules));
+  for (const key of /** @type {const} */ (["undo", "colorMode", "adult"])) {
+    const [off, on] = t.settings[key];
+    const buttons = [false, true].map((value, i) => /** @type {HTMLButtonElement} */ (h("button", { onclick: () => act("settings", { [key]: value }, err).catch(() => {}) }, (i ? on : off)[0])));
+    const row = h("div", { class: "row seg" }, ...buttons);
+    const line = h("p", { class: "muted" });
+    box.append(row, line);
+    items.push({ key, row, buttons, line });
+  }
+  const update = () => {
+    const v = client.view;
+    const room = v.room ?? {};
+    const vip = (v.roster ?? []).find((/** @type {any} */ r) => r.id === client.you?.id)?.vip;
+    for (const { key, row, buttons, line } of items) {
+      const on = !!room[key];
+      row.hidden = !vip;
+      buttons.forEach((b, i) => b.classList.toggle("chosen", !!i === on));
+      if (key === "adult") buttons[1].disabled = !room.adultOk;
+      line.textContent = key === "adult" && !room.adultOk ? t.noAdult : t.settings[key][on ? 1 : 0][1];
+    }
+  };
+  return { box, update };
+}
+
 /** @param {Record<string, any>} view */
 function lobby(view) {
   const list = h("ul", { class: "players" });
@@ -372,8 +457,14 @@ function lobby(view) {
   const err = h("p", { class: "error" });
   const hint = h("p", { class: "muted" });
   const late = lateJoin(err);
-  show(h("section", { class: "card lobby" }, h("h1", {}, t.youreIn), hint, h("h2", {}, t.players), list, start, err, late.box));
+  const set = rules(err);
+  show(h("section", { class: "card lobby" }, h("h1", {}, t.youreIn), hint, h("h2", {}, t.players), list, start, err, set.box, late.box));
+  // Your colour first: picked when you start.
+  /** @type {HTMLElement} */ (app.querySelector(".card")).insertBefore(colorPicker(h("p", { class: "error" })).box, hint.nextSibling);
+  const pick = refresh;
   refresh = () => {
+    pick?.();
+    set.update();
     late.update();
     const v = client.view;
     const roster = v.roster ?? [];
@@ -403,6 +494,7 @@ function final(view) {
   const err = h("p", { class: "error" });
   const again = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", id: "start", onclick: () => act("start", null, err).catch(() => {}) }, t.playAgain));
   const late = lateJoin(err);
+  const set = rules(err);
   show(
     h(
       "section",
@@ -412,12 +504,17 @@ function final(view) {
       h("p", { class: "muted" }, `${t.points(me.score ?? 0)} · ${t.rankOnly(me.rank ?? 0)}`),
       again,
       err,
+      set.box,
       late.box,
     ),
   );
+  /** @type {HTMLElement} */ (app.querySelector(".card")).append(colorPicker(h("p", { class: "error" })).box);
+  const pick = refresh;
   refresh = () => {
+    pick?.();
     const vip = (client.view.roster ?? []).find((/** @type {any} */ r) => r.id === client.you?.id)?.vip;
     again.hidden = !vip;
+    set.update();
     late.update();
     late.box.hidden = !vip;
   };
@@ -442,12 +539,18 @@ async function act(type, data, err) {
 // Drawing
 
 class Pad {
-  /** @param {HTMLCanvasElement} canvas */
-  constructor(canvas) {
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @param {readonly string[]} palette the player's pens
+   */
+  constructor(canvas, palette) {
     this.canvas = canvas;
+    this.palette = palette;
     this.ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
     /** @type {number[][]} */
     this.strokes = [];
+    /** @type {() => void} called when strokes come or go */
+    this.onchange = () => {};
     this.points = 0;
     this.color = 0;
     this.width = WIDTHS[1];
@@ -479,7 +582,7 @@ class Pad {
   }
 
   redraw() {
-    drawDrawing(this.ctx, { strokes: this.strokes }, 0, 0, this.size);
+    drawDrawing(this.ctx, { strokes: this.strokes, palette: [...this.palette] }, 0, 0, this.size);
   }
 
   /** @param {PointerEvent} e */
@@ -498,7 +601,8 @@ class Pad {
     this.current = [this.color, this.width, x, y];
     this.strokes.push(this.current);
     this.points++;
-    drawStroke(this.ctx, this.current, 0, 0, this.size);
+    drawStroke(this.ctx, this.current, 0, 0, this.size, this.palette);
+    this.onchange();
   }
 
   /** @param {PointerEvent} e */
@@ -514,7 +618,7 @@ class Pad {
       if (Math.hypot(x - lx, y - ly) < 4) continue;
       s.push(x, y);
       this.points++;
-      drawStroke(this.ctx, [s[0], s[1], lx, ly, x, y], 0, 0, this.size);
+      drawStroke(this.ctx, [s[0], s[1], lx, ly, x, y], 0, 0, this.size, this.palette);
     }
   }
 
@@ -526,42 +630,107 @@ class Pad {
     this.strokes = [];
     this.points = 0;
     this.redraw();
+    this.onchange();
+  }
+
+  /** Takes back the last stroke (when the room allows undo). */
+  undo() {
+    if (this.current) return;
+    const s = this.strokes.pop();
+    if (!s) return;
+    this.points -= (s.length - 2) / 2;
+    this.redraw();
+    this.onchange();
   }
 }
 
-/** @param {string} prompt */
-function draw(prompt) {
+const SVG_NS = "http://www.w3.org/2000/svg";
+/** @param {string} d the icon's paths (24×24, stroked) */
+function icon(d) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const part of d.split("|")) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", part);
+    svg.append(path);
+  }
+  return svg;
+}
+const TRASH = "M4 7h16|M9 7V4h6v3|M6 7l1 13h10l1-13|M10 11v6|M14 11v6";
+const UNDO = "M9 14L4 9l5-5|M4 9h10a6 6 0 0 1 0 12h-3";
+/** The size buttons' dots, px. */
+const DOTS = [8, 14, 22];
+
+/**
+ * The pad, as big as the screen allows: a line with the prompt and the
+ * clock, the square pad, the player's pens, and one toolbar (sizes,
+ * clear, undo when the room allows it, done).
+ * @param {any} me
+ */
+function draw(me) {
+  const palette = /** @type {string[]} */ (Array.isArray(me.palette) && me.palette.length > 0 ? me.palette : PALETTE);
   const canvas = /** @type {HTMLCanvasElement} */ (h("canvas", { class: "pad" }));
   const err = h("p", { class: "error" });
-  const palette = h("div", { class: "palette" });
-  const tools = h("div", { class: "tools" });
-  const done = /** @type {HTMLButtonElement} */ (h("button", { class: "primary", id: "done", onclick: () => submit() }, t.done));
-  show(h("section", { class: "card" }, h("h2", {}, t.draw), h("p", { class: "prompt" }, prompt), h("div", { class: "pad-wrap" }, canvas), palette, tools, done, err));
-  const p = new Pad(canvas);
+  const swatches = h("div", { class: "swatches" });
+  const sizes = h("div", { class: "sizes" });
+  const done = /** @type {HTMLButtonElement} */ (h("button", { class: "done", id: "done", onclick: () => submit() }, t.done));
+  const top = h("div", { class: "top" }, h("div", { class: "what" }, h("span", { class: "label" }, t.draw), h("span", { class: "prompt" }, me.prompt ?? "")), timer);
+  const clear = /** @type {HTMLButtonElement} */ (h("button", { class: "icon", id: "clear", "aria-label": t.clear }, icon(TRASH)));
+  const undo = me.undo ? /** @type {HTMLButtonElement} */ (h("button", { class: "icon", id: "undo", "aria-label": t.undo }, icon(UNDO))) : null;
+  const bar = h("div", { class: "toolbar" }, sizes, clear, undo, done);
+  show(h("section", { class: "draw" }, top, h("div", { class: "padbox" }, canvas), swatches, bar, err));
+  const p = new Pad(canvas, palette);
   pad = p;
-  const swatches = PALETTE.map((c, i) => {
+  const pens = palette.map((c, i) => {
     const b = h("button", { style: `background:${c}`, "aria-label": t.colour(i + 1), onclick: () => pick(i) });
-    palette.append(b);
+    swatches.append(b);
     return b;
   });
   /** @param {number} i */
   const pick = (i) => {
     p.color = i;
-    swatches.forEach((b, j) => b.classList.toggle("chosen", j === i));
+    pens.forEach((b, j) => b.classList.toggle("chosen", j === i));
   };
   pick(0);
-  const sizes = WIDTHS.map((w, i) => {
-    const b = h("button", { onclick: () => size(i) }, t.sizes[i] ?? "");
-    tools.append(b);
+  const widths = WIDTHS.map((w, i) => {
+    const b = h("button", { "aria-label": t.sizes[i] ?? "", onclick: () => size(i) }, h("i", { style: `width:${DOTS[i]}px;height:${DOTS[i]}px` }));
+    sizes.append(b);
     return b;
   });
   /** @param {number} i */
   const size = (i) => {
     p.width = WIDTHS[i];
-    sizes.forEach((b, j) => b.classList.toggle("chosen", j === i));
+    widths.forEach((b, j) => b.classList.toggle("chosen", j === i));
   };
   size(1);
-  tools.append(h("button", { onclick: () => p.clear() }, t.clear));
+  // Clear asks once: without undo a stray tap would lose the drawing.
+  /** @type {ReturnType<typeof setTimeout> | 0} */
+  let armed = 0;
+  const disarm = () => {
+    if (armed) clearTimeout(armed);
+    armed = 0;
+    clear.classList.remove("arm");
+    clear.replaceChildren(icon(TRASH));
+  };
+  clear.addEventListener("click", () => {
+    if (armed) {
+      disarm();
+      p.clear();
+      return;
+    }
+    clear.classList.add("arm");
+    clear.textContent = t.clearSure;
+    armed = setTimeout(disarm, 2000);
+  });
+  undo?.addEventListener("click", () => p.undo());
+  const changed = () => {
+    if (undo) undo.disabled = p.strokes.length === 0;
+    clear.disabled = p.strokes.length === 0;
+    if (p.strokes.length === 0 && armed) disarm();
+  };
+  p.onchange = changed;
+  changed();
   let sent = false;
   const submit = async () => {
     if (sent) return;

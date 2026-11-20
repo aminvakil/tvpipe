@@ -1,0 +1,342 @@
+# drawbluffs Begriffe für Erwachsene auf Deutsch: für Räume, in denen der
+# Host "ab 18" einschaltet; dann teilt er diese statt data/prompts.de.txt
+# aus (auch die Quelle der Köder-Lügen). Für Deutschsprachige geschrieben,
+# nicht übersetzt (data/prompts.adult.txt: Englisch).
+#
+# Format und Regeln wie data/prompts.de.txt: `[tag]` beginnt eine
+# Struktur, dann ein Begriff pro Zeile; Leerzeilen und `#`-Kommentare
+# zählen nicht. Jeder Begriff steht in seiner Anzeigeform (klein
+# geschrieben, nur Buchstaben mit ä, ö, ü, ß, Leerzeichen und Apostrophe,
+# nichts am Ende, NFC) und hat höchstens 40 Zeichen. Keine zwei gleichen
+# und keiner wie ein Familienbegriff (test/prompts.test.ts prüft das).
+#
+# Frech und zweideutig, aber nie eindeutig: keine Sexszenen, keine
+# Beleidigungen, keine Kinder, keine echten Menschen, keine Marken.
+# Alles muss zeichenbar sein und Spaß beim Raten machen.
+#
+# Die Strukturen:
+#   idiom     Redewendungen wörtlich: die sau rauslassen
+#   wort      zweideutige Komposita wörtlich: ein schluckspecht
+#   party     Feiern, Saufen und der Kater danach: karaoke um vier uhr morgens
+#   date      Flirten und Dating-Desaster: ein profilbild mit totem fisch
+#   nackt     Sauna, FKK und peinliche Körper: der gemischte saunatag
+#   liebe     Beziehung, Ehe und WG: die socke an der türklinke
+#   alt       Erwachsenenleben und Midlife-Crisis: treppe fegen zum dreißigsten
+#   invented  erfundene Berufe, Sportarten, Feiertage: ein katerflüsterer
+#   title     berühmt klingende Titel: das schweigen der schwiegermutter
+#   moment    der Moment, wenn: wenn in der disco das licht angeht
+
+[idiom]
+die sau rauslassen
+einen über den durst trinken
+blau wie ein veilchen
+einen in der krone haben
+voll wie eine haubitze
+die puppen tanzen lassen
+sich die kante geben
+sich einen hinter die binde kippen
+einen sitzen haben
+jemandem schöne augen machen
+mit jemandem in die kiste springen
+jemandem den kopf verdrehen
+auf freiersfüßen wandeln
+jemanden abschleppen
+jemandem den laufpass geben
+in die röhre gucken
+jemanden um den finger wickeln
+jemandem hörner aufsetzen
+die hüllen fallen lassen
+die hosen runterlassen
+nichts anbrennen lassen
+im siebten himmel schweben
+feuer und flamme sein
+die nacht zum tag machen
+eine flasche köpfen
+sich wie die karnickel vermehren
+auf dem trockenen sitzen
+das hemd ist näher als die hose
+einen kater pflegen
+auf jemanden abfahren
+die kuh fliegen lassen
+
+[wort]
+ein schluckspecht
+eine schnapsdrossel
+ein schürzenjäger
+ein sitzpinkler
+ein bierbauch
+ein seitensprung
+eine schnapsidee
+ein flachmann
+ein betthupferl
+ein muttersöhnchen
+ein saufkumpan
+ein partylöwe
+ein busenfreund
+eine schnapsleiche
+ein spätzünder
+ein hosenscheißer
+ein rettungsring
+das hüftgold
+ein waschbrettbauch
+ein lustmolch
+ein ehedrache
+ein pantoffelheld
+ein knutschfleck
+ein sahneschnittchen
+ein kotzbrocken
+ein stinkstiefel
+ein schnarchzapfen
+ein frühschoppen
+ein absacker
+ein schäferstündchen
+ein arschgeweih
+ein warmduscher
+ein schlummertrunk
+ein herzensbrecher
+
+[party]
+ein bollerwagen voller junggesellen
+die polonaise durchs großraumbüro
+der chef tanzt auf dem tisch
+karaoke um vier uhr morgens
+ein maßkrug als badewanne
+trinkspiele im altenheim
+der döner um drei uhr nachts
+bierpong auf dem bügelbrett
+der letzte gast an der theke
+die afterparty im waschsalon
+der dj spielt nur schlager
+eine zeltparty im platzregen
+der fünfte schnaps aufs haus
+die kotztüte im partybus
+der heimweg im einkaufswagen
+ein stripper im seniorenheim
+eierlikör aus der gießkanne
+tequila mit dem pfarrer
+konfetti in der unterhose
+ein ballermann am baggersee
+die bowle mit geheimzutat
+ein kater mit sonnenbrille
+aufwachen in der badewanne
+aufwachen neben einem verkehrshütchen
+ein katerfrühstück mit rollmops
+der verlorene schuh nach der feier
+ein bierzelt auf dem mond
+der hintern auf dem kopierer
+der rausschmeißer trägt ein tutu
+sangria aus dem eimer
+
+[date]
+ein erstes date beim zahnarzt
+wischen bis der daumen glüht
+ein blind date mit einem vampir
+das profilfoto von vor zehn jahren
+der flirt an der fleischtheke
+speeddating auf dem friedhof
+ein heiratsantrag der ins wasser fällt
+ein kuss mit zahnspange
+ein anmachspruch der nach hinten losgeht
+rosen von der tankstelle
+ein liebesbrief mit rechtschreibfehlern
+das date bringt seine mutter mit
+ein candlelight dinner mit knoblauch
+ghosting durch ein echtes gespenst
+ein match mit dem eigenen chef
+schwitzige hände beim händchenhalten
+ein picknick im ameisenhaufen
+knutschen im autokino
+das erste date im möbelhaus
+der flirt im fitnessstudio
+eine kontaktanzeige in der zeitung
+liebe auf den ersten wisch
+die rechnung beim ersten date
+ein profilbild mit totem fisch
+der anruf der ex mitten im date
+zwei singles am kühlregal
+ein kuss unterm mistelzweig
+ein ständchen mit der blockflöte
+der lippenstift am kragen
+
+[nackt]
+saunaregeln für anfänger
+der saunameister wedelt mit dem handtuch
+ein fkk strand voller rentner
+nacktbaden im baggersee
+der handtuchkrieg am hotelpool
+ein nacktscanner am flughafen
+die badehose rutscht beim köpper
+ein flitzer beim fußballspiel
+den bauch einziehen am strand
+haare an unerwarteten stellen
+der klempner beim bücken
+die unterhose auf links
+nacktyoga im stadtpark
+aktzeichnen in der volkshochschule
+rückenhaare wie ein perserteppich
+die umkleidekabine ohne vorhang
+ein bikini aus salatblättern
+ein feigenblatt im herbst
+ein pups im fahrstuhl
+die brille beschlägt in der sauna
+strip poker im winter
+bräunungsstreifen vom tanga
+der gemischte saunatag
+ein nacktmull im badeanzug
+der sonnenbrand mit handabdruck
+der bademantel geht beim winken auf
+ein bierbauch im muskelshirt
+die waage im badezimmer verstecken
+
+[liebe]
+der kampf um die bettdecke
+schnarchen wie eine kettensäge
+kalte füße im ehebett
+die klobrille bleibt oben
+die schwiegermutter zieht ein
+der putzplan den keiner liest
+namensschilder im wg kühlschrank
+wer hat meinen joghurt gegessen
+die wände in der wg sind dünn
+die socke an der türklinke
+paartherapie beim tierarzt
+die silberhochzeit in der eckkneipe
+ein ehevertrag auf dem bierdeckel
+getrennte schlafzimmer mit dosentelefon
+der vergessene hochzeitstag
+streit um die fernbedienung
+der ehering im abfluss
+ein pärchen im partnerlook
+der erste pups vor dem partner
+die ex kommt zur hochzeit
+zu besuch bei den schwiegereltern
+wer räumt die spülmaschine aus
+die zahnpastatube von der mitte gedrückt
+haare im abfluss
+die katze schläft zwischen uns
+das verflixte siebte jahr
+streit um die heizung
+die zweite zahnbürste im bad
+fremdes parfum auf dem kopfkissen
+
+[alt]
+die midlifecrisis im cabrio
+die steuererklärung um mitternacht
+rückenschmerzen vom ausschlafen
+die lesebrille auf der stirn
+das erste graue haar
+das tattoo mit achtzig
+ein bausparvertrag als hochzeitsgeschenk
+schwarze luftballons zum vierzigsten
+treppe fegen zum dreißigsten
+ein samstag im baumarkt
+rasenmähen in der mittagsruhe
+die nachbarin kontrolliert den müll
+falten wegbügeln
+die hüfte knackt beim tanzen
+ein toupet im sturm
+das vorstellungsgespräch mit kater
+die videokonferenz ohne hose
+die kaffeemaschine im büro streikt
+botox für die schwiegermutter
+die rente mit siebzig
+der nachbar mit dem laubbläser
+das klassentreffen nach zwanzig jahren
+der ungenutzte fitnessstudiovertrag
+die bandscheibe beim schuhebinden
+drei männer und ein grill
+die lebensversicherung als liebesbrief
+der tanzkurs für frisch verlobte
+
+[invented]
+ein professioneller kuschler
+synchronschnarchen
+olympisches flaschendrehen
+weltmeisterschaft im maßkrugstemmen
+ein schnarchdolmetscher
+eine ausnüchterungstrainerin
+ein ausredendesigner
+ein ersatzfreund für hochzeiten
+ein nacktwanderführer
+ein flirtlehrer für pinguine
+ein unterhosenbügler
+eine vorkosterin für schnaps
+ein katerflüsterer
+der tag der offenen hose
+der weltschwiegermuttertag
+ein knutschprüfer
+turmspringen vom hochbett
+ein festivalklotester
+ein liebesbriefschreiber auf bestellung
+ein alibilieferant für ehemänner
+ein brautstraußtorwart
+der bauchfreie freitag
+bierdeckelweitwurf
+ein rülpsdirigent
+ein heiratsvermittler für geister
+der nationale katertag
+ein hosenstallwächter
+ein peinlichkeitsgutachter
+sackhüpfen beim junggesellenabschied
+
+[title]
+der herr der augenringe
+schlaflos im schrebergarten
+fluch der kneipentour
+sekt in der stadt
+krieg und frieden im ehebett
+zurück zur ex
+schneewittchen und die sieben schnäpse
+dornröschen mit kater
+das schweigen der schwiegermutter
+die schöne und das feierbiest
+die unendliche betriebsfeier
+der zauberer vom tresen
+hänsel und gretel auf ex
+der fischer und seine ex
+des kaisers neue unterhose
+der froschkönig beim zwanzigsten kuss
+der weiße hai im whirlpool
+die eiskönigin in der sauna
+einer flog über die theke
+tatort schlafzimmer
+promille im kopf
+das liebesleben der anderen
+aschenputtel verliert den tanga
+keinhosenhasen
+die drei musketiere auf malle
+stolz und vollrausch
+der name der weinschorle
+der mit dem bierbauch tanzt
+vom bohneneintopf verweht
+rotkäppchen und der schürzenjäger
+
+[moment]
+wenn der chef in der sauna sitzt
+wenn die hose beim bücken reißt
+die liebesnachricht an den chef
+wenn die mitbewohnerin zu früh heimkommt
+wenn der bh am kronleuchter hängt
+wenn der kater stärker ist als du
+wenn der türsteher dich abweist
+wenn der hosenstall offen steht
+wenn das handtuch in der sauna rutscht
+wenn die karte am tresen abgelehnt wird
+wenn in der disco das licht angeht
+wenn die webcam doch an war
+wenn dir ihr name nicht einfällt
+wenn die waage lügt
+wenn das dirndl zu eng ist
+wenn die lederhose platzt
+der wecker nach zwei stunden schlaf
+die liebeserklärung an den taxifahrer
+wenn die nachbarn an die wand klopfen
+wenn das gehalt am fünften weg ist
+wenn die dusche plötzlich eiskalt wird
+wenn der brautvater breakdance tanzt
+wenn die hose nach dem buffet spannt
+wenn rotwein auf das weiße sofa kippt
+wenn der partner dein handy entsperrt
+wenn du nackt die tür aufmachst
+wenn die blase im stau drückt
+wenn der gürtel ein loch weiter muss

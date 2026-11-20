@@ -29,6 +29,17 @@ language (665 in 17 structures in English, 698 in 18 in German). A room
 deals no prompt twice until it dealt them all, game after game, and a
 round of up to 8 players gets 8 kinds of prompt.
 
+Every player picks a colour in the lobby (one of ten, each player their
+own while one is free; a newcomer gets one of the least used) and draws
+with pens made from it in OKLCH: its dark and light shade, or in colour
+mode black and red, yellow, green and blue leaning towards it (`palette`
+in `game/rules.ts`; a drawing carries its artist's pens). The host page
+and the VIP's phone set the rules before a game: undo on the pad (off by
+default: every stroke counts), colour mode, and adult prompts
+(`data/prompts.adult.txt`, `data/prompts.adult.de.txt`: 18+, cheeky, not
+explicit). The phone's pad takes the whole screen, square, as big as the
+width allows (sideways: the height).
+
 It is a web app for [`tvpipe game play`](../../docs/playshare-design.md):
 tvpipe serves it, the game runs in its host page (a window on the
 computer), the TV page is cast to AirPlay and Chromecast receivers, and
@@ -42,6 +53,7 @@ phones join with the QR code.
 | `screen/` | the TV page | the screen view (`{ roster, screen, join }`); `strings.js` |
 | `phone/` | the phone page | drawing, lies, votes; `strings.js`, `i18n.js` (languages, `Intl`) |
 | `data/prompts.txt`, `data/prompts.de.txt` | the prompts, English and German | fetched by the host page |
+| `data/prompts.adult.txt`, `data/prompts.adult.de.txt` | the adult prompts (18+), English and German | dealt instead when the room turned adult on |
 | `scripts/prompts.ts` | numbers about a prompts file | structures, words, near duplicates, repeats per session |
 
 ## Running it

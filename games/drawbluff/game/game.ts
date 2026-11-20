@@ -7,9 +7,10 @@
  * screens only ever get views (docs/party-design.md §5).
  *
  * Views:
- * - `party.room` (every phone): `{ phase, lang, round, rounds, players, spot?, spots?, deadline?, drawing?, artist?, minPlayers? }`
- * - `player.state` (one phone): `{ task, score, rank, of, … }`, `task` one of
- *   `lobby`, `wait` (a late joiner), `draw` (`prompt`, `deadline`, `done`),
+ * - `party.room` (every phone): `{ phase, lang, round, rounds, players, spot?, spots?, deadline?, drawing?, artist?, minPlayers?,
+ *   undo, colorMode, adult, adultOk, colors, taken }` (the settings, the colours to pick and how many have each)
+ * - `player.state` (one phone): `{ task, score, rank, of, color, palette, … }`, `task` one of
+ *   `lobby`, `wait` (a late joiner), `draw` (`prompt`, `palette`, `undo`, `deadline`, `done`),
  *   `lie` (`key`, `drawing`, `artist`, `liars`, `early`, `deadline`, `done`, `lie`),
  *   `artist` (`key`), `vote` (`key`, `options`, `deadline`, `done`, `choice`),
  *   `watch` (`note`, `result`), `scores`/`final`
@@ -17,15 +18,25 @@
  *
  * `lang` is the room's language (`en`, `de`): the prompts, the decoys,
  * and what every phone and TV says (each page has its strings).
+ *
+ * Every player has a colour (`PLAYER_COLORS`, picked in the lobby, else
+ * the least used) and draws with pens made from it (`palette`): its dark
+ * and light shade, or with `colorMode` black and four colours leaning to
+ * it. The settings (the host page's, or the VIP's in the lobby): `undo`
+ * on the pad (off: every stroke counts), `colorMode`, `adult` (the
+ * adult prompts, where the language has them).
  */
 
-import { Emitter, LATE_JOIN, PartyError, type LateJoin, type Party, type Player } from "@tvpipe/party";
+import { Emitter, LATE_JOIN, PartyError, type Json, type LateJoin, type Party, type Player } from "@tvpipe/party";
 
 import {
   buildOptions,
   cleanTitle,
   decoyOrder,
   displayTitle,
+  palette,
+  PLAYER_COLORS,
+  playerColors,
   deal,
   PHONE_LIES,
   pickLiars,
@@ -108,6 +119,21 @@ export interface GameOptions {
    * drawing, `closed` not at all (docs/drawbluff-scale.md §9).
    */
   lateJoin?: LateJoin | undefined;
+  /** The adult prompts (`data/prompts.adult.txt`, …), per language: dealt instead when `adult` is on. */
+  adultPrompts?: Partial<Record<Lang, readonly (string | Prompt)[]>> | undefined;
+  /** Undo on the drawing pad (default off: every stroke counts). */
+  undo?: boolean | undefined;
+  /** Black and four colours leaning to the player's colour instead of its two shades (default off). */
+  colorMode?: boolean | undefined;
+  /** The adult prompts (default off). */
+  adult?: boolean | undefined;
+}
+
+/** The room's settings: the host page's, or the VIP's in the lobby. */
+export interface Settings {
+  undo: boolean;
+  colorMode: boolean;
+  adult: boolean;
 }
 
 export interface ScoreLine {
@@ -120,6 +146,8 @@ export interface ScoreLine {
 export interface GameEvents {
   phase: [phase: string];
   end: [scores: ScoreLine[]];
+  /** The settings changed (the host page's or the VIP's). */
+  settings: [settings: Settings];
 }
 
 /** What the game itself names, per language (the pages have their own strings). */
@@ -164,9 +192,14 @@ export class Drawbluff extends Emitter<GameEvents> {
   readonly #rng: () => number;
   /** The prompts per language. */
   readonly #prompts = new Map<Lang, readonly Prompt[]>();
-  /** The room's decks per language, kept from game to game (no prompt twice until all were dealt). */
-  readonly #decks = new Map<Lang, PromptDeck>();
+  /** The adult prompts per language. */
+  readonly #adultPrompts = new Map<Lang, readonly Prompt[]>();
+  /** The room's decks per language (`en`, `en:adult`, …), kept from game to game (no prompt twice until all were dealt). */
+  readonly #decks = new Map<string, PromptDeck>();
   #lang: Lang;
+  #settings: Settings;
+  /** Each player's colour (an index of `PLAYER_COLORS`), by id. */
+  readonly #colors = new Map<string, number>();
   /** Points per player id (players in the game; late joiners from their first round). */
   readonly scores = new Map<string, number>();
   /** Lies written so far this game, per player id (rotation). */
@@ -200,11 +233,31 @@ export class Drawbluff extends Emitter<GameEvents> {
     const lists: Partial<Record<Lang, readonly (string | Prompt)[]>> = Array.isArray(options.prompts)
       ? { [this.#lang]: options.prompts }
       : (options.prompts as Partial<Record<Lang, readonly (string | Prompt)[]>>);
-    for (const [lang, list] of Object.entries(lists) as [Lang, readonly (string | Prompt)[]][]) {
-      if (list.length > 0) this.#prompts.set(lang, list.map((p) => (typeof p === "string" ? { text: p, tag: "" } : p)));
-    }
+    const load = (to: Map<Lang, readonly Prompt[]>, from: Partial<Record<Lang, readonly (string | Prompt)[]>>) => {
+      for (const [lang, list] of Object.entries(from) as [Lang, readonly (string | Prompt)[]][]) {
+        if (list.length > 0) to.set(lang, list.map((p) => (typeof p === "string" ? { text: p, tag: "" } : p)));
+      }
+    };
+    load(this.#prompts, lists);
+    load(this.#adultPrompts, options.adultPrompts ?? {});
     if (!this.#prompts.has(this.#lang)) throw new Error(`drawbluff: no prompts in ${this.#lang}`);
     if (options.lateJoin !== undefined) party.lateJoin = options.lateJoin;
+    this.#settings = { undo: options.undo ?? false, colorMode: options.colorMode ?? false, adult: (options.adult ?? false) && this.#adultPrompts.has(this.#lang) };
+  }
+
+  /** The room's settings. */
+  get settings(): Settings {
+    return { ...this.#settings };
+  }
+
+  /** Whether the room's language has adult prompts. */
+  get adultOk(): boolean {
+    return this.#adultPrompts.has(this.#lang);
+  }
+
+  /** A player's colour (an index of `PLAYER_COLORS`). */
+  colorOf(p: Player): number {
+    return this.#colors.get(p.id) ?? 0;
   }
 
   get phase(): Phase {
@@ -247,6 +300,31 @@ export class Drawbluff extends Emitter<GameEvents> {
       party.kick(p);
       return null;
     });
+    party.handle("settings", (d, from) => {
+      if (from.role !== "player" || !from.vip) throw new PartyError("not-vip", "Only the VIP can change this");
+      if (typeof d !== "object" || d === null || Array.isArray(d)) throw new PartyError("bad-settings", "undo, colorMode, adult");
+      const o: Partial<Settings> = {};
+      for (const k of ["undo", "colorMode", "adult"] as const) {
+        const v = (d as Record<string, Json>)[k];
+        if (v === undefined) continue;
+        if (typeof v !== "boolean") throw new PartyError("bad-settings", `${k}: true or false`);
+        o[k] = v;
+      }
+      this.configure(o);
+      return null;
+    });
+    party.handle("color", (d, from) => {
+      if (from.role !== "player") throw new PartyError("not-player", "Only players have a colour");
+      // Not while you play: your pens are dealt with your prompt.
+      if (this.#running && this.scores.has(from.id) && !from.waiting) throw new PartyError("running", "Not during a game");
+      const c = typeof d === "object" && d !== null && "color" in d ? (d as { color: unknown }).color : d;
+      if (typeof c !== "number" || !Number.isInteger(c) || c < 0 || c >= PLAYER_COLORS.length) throw new PartyError("bad-color", "No such colour");
+      const used = this.#taken();
+      // Your own, or a free one; shared only when none is free.
+      if (c !== this.#colors.get(from.id) && used[c]! > 0 && used.some((n) => n === 0)) throw new PartyError("color-taken", "Someone has that colour");
+      this.#setColor(from, c);
+      return null;
+    });
     party.handle("late-join", (d, from) => {
       if (from.role !== "player" || !from.vip) throw new PartyError("not-vip", "Only the VIP can change this");
       if (this.#running) throw new PartyError("running", "Not during a game");
@@ -260,6 +338,8 @@ export class Drawbluff extends Emitter<GameEvents> {
     // game they wait (the party marks them waiting) until they are dealt
     // in: at the next round, or with `open` at the next drawing.
     party.on("join", (p) => {
+      this.#setColor(p, this.#freeColor(), false);
+      this.#colorsChanged();
       if (!this.#running) {
         p.state.replace(this.#lobbyState(p));
         return;
@@ -268,16 +348,75 @@ export class Drawbluff extends Emitter<GameEvents> {
       this.#joined.push(p.name);
       party.screen.set(this.#joinedView());
     });
+    party.on("leave", (p) => {
+      this.#colors.delete(p.id);
+      this.#colorsChanged();
+    });
     this.#lobby();
   }
 
+  /** How many players have each colour. */
+  #taken(): number[] {
+    const n = PLAYER_COLORS.map(() => 0);
+    for (const p of this.party.players) {
+      const c = this.#colors.get(p.id);
+      if (c !== undefined) n[c]!++;
+    }
+    return n;
+  }
+
+  /** A newcomer's colour: one of the least used. */
+  #freeColor(): number {
+    const used = this.#taken();
+    const least = Math.min(...used);
+    const free = used.flatMap((n, i) => (n === least ? [i] : []));
+    return free[Math.floor(this.#rng() * free.length)]!;
+  }
+
+  #setColor(p: Player, c: number, show = true): void {
+    this.#colors.set(p.id, c);
+    if (!show) return;
+    p.state.set({ color: c, palette: palette(c, this.#settings.colorMode) });
+    this.#colorsChanged();
+  }
+
+  /** The colours to pick and how many have each (in the room), the players' (on the TV's lobby). */
+  #colorsChanged(): void {
+    this.party.room.set({ taken: this.#taken() });
+    if (this.#phase === "lobby") this.party.screen.set({ colors: this.#screenColors() });
+  }
+
+  #colorView(): { colors: string[]; taken: number[] } {
+    return { colors: playerColors(), taken: this.#taken() };
+  }
+
+  #screenColors(): Record<string, string> {
+    const all = playerColors();
+    return Object.fromEntries(this.party.players.map((p) => [p.id, all[this.colorOf(p)]!]));
+  }
+
+  /** A player's colour and pens (their view). */
+  #pens(p: Player): { color: number; palette: string[] } {
+    return { color: this.colorOf(p), palette: palette(this.colorOf(p), this.#settings.colorMode) };
+  }
+
+  #settingsView(): Record<string, boolean> {
+    return { ...this.#settings, adultOk: this.adultOk };
+  }
+
   /**
-   * Changes the rounds, the timers or the language before a game (the
-   * lobby shows the rounds; every phone and TV follows the language).
+   * Changes the rounds, the timers, the language or the settings before
+   * a game (the lobby shows the rounds and the settings; every phone and
+   * TV follows the language). Adult prompts only where the language has
+   * them: switching to a language without turns `adult` off.
    */
-  configure(o: { rounds?: number | undefined; timings?: Partial<Timings> | undefined; lang?: Lang | undefined }): void {
+  configure(
+    o: { rounds?: number | undefined; timings?: Partial<Timings> | undefined; lang?: Lang | undefined } & { [K in keyof Settings]?: Settings[K] | undefined },
+  ): void {
     if (this.#running) throw new PartyError("running", "Not during a game");
     if (o.lang !== undefined && !this.#prompts.has(o.lang)) throw new PartyError("bad-lang", `No prompts in ${o.lang}`);
+    const lang = o.lang ?? this.#lang;
+    if (o.adult === true && !this.#adultPrompts.has(lang)) throw new PartyError("no-adult", `No adult prompts in ${lang}`);
     if (o.rounds !== undefined) this.rounds = Math.max(1, Math.min(5, Math.round(o.rounds)));
     if (o.timings) this.timings = { ...DEFAULT_TIMINGS, ...o.timings };
     if (o.lang !== undefined && o.lang !== this.#lang) {
@@ -285,7 +424,19 @@ export class Drawbluff extends Emitter<GameEvents> {
       this.party.room.set({ lang: o.lang });
       this.party.screen.set({ lang: o.lang });
     }
-    if (this.#phase === "lobby") this.party.room.set({ rounds: this.rounds });
+    const was = JSON.stringify(this.#settings);
+    const colorMode = this.#settings.colorMode;
+    if (o.undo !== undefined) this.#settings.undo = o.undo;
+    if (o.colorMode !== undefined) this.#settings.colorMode = o.colorMode;
+    if (o.adult !== undefined) this.#settings.adult = o.adult;
+    if (!this.#adultPrompts.has(this.#lang)) this.#settings.adult = false;
+    if (this.#settings.colorMode !== colorMode) for (const p of this.party.players) p.state.set(this.#pens(p));
+    this.party.room.set(this.#settingsView());
+    if (this.#phase === "lobby") {
+      this.party.room.set({ rounds: this.rounds });
+      this.party.screen.set({ ...this.#settings });
+    }
+    if (JSON.stringify(this.#settings) !== was) this.emit("settings", this.settings);
   }
 
   /** Ends the game and its timers (the party stays). */
@@ -299,14 +450,14 @@ export class Drawbluff extends Emitter<GameEvents> {
   }
 
   #lobbyState(p: Player): Record<string, unknown> {
-    return { task: this.#phase === "final" ? "final" : "lobby", ...this.#rank(this.scores.has(p.id) ? p : undefined) };
+    return { task: this.#phase === "final" ? "final" : "lobby", ...this.#rank(this.scores.has(p.id) ? p : undefined), ...this.#pens(p) };
   }
 
   /** A waiting player's task: when they get in (`note`: `drawing`, `round` or `game`). */
   #waitState(p: Player): Record<string, unknown> {
     const open = this.party.lateJoin === "open" && (this.#phase === "draw" || this.#votesLeft > 0);
     const note = open ? "drawing" : this.#round < this.rounds ? "round" : "game";
-    return { task: "wait", note, ...this.#rank(p) };
+    return { task: "wait", note, ...this.#rank(p), ...this.#pens(p) };
   }
 
   /** The TV's newcomers: `joined` (the last few names), `joinedMore` (how many others). */
@@ -342,9 +493,18 @@ export class Drawbluff extends Emitter<GameEvents> {
   #lobby(): void {
     const p = this.party;
     this.#setPhase("lobby");
-    p.room.replace({ phase: "lobby", lang: this.#lang, minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, rounds: this.rounds, lateJoin: p.lateJoin });
-    p.screen.replace({ phase: "lobby", lang: this.#lang, minPlayers: this.minPlayers, maxPlayers: p.maxPlayers });
-    for (const pl of p.players) pl.state.replace({ task: "lobby" });
+    p.room.replace({
+      phase: "lobby",
+      lang: this.#lang,
+      minPlayers: this.minPlayers,
+      maxPlayers: p.maxPlayers,
+      rounds: this.rounds,
+      lateJoin: p.lateJoin,
+      ...this.#settingsView(),
+      ...this.#colorView(),
+    });
+    p.screen.replace({ phase: "lobby", lang: this.#lang, minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, ...this.#settings, colors: this.#screenColors() });
+    for (const pl of p.players) pl.state.replace({ task: "lobby", ...this.#pens(pl) });
   }
 
   /** Plays a whole game with the players who are there (and those who join). */
@@ -356,8 +516,10 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.#lied.clear();
     this.#spotted.clear();
     this.#fresh.clear();
-    let deck = this.#decks.get(this.#lang);
-    if (!deck) this.#decks.set(this.#lang, (deck = new PromptDeck(this.#prompts.get(this.#lang)!, this.#rng)));
+    const adult = this.#settings.adult && this.#adultPrompts.has(this.#lang);
+    const deckKey = adult ? `${this.#lang}:adult` : this.#lang;
+    let deck = this.#decks.get(deckKey);
+    if (!deck) this.#decks.set(deckKey, (deck = new PromptDeck((adult ? this.#adultPrompts : this.#prompts).get(this.#lang)!, this.#rng)));
     this.#deck = deck;
     try {
       for (let round = 1; round <= this.rounds; round++) {
@@ -396,7 +558,7 @@ export class Drawbluff extends Emitter<GameEvents> {
   }
 
   #room(fields: Record<string, unknown>): void {
-    this.party.room.replace({ lang: this.#lang, round: this.#round, rounds: this.rounds, players: this.#inGame().length, ...fields });
+    this.party.room.replace({ lang: this.#lang, round: this.#round, rounds: this.rounds, players: this.#inGame().length, ...this.#settingsView(), ...this.#colorView(), ...fields });
   }
 
   async #draw(round: number, players: Player[]): Promise<Entry[]> {
@@ -404,15 +566,23 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.#setPhase("draw");
     const hand = this.#deck.deal(players.length);
     const prompts = new Map(players.map((p, i) => [p, hand[i]!]));
+    // Everyone's pens as dealt (a drawing carries its artist's).
+    const pens = new Map(players.map((p) => [p, this.#pens(p).palette]));
     const deadline = this.#deadline(this.timings.draw);
+    const undo = this.#settings.undo;
     this.#room({ phase: "draw", deadline });
     this.#screen({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
-    for (const [p, prompt] of prompts) p.state.replace({ task: "draw", prompt: displayTitle(prompt.text), deadline, done: false, ...this.#rank(p) });
+    for (const [p, prompt] of prompts) {
+      p.state.replace({ task: "draw", prompt: displayTitle(prompt.text), undo, deadline, done: false, ...this.#rank(p), ...this.#pens(p) });
+    }
     for (const p of party.players) if (!prompts.has(p)) p.state.replace(this.#waitState(p));
     const got = await party.collect<Drawing>("draw", {
       from: players,
       until: deadline,
-      validate: validateDrawing,
+      validate: (d, p) => {
+        const palette = pens.get(p) ?? this.#pens(p).palette;
+        return { ...validateDrawing(d, palette.length), palette };
+      },
       signal: this.#abort.signal,
       onAnswer: (p, _v, answers) => {
         p.state.set({ done: true });
@@ -800,9 +970,9 @@ export class Drawbluff extends Emitter<GameEvents> {
     const party = this.party;
     this.#setPhase("final");
     const table = this.#table();
-    party.room.replace({ phase: "final", lang: this.#lang, minPlayers: this.minPlayers, lateJoin: party.lateJoin });
+    party.room.replace({ phase: "final", lang: this.#lang, minPlayers: this.minPlayers, lateJoin: party.lateJoin, ...this.#settingsView(), ...this.#colorView() });
     party.screen.replace({ phase: "final", lang: this.#lang, scores: table.slice(0, BOARD_LINES), total: table.length });
-    for (const p of party.players) p.state.replace({ task: "final", ...this.#rank(this.scores.has(p.id) ? p : undefined) });
+    for (const p of party.players) p.state.replace({ task: "final", ...this.#rank(this.scores.has(p.id) ? p : undefined), ...this.#pens(p) });
     this.emit("end", table);
     return table;
   }

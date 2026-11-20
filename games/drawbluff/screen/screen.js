@@ -158,6 +158,7 @@ function lobby(view) {
   const players = h("div", { class: "players" });
   const hint = h("p", { class: "hint" });
   const lateLine = h("div", { class: "late" });
+  const badges = h("div", { class: "badges" });
   stage.replaceChildren(
     h(
       "div",
@@ -169,7 +170,7 @@ function lobby(view) {
       h("div", { class: "code" }, view.join?.code ?? ""),
       lateLine,
     ),
-    h("div", { class: "col grow" }, h("h1", {}, t.players), players, hint),
+    h("div", { class: "col grow" }, h("h1", {}, t.players), players, hint, badges),
   );
   refresh = () => {
     const v = client.view;
@@ -179,15 +180,31 @@ function lobby(view) {
     lateLine.classList.toggle("open", late === "open");
     const max = v.screen?.maxPlayers ?? 8;
     const min = v.screen?.minPlayers ?? 3;
-    const cards = roster.map((/** @type {any} */ r) =>
-      h("div", { class: `player${r.connected ? "" : " away"}` }, h("span", { class: "n" }, r.name), r.vip ? h("span", { class: "star" }, "★ VIP") : null),
-    );
+    // Each player's colour (`screen.colors`, by id).
+    const colors = v.screen?.colors ?? {};
+    const cards = roster.map((/** @type {any} */ r) => {
+      const c = colors[r.id];
+      return h(
+        "div",
+        { class: `player${r.connected ? "" : " away"}` },
+        typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? h("span", { class: "dot", style: `background:${c}` }) : null,
+        h("span", { class: "n" }, r.name),
+        r.vip ? h("span", { class: "star" }, "★ VIP") : null,
+      );
+    });
     // Empty seats up to 8; past 8 players a denser grid (up to 50 names).
     for (let i = roster.length; i < Math.min(max, 8); i++) cards.push(h("div", { class: "player empty" }, i < min ? t.seatWaiting : t.seatFree));
     players.className = `players${roster.length > 24 ? " many" : roster.length > 8 ? " more" : ""}`;
     players.replaceChildren(...cards);
     const ready = roster.filter((/** @type {any} */ r) => r.connected).length;
     hint.textContent = ready < min ? t.needed(min - ready) : t.vipStarts(roster.find((/** @type {any} */ r) => r.vip)?.name);
+    // The rules: undo, colours, adult prompts.
+    const s = v.screen ?? {};
+    badges.replaceChildren(
+      h("span", { class: "badge" }, s.undo ? t.undoOn : t.undoOff),
+      h("span", { class: "badge" }, s.colorMode ? t.colorMode : t.shades),
+      ...(s.adult ? [h("span", { class: "badge hot" }, t.adult)] : []),
+    );
     if (roster.length > lobbyCount) beep([660, 880]);
     lobbyCount = roster.length;
   };

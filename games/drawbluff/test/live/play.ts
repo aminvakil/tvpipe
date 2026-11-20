@@ -198,6 +198,12 @@ try {
   await phone.eval(`document.getElementById("lang").click(); true`);
   await phone.until(`document.documentElement.lang === ${JSON.stringify(lang)} && localStorage.getItem("drawbluff:lang") === null`);
   log(`phone: switched to ${other} and back to the room's ${lang}`);
+  // Phil picks blue and, as the VIP, turns undo on.
+  await phone.eval(`document.querySelectorAll(".colors button")[7].click(); true`);
+  await phone.until(`document.querySelectorAll(".colors button")[7]?.classList.contains("chosen")`);
+  await phone.eval(`document.querySelectorAll(".rules .seg")[0].querySelectorAll("button")[1].click(); true`);
+  await win.until(`drawbluff.game.settings.undo === true`);
+  log("phone: picked a colour, turned undo on");
   // Phil (the VIP) starts from the phone.
   await phone.until(`!document.querySelector("button.primary")?.disabled`);
   await phone.eval(`document.querySelector("button.primary").click(); true`);
@@ -211,7 +217,7 @@ try {
     );
     const pt = (a: number, b: number): [number, number] => [box.x + a * box.w, box.y + b * box.w];
     await tab.drag(Array.from({ length: 30 }, (_, i) => pt(0.5 + 0.3 * Math.cos((i / 29) * 2 * Math.PI), 0.5 + 0.3 * Math.sin((i / 29) * 2 * Math.PI))));
-    await tab.eval(`document.querySelectorAll(".palette button")[2].click(); true`);
+    await tab.eval(`document.querySelectorAll(".swatches button")[1].click(); true`);
     await tab.drag([pt(0.38, 0.4), pt(0.4, 0.42)]);
     await tab.drag([pt(0.6, 0.4), pt(0.62, 0.42)]);
     await tab.drag(Array.from({ length: 12 }, (_, i) => pt(0.35 + (0.3 * i) / 11, 0.6 + 0.08 * Math.sin((i / 11) * Math.PI))));

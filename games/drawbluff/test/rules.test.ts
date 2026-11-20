@@ -3,7 +3,25 @@ import { test } from "node:test";
 
 import { PartyError } from "@tvpipe/party";
 
-import { buildOptions, cleanTitle, deal, displayTitle, optionsFor, pickLiars, plan, revealOrder, score, seeded, share, titleKey, validateDrawing, type Option } from "../game/rules.ts";
+import {
+  buildOptions,
+  cleanTitle,
+  deal,
+  displayTitle,
+  oklchHex,
+  optionsFor,
+  palette,
+  pickLiars,
+  plan,
+  playerColors,
+  revealOrder,
+  score,
+  seeded,
+  share,
+  titleKey,
+  validateDrawing,
+  type Option,
+} from "../game/rules.ts";
 
 test("titles compare without case, accents, punctuation and a leading article", () => {
   assert.equal(titleKey("A Nervous  Cactus!"), titleKey("nervous cactus"));
@@ -149,4 +167,27 @@ test("German titles: „quotes“, commas, umlauts, ß and articles", () => {
   // A lie equal to the German truth is no option; equal lies merge.
   const opts = buildOptions("der bär der tanzt", new Map([["a", "Der Baer, der tanzt"], ["b", "ein Hund, der tanzt"], ["c", "Hund der tanzt!"]]), [], seeded(1), 2, "de");
   assert.deepEqual(opts.map((o) => [o.text, o.authors]).sort(), [["der bär der tanzt", []], ["ein hund der tanzt", ["b", "c"]]]);
+});
+
+test("colours: OKLCH to sRGB (known answers), gamut mapping, the pens", () => {
+  // CSS Color 4's OKLCH of the sRGB primaries, white and black.
+  assert.equal(oklchHex([0.627955, 0.257683, 29.2339]), "#ff0000");
+  assert.equal(oklchHex([0.519752, 0.176858, 142.4953]), "#008000");
+  assert.equal(oklchHex([0.452014, 0.313214, 264.052]), "#0000ff");
+  assert.equal(oklchHex([1, 0, 0]), "#ffffff");
+  assert.equal(oklchHex([0, 0, 0]), "#000000");
+  // Out of gamut: less chroma, same lightness and hue (never clipped channels).
+  assert.equal(oklchHex([0.7, 0.5, 200]), "#00b4bb");
+  assert.deepEqual(playerColors(), ["#f13936", "#f68000", "#f4ce23", "#98d423", "#1eab53", "#08b6af", "#3fb1ea", "#3968e8", "#8b46df", "#f153aa"]);
+  // Two shades: dark, light.
+  assert.deepEqual(palette(7), ["#153bb7", "#8bafff"]);
+  assert.deepEqual(palette(2), ["#5c4c00", "#d0af00"]);
+  // Colour mode: black and red, yellow, green, blue leaning to the player's colour.
+  assert.deepEqual(palette(7, true), ["#171f30", "#d83a90", "#6cd76d", "#00a293", "#2e67e5"]);
+  assert.deepEqual(palette(0, true), ["#2e1916", "#eb3d33", "#ffac24", "#949800", "#8a4fda"]);
+  // An unknown colour: the first.
+  assert.deepEqual(palette(99), palette(0));
+  // A drawing's colours: indexes into its pens.
+  assert.deepEqual(validateDrawing({ strokes: [[1, 20, 5, 5]] }, 2), { strokes: [[1, 20, 5, 5]] });
+  assert.throws(() => validateDrawing({ strokes: [[2, 20, 5, 5]] }, 2), (e: unknown) => e instanceof PartyError && e.code === "bad-drawing");
 });

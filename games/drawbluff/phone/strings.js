@@ -39,6 +39,9 @@ const en = (f) => ({
     refused: "Try another one.",
     "bad-vote": "Pick one of the titles.",
     "bad-drawing": "That drawing cannot be sent.",
+    "color-taken": "Someone has that colour: pick a free one.",
+    "bad-color": "Pick one of the colours.",
+    "no-adult": "There are no adult prompts in this language.",
   },
   // Header and scores.
   /** @param {number} r @param {number} of */
@@ -105,6 +108,29 @@ const en = (f) => ({
   colour: (i) => `colour ${f.n(i)}`,
   sizes: ["thin", "medium", "thick"],
   clear: "clear",
+  clearSure: "Clear?",
+  undo: "undo",
+  // Your colour and the rules.
+  yourColour: "Your colour",
+  yourPens: "Your pens:",
+  colourNames: ["red", "orange", "yellow", "lime", "green", "teal", "sky blue", "blue", "violet", "pink"],
+  rules: "Rules",
+  /** @type {Record<"undo" | "colorMode" | "adult", [[string, string], [string, string]]>} off, on: the button, the line */
+  settings: {
+    undo: [
+      ["No undo", "No undo: every stroke counts."],
+      ["Undo", "Undo is on: take back the last stroke."],
+    ],
+    colorMode: [
+      ["2 shades", "You draw in two shades of your colour."],
+      ["4 colours", "Colour mode: black and four colours, tinted with yours."],
+    ],
+    adult: [
+      ["Family", "Family-friendly prompts."],
+      ["Adult 18+", "Adult prompts (18+)."],
+    ],
+  },
+  noAdult: "Family-friendly prompts (no adult ones in this language).",
   // Lies and votes.
   fakeTitle: "Fake a title",
   liePlaceholder: "a convincing title",
@@ -144,6 +170,9 @@ const de = (f) => ({
     refused: "Versuch einen anderen.",
     "bad-vote": "Wähl einen der Titel.",
     "bad-drawing": "Diese Zeichnung lässt sich nicht senden.",
+    "color-taken": "Die Farbe hat schon jemand: Nimm eine freie.",
+    "bad-color": "Wähl eine der Farben.",
+    "no-adult": "In dieser Sprache gibt es keine Begriffe ab 18.",
   },
   rank: (r, of) => `Platz ${f.n(r)} von ${f.n(of)}`,
   rankOnly: (r) => `Platz ${f.n(r)}`,
@@ -190,6 +219,27 @@ const de = (f) => ({
   colour: (i) => `Farbe ${f.n(i)}`,
   sizes: ["dünn", "mittel", "dick"],
   clear: "löschen",
+  clearSure: "Löschen?",
+  undo: "rückgängig",
+  yourColour: "Deine Farbe",
+  yourPens: "Deine Stifte:",
+  colourNames: ["Rot", "Orange", "Gelb", "Hellgrün", "Grün", "Türkis", "Himmelblau", "Blau", "Violett", "Pink"],
+  rules: "Regeln",
+  settings: {
+    undo: [
+      ["Kein Zurück", "Kein Rückgängig: Jeder Strich zählt."],
+      ["Rückgängig", "Rückgängig ist an: Der letzte Strich lässt sich zurücknehmen."],
+    ],
+    colorMode: [
+      ["2 Töne", "Du zeichnest in zwei Tönen deiner Farbe."],
+      ["4 Farben", "Farbmodus: Schwarz und vier Farben, in deine getönt."],
+    ],
+    adult: [
+      ["Familie", "Familientaugliche Begriffe."],
+      ["Ab 18", "Begriffe für Erwachsene (ab 18)."],
+    ],
+  },
+  noAdult: "Familientaugliche Begriffe (ab 18 gibt es in dieser Sprache nicht).",
   fakeTitle: "Erfinde einen Titel",
   liePlaceholder: "ein glaubwürdiger titel",
   send: "Senden",

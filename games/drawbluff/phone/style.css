@@ -78,15 +78,79 @@ ul.players li button { padding: .2rem .6rem; font-size: .85rem; }
 .options { display: flex; flex-direction: column; gap: .55rem; }
 .options button { text-align: left; background: var(--paper); color: #1d1d1f; font-weight: 500; }
 .options button.chosen { background: var(--accent); }
-.pad-wrap { position: relative; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-canvas.pad { width: 100%; aspect-ratio: 1; display: block; border-radius: .8rem; background: var(--paper); touch-action: none; }
+/* Drawing: the whole screen (no header, no card), the pad a square as big
+   as the width allows (or the height, when that is shorter), the pens and
+   the tools under the thumb. Sideways: the pad at full height on the left. */
+body.drawing header { display: none; }
+body.drawing main {
+  position: fixed; inset: 0; max-width: none; margin: 0;
+  padding: max(6px, env(safe-area-inset-top)) max(4px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+}
+body.drawing #banner { position: fixed; top: 0; left: 0; right: 0; z-index: 5; }
+.draw {
+  height: 100%; max-width: 40rem; margin: 0 auto;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; gap: 6px;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.draw .top { display: flex; align-items: center; gap: .6rem; padding: 0 6px; min-height: 44px; }
+.draw .what { flex: 1; min-width: 0; }
+.draw .label { display: block; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; opacity: .65; }
+.draw .prompt {
+  margin: 0; font-size: 1rem; line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.draw #timer { font-size: 1rem; padding: .2rem .55rem; min-width: 3.2ch; text-align: center; }
+.padbox { min-height: 0; container-type: size; display: grid; place-items: start center; touch-action: none; }
+canvas.pad {
+  width: 100%; aspect-ratio: 1; /* without container units */
+  width: min(100cqw, 100cqh); height: min(100cqw, 100cqh);
+  display: block; border-radius: 8px; background: var(--paper); touch-action: none;
+}
+.swatches { display: flex; gap: 6px; padding: 0 2px; }
+.swatches button { flex: 1; height: 38px; padding: 0; border-radius: 10px; border: 3px solid rgba(255,255,255,.18); }
+.draw button.chosen { outline: none; }
+.swatches button.chosen { border-color: var(--accent); box-shadow: 0 0 0 2px var(--bg) inset; }
+.toolbar { display: flex; gap: 6px; padding: 0 2px; height: 48px; }
+.toolbar > * { height: 100%; }
+.sizes { display: flex; background: rgba(255,255,255,.1); border-radius: 12px; padding: 3px; gap: 2px; }
+.sizes button { width: 40px; border-radius: 9px; background: transparent; display: grid; place-items: center; padding: 0; }
+.sizes button.chosen { background: rgba(255,214,10,.32); }
+.sizes i { display: block; border-radius: 50%; background: var(--ink); }
+.toolbar .icon { width: 48px; border-radius: 12px; display: grid; place-items: center; padding: 0; }
+.toolbar .icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.toolbar .icon.arm { background: var(--hot); width: auto; padding: 0 .7rem; font-size: .85rem; }
+.toolbar .done { flex: 1; border-radius: 12px; background: var(--accent); color: #1d1d1f; padding: 0; }
+.draw .error { min-height: 0; margin: 0; text-align: center; font-size: .9rem; }
+.draw .error:empty { display: none; }
+@media (orientation: landscape) and (max-height: 540px) {
+  .draw {
+    max-width: none;
+    grid-template-columns: min(calc(100dvh - 16px), 62vw) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "pad top" "pad pens" "pad ." "pad tools" "pad err";
+    column-gap: 10px;
+  }
+  .draw .top { grid-area: top; padding: 0; }
+  .padbox { grid-area: pad; height: 100%; }
+  .swatches { grid-area: pens; flex-wrap: wrap; }
+  .swatches button { flex: 1 0 calc(25% - 6px); height: 34px; }
+  .toolbar { grid-area: tools; height: auto; flex-wrap: wrap; }
+  .toolbar > * { height: 44px; }
+  .toolbar .done { flex: 1 0 100%; }
+  .draw .error { grid-area: err; }
+}
 canvas.mini { width: 60%; aspect-ratio: 1; display: block; margin: 0 auto .8rem; border-radius: .6rem; background: var(--paper); }
-.palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: .35rem; margin-top: .6rem; }
-.palette button { aspect-ratio: 1; padding: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,.25); }
-.palette button.chosen { outline: none; border-color: var(--accent); transform: scale(1.12); }
-.tools { display: flex; gap: .4rem; margin-top: .6rem; }
-.tools button { flex: 1; padding: .55rem .1rem; font-size: .9rem; hyphens: manual; -webkit-hyphens: manual; }
-.tools button.chosen { background: rgba(255,214,10,.3); outline: none; }
+/* Your colour: ten swatches, yours ringed, others' marked. */
+.colors { display: grid; grid-template-columns: repeat(5, 1fr); gap: .45rem; }
+.colors button { aspect-ratio: 1; padding: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,.2); position: relative; }
+.colors button.chosen { outline: none; border-color: var(--accent); transform: scale(1.1); }
+.colors button.taken::after { content: ""; position: absolute; inset: 32%; border-radius: 50%; background: rgba(0,0,0,.35); }
+.pens-line { display: flex; align-items: center; gap: .5rem; margin-top: .6rem; font-size: .9rem; }
+.pens { display: flex; gap: .3rem; }
+.pen { width: 1.6rem; height: .7rem; border-radius: .4rem; border: 1px solid rgba(255,255,255,.3); }
+.picker .error:empty, .rules .error:empty { display: none; }
+.rules .muted { margin: .35rem 0 .2rem; font-size: .9rem; }
+#who .dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin-right: .4rem; vertical-align: -.05rem; }
 .score { font-family: "Michroma", sans-serif; font-size: 2rem; color: var(--accent); margin: .2rem 0; }
 .muted { opacity: .7; }
 .role { font-weight: 600; color: var(--accent); margin: 0 0 .6rem; line-height: 1.35; }

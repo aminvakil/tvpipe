@@ -54,8 +54,13 @@ export const LIES: Record<Lang, readonly string[]> = {
   ],
 };
 
-/** A recognisable doodle: a face, a house or a sun, in a random spot. */
-export function doodle(rng: () => number): Drawing {
+/** A recognisable doodle: a face, a house or a sun, in a random spot, with `pens` colours. */
+export function doodle(rng: () => number, pens = 8): Drawing {
+  const d = sketch(rng);
+  return { strokes: d.strokes.map(([c, ...rest]) => [c! % Math.max(1, pens), ...rest]) };
+}
+
+function sketch(rng: () => number): Drawing {
   const cx = 300 + Math.floor(rng() * 400);
   const cy = 300 + Math.floor(rng() * 400);
   const r = 120 + Math.floor(rng() * 80);
@@ -145,7 +150,7 @@ export class Bot {
         return;
       }
       case "draw":
-        if (!me.done) this.#once(`draw:${turn}`, () => c.act("draw", doodle(this.#rng)));
+        if (!me.done) this.#once(`draw:${turn}`, () => c.act("draw", doodle(this.#rng, Array.isArray(me.palette) ? me.palette.length : 8)));
         return;
       case "lie":
         if (!me.done) {

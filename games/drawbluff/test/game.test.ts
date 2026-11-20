@@ -14,16 +14,24 @@ async function until(cond: () => boolean, ms = 3000): Promise<void> {
 
 import { bots, LIES } from "../game/bots.ts";
 import { Drawbluff } from "../game/game.ts";
-import { seeded, type Lang } from "../game/rules.ts";
-import { PROMPT_LIST, PROMPTS_BY_LANG } from "./prompts.ts";
+import { palette, PLAYER_COLORS, seeded, type Lang } from "../game/rules.ts";
+import { ADULT_BY_LANG, PROMPT_LIST, PROMPTS_BY_LANG } from "./prompts.ts";
 
 const fast = { draw: 1500, lie: 1200, vote: 1200, revealStep: 20, revealEnd: 20, scores: 20, gallery: 20 };
 
-async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number; lateJoin?: LateJoin; lang?: Lang } = {}) {
+async function game(n: number, opts: { silent?: number; drop?: number; rounds?: number; think?: number; lateJoin?: LateJoin; lang?: Lang; adult?: boolean } = {}) {
   const relay = new MemoryRelay();
   const party = new Party({ grace: 100, maxPlayers: Math.max(8, n + 2) }).listen(relay);
   const server = { relay, close: async () => party.close() };
-  const g = new Drawbluff(party, { rounds: opts.rounds ?? 2, timings: fast, rng: seeded(7), lateJoin: opts.lateJoin, prompts: opts.lang ? PROMPTS_BY_LANG : PROMPT_LIST, lang: opts.lang });
+  const g = new Drawbluff(party, {
+    rounds: opts.rounds ?? 2,
+    timings: fast,
+    rng: seeded(7),
+    lateJoin: opts.lateJoin,
+    prompts: opts.lang ? PROMPTS_BY_LANG : PROMPT_LIST,
+    lang: opts.lang,
+    adultPrompts: opts.adult ? { en: ADULT_BY_LANG.en } : undefined,
+  });
   g.open();
   const url = "ws://party.test/_tvpipe/ws";
   const phases: string[] = [];
@@ -330,6 +338,75 @@ test("German: the room's language reaches every phone and the TV, with German pr
     await until(() => players.every((b) => b.client.view["me"].task === "final" && b.client.view["room"].lang === "de"));
     assert.deepEqual(new Set(players.flatMap((b) => b.errors)), new Set());
     assert.throws(() => g.configure({ lang: "fr" as Lang }), (e: { code: string }) => e.code === "bad-lang");
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});
+
+test("colours, pens and the rules: picked in the lobby, the VIP's settings, adult prompts, the pens a drawing carries", async () => {
+  const { server, party, g, players } = await game(3, { rounds: 1, lang: "en", adult: true });
+  try {
+    const me = (i: number) => players[i]!.client.view["me"] as { color: number; palette: string[]; task: string; undo?: boolean };
+    const room = (i: number) => players[i]!.client.view["room"] as Record<string, any>;
+    // Everybody got a colour of their own and its two shades.
+    await until(() => players.every((_, i) => typeof me(i)?.color === "number" && Array.isArray(room(i)?.taken)));
+    const colors = players.map((_, i) => me(i).color);
+    assert.equal(new Set(colors).size, 3);
+    assert.equal(room(0)["colors"].length, PLAYER_COLORS.length);
+    assert.equal(room(0)["taken"].reduce((a: number, b: number) => a + b, 0), 3);
+    for (let i = 0; i < 3; i++) assert.deepEqual(me(i).palette, palette(colors[i]!));
+    // Someone else's colour is taken while one is free; a free one is yours.
+    await assert.rejects(players[1]!.client.act("color", { color: colors[0] }), (e: { code: string }) => e.code === "color-taken");
+    await assert.rejects(players[1]!.client.act("color", { color: 99 }), (e: { code: string }) => e.code === "bad-color");
+    const free = PLAYER_COLORS.findIndex((_, i) => !colors.includes(i));
+    await players[1]!.client.act("color", { color: free });
+    await until(() => me(1).color === free && me(1).palette[0] === palette(free)[0]);
+    const id1 = party.players[1]!.id;
+    assert.equal((party.screen.peek() as { colors: Record<string, string> }).colors[id1], room(0)["colors"][free]);
+    // The rules: the VIP's, with true or false.
+    const changes: unknown[] = [];
+    g.on("settings", (s) => changes.push(s));
+    await assert.rejects(players[1]!.client.act("settings", { undo: true }), (e: { code: string }) => e.code === "not-vip");
+    await assert.rejects(players[0]!.client.act("settings", { undo: "yes" }), (e: { code: string }) => e.code === "bad-settings");
+    assert.deepEqual(g.settings, { undo: false, colorMode: false, adult: false });
+    await players[0]!.client.act("settings", { undo: true, colorMode: true, adult: true });
+    assert.deepEqual(g.settings, { undo: true, colorMode: true, adult: true });
+    assert.equal(changes.length, 1);
+    await until(() => players.every((_, i) => me(i).palette.length === 5 && room(i)["colorMode"] === true));
+    assert.deepEqual(me(1).palette, palette(free, true));
+    assert.equal((party.screen.peek() as { adult: boolean }).adult, true);
+    // No adult prompts in German: off there, refused.
+    g.configure({ lang: "de" });
+    assert.equal(g.settings.adult, false);
+    await until(() => room(0)["adultOk"] === false && room(0)["adult"] === false);
+    await assert.rejects(players[0]!.client.act("settings", { adult: true }), (e: { code: string }) => e.code === "no-adult");
+    g.configure({ lang: "en", adult: true });
+    // The game: adult prompts, the pens and undo on every pad, drawings with their artist's pens.
+    const adult = new Set(ADULT_BY_LANG.en.map((p) => p.text));
+    const prompts: string[] = [];
+    const drawings: { artist: string; palette?: string[] }[] = [];
+    g.on("phase", (p) => {
+      if (p === "draw") queueMicrotask(() => prompts.push(...party.players.map((pl) => (pl.state.peek() as { prompt?: string }).prompt).filter((x) => typeof x === "string")));
+      if (p === "lie") {
+        queueMicrotask(() => {
+          const s = party.screen.peek() as { artist: { id: string }; drawing: { palette?: string[] } };
+          drawings.push({ artist: s.artist.id, palette: s.drawing.palette });
+        });
+      }
+    });
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await until(() => players.every((_, i) => me(i).task === "draw"));
+    assert.ok(players.every((_, i) => me(i).undo === true && me(i).palette.length === 5));
+    await assert.rejects(players[2]!.client.act("color", { color: free }), (e: { code: string }) => e.code === "running");
+    await assert.rejects(players[0]!.client.act("settings", { undo: false }), (e: { code: string }) => e.code === "running");
+    await end;
+    assert.equal(prompts.length, 3);
+    for (const p of prompts) assert.ok(adult.has(p), `${p}: an adult prompt`);
+    assert.ok(drawings.length > 0);
+    for (const d of drawings) assert.deepEqual(d.palette, palette(g.colorOf(party.player(d.artist)!), true));
+    assert.deepEqual(new Set(players.flatMap((b) => b.errors)), new Set());
   } finally {
     for (const b of players) b.close();
     await server.close();

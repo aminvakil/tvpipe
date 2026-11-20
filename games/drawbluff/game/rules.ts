@@ -5,12 +5,119 @@
 
 import { cleanText, PartyError } from "@tvpipe/party";
 
-/** The 8 colours a drawing may use (index → CSS colour). */
+/**
+ * The colours of a drawing without its own palette (index → CSS colour):
+ * the fallback of the pages; a game's drawings carry their artist's
+ * {@link palette}.
+ */
 export const PALETTE = ["#1d1d1f", "#ffffff", "#e5383b", "#f9a620", "#ffd60a", "#2a9d8f", "#3a86ff", "#8338ec"] as const;
 
-/** A drawing on a 1000×1000 grid: strokes of `[colour, width, x0, y0, x1, y1, …]`. */
+/**
+ * A drawing on a 1000×1000 grid: strokes of `[colour, width, x0, y0, x1,
+ * y1, …]`, `colour` an index into `palette` (the artist's pens, set by
+ * the host; {@link PALETTE} without one).
+ */
 export interface Drawing {
   strokes: number[][];
+  palette?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Colours: every player picks a colour and draws with pens made from it in
+// OKLCH (perceptual lightness, chroma, hue), mapped into sRGB.
+
+/** An OKLCH colour: lightness 0–1, chroma (0–~0.37), hue in degrees. */
+export type Oklch = readonly [l: number, c: number, h: number];
+
+/** OKLCH to sRGB (gamma-encoded, 0–1 per channel, may be out of range), after Björn Ottosson's Oklab. */
+export function oklchToRgb([l, c, h]: Oklch): [number, number, number] {
+  const a = c * Math.cos((h * Math.PI) / 180);
+  const b = c * Math.sin((h * Math.PI) / 180);
+  const l_ = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m_ = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s_ = (l - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const lin = [
+    4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+    -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+    -0.0041960863 * l_ - 0.7034186147 * m_ + 1.707614701 * s_,
+  ];
+  const gamma = (x: number) => (Math.abs(x) <= 0.0031308 ? 12.92 * x : Math.sign(x) * (1.055 * Math.abs(x) ** (1 / 2.4) - 0.055));
+  return [gamma(lin[0]!), gamma(lin[1]!), gamma(lin[2]!)];
+}
+
+const inGamut = (rgb: readonly number[]) => rgb.every((v) => v >= -1e-4 && v <= 1 + 1e-4);
+
+/**
+ * An OKLCH colour as `#rrggbb`: out of the sRGB gamut, its chroma is
+ * lowered (lightness and hue kept) until it fits.
+ */
+export function oklchHex(color: Oklch): string {
+  const [l, c, h] = color;
+  const L = clamp(l, 0, 1);
+  let rgb = oklchToRgb([L, c, h]);
+  if (!inGamut(rgb)) {
+    let lo = 0;
+    let hi = Math.max(0, c);
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      if (inGamut(oklchToRgb([L, mid, h]))) lo = mid;
+      else hi = mid;
+    }
+    rgb = oklchToRgb([L, lo, h]);
+  }
+  return `#${rgb.map((v) => Math.round(clamp(v, 0, 1) * 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** The colours a player can pick (OKLCH): red, orange, yellow, lime, green, teal, sky, blue, violet, pink. */
+export const PLAYER_COLORS: readonly Oklch[] = [
+  [0.63, 0.22, 27],
+  [0.72, 0.18, 55],
+  [0.86, 0.17, 95],
+  [0.8, 0.2, 128],
+  [0.65, 0.17, 150],
+  [0.7, 0.12, 190],
+  [0.72, 0.13, 235],
+  [0.56, 0.2, 265],
+  [0.56, 0.22, 300],
+  [0.68, 0.21, 350],
+];
+
+/** The player colours as CSS colours (the picker's swatches). */
+export function playerColors(): string[] {
+  return PLAYER_COLORS.map(oklchHex);
+}
+
+/** The lightness of a player's two pens (dark, light). */
+export const SHADES = [0.42, 0.76] as const;
+
+/** Colour mode's four pens before they lean to the player's colour (red, yellow, green, blue), and black. */
+export const FULL_COLORS: readonly Oklch[] = [
+  [0.62, 0.21, 29],
+  [0.85, 0.17, 92],
+  [0.66, 0.17, 148],
+  [0.55, 0.2, 262],
+];
+export const FULL_BLACK: Oklch = [0.24, 0.035, 0];
+/** How far colour mode's pens move to the player's colour: of the hue's way, of the lightness's and chroma's. */
+export const LEAN = { hue: 0.3, lc: 0.2 } as const;
+
+/** `a` moved `t` of the way to `b` on the colour wheel (the short way round). */
+function towards(a: number, b: number, t: number): number {
+  const d = ((((b - a) % 360) + 540) % 360) - 180;
+  return (((a + d * t) % 360) + 360) % 360;
+}
+
+/**
+ * A player's pens (`#rrggbb`, index = a stroke's colour): their colour
+ * dark and light; in colour mode black and four colours leaning towards
+ * theirs (black tinted with its hue). An unknown colour: the first.
+ */
+export function palette(color: number, colorMode = false): string[] {
+  const base = PLAYER_COLORS[color] ?? PLAYER_COLORS[0]!;
+  const [bl, bc, bh] = base;
+  if (!colorMode) return SHADES.map((l) => oklchHex([l, bc, bh]));
+  const pens = FULL_COLORS.map(([l, c, h]): Oklch => [l + (bl - l) * LEAN.lc, c + (bc - c) * LEAN.lc, towards(h, bh, LEAN.hue)]);
+  return [oklchHex([FULL_BLACK[0], FULL_BLACK[1], bh]), ...pens.map(oklchHex)];
 }
 
 export const GRID = 1000;
@@ -18,8 +125,8 @@ export const MAX_STROKES = 300;
 export const MAX_POINTS = 12_000;
 export const MAX_TITLE = 48;
 
-/** Checks and normalises a drawing from a phone (throws `PartyError("bad-drawing")`). */
-export function validateDrawing(data: unknown): Drawing {
+/** Checks and normalises a drawing from a phone with `colors` pens (throws `PartyError("bad-drawing")`); its strokes only. */
+export function validateDrawing(data: unknown, colors: number = PALETTE.length): Drawing {
   const bad = (why: string) => new PartyError("bad-drawing", `That drawing cannot be sent (${why})`);
   if (typeof data !== "object" || data === null || !Array.isArray((data as Drawing).strokes)) throw bad("no strokes");
   const strokes = (data as Drawing).strokes;
@@ -30,7 +137,7 @@ export function validateDrawing(data: unknown): Drawing {
     if (!Array.isArray(s) || s.length < 4 || s.length % 2 !== 0) throw bad("a broken stroke");
     if (!s.every((v) => typeof v === "number" && Number.isFinite(v))) throw bad("not numbers");
     const [color, width, ...xy] = s as number[];
-    if (!Number.isInteger(color) || color! < 0 || color! >= PALETTE.length) throw bad("unknown colour");
+    if (!Number.isInteger(color) || color! < 0 || color! >= colors) throw bad("unknown colour");
     points += xy.length / 2;
     if (points > MAX_POINTS) throw bad("too many points");
     out.push([color!, clamp(Math.round(width!), 2, 120), ...xy.map((v) => clamp(Math.round(v), 0, GRID))]);

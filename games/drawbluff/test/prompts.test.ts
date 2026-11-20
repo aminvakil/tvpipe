@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { DECK_RESERVE, displayTitle, LANGS, LIE_SOFT, PromptDeck, seeded, titleKey, type Prompt } from "../game/rules.ts";
 import { nearDuplicates, perStructure, repeats } from "../scripts/prompt-stats.ts";
-import { PROMPTS_BY_LANG } from "./prompts.ts";
+import { ADULT_BY_LANG, PROMPTS_BY_LANG } from "./prompts.ts";
 
 /** What a prompt may contain, per language (its display form, so lowercase). */
 const LETTERS = { en: /^[a-z' ]+$/, de: /^[a-zäöüß' ]+$/ } as const;
@@ -50,6 +50,47 @@ for (const lang of LANGS) {
     assert.deepEqual(repeats(prompts, s, false, 20), { mean: 0, sessions: 0, mixed: 1 });
     // A fresh deck per game (as before) would repeat some.
     assert.ok(repeats(prompts, s, true, 20).mean > 0);
+  });
+}
+
+for (const lang of LANGS) {
+  const prompts = ADULT_BY_LANG[lang];
+
+  test(`adult prompts (${lang}): display form, at most ${LIE_SOFT} characters, nothing a lie could not be`, () => {
+    for (const { text } of prompts) {
+      assert.equal(displayTitle(text), text, text);
+      assert.equal(text.normalize("NFC"), text, `${text}: not NFC`);
+      assert.ok([...text].length <= LIE_SOFT, `${text}: ${[...text].length} characters`);
+      assert.match(text, LETTERS[lang], text);
+      assert.ok(!/^ | $|  /.test(text), `${text}: spacing`);
+      for (const w of text.split(" ")) assert.ok([...w].length <= LONGEST_WORD, `${text}: ${w} is too long a word`);
+    }
+  });
+
+  test(`adult prompts (${lang}): no two alike, none like a family prompt`, () => {
+    const keys = new Map<string, string>();
+    for (const { text } of PROMPTS_BY_LANG[lang]) keys.set(titleKey(text, lang), text);
+    for (const { text } of prompts) {
+      const k = titleKey(text, lang);
+      assert.ok(!keys.has(k), `${text} = ${keys.get(k)}`);
+      keys.set(k, text);
+    }
+    assert.deepEqual(nearDuplicates(prompts, lang), []);
+  });
+
+  test(`adult prompts (${lang}): enough, in balanced structures`, () => {
+    assert.ok(prompts.length >= 240, String(prompts.length));
+    assert.ok(prompts.every((p) => /^[a-z]+$/.test(p.tag)), "every prompt has a structure");
+    const tags = perStructure(prompts);
+    assert.ok(tags.size >= 8, `${tags.size} structures`);
+    for (const [tag, n] of tags) {
+      assert.ok(n >= 25, `${tag}: ${n}`);
+      assert.ok(n <= prompts.length / 6, `${tag}: ${n} of ${prompts.length}`);
+    }
+  });
+
+  test(`adult prompts (${lang}): a room plays 3 games of 8 players, 2 rounds, without a repeat`, () => {
+    assert.equal(repeats(prompts, { games: 3, players: 8, rounds: 2 }, false, 20).mean, 0);
   });
 }
 

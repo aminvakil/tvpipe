@@ -27,6 +27,12 @@ const en = (f) => ({
   needed: (n) => f.p(n, { one: "# more player needed.", other: "# more players needed." }),
   /** @param {string | undefined} vip */
   vipStarts: (vip) => `${vip ?? "The VIP"} starts the game on their phone.`,
+  // The rules (the lobby's badges).
+  undoOff: "No undo",
+  undoOn: "Undo on",
+  shades: "Two shades each",
+  colorMode: "Colour mode",
+  adult: "18+ prompts",
   // Progress.
   /** @param {number} n @param {number} of */
   done: (n, of) => `${f.n(n)} of ${f.n(of)} done`,
@@ -110,6 +116,11 @@ const de = (f) => ({
   seatFree: "noch ein Platz frei",
   needed: (n) => f.p(n, { one: "Noch # Mitspieler fehlt.", other: "Noch # Mitspieler fehlen." }),
   vipStarts: (vip) => `${vip ?? "Der VIP"} startet das Spiel am Handy.`,
+  undoOff: "Kein Rückgängig",
+  undoOn: "Rückgängig an",
+  shades: "Zwei Töne pro Person",
+  colorMode: "Farbmodus",
+  adult: "Begriffe ab 18",
   done: (n, of) => `${f.n(n)} von ${f.n(of)} fertig`,
   voted: (n, of) => `${f.n(n)} von ${f.n(of)} abgestimmt`,
   waitingFor: (names) => `Wir warten auf ${f.list(names)}`,

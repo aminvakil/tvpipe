@@ -84,7 +84,18 @@ function renderPlayers(): void {
   $("count").textContent = `${party.players.length} / ${party.maxPlayers}`;
   ($("start") as HTMLButtonElement).disabled = running || party.connectedPlayers.length < game.minPlayers;
   $("start").textContent = running ? t.playing : party.connectedPlayers.length < game.minPlayers ? t.waitingMore(game.minPlayers - party.connectedPlayers.length) : t.start;
-  for (const id of ["rounds", "timers", "late", "lang"]) ($(id) as HTMLSelectElement).disabled = running;
+  for (const id of ["rounds", "timers", "late", "lang", "undo", "colormode", "adult"]) ($(id) as HTMLSelectElement).disabled = running;
+  renderSettings();
+}
+
+/** The settings as the game has them (the VIP changes them from the lobby too). */
+function renderSettings(): void {
+  const s = game.settings;
+  $<HTMLSelectElement>("undo").value = s.undo ? "on" : "off";
+  $<HTMLSelectElement>("colormode").value = s.colorMode ? "on" : "off";
+  $<HTMLSelectElement>("adult").value = s.adult ? "on" : "off";
+  ($<HTMLSelectElement>("adult").options[1] as HTMLOptionElement).disabled = !game.adultOk;
+  $<HTMLSelectElement>("late").value = party.lateJoin;
 }
 
 function renderCast(s: CastStatus): void {
@@ -245,21 +256,24 @@ async function main(): Promise<void> {
     showError(t.noTvpipe((err as Error).message));
     return;
   }
-  // Every language's prompts (data/prompts.txt, data/prompts.de.txt).
+  // Every language's prompts (data/prompts.txt, data/prompts.de.txt) and adult ones (data/prompts.adult.txt, …).
   const prompts: Partial<Record<Lang, Prompt[]>> = {};
+  const adultPrompts: Partial<Record<Lang, Prompt[]>> = {};
   await Promise.all(
-    LANGS.map(async (l) => {
-      const file = l === "en" ? "prompts.txt" : `prompts.${l}.txt`;
-      const res = await fetch(new URL(`../data/${file}`, import.meta.url));
-      if (res.ok) prompts[l] = parsePrompts(await res.text());
-    }),
+    LANGS.flatMap((l) =>
+      [false, true].map(async (adult) => {
+        const file = `prompts${adult ? ".adult" : ""}${l === "en" ? "" : `.${l}`}.txt`;
+        const res = await fetch(new URL(`../data/${file}`, import.meta.url));
+        if (res.ok) (adult ? adultPrompts : prompts)[l] = parsePrompts(await res.text());
+      }),
+    ),
   );
   if (!prompts[lang]) lang = "en";
   for (const o of $<HTMLSelectElement>("lang").options) o.disabled = !prompts[pickLang(o.value)];
   t = strings(lang);
   renderLang();
   party = await tvpipe.party({ lateJoin: "wait" });
-  game = new Drawbluff(party, { prompts, lang, rounds: 2 });
+  game = new Drawbluff(party, { prompts, adultPrompts, lang, rounds: 2 });
   game.open();
   renderJoin();
   renderPlayers();
@@ -267,6 +281,7 @@ async function main(): Promise<void> {
     renderJoin();
     renderPlayers();
   });
+  game.on("settings", renderSettings);
   game.on("phase", (p) => {
     $("phase").textContent = p === "lobby" ? t.lobby : p === "final" ? t.gameOver : t.round(Number(party.room.peek()["round"] ?? 0), t.phases[p] ?? p);
     renderPlayers();
@@ -307,6 +322,19 @@ async function main(): Promise<void> {
     party.lateJoin = (e.target as HTMLSelectElement).value as LateJoin;
     party.room.set({ lateJoin: party.lateJoin });
   };
+  const setting = (id: string, key: "undo" | "colorMode" | "adult") => {
+    $<HTMLSelectElement>(id).onchange = (e) => {
+      try {
+        game.configure({ [key]: (e.target as HTMLSelectElement).value === "on" });
+      } catch (err) {
+        showError((err as Error).message);
+      }
+      renderSettings();
+    };
+  };
+  setting("undo", "undo");
+  setting("colormode", "colorMode");
+  setting("adult", "adult");
   $("bot1").onclick = () => void addBots(1);
   $("bot3").onclick = () => void addBots(3);
   $("start").onclick = () => {

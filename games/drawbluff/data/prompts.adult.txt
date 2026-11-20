@@ -1,0 +1,334 @@
+# drawbluff's adult themed prompts in English, dealt instead of
+# data/prompts.txt in rooms that turned "adult" on, fetched by the host
+# page (data/prompts.adult.de.txt: German). Same format and rules as
+# data/prompts.txt: `[tag]` starts a structure, one prompt per line,
+# each in its display form and at most 40 characters, drawable, our
+# own, no two alike and none like a family prompt (test/prompts.test.ts
+# checks it; `node scripts/prompts.ts --file data/prompts.adult.txt
+# --near` lists near duplicates).
+#
+# Cheeky, not explicit: innuendo and grown-up embarrassment, no graphic
+# acts, no slurs, no real people, no brands.
+#
+# The structures:
+#   double    double meanings drawn literally: a very well hung painting
+#   idiom     grown-up idioms taken literally: a roll in the hay
+#   dating    dating and hookup disasters: a blind date with a ghost
+#   booze     drinking and hangovers: the morning after tequila
+#   body      bodily embarrassments: a fart in yoga class
+#   couple    awkward relationship moments: saying the wrong name in bed
+#   office    office party scandal: photocopying your butt
+#   nude      nudity: skinny dipping with sharks
+#   adulting  grown-up worries: doing your taxes at midnight
+#   moment    the moment it goes wrong: the moment the towel drops
+
+[double]
+a nice pair of melons
+polishing the family jewels
+a mailman with a huge package
+stuffing the turkey
+a very well hung painting
+big knockers on the front door
+a sausage party
+hiding the salami
+nice buns at the bakery
+a disappointing baguette
+a very moist sponge cake
+the neighbours banging all night
+a lumberjack with massive wood
+the proudest cock on the farm
+going down under
+a man proud of his organ
+screwed at the hardware store
+a sailor with an enormous mast
+searching for the g spot with a map
+a massage with a happy ending
+a handyman who nails everything
+whipped cream in the bedroom
+beating around the bush
+a fireman sliding down the pole
+a ballerina doing the splits
+a pair of jugs on the shelf
+a plumber checking the pipes
+a big bulge in the christmas stocking
+a tight squeeze in the elevator
+a magician with a long wand
+
+[idiom]
+sowing your wild oats
+a booty call
+a friend with benefits
+a roll in the hay
+caught with your pants down
+the birds and the bees
+playing the field
+sleeping your way to the top
+a cougar on the prowl
+a sugar daddy
+the seven year itch
+a bun in the oven
+a one night stand
+tying the knot
+a shotgun wedding
+the old ball and chain
+going commando
+hot and bothered
+feeling frisky
+the elephant in the bedroom
+wearing the trousers
+the honeymoon is over
+playing hard to get
+a hot mess
+getting hammered
+the walk of shame
+a third wheel
+getting lucky
+bringing someone home to meet mother
+
+[dating]
+a first date at the dentist
+swiping left on a werewolf
+a dating profile photo holding a fish
+catfished by an actual catfish
+a blind date with a ghost
+splitting the bill to the penny
+speed dating with zombies
+a vampire's lonely hearts ad
+a date who brought his mother along
+two kissers with braces stuck together
+a love bite shaped like a country
+an awkward goodnight kiss
+spinach in your teeth at dinner
+a hookup in a tent in the rain
+running into your ex at the restaurant
+a romantic candlelit meal for one
+serenading the wrong window
+a pickup line that actually worked
+an online match who is a llama
+escaping through the bathroom window
+a hickey under a turtleneck
+being friend zoned by a robot
+a sext sent to grandma
+a dating app for pirates
+a crush who owns forty cats
+a mermaid's awkward smooch
+a hookup at the wrong address
+the all you can eat buffet date
+a toad looking for love online
+
+[booze]
+the morning after tequila
+a wine mom at soccer practice
+karaoke after six beers
+drunk texting an ex
+a hangover with a marching band
+the hair of the dog
+beer goggles
+a kebab at four in the morning
+doing shots with a pirate
+a beer belly with a face
+a bartender who's seen everything
+a pub crawl with actual crawling
+asleep in the bathtub fully dressed
+the bottomless brunch
+a wine tasting where nobody spits
+a keg stand at a retirement home
+a toast that goes on too long
+a tipsy uncle at the wedding
+sunglasses indoors at breakfast
+a cocktail with too many umbrellas
+the vow to never drink again
+a bar fight between two grannies
+waking up next to a traffic cone
+last orders at closing time
+a drunk pigeon
+a champagne cork to the eye
+vodka in a water bottle
+dancing on the bar
+a hangover cure made of pickles
+
+[body]
+a fart in yoga class
+a plumber's crack
+the wedgie that won't quit
+sweaty armpits at a job interview
+a nose hair that keeps growing
+the toilet with no paper
+an open zipper at the funeral
+a burp during the wedding vows
+a back hair forest
+a comb over in the wind
+a sneeze fart
+the scale after christmas
+a bikini wax with duct tape
+a sports bra emergency
+a giant pimple before the prom
+a camel toe at the gym
+a muffin top
+a belly button lint collection
+a toenail that could kill
+a smelly foot in the cinema
+morning breath that kills plants
+a wardrobe malfunction on stage
+a doctor with very cold hands
+shapewear that won't come off
+loo roll trailing from your shoe
+the gas after bean soup
+a man boob workout
+a hairy mole with a name
+a rash in an awkward place
+
+[couple]
+meeting the in laws
+arguing at the furniture store
+who left the toilet seat up
+the blanket hog
+matching tattoos of each other's faces
+couples therapy for robots
+grandma finds the toy drawer
+spooning gone wrong
+the snoring husband
+a bubble bath for two that overflows
+a stadium proposal that fails
+the anniversary he forgot
+saying the wrong name in bed
+the honeymoon suite with bunk beds
+a wedding night with food poisoning
+the passive aggressive sticky note
+whose turn it is to do the dishes
+couples yoga in a tiny flat
+a romantic massage with a cramp
+lingerie under a winter coat
+the couple who dresses alike
+a breakup by text message
+splitting the record collection
+the open marriage of two snails
+his socks everywhere
+a pillow wall in the middle of the bed
+the honey do list
+a selfie that never ends
+the mother in law moving in
+
+[office]
+photocopying your butt
+the boss doing the worm
+reply all to the whole company
+romance in the supply closet
+the intern who saw too much
+a trust fall with nobody catching
+mistletoe over the boss's desk
+a lampshade on the accountant's head
+the meeting with hr on monday
+a video call with no pants
+stealing food from the office fridge
+a desk nap discovered
+secret santa gives handcuffs
+a raise negotiation with a shark
+the email sent to the wrong person
+the conga line through accounting
+the coworker who microwaves fish
+a performance review from a cat
+the boardroom limbo contest
+the awkward elevator ride after
+an out of office reply from the beach
+crying in the office bathroom
+working from home in a bathrobe
+the office gossip as a parrot
+the ugly sweater contest winner
+the slow dance with the ceo
+a lost thong in the conference room
+the company retreat talent show
+the printer jam of shame
+
+[nude]
+skinny dipping with sharks
+nude beach volleyball
+a naked chef
+a surprise at the life drawing class
+a streaker at the cricket match
+an art model who sneezes
+the emperor's new clothes
+a nudist fashion show
+a sunburn in all the wrong places
+a towel that's too small
+locked out naked in the hallway
+a strip poker tournament
+a nude portrait of grandpa
+the naked mole rat's beach day
+a clothing optional cruise
+wearing only a barrel
+a fig leaf in the wind
+naked yoga at dawn
+mooning the tour bus
+a birthday suit party
+the nudist's pocket problem
+streaking through graduation
+a statue getting dressed
+a sauna full of strangers
+the strategically placed pineapple
+a nude selfie with the flash on
+a peeping tom pigeon
+the stripper who forgot his music
+a gorilla at the nudist camp
+
+[adulting]
+doing your taxes at midnight
+a midlife crisis sports car
+the mortgage monster under the bed
+paying bills with tears
+a grey chest hair
+a pension plan made of lottery tickets
+a tax auditor at the door
+the gym membership never used
+excited about a new vacuum cleaner
+in bed by nine on a saturday
+back pain from sleeping wrong
+turning forty at a trampoline park
+a man cave
+meal prepping for the whole week
+a frozen botox smile
+the student loan dragon
+reading glasses on a night out
+a hot flash in a meeting
+a divorce lawyer shark
+a dad bod in tiny swim trunks
+groaning when standing up
+the tax return that never comes
+a dinner party with spreadsheets
+the landlord who never fixes anything
+arguing with the self checkout
+a fifty year old buying a motorcycle
+a wine fridge for emotional support
+the colonoscopy waiting room
+a hangover that lasts three days
+
+[moment]
+the moment the towel drops
+when you hit send to the boss
+when the parents walk in
+the moment the tequila kicks in
+when you wake up at a stranger's house
+when your date's mom calls
+when the hot tub jets turn on
+the moment the pants split
+when the webcam is still on
+when the stripper is your dentist
+the moment the bill arrives
+remembering last night
+the moment the bed breaks
+the bra that won't unhook
+when the dress rips on the dance floor
+when the lights come on at the club
+too old for the nightclub
+the moment the waterbed pops
+when the party photos get posted
+mum liking your racy photo
+the baby looks like the mailman
+the karaoke song gets dirty
+caught singing naked in the shower
+the bartender cutting you off
+when the condom wrapper falls out
+the moment your ex walks in
+when grandma reads the group chat
+the moment the zipper sticks
+when the neighbours hear everything
