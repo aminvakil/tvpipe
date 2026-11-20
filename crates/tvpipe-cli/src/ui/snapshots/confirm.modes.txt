@@ -19,12 +19,11 @@ tvpipe · drawbluff
   http://127.0.0.1:62991/
 
 ✓ Public link ready
+✓ Game window open (1.1 s)
 
   Phones join here
-  https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/
-  Carried by OpenTunnel
+  https://tvpipe.party/BCDF
 
-✓ Game window open (1.1 s)
 • Casting to Living Room TV
 ? End the game? Press q again to end it, any other key to keep playing
 ---
@@ -34,11 +33,10 @@ tvpipe · drawbluff
   http://127.0.0.1:62991/
 
 ✓ Public link ready
+✓ Game window open (1.1 s)
 
   Phones join here
-  https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/
-  Carried by OpenTunnel
+  https://tvpipe.party/BCDF
 
-✓ Game window open (1.1 s)
 • Casting to Living Room TV
 ⠋ Stopping…

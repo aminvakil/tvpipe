@@ -480,6 +480,15 @@ fn progress_round_trips_and_is_not_machine() {
         Progress::GameLink {
             url: s("https://x.example/"),
             provider: s("opentunnel"),
+            short: false,
+        },
+        Progress::GameLink {
+            url: s("https://x.example/"),
+            provider: s("cloudflare"),
+            short: true,
+        },
+        Progress::ShortLink {
+            url: s("https://tvpipe.party/BCDF"),
         },
         Progress::Phones(3),
         Progress::Casting(vec![s("TV"), s("Bedroom")]),

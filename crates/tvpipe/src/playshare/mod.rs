@@ -422,6 +422,7 @@ fn start_tunnel(hub: &Arc<Hub>, choice: TunnelChoice) -> TunnelThread {
                         hub.progress(Progress::GameLink {
                             url: format!("https://{}/", t.host()),
                             provider: p.name().to_owned(),
+                            short: hub.shortlinks.get().is_some_and(|l| l.enabled()),
                         });
                         *hub.peers.write().unwrap_or_else(|e| e.into_inner()) = t.peer_lookup();
                         *s.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);

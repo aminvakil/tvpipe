@@ -115,6 +115,16 @@ pub enum Progress {
         url: String,
         /// Who carries it: `cloudflare` or `opentunnel`.
         provider: String,
+        /// A short link (tvpipe.party/CODE) will follow as
+        /// [`Progress::ShortLink`] once the game asks for it: people are
+        /// shown that one, this link only as its QR code.
+        short: bool,
+    },
+    /// `game play`'s short link for phones (`https://tvpipe.party/CODE`,
+    /// docs/short-links.md): registered, or changed.
+    ShortLink {
+        /// The link.
+        url: String,
     },
     /// `game play`: the number of phones connected changed.
     Phones(usize),
@@ -642,10 +652,16 @@ fn progress_value(p: &Progress, v: Value) -> Value {
             .with("title", title.as_str())
             .with("local", local.as_str())
             .with_opt("lan", lan.as_deref()),
-        Progress::GameLink { url, provider } => v
+        Progress::GameLink {
+            url,
+            provider,
+            short,
+        } => v
             .with("kind", "game-link")
             .with("url", url.as_str())
-            .with("provider", provider.as_str()),
+            .with("provider", provider.as_str())
+            .with("short", *short),
+        Progress::ShortLink { url } => v.with("kind", "short-link").with("url", url.as_str()),
         Progress::Phones(n) => v.with("kind", "phones").with("count", *n as u64),
         Progress::Casting(to) => v
             .with("kind", "casting")
@@ -673,6 +689,10 @@ fn progress_from(v: &Value) -> Result<Progress> {
         "game-link" => Progress::GameLink {
             url: v.require_str("url")?.to_owned(),
             provider: v.require_str("provider")?.to_owned(),
+            short: v.get("short").and_then(Value::as_bool).unwrap_or(false),
+        },
+        "short-link" => Progress::ShortLink {
+            url: v.require_str("url")?.to_owned(),
         },
         "phones" => Progress::Phones(
             usize::try_from(v.require_u64("count")?)

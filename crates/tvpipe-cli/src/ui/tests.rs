@@ -367,6 +367,37 @@ fn the_qr_code_is_framed() {
     snapshot("screen-tunnel.qr", &shown(&raw, 100));
 }
 
+#[test]
+fn a_game_shows_the_short_link_and_the_tunnels_only_as_a_qr_code() {
+    let caps = Caps {
+        qr: true,
+        ..Caps::plain()
+    };
+    let raw = run(caps, Kind::Game, None, &game());
+    assert!(raw.contains("Phones scan this"), "{raw}");
+    assert!(!raw.contains("opentunnel.xyz"), "{raw}");
+    assert!(raw.contains("Carried by OpenTunnel"), "{raw}");
+    assert!(
+        raw.contains(
+            "  Phones join here\n  https://tvpipe.party/BCDF\n  Or scan the QR code above"
+        ),
+        "{raw}"
+    );
+    // No short link to come: the tunnel's link as before.
+    let mut script = game();
+    script.retain(|(_, i)| !matches!(i, Event(Event::Progress(Progress::ShortLink { .. }))));
+    for (_, i) in &mut script {
+        if let Event(Event::Progress(Progress::GameLink { short, .. })) = i {
+            *short = false;
+        }
+    }
+    let raw = run(Caps::plain(), Kind::Game, None, &script);
+    assert!(
+        raw.contains("  Phones join here\n  https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/"),
+        "{raw}"
+    );
+}
+
 /// `tvpipe play movie.mkv --to "Living Room TV"`, to the end.
 fn play_file() -> Vec<(u64, In)> {
     vec![
@@ -597,9 +628,16 @@ fn game() -> Vec<(u64, In)> {
             p(Progress::GameLink {
                 url: "https://85abd01b7ad97e1d.baqlo7vg7agz.opentunnel.xyz/".into(),
                 provider: "opentunnel".into(),
+                short: true,
             }),
         ),
         (1100, p(Progress::Done(Step::Window, None))),
+        (
+            1900,
+            p(Progress::ShortLink {
+                url: "https://tvpipe.party/BCDF".into(),
+            }),
+        ),
         (30_000, p(Progress::Phones(1))),
         (40_000, p(Progress::Phones(3))),
         (60_000, p(Progress::Casting(vec!["Living Room TV".into()]))),

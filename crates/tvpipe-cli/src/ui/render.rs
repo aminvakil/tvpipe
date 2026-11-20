@@ -266,6 +266,23 @@ impl Renderer {
 
     /// A link: a label, the URL on its own line, its QR code if wanted,
     /// a footnote; framed by blank lines.
+    /// A link shown only as its QR code (`caps.qr`), with a label and a
+    /// footnote.
+    fn qr_block(&mut self, label: &str, url: &str, footnote: &str) {
+        let p = self.paint;
+        self.blank_line();
+        self.line(&format!("  {}", p.bold(label)));
+        if let Some(art) = tvpipe::__cli::qr::render_terminal(url) {
+            self.raw_line("");
+            for l in art.lines() {
+                self.raw_line(&format!("  {l}"));
+            }
+            self.raw_line("");
+        }
+        self.line(&format!("  {}", p.dim(footnote)));
+        self.raw_line("");
+    }
+
     fn link(&mut self, label: &str, url: &str, qr: bool, footnote: Option<&str>) {
         let p = self.paint;
         self.blank_line();
@@ -425,17 +442,36 @@ impl Renderer {
                     self.link("Phones on the same Wi-Fi join here", lan, true, None);
                 }
             }
-            Progress::GameLink { url, provider } => {
+            Progress::GameLink {
+                url,
+                provider,
+                short,
+            } => {
                 let took = self
                     .end_step(|s| *s == Step::Tunnel)
                     .map(|t| now.saturating_sub(t));
                 self.ok("Public link ready", took);
-                self.link(
-                    "Phones join here",
-                    url,
-                    true,
-                    Some(&provider_note(provider)),
-                );
+                if *short {
+                    // The tunnel's link is too long to read out: only its
+                    // QR code here; the short link to type follows.
+                    if self.caps.qr {
+                        self.qr_block("Phones scan this", url, &provider_note(provider));
+                    }
+                } else {
+                    self.link(
+                        "Phones join here",
+                        url,
+                        true,
+                        Some(&provider_note(provider)),
+                    );
+                }
+            }
+            Progress::ShortLink { url } => {
+                let note = self
+                    .caps
+                    .qr
+                    .then_some("Or scan the QR code above: it opens the game directly");
+                self.link("Phones join here", url, false, note);
             }
             Progress::Phones(n) => self.phones = *n,
             Progress::Download { done, total } => self.download = Some((*done, *total)),

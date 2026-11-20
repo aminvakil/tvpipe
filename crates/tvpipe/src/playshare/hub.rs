@@ -111,6 +111,8 @@ pub(super) struct St {
     apis_gone_since: Option<Instant>,
     seen_api: bool,
     closing: bool,
+    /// The short link the front end was told about last.
+    short_shown: Option<String>,
 }
 
 pub struct Hub {
@@ -202,6 +204,7 @@ impl Hub {
             events: OnceLock::new(),
             shortlinks: OnceLock::new(),
             st: Mutex::new(St {
+                short_shown: None,
                 next_conn: 0,
                 next_api: 0,
                 clients: HashMap::new(),
@@ -746,7 +749,23 @@ impl Hub {
             .get()
             .filter(|l| l.enabled())
             .ok_or_else(|| unavailable("short links are off"))?;
-        let (short, code) = links.register(url, code)?;
+        let (short, code) = links.register(url, code).inspect_err(|e| {
+            // The terminal shows only the short link: this one instead.
+            if self.lock().short_shown.is_none() {
+                warn!(
+                    "playshare: no short link ({e}); phones join at https://{host}/ (the QR code)"
+                );
+            }
+        })?;
+        let news = {
+            let mut st = self.lock();
+            let news = st.short_shown.as_deref() != Some(short.as_str());
+            st.short_shown = Some(short.clone());
+            news
+        };
+        if news {
+            self.progress(Progress::ShortLink { url: short.clone() });
+        }
         Ok(Value::object().with("url", short).with("code", code))
     }
 
