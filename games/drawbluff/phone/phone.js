@@ -551,6 +551,8 @@ class Pad {
     this.strokes = [];
     /** @type {() => void} called when strokes come or go */
     this.onchange = () => {};
+    /** How much is drawn: the strokes' length on the grid (the TV's progress). */
+    this.length = 0;
     this.points = 0;
     this.color = 0;
     this.width = WIDTHS[1];
@@ -618,17 +620,20 @@ class Pad {
       if (Math.hypot(x - lx, y - ly) < 4) continue;
       s.push(x, y);
       this.points++;
+      this.length += Math.hypot(x - lx, y - ly);
       drawStroke(this.ctx, [s[0], s[1], lx, ly, x, y], 0, 0, this.size, this.palette);
     }
   }
 
   up() {
+    if (this.current) this.onchange();
     this.current = null;
   }
 
   clear() {
     this.strokes = [];
     this.points = 0;
+    this.length = 0;
     this.redraw();
     this.onchange();
   }
@@ -639,6 +644,8 @@ class Pad {
     const s = this.strokes.pop();
     if (!s) return;
     this.points -= (s.length - 2) / 2;
+    for (let i = 4; i + 1 < s.length; i += 2) this.length -= Math.hypot(s[i] - s[i - 2], s[i + 1] - s[i - 1]);
+    this.length = Math.max(0, this.length);
     this.redraw();
     this.onchange();
   }
@@ -729,7 +736,20 @@ function draw(me) {
     clear.disabled = p.strokes.length === 0;
     if (p.strokes.length === 0 && armed) disarm();
   };
-  p.onchange = changed;
+  // The TV shows how much everyone drew (never what): `{ ink }`, the
+  // length drawn / 10, at most every half second while drawing.
+  let inkAt = 0;
+  const ink = () => {
+    inkAt = Date.now();
+    client.input({ ink: Math.round(p.length / 10) });
+  };
+  p.onchange = () => {
+    changed();
+    ink();
+  };
+  canvas.addEventListener("pointermove", () => {
+    if (p.current && Date.now() - inkAt >= 500) ink();
+  });
   changed();
   let sent = false;
   const submit = async () => {
@@ -780,6 +800,13 @@ function lie(me) {
     h("input", { maxlength: LIE_SOFT, placeholder: t.liePlaceholder, enterkeyhint: "send", autocapitalize: "none", autocomplete: "off", spellcheck: "true", lang })
   );
   const err = h("p", { class: "error" });
+  // The TV shows who is typing (never what), at most once a second.
+  let typedAt = 0;
+  input.addEventListener("input", () => {
+    if (Date.now() - typedAt < 1000) return;
+    typedAt = Date.now();
+    client.input({ typing: true });
+  });
   const send = async (/** @type {any} */ data) => {
     try {
       await act("lie", data, err);

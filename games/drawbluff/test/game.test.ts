@@ -412,3 +412,42 @@ test("colours, pens and the rules: picked in the lobby, the VIP's settings, adul
     await server.close();
   }
 });
+
+test("the TV: every player's colour in every phase, ink while drawing, who types, the reveal's ids", async () => {
+  const { server, party, g, players } = await game(4, { rounds: 1, think: 900 });
+  try {
+    const seen: Record<string, any>[] = [];
+    let inked = false;
+    let typing = false;
+    const off = party.on("screen-view", (v) => {
+      const s = v["screen"] as Record<string, any>;
+      seen.push(s);
+      if (s["phase"] === "draw" && Object.values(s["ink"] ?? {}).some((n) => (n as number) > 0)) inked = true;
+      if ((s["phase"] === "lie" || s["phase"] === "gallery") && (s["typing"] ?? []).length > 0) typing = true;
+    });
+    assert.equal((party.screen.peek() as { rounds: number }).rounds, 1);
+    const end = new Promise((r) => g.once("end", r));
+    await players[0]!.client.act("start");
+    await end;
+    off();
+    const ids = party.players.map((p) => p.id).sort();
+    for (const phase of ["draw", "lie", "vote", "reveal", "scores", "final"]) {
+      const s = seen.find((x) => x["phase"] === phase);
+      assert.ok(s, phase);
+      assert.deepEqual(Object.keys(s["colors"] ?? {}).sort(), ids, `${phase}: everybody's colour`);
+    }
+    assert.ok(inked, "ink while drawing");
+    assert.ok(typing, "liars typing");
+    const reveal = seen.find((x) => x["phase"] === "reveal")!;
+    assert.equal(reveal["stepMs"], fast.revealStep);
+    assert.equal(reveal["endMs"], fast.revealEnd);
+    for (const it of reveal["items"]) {
+      assert.ok(Array.isArray(it.authorIds) && Array.isArray(it.voterIds));
+      assert.equal(it.voterIds.length, Math.min(it.count, 12));
+      for (const id of [...it.authorIds, ...it.voterIds]) assert.ok(ids.includes(id), id);
+    }
+  } finally {
+    for (const b of players) b.close();
+    await server.close();
+  }
+});

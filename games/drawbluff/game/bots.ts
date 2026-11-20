@@ -150,7 +150,11 @@ export class Bot {
         return;
       }
       case "draw":
-        if (!me.done) this.#once(`draw:${turn}`, () => c.act("draw", doodle(this.#rng, Array.isArray(me.palette) ? me.palette.length : 8)));
+        if (!me.done) {
+          // The TV's progress first (how much is drawn), then the drawing.
+          if (!this.#handled.has(`draw:${turn}`)) c.input({ ink: 50 + Math.floor(this.#rng() * 300) });
+          this.#once(`draw:${turn}`, () => c.act("draw", doodle(this.#rng, Array.isArray(me.palette) ? me.palette.length : 8)));
+        }
         return;
       case "lie":
         if (!me.done) {
@@ -158,6 +162,7 @@ export class Bot {
           const base = lies[Math.floor(this.#rng() * lies.length)]!;
           // Now and then the same idea as another bot (merged lies).
           const lie = { text: this.#rng() < 0.3 ? base : `${base} ${this.name}` };
+          if (!this.#handled.has(`lie:${turn}`)) c.input({ typing: true });
           this.#once(`lie:${turn}`, () => c.act("lie", lie));
         }
         return;

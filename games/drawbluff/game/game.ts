@@ -14,7 +14,10 @@
  *   `lie` (`key`, `drawing`, `artist`, `liars`, `early`, `deadline`, `done`, `lie`),
  *   `artist` (`key`), `vote` (`key`, `options`, `deadline`, `done`, `choice`),
  *   `watch` (`note`, `result`), `scores`/`final`
- * - `party.screen` (the TV): `{ phase, lang, … }` per phase, see each method.
+ * - `party.screen` (the TV): `{ phase, lang, colors, … }` per phase, see each method;
+ *   `colors` every player's colour by id. While drawing `ink` (how much
+ *   each one drew, from the phones' continuous input `{ ink }`), while
+ *   liars write `typing` (who typed lately, from `{ typing: true }`).
  *
  * `lang` is the room's language (`en`, `de`): the prompts, the decoys,
  * and what every phone and TV says (each page has its strings).
@@ -100,6 +103,15 @@ export const GALLERY_PAGE = 8;
 export const BOARD_LINES = 8;
 /** Voter names a reveal line lists (more: a count). */
 export const REVEAL_NAMES = 6;
+/** Voter ids a reveal line carries (the TV's dots; more: a count). */
+export const REVEAL_IDS = 12;
+/** The TV's `ink` and `typing` at most this often, ms. */
+export const INK_EVERY = 500;
+export const TYPING_EVERY = 1000;
+/** A liar counts as typing this long after their last keystroke, ms. */
+export const TYPING_FOR = 3000;
+/** The most `ink` a phone can report (a full pad of strokes is far less). */
+export const MAX_INK = 1_000_000;
 
 export interface GameOptions {
   rounds?: number | undefined;
@@ -221,6 +233,13 @@ export class Drawbluff extends Emitter<GameEvents> {
   #joined: string[] = [];
   /** Spotlights of this round whose vote has not started (a newcomer in `open` mode can still vote). */
   #votesLeft = 0;
+  /** While drawing: how much each drawer drew (their phone's `ink`), and the TV's update to come. */
+  #ink: Map<string, number> | undefined;
+  #inkTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Liars' last keystrokes (their phone's `typing`), by id. */
+  readonly #typed = new Map<string, number>();
+  /** Updates the TV's `typing` now unless it just did (while liars are on screen). */
+  #pokeTyping: (() => void) | undefined;
 
   constructor(party: Party, options: GameOptions) {
     super();
@@ -352,6 +371,7 @@ export class Drawbluff extends Emitter<GameEvents> {
       this.#colors.delete(p.id);
       this.#colorsChanged();
     });
+    party.on("input", (p, data) => this.#input(p, data));
     this.#lobby();
   }
 
@@ -383,7 +403,58 @@ export class Drawbluff extends Emitter<GameEvents> {
   /** The colours to pick and how many have each (in the room), the players' (on the TV's lobby). */
   #colorsChanged(): void {
     this.party.room.set({ taken: this.#taken() });
-    if (this.#phase === "lobby") this.party.screen.set({ colors: this.#screenColors() });
+    this.party.screen.set({ colors: this.#screenColors() });
+  }
+
+  /**
+   * A phone's continuous input: `{ ink }` while drawing (the TV's
+   * progress), `{ typing: true }` while lying. Anything else is ignored.
+   */
+  #input(p: Player, data: Json): void {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return;
+    const ink = data["ink"];
+    if (this.#ink && this.#ink.has(p.id) && typeof ink === "number" && Number.isFinite(ink)) {
+      this.#ink.set(p.id, Math.round(Math.min(MAX_INK, Math.max(0, ink))));
+      this.#inkTimer ??= setTimeout(() => {
+        this.#inkTimer = undefined;
+        if (this.#ink && this.#phase === "draw") this.party.screen.set({ ink: Object.fromEntries(this.#ink) });
+      }, INK_EVERY);
+    }
+    if (data["typing"] === true) {
+      this.#typed.set(p.id, Date.now());
+      this.#pokeTyping?.();
+    }
+  }
+
+  /** The liars of `lies` who typed lately (and are not done). */
+  #typing(lies: Lies | undefined): string[] {
+    if (!lies) return [];
+    const now = Date.now();
+    return lies.liars.filter((l) => !lies.answers.has(l) && now - (this.#typed.get(l.id) ?? -Infinity) < TYPING_FOR).map((l) => l.id);
+  }
+
+  /** Keeps the TV's `typing` current while `lies` are on screen; call the result to stop. */
+  #watchTyping(lies: Lies | undefined): () => void {
+    if (!lies) return () => {};
+    let last = "[]";
+    let at = 0;
+    const update = () => {
+      if (this.#onScreen !== lies) return;
+      const now = JSON.stringify(this.#typing(lies));
+      if (now === last) return;
+      last = now;
+      at = Date.now();
+      this.party.screen.set({ typing: JSON.parse(now) as string[] });
+    };
+    const timer = setInterval(update, TYPING_EVERY);
+    const poke = () => {
+      if (Date.now() - at >= TYPING_EVERY) update();
+    };
+    this.#pokeTyping = poke;
+    return () => {
+      clearInterval(timer);
+      if (this.#pokeTyping === poke) this.#pokeTyping = undefined;
+    };
   }
 
   #colorView(): { colors: string[]; taken: number[] } {
@@ -434,7 +505,7 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.party.room.set(this.#settingsView());
     if (this.#phase === "lobby") {
       this.party.room.set({ rounds: this.rounds });
-      this.party.screen.set({ ...this.#settings });
+      this.party.screen.set({ ...this.#settings, rounds: this.rounds });
     }
     if (JSON.stringify(this.#settings) !== was) this.emit("settings", this.settings);
   }
@@ -467,7 +538,7 @@ export class Drawbluff extends Emitter<GameEvents> {
 
   /** The TV's view of a phase, with the newcomers. */
   #screen(fields: Record<string, unknown>): void {
-    this.party.screen.replace({ ...fields, lang: this.#lang, ...this.#joinedView() });
+    this.party.screen.replace({ ...fields, lang: this.#lang, colors: this.#screenColors(), ...this.#joinedView() });
   }
 
   /**
@@ -503,7 +574,15 @@ export class Drawbluff extends Emitter<GameEvents> {
       ...this.#settingsView(),
       ...this.#colorView(),
     });
-    p.screen.replace({ phase: "lobby", lang: this.#lang, minPlayers: this.minPlayers, maxPlayers: p.maxPlayers, ...this.#settings, colors: this.#screenColors() });
+    p.screen.replace({
+      phase: "lobby",
+      lang: this.#lang,
+      minPlayers: this.minPlayers,
+      maxPlayers: p.maxPlayers,
+      rounds: this.rounds,
+      ...this.#settings,
+      colors: this.#screenColors(),
+    });
     for (const pl of p.players) pl.state.replace({ task: "lobby", ...this.#pens(pl) });
   }
 
@@ -516,6 +595,7 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.#lied.clear();
     this.#spotted.clear();
     this.#fresh.clear();
+    this.#typed.clear();
     const adult = this.#settings.adult && this.#adultPrompts.has(this.#lang);
     const deckKey = adult ? `${this.#lang}:adult` : this.#lang;
     let deck = this.#decks.get(deckKey);
@@ -571,7 +651,8 @@ export class Drawbluff extends Emitter<GameEvents> {
     const deadline = this.#deadline(this.timings.draw);
     const undo = this.#settings.undo;
     this.#room({ phase: "draw", deadline });
-    this.#screen({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [] });
+    this.#ink = new Map(players.map((p) => [p.id, 0]));
+    this.#screen({ phase: "draw", round, rounds: this.rounds, deadline, waiting: players.map((p) => p.id), done: [], ink: {} });
     for (const [p, prompt] of prompts) {
       p.state.replace({ task: "draw", prompt: displayTitle(prompt.text), undo, deadline, done: false, ...this.#rank(p), ...this.#pens(p) });
     }
@@ -589,6 +670,7 @@ export class Drawbluff extends Emitter<GameEvents> {
         party.screen.set({ done: [...answers.keys()].map((x) => x.id) });
       },
     });
+    this.#ink = undefined;
     return [...got].map(([artist, drawing]) => ({ artist, prompt: prompts.get(artist)!.text, tag: prompts.get(artist)!.tag, drawing }));
   }
 
@@ -716,6 +798,7 @@ export class Drawbluff extends Emitter<GameEvents> {
       liars: lies?.liars.map((l) => l.id) ?? [],
       done: lies ? [...lies.answers.keys()].map((l) => l.id) : [],
       artist: lies ? { id: lies.spot.artist.id, name: lies.spot.artist.name } : null,
+      typing: this.#typing(lies),
     });
     for (const p of party.players) {
       if (busy.has(p)) continue;
@@ -723,10 +806,15 @@ export class Drawbluff extends Emitter<GameEvents> {
       if (!this.scores.has(p.id)) p.state.replace(this.#waitState(p));
       else p.state.replace({ task: "watch", note: "gallery", mine: mine >= 0 ? Math.floor(mine / GALLERY_PAGE) + 1 : null, ...this.#rank(p) });
     }
-    for (let n = 1; n <= pages; n++) {
-      if (n > 1) party.screen.set({ page: n, items: page(n - 1) });
-      await this.#sleep(this.timings.gallery);
-      if (this.#abort.signal.aborted) return;
+    const stop = this.#watchTyping(lies);
+    try {
+      for (let n = 1; n <= pages; n++) {
+        if (n > 1) party.screen.set({ page: n, items: page(n - 1) });
+        await this.#sleep(this.timings.gallery);
+        if (this.#abort.signal.aborted) return;
+      }
+    } finally {
+      stop();
     }
   }
 
@@ -750,6 +838,7 @@ export class Drawbluff extends Emitter<GameEvents> {
       artist: art,
       waiting: lies.liars.map((p) => p.id),
       done: [...lies.answers.keys()].map((p) => p.id),
+      typing: this.#typing(lies),
     });
     const busy = new Set(lies.liars);
     for (const p of party.players) {
@@ -758,7 +847,12 @@ export class Drawbluff extends Emitter<GameEvents> {
       else if (!this.scores.has(p.id)) p.state.replace(this.#waitState(p));
       else p.state.replace({ task: "watch", note: "rest", artist: art, ...this.#rank(p) });
     }
-    await lies.done;
+    const stop = this.#watchTyping(lies);
+    try {
+      await lies.done;
+    } finally {
+      stop();
+    }
   }
 
   /** A spotlight's vote and reveal (`next`: the next drawing's liars, writing meanwhile). */
@@ -869,7 +963,9 @@ export class Drawbluff extends Emitter<GameEvents> {
         truth: o.truth,
         decoy: o.decoy,
         authors: o.authors.map(name),
+        authorIds: o.authors,
         voters: who.slice(0, REVEAL_NAMES).map(name),
+        voterIds: who.slice(0, REVEAL_IDS),
         count: who.length,
         seen,
         points: (o.truth ? POINTS.guess : share(who.length, POINTS.fooled, seen)) * round,
@@ -879,7 +975,19 @@ export class Drawbluff extends Emitter<GameEvents> {
     });
     const art = { id: spot.artist.id, name: spot.artist.name };
     this.#room({ phase: "reveal", spot: i + 1, spots, drawing: spot.drawing, artist: art });
-    this.#screen({ phase: "reveal", round, spot: i + 1, spots, drawing: spot.drawing, artist: art, prompt: displayTitle(spot.prompt), items, step: 0 });
+    this.#screen({
+      phase: "reveal",
+      round,
+      spot: i + 1,
+      spots,
+      drawing: spot.drawing,
+      artist: art,
+      prompt: displayTitle(spot.prompt),
+      items,
+      step: 0,
+      stepMs: this.timings.revealStep,
+      endMs: this.timings.revealEnd,
+    });
     const writing = new Set(next && !next.finished ? next.liars.filter((p) => !next.answers.has(p)) : []);
     for (const p of party.players) {
       if (writing.has(p)) continue;
@@ -971,7 +1079,7 @@ export class Drawbluff extends Emitter<GameEvents> {
     this.#setPhase("final");
     const table = this.#table();
     party.room.replace({ phase: "final", lang: this.#lang, minPlayers: this.minPlayers, lateJoin: party.lateJoin, ...this.#settingsView(), ...this.#colorView() });
-    party.screen.replace({ phase: "final", lang: this.#lang, scores: table.slice(0, BOARD_LINES), total: table.length });
+    party.screen.replace({ phase: "final", lang: this.#lang, scores: table.slice(0, BOARD_LINES), total: table.length, colors: this.#screenColors() });
     for (const p of party.players) p.state.replace({ task: "final", ...this.#rank(this.scores.has(p.id) ? p : undefined), ...this.#pens(p) });
     this.emit("end", table);
     return table;

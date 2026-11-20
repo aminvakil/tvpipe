@@ -28,6 +28,8 @@ const en = (f) => ({
   /** @param {string | undefined} vip */
   vipStarts: (vip) => `${vip ?? "The VIP"} starts the game on their phone.`,
   // The rules (the lobby's badges).
+  /** @param {number} n */
+  roundsN: (n) => f.p(n, { one: "# round", other: "# rounds" }),
   undoOff: "No undo",
   undoOn: "Undo on",
   shades: "Two shades each",
@@ -38,12 +40,23 @@ const en = (f) => ({
   done: (n, of) => `${f.n(n)} of ${f.n(of)} done`,
   /** @param {number} n @param {number} of */
   voted: (n, of) => `${f.n(n)} of ${f.n(of)} voted`,
-  /** @param {string[]} names */
-  waitingFor: (names) => `Waiting for ${f.list(names)}`,
   // Drawing and the gallery.
   /** @param {number} r @param {number} of */
   roundOf: (r, of) => `Round ${f.n(r)} of ${f.n(of)}`,
   drawPrompt: "Draw your prompt on your phone!",
+  /** @param {number} r */
+  roundN: (r) => `Round ${f.n(r)}`,
+  /** @param {number} n @param {number} of */
+  nOf: (n, of) => `${f.n(n)} of ${f.n(of)}`,
+  doneWord: "done",
+  lastSeconds: "Last 10 seconds!",
+  // A drawer's card.
+  drawingNow: "drawing…",
+  thinking: "thinking…",
+  doneShort: "done!",
+  hurry: "hurry!",
+  startedOver: "started over!",
+  stampDone: "DONE ✓",
   /** @param {number} r @param {number} page @param {number} pages */
   gallery: (r, page, pages) => `Round ${f.n(r)} · the gallery${pages > 1 ? ` · ${f.n(page)} of ${f.n(pages)}` : ""}`,
   /** @param {string} name */
@@ -54,8 +67,11 @@ const en = (f) => ({
   // Lies and votes.
   /** @param {number} spot @param {number} spots */
   spotOf: (spot, spots) => ` · drawing ${f.n(spot)} of ${f.n(spots)}`,
-  /** @param {string | undefined} artist */
-  drewThis: (artist) => `${artist ?? "Someone"} drew this`,
+  /** Around the artist's name: "Anna drew this". */
+  drewBefore: "",
+  drewAfter: "drew this",
+  /** @param {number} spot @param {number} spots */
+  drawingOf: (spot, spots) => `Drawing ${f.n(spot)} of ${f.n(spots)}`,
   /** @param {number} n */
   liarsWriting: (n) => f.p(n, { one: "What is it called? The liar is writing a fake title.", other: "What is it called? # liars are writing fake titles." }),
   whichReal: "Which one is the real title?",
@@ -63,24 +79,28 @@ const en = (f) => ({
   writingNext: (n) => f.p(n, { one: "Meanwhile # liar writes for the next drawing.", other: "Meanwhile # liars write for the next drawing." }),
   // The reveal.
   answers: "The answers",
-  /** @param {string | undefined} artist */
-  truthBy: (artist) => `THE TRUTH by ${artist ?? "?"}`,
-  aLie: "A LIE",
-  /** @param {string[]} authors */
-  aLieBy: (authors) => `A LIE by ${f.list(authors)}`,
-  /** @param {string} names @param {number} points @param {string | undefined} artist @param {number} artistPoints */
-  foundBy: (names, points, artist, artistPoints) => `found by ${names} · +${f.n(points)} each, ${artist ?? "?"} +${f.n(artistPoints)}`,
+  votes: "Votes",
+  stampLie: "LIE",
+  stampOurs: "OUR LIE",
+  stampTruth: "TRUTH",
+  /** @param {string[]} names */
+  foundBy: (names) => `found by ${f.list(names)}`,
+  /** @param {number} count @param {number} seen */
+  foundByN: (count, seen) => `found by ${f.n(count)} of ${f.n(seen)}`,
+  each: "each",
   nobodyFound: "nobody found it",
   /** @param {string[]} names */
   fellForIt: (names) => `${f.list(names)} fell for it`,
   /** @param {number} count @param {number} seen */
   fooledOf: (count, seen) => `fooled ${f.n(count)} of ${f.n(seen)}`,
-  /** @param {number} count @param {number} seen */
-  foundOf: (count, seen) => `${f.n(count)} of ${f.n(seen)}`,
-  ourLie: " (our lie)",
-  /** @param {string[]} authors @param {number} points */
-  liarsGet: (authors, points) => ` · ${f.list(authors)} +${f.n(points)}`,
   sameIdea: " (same idea!)",
+  // Stingers: the word between two phases.
+  stDraw: "DRAW!",
+  stPens: "PENS DOWN!",
+  stBluff: "BLUFF!",
+  stVote: "VOTE!",
+  stScores: "SCORES",
+  stFinal: "AND THE WINNER IS…",
   // Scores.
   /** @param {string | undefined} name */
   wins: (name) => `${name ?? "Nobody"} wins!`,
@@ -116,6 +136,7 @@ const de = (f) => ({
   seatFree: "noch ein Platz frei",
   needed: (n) => f.p(n, { one: "Noch # Mitspieler fehlt.", other: "Noch # Mitspieler fehlen." }),
   vipStarts: (vip) => `${vip ?? "Der VIP"} startet das Spiel am Handy.`,
+  roundsN: (n) => f.p(n, { one: "# Runde", other: "# Runden" }),
   undoOff: "Kein Rückgängig",
   undoOn: "Rückgängig an",
   shades: "Zwei Töne pro Person",
@@ -123,31 +144,48 @@ const de = (f) => ({
   adult: "Begriffe ab 18",
   done: (n, of) => `${f.n(n)} von ${f.n(of)} fertig`,
   voted: (n, of) => `${f.n(n)} von ${f.n(of)} abgestimmt`,
-  waitingFor: (names) => `Wir warten auf ${f.list(names)}`,
   roundOf: (r, of) => `Runde ${f.n(r)} von ${f.n(of)}`,
   drawPrompt: "Zeichne deinen Begriff auf dem Handy!",
+  roundN: (r) => `Runde ${f.n(r)}`,
+  nOf: (n, of) => `${f.n(n)} von ${f.n(of)}`,
+  doneWord: "fertig",
+  lastSeconds: "Noch 10 Sekunden!",
+  drawingNow: "zeichnet…",
+  thinking: "überlegt…",
+  doneShort: "fertig!",
+  hurry: "schnell!",
+  startedOver: "fängt neu an!",
+  stampDone: "FERTIG ✓",
   gallery: (r, page, pages) => `Runde ${f.n(r)} · die Galerie${pages > 1 ? ` · ${f.n(page)} von ${f.n(pages)}` : ""}`,
   by: (name) => `von ${name}`,
   meanwhile: (liars, artist, done) =>
     `Währenddessen ${f.p(liars, { one: "schreibt # Lügner", other: "schreiben # Lügner" })} für ${artist ? `die Zeichnung von ${artist}` : "die erste Zeichnung"} · ${f.n(done)} fertig`,
   spotOf: (spot, spots) => ` · Zeichnung ${f.n(spot)} von ${f.n(spots)}`,
-  drewThis: (artist) => (artist ? `Gezeichnet von ${artist}` : "Wer hat das gezeichnet?"),
+  drewBefore: "Gezeichnet von",
+  drewAfter: "",
+  drawingOf: (spot, spots) => `Zeichnung ${f.n(spot)} von ${f.n(spots)}`,
   liarsWriting: (n) =>
     f.p(n, { one: "Wie heißt das? Der Lügner denkt sich einen falschen Titel aus.", other: "Wie heißt das? # Lügner denken sich falsche Titel aus." }),
   whichReal: "Welcher Titel ist echt?",
   writingNext: (n) => f.p(n, { one: "Währenddessen schreibt # Lügner für die nächste Zeichnung.", other: "Währenddessen schreiben # Lügner für die nächste Zeichnung." }),
   answers: "Die Antworten",
-  truthBy: (artist) => `DIE WAHRHEIT von ${artist ?? "?"}`,
-  aLie: "EINE LÜGE",
-  aLieBy: (authors) => `EINE LÜGE von ${f.list(authors)}`,
-  foundBy: (names, points, artist, artistPoints) => `erkannt von ${names} · je +${f.n(points)}, ${artist ?? "?"} +${f.n(artistPoints)}`,
+  votes: "Stimmen",
+  stampLie: "LÜGE",
+  stampOurs: "UNSERE LÜGE",
+  stampTruth: "WAHRHEIT",
+  foundBy: (names) => `erkannt von ${f.list(names)}`,
+  foundByN: (count, seen) => `erkannt von ${f.n(count)} von ${f.n(seen)}`,
+  each: "pro Kopf",
   nobodyFound: "keiner hat's erkannt",
   fellForIt: (names) => `${f.list(names)} ${names.length === 1 ? "ist" : "sind"} reingefallen`,
   fooledOf: (count, seen) => `hat ${f.n(count)} von ${f.n(seen)} reingelegt`,
-  foundOf: (count, seen) => `${f.n(count)} von ${f.n(seen)}`,
-  ourLie: " (unsere Lüge)",
-  liarsGet: (authors, points) => ` · ${f.list(authors)} +${f.n(points)}`,
   sameIdea: " (gleiche Idee!)",
+  stDraw: "ZEICHNEN!",
+  stPens: "STIFTE WEG!",
+  stBluff: "BLUFFEN!",
+  stVote: "ABSTIMMEN!",
+  stScores: "PUNKTE",
+  stFinal: "UND GEWONNEN HAT…",
   wins: (name) => `${name ?? "Niemand"} gewinnt!`,
   finalScores: "Endstand",
   scoresAfter: (r) => `Punkte nach Runde ${f.n(r)}`,

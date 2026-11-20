@@ -198,9 +198,10 @@ try {
   await phone.eval(`document.getElementById("lang").click(); true`);
   await phone.until(`document.documentElement.lang === ${JSON.stringify(lang)} && localStorage.getItem("drawbluff:lang") === null`);
   log(`phone: switched to ${other} and back to the room's ${lang}`);
-  // Phil picks blue and, as the VIP, turns undo on.
-  await phone.eval(`document.querySelectorAll(".colors button")[7].click(); true`);
-  await phone.until(`document.querySelectorAll(".colors button")[7]?.classList.contains("chosen")`);
+  // Phil picks a free colour (the bots have some) and, as the VIP, turns undo on.
+  const pick = await phone.eval<number>(`[...document.querySelectorAll(".colors button")].findIndex((b) => !b.classList.contains("taken") && !b.classList.contains("chosen"))`);
+  await phone.eval(`document.querySelectorAll(".colors button")[${pick}].click(); true`);
+  await phone.until(`document.querySelectorAll(".colors button")[${pick}]?.classList.contains("chosen")`);
   await phone.eval(`document.querySelectorAll(".rules .seg")[0].querySelectorAll("button")[1].click(); true`);
   await win.until(`drawbluff.game.settings.undo === true`);
   log("phone: picked a colour, turned undo on");

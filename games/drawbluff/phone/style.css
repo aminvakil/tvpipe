@@ -141,9 +141,9 @@ canvas.pad {
 }
 canvas.mini { width: 60%; aspect-ratio: 1; display: block; margin: 0 auto .8rem; border-radius: .6rem; background: var(--paper); }
 /* Your colour: ten swatches, yours ringed, others' marked. */
-.colors { display: grid; grid-template-columns: repeat(5, 1fr); gap: .45rem; }
-.colors button { aspect-ratio: 1; padding: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,.2); position: relative; }
-.colors button.chosen { outline: none; border-color: var(--accent); transform: scale(1.1); }
+.colors { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .45rem; padding: 4px; }
+.colors button { min-width: 0; aspect-ratio: 1; padding: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,.2); position: relative; }
+.colors button.chosen { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent); }
 .colors button.taken::after { content: ""; position: absolute; inset: 32%; border-radius: 50%; background: rgba(0,0,0,.35); }
 .pens-line { display: flex; align-items: center; gap: .5rem; margin-top: .6rem; font-size: .9rem; }
 .pens { display: flex; gap: .3rem; }
