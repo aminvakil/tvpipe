@@ -390,6 +390,13 @@ npm/
   `mitsuhiko/tvpipe`, workflow `release.yml`, no environment
   (`npm trust github <pkg> --repo mitsuhiko/tvpipe --file release.yml
   --allow-publish`; this needs the owner's 2FA, a token cannot do it).
+  Until 0.3.0 the trusted publishers were in fact missing: the OIDC
+  exchange failed, npm fell back to setup-node's placeholder token and the
+  publish died with a 404 (0.1.2 and 0.2.0 were published by hand;
+  `publish-packages.mjs` now names the likely cause). They were set up for
+  0.3.0, whose packages CI published. `npm trust list <pkg>` shows a
+  package's configuration; a new package needs the same first publish by
+  hand and the same command.
 - **Releasing**: bump the version in `Cargo.toml`, `Cargo.lock` and
   `npm/tvpipe/package.json` together (CI fails when they differ), tag
   `vX.Y.Z`.

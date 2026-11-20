@@ -55,6 +55,15 @@ for (const { name, dir } of packages) {
       console.log(`${name}@${version}: already published, skipped`);
       continue;
     }
+    if (process.env["GITHUB_ACTIONS"] && /E404|ENEEDAUTH|E401/.test(r.stderr ?? "")) {
+      // The OIDC exchange failed (npm does not say why): the package has no
+      // trusted publisher for this repository's release.yml.
+      console.error(
+        `${name}: npm did not accept this workflow (trusted publishing). Check \`npm trust list ${name}\`: ` +
+          `it needs GitHub repository mitsuhiko/tvpipe, workflow release.yml, no environment ` +
+          `(\`npm trust github ${name} --repo mitsuhiko/tvpipe --file release.yml --allow-publish\`, docs/sdk-design.md).`,
+      );
+    }
     process.exit(r.status ?? 1);
   }
 }
