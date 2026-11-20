@@ -18,7 +18,7 @@ fn help(args: &[&str]) -> String {
 
 #[test]
 fn command_lists_fit_80_columns() {
-    for (args, commands) in [(&[][..], 9), (&["debug"][..], 4), (&["game"][..], 4)] {
+    for (args, commands) in [(&[][..], 9), (&["debug"][..], 4), (&["game"][..], 6)] {
         let text = help(args);
         for line in text.lines() {
             assert!(

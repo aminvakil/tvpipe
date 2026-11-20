@@ -63,7 +63,7 @@ cargo build --release -p tvpipe-cli         # tvpipe (or a release build of it)
 (cd npm/party && npm ci && npm run build)
 cd games/drawbluff && npm install && npm run build
 ../../target/release/tvpipe game play .     # or: tvpipe game play games/drawbluff
-npm run zip                                 # drawbluff.zip: tvpipe game play drawbluff.zip
+npm run zip                                 # drawbluff.zip (tvpipe game pack): tvpipe game play drawbluff.zip
 ```
 
 tvpipe opens a window with its launcher: pick the TVs (or "A browser tab

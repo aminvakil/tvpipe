@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicU32;
 use super::*;
 use crate::net::http::Response;
 use crate::net::httpd::{self, Reply};
+use rustls::pki_types::ServerName;
 use rustls::RootCertStore;
 
 const DOMAIN: &str = "opentunnel.test";
@@ -670,7 +671,7 @@ fn roots_source() -> String {
 
 #[test]
 fn roots_match_the_pem() {
-    assert!(roots::ROOTS.len() > 100);
+    assert!(crate::net::roots::ROOTS.len() > 100);
     let current = std::fs::read_to_string(ROOTS_RS).unwrap();
     assert!(
         current == roots_source(),

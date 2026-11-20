@@ -11,7 +11,7 @@ Contents: 1. decisions, 2. the pieces, 3. the bundle, 4. listeners and
 URLs, 5. the local API, 6. the relay, 7. the launcher, 8. the game
 library, 9. casting, 10. lifecycle, 11. tunnels, 12. security, 13.
 tests, 14. what goes, 15. plan, 16. as built, 17. surfaces: canvases
-beamed without a second browser.
+beamed without a second browser, 18. remote games.
 
 ## 1. Decisions (the owner's, final)
 
@@ -562,7 +562,8 @@ tunnels (about 29 per address in 90 minutes, each a new hostname):
 - **drawbluff**: `tvpipe.json` at the game's folder with `root: dist`;
   `npm run build` compiles `game/` and `host/` and rewrites the library
   imports to `/_tvpipe/lib/`; `npm run zip` writes `drawbluff.zip`
-  (`scripts/zip.ts`, deflate through Node's zlib). The host page shows
+  (first `scripts/zip.ts`, deflate through Node's zlib; now `tvpipe game
+  pack`, §18). The host page shows
   the room, the TVs (with "try again"), the players (remove, bots), the
   rounds, timers and late joining, and a muted preview of the TV (the
   watch link in an `<iframe>`).
@@ -644,9 +645,9 @@ page (window or worker)                      tvpipe
 
 ### 17.2 Measured
 
-`node games/beam/measure.ts` (`games/beam`: a WebGL demo, 400 instanced
+A WebGL demo game written for the measurement (400 instanced
 triangles on an animated shader field, a beep a second; every picture
-carries the wall clock in ms as a row of blocks). tvpipe game play
+carries the wall clock in ms as a row of blocks) and a script driving it. tvpipe game play
 release build, the `browser` receiver, the player page in a second
 headless Chrome reading the blocks back from its canvas: latency is
 glass to glass on one machine including the player's 100 ms playout
@@ -744,3 +745,118 @@ real TVs (only the `browser` receiver was measured; AirPlay and Cast take
 the same H.264 as from a native game); Safari and Firefox were checked
 only with a window in the background (Safari) or headless (Firefox),
 not hidden; HTML-in-Canvas in a worker (`captureElementImage`).
+
+## 18. Remote games
+
+`tvpipe game play` also takes a game from the internet. Games are not
+shipped with tvpipe: each has its own releases, and tvpipe fetches,
+caches and checks them.
+
+**Sources** (`playshare/source.rs`), in this order:
+
+| Form | Meaning |
+|---|---|
+| a path that exists | a folder or a `.zip`, as before (a local path always wins) |
+| `https://…[#sha256=HEX]` | a zip by URL; `http://` only for loopback or with a pin |
+| `gh:OWNER/REPO[/ASSET][@TAG][#sha256=HEX]` | a GitHub release asset. `ASSET` gets `.zip` when it has no extension; without it, the release's only `.zip` (else `REPO.zip`). No `@`: the latest release. `@TAG`: that release. `@PREFIX*`: the newest release whose tag starts with `PREFIX` and that fits this tvpipe (below) |
+| `https://github.com/O/R[/releases[/latest\|/tag/T\|/download/T/F\|/latest/download/F]]` | rewritten to `gh:` |
+| `NAME` (`[a-z0-9-]`, not a path) | an entry of the games list |
+
+No bare `owner/repo`: it reads like a relative path, and a typo would
+fetch code from the internet.
+
+**GitHub.** `gh:` with an asset and a tag (or the latest) needs no API:
+`github.com/O/R/releases/{download/TAG|latest/download}/ASSET`, which
+redirects to a signed `release-assets.githubusercontent.com` URL (valid
+minutes, so never cached). Without an asset, and for `@PREFIX*`, one API
+call (`/repos/O/R/releases/latest`, `/releases/tags/T` or
+`/releases?per_page=100`): 60 an hour without a token; `GITHUB_TOKEN` or
+`GH_TOKEN` is sent to `api.github.com` only, never across a redirect. The
+API's `digest` (`sha256:…`) is checked after the download.
+
+**Which release fits.** One repository can hold several release streams
+(tvpipe's own `vX.Y.Z`, `drawbluff-vX.Y.Z`); GitHub's single "latest"
+pointer belongs to tvpipe (game releases are made with `--latest=false`).
+`@drawbluff-v*` lists the releases (drafts and prereleases left out),
+orders the tags by the version after the prefix, and takes the newest
+whose release notes carry `<!-- tvpipe: X.Y -->` with a series this tvpipe
+runs (`check::version_compatible`); releases without the marker count as
+fitting, and the zip's own `tvpipe.json` decides after the download. The
+games workflow writes the marker; other publishers may.
+
+**The games list.** `https://tvpipe.party/games.json`
+(`site/static/games.json`; `$TVPIPE_GAMES_URL` overrides it): `{"v": 1,
+"games": [{name, title, summary, players: {min, max}, languages, source,
+home}]}`, each `source` a remote form above (drawbluff:
+`gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v*`). Fetched with its ETag when a
+name is played, kept in the cache; offline the cached copy; never compiled
+into tvpipe. The manual's "Games to play" page is rendered from it.
+
+**Fetching** (`net/fetch.rs`, on `net/tls.rs`, the TLS dialer the tunnels
+share): blocking HTTP/1.1 GET, rustls with Mozilla's roots plus
+`$SSL_CERT_FILE`; redirects (301/302/303/307/308, at most 5, never from
+https to http); the body streamed to a file with SHA-256, at most 256 MiB;
+10 s to connect, 30 s of silence; Ctrl-C between reads;
+`Progress::Download` for the status line. No proxies yet.
+
+**Cache** (`playshare/cache.rs`) in the platform's cache directory
+(`~/Library/Caches/tvpipe`, `$XDG_CACHE_HOME/tvpipe` or
+`~/.cache/tvpipe`, `%LOCALAPPDATA%\tvpipe\cache`; `$TVPIPE_CACHE_DIR`):
+`games/blobs/SHA256.zip` and `games/index.json` (per source: the resolved
+URL, tag, ETag, sha256, size, name, title, series, when fetched and used,
+the sha256 the person approved), `games/list.json`. A pinned source with
+its blob never touches the network; `@TAG` uses the cached copy until
+`--refresh`; moving sources (latest, `@PREFIX*`, URLs) ask again
+(`If-None-Match`), and fall back to the cached copy with a warning when
+the network fails. `--offline` uses only the cache. Blobs no source
+refers to are deleted.
+
+**Trust: ask once per source and hash.** A remote game runs its host page
+in tvpipe's window with the local API (it can cast to TVs on the network,
+pair, open links in the system's browser, quit), reaches what any web page
+from `127.0.0.1` reaches, and serves pages to phones. Before the first run
+of a source, and again when its sha256 changes, `game play` shows the
+source, name, title, size, sha256 and the `tvpipe` series and asks. A
+matching `#sha256=` pin or `--yes` skip the question; without a terminal
+(and neither) it is an error that names both. No source is trusted more
+than another, the games list's included. `game fetch` and `game check` run
+nothing and never ask.
+
+**Service workers** are refused on the phones' listeners (a request with
+`Service-Worker: script` gets 403, for every game): the phones' origin
+can be the same across runs (a reused Cloudflare hostname, `--lan`'s
+port), and a worker would outlive the game that registered it.
+
+**Commands.** `game play SOURCE [--yes] [--refresh|--offline]`; `game
+fetch SOURCE [-o FILE]` (download, check, print the pinned source);
+`game check SOURCE`; `game list` (the cached games); `game pack` prints
+the zip's sha256.
+
+**Publishing** (`.github/workflows/games.yml`): a tag `GAME-vX.Y.Z`
+builds `npm/party` and `games/GAME`, checks that the tag is the game's
+`package.json` version and that `tvpipe.json`'s `tvpipe` is the
+workspace's series, packs with a tvpipe built from the same commit
+(`game pack --strict`, `game check --strict`), writes `SHA256SUMS` and
+the notes (with the marker), and runs `gh release create --latest=false`.
+`game check --smoke` is not run there (no headless Chrome is promised on
+the runners; run it before tagging). CI packs and checks drawbluff the
+same way on every push, and checks every game's series. tvpipe's own
+release marks itself `--latest`; the installers pick the newest
+`vX.Y.Z` tag from `/releases?per_page=100` themselves (falling back to
+the latest pointer only when it is a `vX.Y.Z` tag), tested with fixtures
+by `scripts/test-installers.sh`. `site/build.py` validates `games.json`
+and renders it (`:::games`).
+
+**Overrides** for tests and mirrors: `$TVPIPE_GITHUB_URL` (github.com),
+`$TVPIPE_GITHUB_API` (api.github.com), `$TVPIPE_GAMES_URL` (the list),
+`$TVPIPE_CACHE_DIR`. The fetch tests run a TLS server with the
+opentunnel test CA in-process (`net/fetch/tests.rs`,
+`playshare/remote/tests.rs`: a fake GitHub web, API, CDN and list); a
+live check of the real list runs with `TVPIPE_TEST_NET=1`.
+
+**Follow-ups** (not built): a CSP for remote games (`connect-src 'self'`,
+a `network` allowlist in `tvpipe.json`); remote games casting only to
+the launcher's selection; a remote game's own launcher only after the
+question says so; downloads denied and `open_url` rate-limited in the
+window; `HTTPS_PROXY`; community entries in the games list (pinned,
+checked by a scheduled workflow); `game list --available`; signatures.

@@ -462,6 +462,7 @@ fn progress_round_trips_and_is_not_machine() {
         Step::Capture,
         Step::Viewer,
         Step::Discover,
+        Step::Download(s("drawbluff.zip")),
     ];
     let mut all: Vec<Progress> = Vec::new();
     for st in steps {
@@ -484,6 +485,14 @@ fn progress_round_trips_and_is_not_machine() {
         Progress::Casting(vec![s("TV"), s("Bedroom")]),
         Progress::CastFailed(s("no")),
         Progress::CastStopped,
+        Progress::Download {
+            done: 5,
+            total: Some(10),
+        },
+        Progress::Download {
+            done: 5,
+            total: None,
+        },
     ]);
     for p in all {
         let e = Event::Progress(p);

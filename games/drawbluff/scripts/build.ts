@@ -4,16 +4,16 @@
  * `@tvpipe/party` pointed at tvpipe's copy (`/_tvpipe/lib/`), and the
  * pages, styles, fonts and prompts copied as they are.
  *
- *   node scripts/build.ts          # dist/
- *   node scripts/build.ts --zip    # also drawbluff.zip (tvpipe.json at its top)
+ *   node scripts/build.ts    # dist/
+ *
+ * `npm run zip` (scripts/pack.ts) packs it into drawbluff.zip with
+ * `tvpipe game pack`.
  */
 
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { zip } from "./zip.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
@@ -47,16 +47,6 @@ for (const f of files(dist)) {
 for (const dir of ["phone", "screen", "data"]) cpSync(join(root, dir), join(dist, dir), { recursive: true });
 for (const f of ["index.html", "host.css"]) cpSync(join(root, "host", f), join(dist, "host", f));
 console.log(`built ${relative(process.cwd(), dist) || "."}`);
-
-if (process.argv.includes("--zip")) {
-  const manifest = JSON.parse(readFileSync(join(root, "tvpipe.json"), "utf8")) as Record<string, unknown>;
-  delete manifest["root"];
-  const entries: [string, Uint8Array][] = [["drawbluff/tvpipe.json", new TextEncoder().encode(JSON.stringify(manifest, null, 2) + "\n")]];
-  for (const f of files(dist).sort()) entries.push([`drawbluff/${relative(dist, f).split("\\").join("/")}`, readFileSync(f)]);
-  const out = join(root, "drawbluff.zip");
-  writeFileSync(out, zip(entries));
-  console.log(`wrote ${relative(process.cwd(), out)} (${entries.length} files)`);
-}
 
 if (!existsSync(join(dist, "host", "host.js"))) {
   mkdirSync(dist, { recursive: true });

@@ -11,6 +11,10 @@ name: Release
 # npmjs.com trusts this repository's release.yml. So does crates.io for the
 # three crates (tvpipe-fairplay, tvpipe, tvpipe-cli), which the `crates`
 # job publishes in that order.
+#
+# The release is marked latest explicitly: games have their own releases
+# in this repository (NAME-vX.Y.Z, games.yml, never latest), and the
+# installers and /releases/latest must keep finding tvpipe.
 
 on:
   push:
@@ -164,6 +168,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag \
+            --latest \
             --title "tvpipe ${{ steps.version.outputs.version }}" \
             --notes-file release-notes.md \
             --generate-notes

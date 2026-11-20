@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "games": [
+    {
+      "name": "drawbluff",
+      "title": "drawbluff",
+      "summary": "Draw your prompt, fake the others' titles, find the real one",
+      "players": { "min": 3, "max": 50 },
+      "languages": ["en", "de"],
+      "source": "gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v*",
+      "home": "https://github.com/mitsuhiko/tvpipe/tree/main/games/drawbluff"
+    }
+  ]
+}

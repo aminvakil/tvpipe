@@ -124,9 +124,10 @@ pub mod __cli {
     pub use crate::net::tunnel::{start as start_tunnel, Tunnel};
     #[cfg(feature = "playshare")]
     pub mod playshare {
+        pub use crate::playshare::remote::FetchOptions;
         pub use crate::playshare::resolution::Resolution;
         pub use crate::playshare::tool::{run as game_tool, ToolAction, ToolOptions};
-        pub use crate::playshare::{run, Options, TunnelChoice, WindowMode};
+        pub use crate::playshare::{run, Ask, Options, TunnelChoice, WindowMode};
     }
     pub use crate::session::{run, GameIo};
     pub use crate::util::stop::Stop;

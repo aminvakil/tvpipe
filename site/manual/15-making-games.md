@@ -1,9 +1,9 @@
 ---
 title: Making party games
-summary: Build a game for tvpipe, check it, pack it into a zip, and run it.
+summary: Build a game for tvpipe, check it, pack it into a zip, run it and share it.
 group: Use
 spec:
-  Commands: `game new`, `game check`; `game pack`, `game play`
+  Commands: `game new`, `game check`; `game pack`, `game play`; `game fetch`
   Library: `@tvpipe/party` (served by tvpipe at `/_tvpipe/lib/`)
   Browser: Chrome, Edge, Chromium or Brave for the window and `--smoke`
   Example: `games/drawbluff`
@@ -116,7 +116,7 @@ A game that streams a canvas this way does not need a party client on its TV pag
 
 Drawing stops while the window is minimized, unless the canvas lives in a worker. With an `OffscreenCanvas` drawn on a timer there (`clock: "timer"`), the library's `SurfaceEncoder` runs in the worker too.
 
-A TV page made of HTML can be drawn into a canvas in Chrome 157 and later (HTML-in-Canvas). The demo game offers it as **TV picture: drawn here**. `games/beam` in the repository shows both ways side by side, and [docs/playshare-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/playshare-design.md) explains surfaces in section 17.
+A TV page made of HTML can be drawn into a canvas in Chrome 157 and later (HTML-in-Canvas). The demo game offers it as **TV picture: drawn here**. [docs/playshare-design.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/playshare-design.md) explains surfaces in section 17.
 
 ## Check and pack
 
@@ -139,7 +139,7 @@ The zip is the same byte for byte when the files are: entries are sorted and car
 
 `tvpipe game check` checks `tvpipe.json`, then follows every page through its HTML, CSS and JavaScript imports. It reports missing files, names that differ only in case (they work on a Mac and break in the zip), TypeScript that was never built, imports a browser cannot resolve, files that come from the internet, and names that break on other systems. `--smoke` starts the game without TVs, opens the launcher, the host page, the TV page and the phone page in a headless browser, lets a fake phone join, and reports errors from any of them. `--strict` makes warnings fail too, for CI. `game pack` runs the same checks before it packs.
 
-Share the zip. A zip made by hand, with the Finder's Compress for example, works too, but `tvpipe game pack` checks the game and leaves out what does not belong.
+`game pack` ends with the zip's SHA-256 (`sha256 …`), for pinning it (see below). A zip made by hand, with the Finder's Compress for example, works too, but `tvpipe game pack` checks the game and leaves out what does not belong.
 
 ## Play
 
@@ -155,5 +155,25 @@ The window shows the TVs, and the game starts on the ones you pick. [Party games
 | No TVs in the list | Same network, TV awake, AirPlay or casting turned on. `tvpipe discover` shows what the network has. |
 | Phones cannot open the link | `--tunnel=cloudflare`, or `--lan` with the phones on the same Wi-Fi |
 | The game needs a newer tvpipe | Update tvpipe. The game's `tvpipe.json` says which version it is made for. |
+
+## Share it
+
+:::aside Pinned
+`#sha256=HEX` after a source plays only that zip, and skips the question. `tvpipe game fetch SOURCE` prints a source pinned that way.
+:::
+
+Put the zip where people can download it. tvpipe plays it from there, asks once before running a game from the internet, and keeps it for next time:
+
+```sh
+$ tvpipe game play https://example.com/my-game.zip
+$ tvpipe game play gh:you/my-game             # the latest GitHub release's zip
+$ tvpipe game play gh:you/my-game@v1.2.0      # that release
+```
+
+A GitHub release is the easiest place: attach `my-game.zip` (the release's only zip, or one named like the repository) to a release. Links to the repository or the release on github.com work too.
+
+Several games in one repository, or a repository with releases of its own, give every game its own tags, `my-game-v1.2.0`, and players name the stream: `gh:you/games/my-game@my-game-v*` takes the newest of them that fits their tvpipe. A line `<!-- tvpipe: 0.2 -->` in the release notes says which tvpipe version the release is for, so a player with an older tvpipe gets the newest release that still runs on it.
+
+To have a game played by name, add it to the [list of games](game-list.md).
 
 The whole guide, with the manifest's limits and every check, is [docs/games.md](https://github.com/mitsuhiko/tvpipe/blob/main/docs/games.md).

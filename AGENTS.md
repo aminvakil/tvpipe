@@ -15,8 +15,9 @@ workstream.
   TypeScript, browser APIs only, no runtime dependencies; `npm run build`
   copies it into `crates/tvpipe/src/playshare/web/`, which is checked in
   and must match) and `games/drawbluff` (the reference game, a web app,
-  not published). Games run in browsers: no Node and no Rust game logic;
-  Node only for tests and build scripts.
+  released on its own as `drawbluff-vX.Y.Z` by `.github/workflows/games.yml`;
+  tvpipe fetches games, it does not ship them). Games run in browsers: no
+  Node and no Rust game logic; Node only for tests and build scripts.
 - Dependencies: `tvpipe` and `tvpipe-fairplay` use only `ring` and `rustls`
   (ring backend, no default features); `argument` is allowed in `tvpipe-cli`
   only. Games may take their own dependencies. Do not add crates or npm
@@ -25,7 +26,7 @@ workstream.
   known-answer tests or fixtures.
 - Never panic on data from the network or from ffmpeg. Return errors.
 - Platform-neutral code only. No OS media/discovery APIs; `cfg(target_os)` is
-  only acceptable for config-directory paths. The exceptions are
+  only acceptable for config- and cache-directory paths. The exceptions are
   `crates/tvpipe/src/signals.rs` (Ctrl-C handling, `cfg(unix)`/`cfg(windows)`) and
   `crates/tvpipe/src/util/timer.rs` (Windows 1 ms timer resolution, `cfg(windows)`); see
   "Platform-Specific Code" in `ARCHITECTURE.md`.

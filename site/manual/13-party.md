@@ -5,20 +5,57 @@ group: Use
 spec:
   Command: `tvpipe game play GAME`
   Package: `@tvpipe/party` (npm, for writing games)
-  A game: a folder or a zip with `tvpipe.json`
-  Example: `games/drawbluff`
+  A game: a folder or a zip with `tvpipe.json`, here or from the internet
+  Games: [Games to play](game-list.md)
 ---
 
 `tvpipe game play` runs games like the ones from Jackbox: the TV shows the game and a QR code, and everyone joins by scanning it with their phone. Nobody installs anything: a game is a small web app, and tvpipe serves it, puts its main screen on the TV and connects the phones.
 
 ```sh
-$ tvpipe game play games/drawbluff     # a folder with tvpipe.json
-$ tvpipe game play drawbluff.zip       # or a zip of one
+$ tvpipe game play drawbluff           # a game from the list, downloaded
+$ tvpipe game play my-game             # a folder with tvpipe.json
+$ tvpipe game play my-game.zip         # or a zip of one
 ```
 
 :::aside Not released yet
 `tvpipe game` and `@tvpipe/party` come out with the next release. Until then, use them from a clone of the repository.
 :::
+
+## Games from the internet
+
+:::aside Kept
+Downloaded games stay in tvpipe's cache folder (`TVPIPE_CACHE_DIR` moves it). `tvpipe game list` shows them.
+:::
+
+Games are not part of tvpipe: each one comes out on its own. A name from the [list of games](game-list.md) downloads the newest release of that game made for your tvpipe:
+
+```sh
+$ tvpipe game play drawbluff
+drawbluff ("drawbluff") from gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v* ("drawbluff" in the games list), release drawbluff-v0.2.0
+  128.2 KiB, 24 files (254.5 KiB unpacked), made for tvpipe 0.2
+  sha256 67a1867955902de214916aa67a287580fda732d46008d98b7e36d763094b0dd3
+  It runs in tvpipe's window, can cast to the TVs on this network and serves pages to phones.
+  Play it? [y/N]
+```
+
+A game runs in tvpipe's window and can do what tvpipe can: cast to your TVs and serve pages to phones. So tvpipe asks before it runs a game from the internet the first time, and again when a new release of it comes out. A game from the list is asked about like any other. `--yes` (`-y`) answers yes; without a terminal tvpipe needs `--yes` or a pin.
+
+Other sources work the same way:
+
+| Source | |
+|---|---|
+| `NAME` | a game from the [list](game-list.md) |
+| `https://…/game.zip` | a zip on a website |
+| `gh:OWNER/REPO` | the zip of a GitHub repository's latest release; `gh:OWNER/REPO@TAG` a given release. Links to the repository or release on github.com work too |
+| `…#sha256=HEX` | only this zip (a pin): tvpipe checks it and does not ask |
+
+| Option | |
+|---|---|
+| `--yes`, `-y` | Play it without asking |
+| `--refresh` | Look for a new release even of a game played before |
+| `--offline` | Only games downloaded before: no network |
+
+`tvpipe game fetch SOURCE` downloads a game without running it, checks it and prints the source pinned to its SHA-256 (`-o FILE` also writes the zip). The next `game play` of that pin needs no network. When the network fails, tvpipe plays the copy it has and says so.
 
 ## Playing
 
@@ -69,12 +106,17 @@ A game is a small web app: a host page with the rules, a TV page, a phone page a
 
 ## The demo game
 
-`games/drawbluff` in the repository is a drawing and bluffing game for 3 to 50 players. Build it once, then play:
+drawbluff is a drawing and bluffing game for 3 to 50 players:
+
+```sh
+$ tvpipe game play drawbluff
+```
+
+Its source is `games/drawbluff` in the repository. To change it, build it and play the folder:
 
 ```sh
 $ cd games/drawbluff && npm install && npm run build
 $ tvpipe game play .
-$ npm run zip && tvpipe game play drawbluff.zip
 ```
 
 Its window shows the room code and the QR code, the TVs, the players, the number of rounds, the timers and whether latecomers join at the next round, at the next drawing, or not at all, and a preview of the TV. **Add a bot** adds fake players, to try it alone.

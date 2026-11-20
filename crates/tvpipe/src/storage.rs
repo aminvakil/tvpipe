@@ -354,6 +354,47 @@ fn platform_config_dir() -> Option<PathBuf> {
         .or_else(|| env_path("HOME").map(|h| h.join(".config")))
 }
 
+/// Overrides the CLI's cache directory ([`cache_dir`]).
+pub const CACHE_DIR_ENV: &str = "TVPIPE_CACHE_DIR";
+
+/// The CLI's cache directory (games fetched from the internet):
+/// `$TVPIPE_CACHE_DIR`, else `~/Library/Caches/tvpipe` on macOS,
+/// `%LOCALAPPDATA%\tvpipe\cache` on Windows and `$XDG_CACHE_HOME/tvpipe`
+/// (or `~/.cache/tvpipe`) elsewhere. Computed from environment variables
+/// only. Unit tests get a scratch directory, as with [`cli_dir`].
+#[cfg_attr(not(feature = "playshare"), allow(dead_code))]
+pub(crate) fn cache_dir() -> Result<PathBuf> {
+    if let Some(dir) = env_path(CACHE_DIR_ENV) {
+        return Ok(dir);
+    }
+    #[cfg(test)]
+    return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test-tmp")
+        .join(format!("cache-{}", std::process::id())));
+    #[cfg(not(test))]
+    platform_cache_dir()
+        .ok_or_else(|| Error::not_found("storage: cannot determine the cache directory"))
+}
+
+#[cfg(all(target_os = "macos", not(test)))]
+fn platform_cache_dir() -> Option<PathBuf> {
+    env_path("HOME").map(|h| h.join("Library").join("Caches").join("tvpipe"))
+}
+
+#[cfg(all(target_os = "windows", not(test)))]
+fn platform_cache_dir() -> Option<PathBuf> {
+    env_path("LOCALAPPDATA").map(|d| d.join("tvpipe").join("cache"))
+}
+
+#[cfg(all(not(any(target_os = "macos", target_os = "windows")), not(test)))]
+fn platform_cache_dir() -> Option<PathBuf> {
+    env_path("XDG_CACHE_HOME")
+        .filter(|p| p.is_absolute())
+        .or_else(|| env_path("HOME").map(|h| h.join(".cache")))
+        .map(|d| d.join("tvpipe"))
+}
+
 /// The project used to be called `streamlib`: the CLI's platform
 /// directory is moved over once from the old name, so nobody has to pair
 /// again. Only the platform directory has a legacy one next to it: not
@@ -496,6 +537,8 @@ pub(crate) mod tests {
     #[test]
     fn tests_use_a_scratch_cli_dir() {
         let dir = cli_dir().unwrap();
+        assert!(dir.starts_with(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target")));
+        let dir = cache_dir().unwrap();
         assert!(dir.starts_with(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target")));
     }
 

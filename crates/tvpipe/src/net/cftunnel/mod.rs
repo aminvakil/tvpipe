@@ -134,28 +134,7 @@ fn dial(
     sni: &str,
     roots: RootCertStore,
 ) -> Result<(ClientConnection, TcpStream)> {
-    let mut last = None;
-    let addrs = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| Error::io(format!("tunnel: resolve {host}"), e))?;
-    let mut tcp = None;
-    for a in addrs {
-        match TcpStream::connect_timeout(&a, TIMEOUT) {
-            Ok(t) => {
-                tcp = Some(t);
-                break;
-            }
-            Err(e) => last = Some(e),
-        }
-    }
-    let mut tcp = tcp.ok_or_else(|| match last {
-        Some(e) => Error::io(format!("tunnel: connect {host}"), e),
-        None => Error::not_found(format!("tunnel: no address for {host}")),
-    })?;
-    let _ = tcp.set_nodelay(true);
-    tcp.set_read_timeout(Some(TIMEOUT))
-        .and_then(|()| tcp.set_write_timeout(Some(TIMEOUT)))
-        .map_err(|e| Error::io("tunnel: socket", e))?;
+    let mut tcp = super::tls::tcp(host, port, TIMEOUT, "tunnel")?;
     let name = ServerName::try_from(sni.to_owned())
         .map_err(|_| Error::usage(format!("tunnel: bad host {sni}")))?;
     let mut conn = ClientConnection::new(tls_config(roots, port == 443)?, name)

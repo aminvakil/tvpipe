@@ -19,7 +19,7 @@ Windows: `%LOCALAPPDATA%\tvpipe\bin`, added to your `PATH`
 :::install
 :::
 
-The installer downloads the release for your platform from GitHub and checks it before installing. The archives are also on the [releases page](https://github.com/mitsuhiko/tvpipe/releases).
+The installer downloads the newest release for your platform from GitHub and checks it before installing. The archives are also on the [releases page](https://github.com/mitsuhiko/tvpipe/releases), whose tags `vX.Y.Z` are tvpipe's; the games have releases of their own there (`drawbluff-v0.2.0`), which the installers skip.
 
 ## ffmpeg
 

@@ -642,6 +642,22 @@ fn public_listener_rules() {
     assert!(r.starts_with("HTTP/1.1 302"), "{r}");
     assert!(r.contains("Location: /phone/index.html?r=BCDF"), "{r}");
     assert!(get(s.public(), "/phone/app.js", &host, "").contains("export const x"));
+    // No service workers on the phones' origin (§18); the window may.
+    let r = get(
+        s.public(),
+        "/phone/app.js",
+        &host,
+        "Service-Worker: script\r\n",
+    );
+    assert!(r.starts_with("HTTP/1.1 403"), "{r}");
+    let local = format!("127.0.0.1:{}", s.local());
+    let r = get(
+        s.local(),
+        "/phone/app.js",
+        &local,
+        "Service-Worker: script\r\n",
+    );
+    assert!(!r.starts_with("HTTP/1.1 403 Forbidden: no service"), "{r}");
     assert!(get(s.public(), "/_tvpipe/lib/client.js", &host, "").starts_with("HTTP/1.1 200"));
     assert!(get(s.public(), "/_tvpipe/ui.css", &host, "").starts_with("HTTP/1.1 200"));
     let r = get(s.public(), "/nope.html", &host, "Accept: text/html\r\n");

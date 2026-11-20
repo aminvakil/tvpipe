@@ -512,13 +512,70 @@ impl<S: Read + Write> Conn<S> {
         version: Version,
         response: bool,
     ) -> Result<Vec<u8>> {
+        let mut body = Vec::new();
+        self.read_body_with(headers, version, response, &mut |d| {
+            body.extend_from_slice(d);
+            Ok(())
+        })?;
+        Ok(body)
+    }
+
+    /// Reads a response's status line and header fields, skipping 1xx
+    /// responses; the body (empty here) is still to be read with
+    /// [`Conn::read_body_into`]. For bodies too large to keep in memory.
+    pub fn read_response_head(&mut self) -> Result<Response> {
+        loop {
+            let (start, headers) = self.read_head()?;
+            let mut parts = start.splitn(3, ' ');
+            let version = Version::parse(parts.next().unwrap_or(""))?;
+            let code = parts.next().unwrap_or("");
+            if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(Error::malformed(format!("http: bad status line {start:?}")));
+            }
+            let status: u16 = code
+                .parse()
+                .map_err(|_| Error::malformed(format!("http: bad status line {start:?}")))?;
+            if status < 200 {
+                continue;
+            }
+            return Ok(Response {
+                version,
+                status,
+                reason: parts.next().unwrap_or("").to_owned(),
+                headers,
+                body: Vec::new(),
+            });
+        }
+    }
+
+    /// Streams the body of `resp` (from [`Conn::read_response_head`]) to
+    /// `sink` in pieces; `max_body` applies. `head_request`: there is none.
+    pub fn read_body_into(
+        &mut self,
+        resp: &Response,
+        head_request: bool,
+        sink: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        if head_request || resp.status == 204 || resp.status == 304 {
+            return Ok(());
+        }
+        self.read_body_with(&resp.headers, resp.version, true, sink)
+    }
+
+    fn read_body_with(
+        &mut self,
+        headers: &Headers,
+        version: Version,
+        response: bool,
+        sink: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
         let (coded, chunked) = headers.transfer_coding();
         if coded && !version.is_rtsp() {
             if chunked {
-                return self.read_chunked();
+                return self.read_chunked(sink);
             }
             if response {
-                return self.read_to_close();
+                return self.read_to_close(sink);
             }
             return Err(Error::malformed(
                 "http: request with unknown transfer coding",
@@ -532,18 +589,21 @@ impl<S: Read + Write> Conn<S> {
                         self.limits.max_body
                     )));
                 }
-                self.read_exact_vec(n)
+                self.read_exact_into(n, sink)
             }
-            None if response && !version.is_rtsp() => self.read_to_close(),
-            None => Ok(Vec::new()),
+            None if response && !version.is_rtsp() => self.read_to_close(sink),
+            None => Ok(()),
         }
     }
 
-    fn read_chunked(&mut self) -> Result<Vec<u8>> {
-        let mut body = Vec::new();
+    fn read_chunked(&mut self, sink: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
+        let mut len = 0usize;
         let mut total = 0;
         loop {
-            let line = self.read_line(&mut total, false)?;
+            // Chunk-size lines do not count towards the header section's
+            // size (a long body has many); each is bounded by `max_line`.
+            let mut t = 0;
+            let line = self.read_line(&mut t, false)?;
             let size = line.split(';').next().unwrap_or("").trim();
             if size.is_empty() || size.len() > 16 || !size.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(Error::malformed(format!("http: bad chunk size {line:?}")));
@@ -553,30 +613,40 @@ impl<S: Read + Write> Conn<S> {
             if n == 0 {
                 break;
             }
-            if body.len() + n > self.limits.max_body {
+            len = len.saturating_add(n);
+            if len > self.limits.max_body {
                 return Err(Error::malformed("http: chunked body exceeds the limit"));
             }
-            body.extend_from_slice(&self.read_exact_vec(n)?);
-            if !self.read_line(&mut total, false)?.is_empty() {
+            self.read_exact_into(n, sink)?;
+            // The chunk's CRLF is not part of the header section's size.
+            let mut crlf = 0;
+            if !self.read_line(&mut crlf, false)?.is_empty() {
                 return Err(Error::malformed("http: missing CRLF after chunk"));
             }
         }
         // Trailer fields are read and dropped.
         while !self.read_line(&mut total, false)?.is_empty() {}
-        Ok(body)
+        Ok(())
     }
 
-    fn read_to_close(&mut self) -> Result<Vec<u8>> {
-        let mut body = self.buffered().to_vec();
+    fn read_to_close(&mut self, sink: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
+        let mut len = self.end - self.start;
+        if len > self.limits.max_body {
+            return Err(Error::malformed("http: body exceeds the limit"));
+        }
+        sink(&self.buf[self.start..self.end])?;
         self.start = self.end;
         let mut chunk = [0u8; READ_CHUNK];
         loop {
-            if body.len() > self.limits.max_body {
-                return Err(Error::malformed("http: body exceeds the limit"));
-            }
             match self.stream.read(&mut chunk) {
-                Ok(0) => return Ok(body),
-                Ok(n) => body.extend_from_slice(&chunk[..n]),
+                Ok(0) => return Ok(()),
+                Ok(n) => {
+                    len += n;
+                    if len > self.limits.max_body {
+                        return Err(Error::malformed("http: body exceeds the limit"));
+                    }
+                    sink(&chunk[..n])?;
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(Error::io("http: read body", e)),
             }
@@ -620,22 +690,29 @@ impl<S: Read + Write> Conn<S> {
         }
     }
 
-    fn read_exact_vec(&mut self, n: usize) -> Result<Vec<u8>> {
-        let mut out = Vec::with_capacity(n.min(1 << 20));
+    fn read_exact_into(
+        &mut self,
+        n: usize,
+        sink: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
         let take = n.min(self.end - self.start);
-        out.extend_from_slice(&self.buf[self.start..self.start + take]);
+        sink(&self.buf[self.start..self.start + take])?;
         self.start += take;
+        let mut left = n - take;
         let mut chunk = [0u8; READ_CHUNK];
-        while out.len() < n {
-            let want = (n - out.len()).min(chunk.len());
+        while left > 0 {
+            let want = left.min(chunk.len());
             match self.stream.read(&mut chunk[..want]) {
                 Ok(0) => return Err(Error::closed("http: connection closed mid-body")),
-                Ok(k) => out.extend_from_slice(&chunk[..k]),
+                Ok(k) => {
+                    sink(&chunk[..k])?;
+                    left -= k;
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(Error::io("http: read body", e)),
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// Reads more bytes into the buffer; returns how many (0 at EOF).

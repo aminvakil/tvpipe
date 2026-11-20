@@ -29,20 +29,57 @@ download() { # URL FILE
   fi
 }
 
+# The repository's releases (the GitHub API's JSON) on stdin; prints the
+# highest version among the tags vX.Y.Z, nothing when there is none. Games
+# have their own releases in the repository (NAME-vX.Y.Z), so the newest
+# release or GitHub's "latest" need not be tvpipe's.
+newest_version() {
+  grep -o '"tag_name": *"[^"]*"' |
+    sed 's/^"tag_name": *"\(.*\)"$/\1/' |
+    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+    sed 's/^v//' |
+    sort -t . -k1,1n -k2,2n -k3,3n |
+    tail -n 1
+}
+
+# A tag vX.Y.Z as X.Y.Z; fails for any other tag.
+tag_version() { # TAG
+  v=${1#v}
+  case "$1" in
+    v[0-9]*) ;;
+    *) return 1 ;;
+  esac
+  case "$v" in
+    *[!0-9.]* | *..* | .* | *.) return 1 ;;
+  esac
+  printf '%s\n' "$v"
+}
+
 latest_version() {
+  api="https://api.github.com/repos/$REPO/releases"
+  if has curl; then
+    json=$(curl -fsSL --proto '=https' --retry 3 -H 'Accept: application/vnd.github+json' \
+      "$api?per_page=100" 2>/dev/null) || json=
+  else
+    json=$(wget -q -O - "$api?per_page=100" 2>/dev/null) || json=
+  fi
+  version=$(printf '%s\n' "$json" | newest_version)
+  if [ -n "$version" ]; then
+    printf '%s\n' "$version"
+    return 0
+  fi
+  # The API failed (it allows 60 requests an hour without a token): ask
+  # for GitHub's latest release, which the release workflow marks.
   if has curl; then
     # The latest release's page redirects to .../releases/tag/vX.Y.Z.
     url=$(curl -fsSLI --proto '=https' --retry 3 -o /dev/null -w '%{url_effective}' \
       "https://github.com/$REPO/releases/latest") || return 1
     tag=${url##*/}
   else
-    tag=$(wget -q -O - "https://api.github.com/repos/$REPO/releases/latest" |
+    tag=$(wget -q -O - "$api/latest" |
       sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || return 1
   fi
-  case "$tag" in
-    v[0-9]*) printf '%s\n' "${tag#v}" ;;
-    *) return 1 ;;
-  esac
+  tag_version "$tag"
 }
 
 sha256() { # FILE
@@ -153,4 +190,7 @@ main() {
   say "Documentation: https://tvpipe.party/"
 }
 
-main "$@"
+# TVPIPE_INSTALL_SOURCED=1: only define the functions (scripts/test-installers.sh).
+if [ "${TVPIPE_INSTALL_SOURCED:-}" != 1 ]; then
+  main "$@"
+fi

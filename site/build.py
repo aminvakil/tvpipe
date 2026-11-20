@@ -6,8 +6,10 @@
 Sources:
   site/index.md          the landing page
   site/manual/NN-*.md    the manual, one section per file, in file order
-  site/static/           CSS, JS and the logo, copied as is; install.sh and
-                         install.ps1 are also copied to the site's root
+  site/static/           CSS, JS and the logo, copied as is; install.sh,
+                         install.ps1 and games.json (the games list
+                         `tvpipe game play NAME` reads) are also copied to
+                         the site's root
   crates/tvpipe/src/browser/fonts/  the fonts (shared with tvpipe's share page)
   site/shots/            screenshots (site/screenshots.mjs makes them)
 Output: site/_out/ (static files, serve the directory). Every page is a
@@ -40,12 +42,14 @@ Containers:
   :::install :::             the install commands, for the visitor's platform
   :::figure CAPTION ... :::  raw HTML (an inline SVG) as a numbered figure
   :::index :::               the list of manual sections
+  :::games :::               the games list (site/static/games.json)
 
 Inline: `code`, **bold**, *italic*, [links](receivers.md) (a manual page by its
 slug, without the number, so renumbering does not break links).
 """
 
 import html
+import json
 import posixpath
 import re
 import shutil
@@ -53,7 +57,11 @@ import sys
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
-INSTALLERS = ("install.sh", "install.ps1")
+# Served at the site's root: the installers' one-liners and the games list
+# (https://tvpipe.party/games.json, which tvpipe fetches).
+ROOT_FILES = ("install.sh", "install.ps1", "games.json")
+LANGUAGES = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "it": "Italian",
+             "nl": "Dutch", "pt": "Portuguese", "ja": "Japanese"}
 SOURCE = "https://github.com/mitsuhiko/tvpipe"
 LICENSE = SOURCE + "/blob/main/LICENSE"
 FOOTER_NOTE = f'tvpipe is open source. <a href="{LICENSE}">License</a>'
@@ -170,6 +178,49 @@ def install_html():
 <pre data-os="unix"><code>""" + shell_line("$ curl -fsSL https://tvpipe.party/install.sh | sh") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
 <pre data-os="windows" hidden><code>""" + shell_line("PS> irm https://tvpipe.party/install.ps1 | iex") + """</code><button class="copy" aria-label="Copy">Copy</button></pre>
 </div>""")
+
+
+# The games list, checked here so a broken one never deploys: what
+# `tvpipe game play NAME` reads (docs/playshare-design.md §18).
+def games_list():
+    path = SITE / "static" / "games.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("v") != 1 or not isinstance(data.get("games"), list):
+        raise SystemExit(f"{path}: needs \"v\": 1 and a \"games\" array")
+    seen = set()
+    for g in data["games"]:
+        name = g.get("name", "")
+        where = f"{path}: game {name!r}"
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", name) or name in seen:
+            raise SystemExit(f"{where}: the name must be [a-z0-9-], at most 40, unique")
+        seen.add(name)
+        for key in ("title", "summary", "source"):
+            if not isinstance(g.get(key), str) or not g[key]:
+                raise SystemExit(f"{where}: needs {key}")
+        if not re.fullmatch(r"gh:[\w.-]+/[\w.-]+(/[\w.-]+)?(@[\w.*-]+)?(#sha256=[0-9a-f]{64})?|https://\S+", g["source"]):
+            raise SystemExit(f"{where}: source {g['source']!r} is neither gh:OWNER/REPO[/ASSET][@TAG] nor https://")
+        p = g.get("players", {})
+        if not (isinstance(p.get("min"), int) and isinstance(p.get("max"), int) and 1 <= p["min"] <= p["max"]):
+            raise SystemExit(f"{where}: players needs min and max")
+        for lang in g.get("languages", []):
+            if lang not in LANGUAGES:
+                raise SystemExit(f"{where}: unknown language {lang!r} (add it to LANGUAGES)")
+    return data["games"]
+
+
+def games_html(ctx):
+    out = []
+    for g in games_list():
+        p = g["players"]
+        facts = [f'{p["min"]}–{p["max"]} players' if p["min"] != p["max"] else f'{p["min"]} players']
+        if g.get("languages"):
+            facts.append(", ".join(LANGUAGES[lang] for lang in g["languages"]))
+        if g.get("home"):
+            facts.append(f'<a href="{html.escape(g["home"])}">Source</a>')
+        out.append(f'<div class="game"><h3>{html.escape(g["title"])}</h3>'
+                   f'<p>{html.escape(g["summary"])}</p><p class="facts">{" · ".join(facts)}</p>'
+                   + code_block("sh", [f'$ tvpipe game play {g["name"]}']) + "</div>")
+    return "".join(out)
 
 
 # ---------------------------------------------------------------- blocks
@@ -412,6 +463,8 @@ def container(kind, arg, body, ctx):
         return install_html()
     if kind == "figure":
         return figure('<div class="frame">' + "\n".join(body) + "</div>", arg, ctx)
+    if kind == "games":
+        return games_html(ctx)
     if kind == "index":
         return '<div class="index">' + "".join(
             f'<a href="{ctx.to(p["dir"])}"><span class="n">{p["num"]}</span><span><b>{html.escape(p["title"])}</b>'
@@ -519,7 +572,7 @@ def build(out):
     shutil.copytree(SITE.parent / "crates" / "tvpipe" / "src" / "browser" / "fonts", out / "static" / "fonts")
     # The installers live at the root, for the one-liners:
     # curl -fsSL https://tvpipe.party/install.sh | sh
-    for name in INSTALLERS:
+    for name in ROOT_FILES:
         if (SITE / "static" / name).exists():
             shutil.copy(SITE / "static" / name, out / name)
     if (SITE / "shots").exists():

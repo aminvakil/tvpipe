@@ -11,6 +11,18 @@
 # and adds that directory to the user PATH. Works in Windows PowerShell 5.1
 # and PowerShell 7.
 
+# The newest tvpipe version (X.Y.Z) among GitHub releases (the API's
+# objects): tags vX.Y.Z only, no drafts or prereleases; $null if none.
+function Select-TvpipeVersion($releases) {
+    $best = $releases |
+        Where-Object { "$($_.tag_name)" -match '^v\d+\.\d+\.\d+$' -and -not $_.draft -and -not $_.prerelease } |
+        ForEach-Object { [version]("$($_.tag_name)".Substring(1)) } |
+        Sort-Object -Descending |
+        Select-Object -First 1
+    if ($best) { return "$best" }
+    return $null
+}
+
 function Install-Tvpipe {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest is slow with it
@@ -31,12 +43,26 @@ function Install-Tvpipe {
 
     $version = "$env:TVPIPE_VERSION".Trim() -replace '^v', ''
     if (-not $version) {
+        # The highest vX.Y.Z tag among the releases: games have their own
+        # releases in the repository (NAME-vX.Y.Z), so the newest release
+        # or GitHub's "latest" need not be tvpipe's.
         try {
-            $release = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases/latest"
+            $releases = Invoke-RestMethod -UseBasicParsing -Headers @{ Accept = 'application/vnd.github+json' } "https://api.github.com/repos/$repo/releases?per_page=100"
+            $version = Select-TvpipeVersion $releases
         } catch {
-            throw "could not find the latest release of ${repo}: $($_.Exception.Message)"
+            $version = $null
         }
-        $version = $release.tag_name -replace '^v', ''
+        if (-not $version) {
+            # The API allows 60 requests an hour without a token: GitHub's
+            # latest release, which the release workflow marks.
+            try {
+                $release = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases/latest"
+            } catch {
+                throw "could not find the latest release of ${repo}: $($_.Exception.Message)"
+            }
+            if ($release.tag_name -notmatch '^v\d+\.\d+\.\d+$') { throw "the latest release of $repo is not tvpipe's ($($release.tag_name))" }
+            $version = $release.tag_name -replace '^v', ''
+        }
     }
 
     $dir = $env:TVPIPE_INSTALL_DIR
@@ -124,8 +150,11 @@ function Install-Tvpipe {
     }
 }
 
-try {
-    Install-Tvpipe
-} catch {
-    Write-Host "tvpipe install: $($_.Exception.Message)" -ForegroundColor Red
+# TVPIPE_INSTALL_SOURCED=1: only define the functions (scripts/test-installers.sh).
+if ($env:TVPIPE_INSTALL_SOURCED -ne '1') {
+    try {
+        Install-Tvpipe
+    } catch {
+        Write-Host "tvpipe install: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }

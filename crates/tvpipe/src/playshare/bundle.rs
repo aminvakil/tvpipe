@@ -53,6 +53,8 @@ impl Default for Limits {
 pub struct Manifest {
     pub name: String,
     pub title: String,
+    /// The tvpipe the game is made for (`"0.2"`), checked already.
+    pub tvpipe: Option<String>,
     /// The served directory, relative to the manifest (`""`: its own).
     pub root: String,
     pub pages: Pages,
@@ -106,11 +108,13 @@ impl Manifest {
             )));
         }
         // The tvpipe (and @tvpipe/party) the game is made for.
+        let mut tvpipe = None;
         if let Some(t) = v.get("tvpipe").filter(|t| !t.is_null()) {
             let t = t
                 .as_str()
                 .ok_or_else(|| field("\"tvpipe\" must be a version like \"0.2\""))?;
             super::check::version_compatible(t, env!("CARGO_PKG_VERSION")).map_err(field)?;
+            tvpipe = Some(t.to_owned());
         }
         let title = match v.get("title") {
             None | Some(Value::Null) => name.to_owned(),
@@ -228,6 +232,7 @@ impl Manifest {
         Ok(Manifest {
             name: name.to_owned(),
             title,
+            tvpipe,
             root,
             pages,
             min_players,
@@ -335,7 +340,34 @@ impl Bundle {
                 .map_err(|e| Error::io(format!("read {}", path.display()), e))?;
             Bundle::from_zip(&data, path)?
         };
-        let m = &b.manifest;
+        b.check_pages(path)?;
+        Ok(b)
+    }
+
+    /// A zip read from `path` (a cached download), named `label` (its
+    /// source) in messages and logs.
+    pub fn open_zip_as(path: &Path, label: &str) -> Result<Bundle> {
+        let data =
+            std::fs::read(path).map_err(|e| Error::io(format!("read {}", path.display()), e))?;
+        let b = Bundle::from_zip(&data, Path::new(label))?;
+        b.check_pages(Path::new(label))?;
+        Ok(b)
+    }
+
+    /// A zip's file count and unpacked size; `None` for a folder.
+    pub fn zip_stats(&self) -> Option<(usize, u64)> {
+        match &self.source {
+            Source::Zip(files) => Some((
+                files.len(),
+                files.values().map(|f| f.bytes.len() as u64).sum(),
+            )),
+            Source::Folder(_) => None,
+        }
+    }
+
+    /// Every entry page is in the bundle.
+    fn check_pages(&self, path: &Path) -> Result<()> {
+        let m = &self.manifest;
         let mut pages = vec![
             ("host", &m.pages.host),
             ("tv", &m.pages.tv),
@@ -345,7 +377,7 @@ impl Bundle {
             pages.push(("launcher", l));
         }
         for (key, p) in pages {
-            if !matches!(b.get(p), Lookup::File(_)) {
+            if !matches!(self.get(p), Lookup::File(_)) {
                 let root = if m.root.is_empty() {
                     String::new()
                 } else {
@@ -362,7 +394,7 @@ impl Bundle {
                 )));
             }
         }
-        Ok(b)
+        Ok(())
     }
 
     fn open_folder(dir: &Path) -> Result<Bundle> {

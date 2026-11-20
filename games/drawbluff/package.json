@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node scripts/build.ts",
-    "zip": "node scripts/build.ts --zip",
+    "zip": "node scripts/pack.ts",
     "check": "tsc -p tsconfig.json && tsc -p tsconfig.pages.json && tsc -p tsconfig.build.json --noEmit",
     "test": "node --test \"test/*.test.ts\""
   },

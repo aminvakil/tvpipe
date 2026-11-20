@@ -21,7 +21,7 @@ tvpipe screen --to Kitchen                             # the screen, with sound
 tvpipe screen --to Kitchen --window Keynote            # one window
 tvpipe share --to Kitchen --open                       # a browser tab or the screen
 tvpipe share https://status.example.com --to Kitchen   # a web page
-tvpipe game play games/drawbluff                       # a party game: TV, phones, a window here
+tvpipe game play drawbluff                             # a party game: TV, phones, a window here
 ```
 
 ## Installing
@@ -108,9 +108,19 @@ that off; never with `--machine`).
 ## Party games
 
 ```sh
+tvpipe game play drawbluff            # a game from the games list, downloaded
 tvpipe game play games/drawbluff      # a folder with tvpipe.json
-tvpipe game play drawbluff.zip        # or a zip of one
+tvpipe game play my-game.zip          # or a zip of one
+tvpipe game play gh:OWNER/REPO        # a GitHub release's zip (or https://…/game.zip)
 ```
+
+Games are not shipped with tvpipe: each has its own releases, and tvpipe
+downloads the newest one made for it, keeps it in its cache and asks
+once per game and version before running it (`--yes`, or a
+`#sha256=HEX` pin; `--offline` plays what is cached). `tvpipe game fetch`
+downloads without playing, `tvpipe game list` shows what is cached. The
+names come from the [games list](https://tvpipe.party/manual/game-list/)
+(`site/static/games.json`).
 
 A game is a web app: a host page (the rules), a TV page and a phone page,
 with a small `tvpipe.json`. tvpipe serves it, opens a window with a
@@ -119,7 +129,8 @@ it renders the TV page in a headless browser of its own and casts it,
 and relays the phones' WebSockets (through a public link: OpenTunnel by
 default, or `--lan`) to the host page. Rooms, players, reconnects and
 views live in the browser library [`@tvpipe/party`](npm/party/README.md);
-the demo is [`games/drawbluff`](games/drawbluff/) (3–50 players). Closing
+the demo is [`games/drawbluff`](games/drawbluff/) (3–50 players), released
+on its own as `drawbluff-vX.Y.Z`. Closing
 the window ends everything. Design: [`docs/playshare-design.md`](docs/playshare-design.md).
 
 Making one: [`docs/games.md`](docs/games.md) (layout, `tvpipe.json`,
@@ -130,6 +141,9 @@ tvpipe game new my-game               # a starter game
 tvpipe game check my-game             # what would break, with files and lines
 tvpipe game pack my-game --smoke      # my-game.zip (deterministic), run once in a headless browser
 ```
+
+Sharing one: put the zip on a website or a GitHub release
+([`docs/games.md`](docs/games.md#publishing)); `game pack` prints its sha256.
 
 ## Manual
 
@@ -148,6 +162,7 @@ tvpipe game pack my-game --smoke      # my-game.zip (deterministic), run once in
 | [From Node.js](https://tvpipe.party/manual/node/) | the `@tvpipe/sdk` npm package |
 | [From Rust](https://tvpipe.party/manual/rust/) | the `tvpipe` crate |
 | [Party games](https://tvpipe.party/manual/party/) | `tvpipe game` and `@tvpipe/party`: web games played with phones, the TV as the main screen |
+| [Games to play](https://tvpipe.party/manual/game-list/) | the games list: games played by name |
 | [Commands and options](https://tvpipe.party/manual/options/) | every command, the shared options, encoders |
 | [Configuration](https://tvpipe.party/manual/config/) | the config directory, environment variables |
 | [Diagnostics](https://tvpipe.party/manual/diagnostics/) | `-v`, `--debug`, common problems |
@@ -178,7 +193,12 @@ The Node SDK's and the game library's tests run against the debug binary:
 version in `Cargo.toml`, `Cargo.lock`, `npm/tvpipe/package.json`,
 `npm/party/package.json` and the crates' path dependencies together (CI
 checks), then tags `vX.Y.Z`; `release.yml` publishes the GitHub
-release, the npm packages and the crates. Programs in other languages can drive tvpipe
+release (marked latest), the npm packages and the crates. A game releases
+on its own: bump `games/NAME/package.json`'s version (and `tvpipe.json`'s
+`tvpipe` when the tvpipe series changes; CI checks it is the workspace's
+`X.Y`), then tag `NAME-vX.Y.Z`; `games.yml` packs it with the tvpipe of
+that commit and publishes a release that is not latest
+([`docs/games.md`](docs/games.md#publishing)). Programs in other languages can drive tvpipe
 through [`--machine`](docs/machine.md).
 
 Tests that use ffmpeg as an oracle are skipped without it; tests against

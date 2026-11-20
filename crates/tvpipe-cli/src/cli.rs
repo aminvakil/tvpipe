@@ -36,13 +36,15 @@ enum DebugCmd {
 #[derive(Copy, Clone)]
 enum GameCmd {
     Play,
+    Fetch,
+    List,
     Pack,
     Check,
     New,
 }
 
-/// The options of `game pack`, `game check` and `game new` (each spec
-/// declares the ones it takes).
+/// The options of `game pack`, `game check`, `game new`, `game fetch` and
+/// `game list` (each spec declares the ones it takes).
 #[derive(Copy, Clone)]
 enum GameToolArg {
     Path,
@@ -50,11 +52,16 @@ enum GameToolArg {
     Smoke,
     Strict,
     Browser,
+    Refresh,
+    Offline,
 }
 
 #[derive(Copy, Clone)]
 enum PlayshareArg {
     Path,
+    Yes,
+    Refresh,
+    Offline,
     Tunnel,
     NoTunnel,
     Lan,
@@ -222,11 +229,16 @@ static GAME: Cli<GameCmd> = Cli::new("game")
     .usage("COMMAND [OPTIONS]")
     .commands(&[
         Cmd::new(GameCmd::Play, &GAME_PLAY),
+        Cmd::new(GameCmd::Fetch, &GAME_FETCH),
+        Cmd::new(GameCmd::List, &GAME_LIST),
         Cmd::new(GameCmd::Pack, &GAME_PACK),
         Cmd::new(GameCmd::Check, &GAME_CHECK),
         Cmd::new(GameCmd::New, &GAME_NEW),
     ])
-    .after_help("A game is a web app: a folder or a .zip with tvpipe.json. docs/games.md");
+    .after_help(
+        "A game is a web app: a folder or a .zip with tvpipe.json, here or from the\n\
+         internet (https://…, gh:OWNER/REPO or a name from the games list). docs/games.md",
+    );
 
 /// The top-level commands that moved into a group, and where to.
 const MOVED: &[(&str, &str)] = &[
@@ -234,7 +246,7 @@ const MOVED: &[(&str, &str)] = &[
     ("debug-pipeline", "tvpipe debug pipeline"),
     ("tunnel", "tvpipe debug tunnel PORT"),
     ("qr", "tvpipe debug qr TEXT"),
-    ("playshare", "tvpipe game play PATH"),
+    ("playshare", "tvpipe game play GAME"),
     (
         "bundle",
         "tvpipe game pack DIR, game check PATH or game new DIR",
@@ -289,8 +301,18 @@ static TUNNEL: Cli<TunnelArg> = Cli::new("tunnel")
 
 static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
     .about("Play a game: the host window here, the TV page on TVs, phones join")
-    .usage("PATH [--tunnel[=PROVIDER] | --no-tunnel] [--lan[=IP]] [--window=MODE]")
+    .usage("GAME [--yes] [--refresh | --offline] [--tunnel[=PROVIDER] | --no-tunnel] [--lan[=IP]] [--window=MODE]")
     .opts(&[
+        Opt::new(PlayshareArg::Yes)
+            .short('y')
+            .long("yes")
+            .help("Play a game from the internet without asking first"),
+        Opt::new(PlayshareArg::Refresh)
+            .long("refresh")
+            .help("Ask the server again even for a release downloaded before"),
+        Opt::new(PlayshareArg::Offline)
+            .long("offline")
+            .help("Only games downloaded before (and the games list from before)"),
         tunnel(
             PlayshareArg::Tunnel,
             "Who carries the phones' link: opentunnel or cloudflare (default: OpenTunnel, Cloudflare if it fails)",
@@ -320,10 +342,53 @@ static GAME_PLAY: Cli<PlayshareArg> = Cli::new("play")
             .value("RES")
             .help("The TV picture: auto, 720p, 1080p or 4k (default auto; the window can change it)"),
     ])
-    .args(&[Pos::new(PlayshareArg::Path, "PATH").help("The game: a folder or a .zip with tvpipe.json")])
+    .args(&[Pos::new(PlayshareArg::Path, "GAME").help(
+        "A folder or .zip with tvpipe.json, an https:// URL of a zip, gh:OWNER/REPO[/ASSET][@TAG], \
+         or a name from the games list (drawbluff); #sha256=HEX pins a download",
+    )])
     .after_help(
-        "Closing the window (or Ctrl-C) ends the game: the TVs stop, phones are told. \
-         docs/playshare-design.md",
+        "A game from the internet is downloaded (and kept: tvpipe game list), and the first time \
+         tvpipe asks before running it. Closing the window (or Ctrl-C) ends the game: the TVs \
+         stop, phones are told. docs/games.md",
+    );
+
+const fn game_refresh(id: GameToolArg) -> Opt<GameToolArg> {
+    Opt::new(id)
+        .long("refresh")
+        .help("Ask the server again even for a release downloaded before")
+}
+
+const fn game_offline(id: GameToolArg) -> Opt<GameToolArg> {
+    Opt::new(id)
+        .long("offline")
+        .help("Only games downloaded before")
+}
+
+static GAME_FETCH: Cli<GameToolArg> = Cli::new("fetch")
+    .about("Download a game from the internet, check it, print its pinned source")
+    .usage("GAME [-o FILE] [--refresh | --offline]")
+    .opts(&[
+        Opt::new(GameToolArg::Out)
+            .short('o')
+            .long("output")
+            .value("FILE")
+            .value_hint(ValueHint::FilePath)
+            .help("Also write the zip here"),
+        game_refresh(GameToolArg::Refresh),
+        game_offline(GameToolArg::Offline),
+    ])
+    .args(&[Pos::new(GameToolArg::Path, "GAME").help(
+        "An https:// URL of a zip, gh:OWNER/REPO[/ASSET][@TAG], or a name from the games list",
+    )])
+    .after_help(
+        "Runs nothing and asks nothing: the game is kept in the cache, for playing offline \
+         later. docs/games.md",
+    );
+
+static GAME_LIST: Cli<GameToolArg> = Cli::new("list")
+    .about("List the games downloaded from the internet")
+    .after_help(
+        "The games list of games to play: https://tvpipe.party/manual/game-list/",
     );
 
 const fn game_smoke(id: GameToolArg) -> Opt<GameToolArg> {
@@ -375,16 +440,20 @@ static GAME_PACK: Cli<GameToolArg> = Cli::new("pack")
     );
 
 static GAME_CHECK: Cli<GameToolArg> = Cli::new("check")
-    .about("Check a game (a folder or a .zip); write nothing")
-    .usage("PATH [--smoke] [--strict]")
+    .about("Check a game (a folder, a .zip or from the internet); write nothing")
+    .usage("GAME [--smoke] [--strict] [--refresh | --offline]")
     .opts(&[
         game_smoke(GameToolArg::Smoke),
         game_strict(GameToolArg::Strict),
         game_browser(GameToolArg::Browser),
+        game_refresh(GameToolArg::Refresh),
+        game_offline(GameToolArg::Offline),
     ])
-    .args(&[Pos::new(GameToolArg::Path, "PATH")
+    .args(&[Pos::new(GameToolArg::Path, "GAME")
         .value_hint(ValueHint::FilePath)
-        .help("The game: a folder with tvpipe.json, or a .zip")])
+        .help(
+            "The game: a folder with tvpipe.json, a .zip, an https:// URL, gh:OWNER/REPO or a name",
+        )])
     .after_help(GAME_CHECKS);
 
 static GAME_NEW: Cli<GameToolArg> = Cli::new("new")
@@ -907,6 +976,8 @@ fn parse_game(mut p: Parser<GameCmd>) -> Result<Command, Error> {
     use tvpipe::__cli::playshare::ToolAction;
     match p.param()? {
         Some(GameCmd::Play) => parse_playshare(p.subcommand(&GAME_PLAY)),
+        Some(GameCmd::Fetch) => parse_game_tool(p.subcommand(&GAME_FETCH), ToolAction::Fetch),
+        Some(GameCmd::List) => parse_game_tool(p.subcommand(&GAME_LIST), ToolAction::List),
         Some(GameCmd::Pack) => parse_game_tool(p.subcommand(&GAME_PACK), ToolAction::Pack),
         Some(GameCmd::Check) => parse_game_tool(p.subcommand(&GAME_CHECK), ToolAction::Check),
         Some(GameCmd::New) => parse_game_tool(p.subcommand(&GAME_NEW), ToolAction::New),
@@ -987,6 +1058,9 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
     while let Some(arg) = p.param()? {
         match arg {
             PlayshareArg::Path => path = Some(p.value::<String>()?),
+            PlayshareArg::Yes => o.yes = true,
+            PlayshareArg::Refresh => o.fetch.refresh = true,
+            PlayshareArg::Offline => o.fetch.offline = true,
             PlayshareArg::Tunnel => {
                 tunnel = Some(match p.optional_value::<String>()? {
                     None => TunnelChoice::Auto,
@@ -1035,10 +1109,15 @@ fn parse_playshare(mut p: Parser<PlayshareArg>) -> Result<Command, Error> {
     } else {
         tunnel.unwrap_or_default()
     };
+    if o.fetch.refresh && o.fetch.offline {
+        return Err(p.error("--refresh and --offline together"));
+    }
     let Some(path) = path else {
-        return Err(p.error("game play needs the PATH of a game (a folder or a .zip)"));
+        return Err(p.error(
+            "game play needs a GAME: a folder, a .zip, an https:// URL, gh:OWNER/REPO or a name",
+        ));
     };
-    o.path = path.into();
+    o.game = path;
     Ok(Command::Playshare(o))
 }
 
@@ -1058,18 +1137,29 @@ fn parse_game_tool(
             GameToolArg::Smoke => o.smoke = true,
             GameToolArg::Strict => o.strict = true,
             GameToolArg::Browser => o.browser = Some(p.value::<String>()?.into()),
+            GameToolArg::Refresh => o.fetch.refresh = true,
+            GameToolArg::Offline => o.fetch.offline = true,
         }
     }
-    let Some(path) = path else {
-        return Err(p.error(format!(
-            "{} needs the {}",
-            action.command(),
-            match action {
-                tvpipe::__cli::playshare::ToolAction::Check =>
-                    "PATH of a game (a folder or a .zip)",
-                _ => "DIR of the game",
-            }
-        )));
+    if o.fetch.refresh && o.fetch.offline {
+        return Err(p.error("--refresh and --offline together"));
+    }
+    use tvpipe::__cli::playshare::ToolAction;
+    let path = match (path, action) {
+        (Some(p), _) => p,
+        (None, ToolAction::List) => String::new(),
+        (None, _) => {
+            return Err(p.error(format!(
+                "{} needs the {}",
+                action.command(),
+                match action {
+                    ToolAction::Check =>
+                        "GAME: a folder, a .zip, an https:// URL, gh:OWNER/REPO or a name",
+                    ToolAction::Fetch => "GAME: an https:// URL, gh:OWNER/REPO or a name",
+                    _ => "DIR of the game",
+                }
+            )))
+        }
     };
     o.path = path.into();
     Ok(Command::GameTool(o))
@@ -1566,7 +1656,31 @@ mod tests {
             panic!("game new");
         };
         assert_eq!((o.action, o.path.to_str()), (ToolAction::New, Some("quiz")));
+        let Ok((_, Command::GameTool(o))) =
+            parse_from(&["game", "fetch", "drawbluff", "-o", "d.zip", "--refresh"])
+        else {
+            panic!("game fetch");
+        };
+        assert_eq!(
+            (o.action, o.path.to_str()),
+            (ToolAction::Fetch, Some("drawbluff"))
+        );
+        assert!(o.fetch.refresh && o.out.is_some());
+        let Ok((_, Command::GameTool(o))) = parse_from(&["game", "list"]) else {
+            panic!("game list");
+        };
+        assert_eq!(o.action, ToolAction::List);
+        let Ok((_, Command::GameTool(o))) =
+            parse_from(&["game", "check", "--offline", "https://example.com/g.zip"])
+        else {
+            panic!("game check remote");
+        };
+        assert!(o.fetch.offline);
         for bad in [
+            &["game", "fetch"][..],
+            &["game", "fetch", "--smoke", "x"],
+            &["game", "list", "x"],
+            &["game", "pack", "--offline", "x"],
             &["game", "pack"][..],
             &["game", "check"],
             &["game", "new"],
@@ -1608,7 +1722,8 @@ mod tests {
         let Ok((_, Command::Playshare(o))) = parse_from(&["game", "play", "games/x"]) else {
             panic!()
         };
-        assert_eq!(o.path, std::path::PathBuf::from("games/x"));
+        assert_eq!(o.game, "games/x");
+        assert!(!o.yes && !o.fetch.refresh && !o.fetch.offline);
         assert_eq!(o.tunnel, TunnelChoice::Auto);
         assert_eq!(o.window, WindowMode::App);
         assert_eq!(o.lan, None);
@@ -1638,8 +1753,20 @@ mod tests {
             panic!()
         };
         assert_eq!((o.tunnel, o.lan), (TunnelChoice::Off, Some(None)));
+        let Ok((_, Command::Playshare(o))) = parse_from(&[
+            "game",
+            "play",
+            "-y",
+            "--offline",
+            "gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v*",
+        ]) else {
+            panic!()
+        };
+        assert_eq!(o.game, "gh:mitsuhiko/tvpipe/drawbluff@drawbluff-v*");
+        assert!(o.yes && o.fetch.offline);
         for bad in [
             &["game", "play"][..],
+            &["game", "play", "--refresh", "--offline", "x"],
             &["game", "play", "--tunnel", "--no-tunnel", "x"],
             &["game", "play", "--tunnel=nope", "x"],
             &["game", "play", "--window", "tab", "x"],

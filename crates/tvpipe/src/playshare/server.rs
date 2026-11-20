@@ -187,6 +187,20 @@ impl Hub {
             r.headers.add("Allow", "GET, HEAD");
             return Reply::Response(r);
         }
+        // A service worker on the phones' origin would outlive the game:
+        // the next game on the same name (a reused Cloudflare hostname,
+        // `--lan`'s port) would run under it (§18).
+        if l != Listener::Local
+            && req
+                .headers
+                .get("service-worker")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("script"))
+        {
+            return Reply::Response(httpd::error_response(
+                403,
+                "Forbidden: no service workers on the phones' link",
+            ));
+        }
         let r = self.get(req, l, path, query);
         Reply::Response(self.for_browser(req, l, r))
     }

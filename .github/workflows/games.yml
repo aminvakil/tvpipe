@@ -1,0 +1,156 @@
+name: Games
+
+# Every game in games/ has its own release stream in this repository:
+# pushing a tag NAME-vX.Y.Z (drawbluff-v0.2.0) packs games/NAME with the
+# tvpipe of the same commit and publishes a GitHub Release with NAME.zip
+# and SHA256SUMS. `tvpipe game play NAME` finds it through the games list
+# (site/static/games.json: gh:mitsuhiko/tvpipe/NAME@NAME-v*) and picks the
+# newest release whose notes' `<!-- tvpipe: X.Y -->` marker names its
+# series (docs/playshare-design.md §18). Game releases are never marked
+# latest: /releases/latest stays tvpipe's, which the installers and
+# release.yml rely on.
+#
+# The tag pattern needs a "-v", so tvpipe's own vX.Y.Z tags (release.yml)
+# never match. Running the workflow by hand (workflow_dispatch) is a dry
+# run for one game: it packs and checks it and keeps the zip, the checksums
+# and the notes as a workflow artifact, but publishes nothing.
+#
+# Not run: `tvpipe game check --smoke` (loads the pages in a headless
+# Chrome). Whether a Chrome is reliably there on the runners is unverified;
+# run it locally before tagging.
+
+on:
+  push:
+    tags: ["*-v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      game:
+        description: "Game to pack (a folder in games/)"
+        required: true
+        default: drawbluff
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  game:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Which game
+        id: game
+        env:
+          INPUT_GAME: ${{ inputs.game }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            name="${GITHUB_REF_NAME%-v*}"
+            version="${GITHUB_REF_NAME##*-v}"
+          else
+            name="$INPUT_GAME"
+            version=
+          fi
+          case "$name" in
+            ""|*/*|.*) echo "bad game name '$name'" >&2; exit 1 ;;
+          esac
+          test -f "games/$name/tvpipe.json" || { echo "games/$name/tvpipe.json does not exist" >&2; exit 1; }
+          if [ -f "games/$name/package.json" ]; then
+            v="$(node -p "require('./games/$name/package.json').version")"
+            if [ -n "$version" ] && [ "$version" != "$v" ]; then
+              echo "tag $GITHUB_REF_NAME does not match games/$name/package.json version $v" >&2
+              exit 1
+            fi
+            version="$v"
+          fi
+          echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "bad version '$version'" >&2; exit 1; }
+          # The game names the tvpipe series it is made for; it is packed
+          # and checked by this commit's tvpipe, so the two must agree.
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          series="${cargo_version%.*}"
+          game_series="$(node -p "require('./games/$name/tvpipe.json').tvpipe || ''")"
+          test "$game_series" = "$series" || {
+            echo "games/$name/tvpipe.json has \"tvpipe\": \"$game_series\", this tvpipe is $series" >&2
+            exit 1
+          }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "series=$series" >> "$GITHUB_OUTPUT"
+      - name: Build tvpipe
+        run: cargo build --release --locked -p tvpipe-cli
+      # The game library first: games import it through file:../../npm/party.
+      - name: Build the game library
+        working-directory: npm/party
+        run: |
+          npm ci
+          npm run build
+          npm run check
+      - name: Build the game
+        working-directory: games/${{ steps.game.outputs.name }}
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+            npm run check --if-present
+            npm run test --if-present
+            npm run build --if-present
+          fi
+      - name: Pack and check
+        env:
+          NAME: ${{ steps.game.outputs.name }}
+        run: |
+          mkdir -p dist
+          target/release/tvpipe game pack "games/$NAME" --strict -o "dist/$NAME.zip"
+          target/release/tvpipe game check "dist/$NAME.zip" --strict
+      - name: Checksums and notes
+        env:
+          NAME: ${{ steps.game.outputs.name }}
+          VERSION: ${{ steps.game.outputs.version }}
+          SERIES: ${{ steps.game.outputs.series }}
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          cd ..
+          {
+            echo "<!-- tvpipe: $SERIES -->"
+            echo "$NAME $VERSION, a game for tvpipe $SERIES. Play it with"
+            echo
+            echo '```'
+            echo "tvpipe game play $NAME"
+            echo "tvpipe game play gh:$GITHUB_REPOSITORY/$NAME@$NAME-v$VERSION"
+            echo '```'
+            echo
+            echo "SHA256 of $NAME.zip: \`$(sha256sum "dist/$NAME.zip" | cut -d' ' -f1)\`"
+          } > release-notes.md
+          cat release-notes.md
+      - name: Keep the dry run's output
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: game-dry-run
+          path: |
+            dist/
+            release-notes.md
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.game.outputs.name }}
+          VERSION: ${{ steps.game.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --latest=false \
+            --title "$NAME $VERSION" \
+            --notes-file release-notes.md

@@ -207,7 +207,7 @@ the pages are static files embedded in the binary.
 
 ## Party Games (playshare)
 
-`tvpipe game play PATH` (`crates/tvpipe/src/playshare/`, the `playshare`
+`tvpipe game play GAME` (`crates/tvpipe/src/playshare/`, the `playshare`
 feature) runs a game that is a web app: a folder or a zip (our own zip
 reader and inflate, `util::zip`, `util::inflate`) with `tvpipe.json`
 naming its host, TV and phone pages. Design and protocols:
@@ -254,6 +254,17 @@ naming its host, TV and phone pages. Design and protocols:
   game with a stand-in receiver backend and a headless browser over
   DevTools, and joins with a fake phone over the relay. `game new` writes
   the starter game embedded from `playshare/template/`.
+- **Games from the internet** (`playshare/source.rs`, `remote.rs`,
+  `cache.rs`; `net/fetch.rs` on `net/tls.rs`, the rustls dialer the
+  tunnels share): a game named by URL, `gh:OWNER/REPO[/ASSET][@TAG]` or a
+  name from the games list (`games.json` on the website) is downloaded
+  with a blocking HTTPS client (redirects, size caps, streamed to a file
+  with its SHA-256), kept in the cache directory (`storage::cache_dir`,
+  `games/`), and run only after the person said yes to that source and
+  hash (or `--yes`, or a `#sha256=` pin). GitHub release streams in one
+  repository (`drawbluff-v*`) are told apart by tag prefix and a
+  `<!-- tvpipe: X.Y -->` marker in the notes. Phones' listeners refuse
+  service-worker scripts. Design: `docs/playshare-design.md` §18.
 - **Surfaces** (`playshare/surface.rs`): a page encodes a canvas with
   WebCodecs and sends SLRW records over `/_tvpipe/surface`; tvpipe feeds
   them to a `Stream` (the program's-own-H.264 path) per surface, with
@@ -489,7 +500,9 @@ Everything is platform-neutral except these, each with no crate and every
   Windows 10 2004 it ends with the process) is called from `main`,
   `session::play_with` and the fake receivers. Measurements:
   [`docs/measurements.md`](docs/measurements.md#windows-timer-resolution).
-- **Paths:** `cfg(target_os)` for the config directory and for the
+- **Paths:** `cfg(target_os)` for the config and cache directories
+  (`crates/tvpipe/src/storage.rs`; the cache holds games fetched from the
+  internet) and for the
   well-known browser install paths (Chromium-based and Firefox) and the
   browsers' own profile directories, which `tvpipe share URL --profile` refuses
   (`crates/tvpipe/src/browser/platform.rs`).
@@ -551,7 +564,7 @@ blocked `recv`, socket timeouts per handle, PowerShell pipes) are handled in por
   with `--ignored` and `TVPIPE_*` variables.
 - **CI** runs fmt, clippy and the tests on Linux, macOS and Windows. What
   was checked by hand on which OS: [`docs/cross-platform.md`](docs/cross-platform.md).
-- **Isolation.** Unit tests use a scratch config directory
+- **Isolation.** Unit tests use scratch config and cache directories
   (`target/test-tmp/`) and never browse the real network, unless
   `TVPIPE_ATV` (hardware tests) or `TVPIPE_LIVE_MDNS` is set.
 

@@ -1,13 +1,18 @@
-//! `tvpipe game pack`, `game check` and `game new`: pack a game into a
-//! zip, check it, run it once without TVs, or start a new one from the
-//! template (docs/games.md).
+//! `tvpipe game pack`, `game check`, `game new`, `game fetch` and `game
+//! list`: pack a game into a zip, check it, run it once without TVs, start
+//! a new one from the template, download one from the internet, list the
+//! downloaded ones (docs/games.md).
 
 use std::path::{Path, PathBuf};
 
+use super::cache::Cache;
 use super::check::{self, Checked};
+use super::remote::{FetchOptions, Fetcher};
 use super::smoke::{self, SmokeOptions};
+use super::source::Source;
 use crate::codec::json::Value;
 use crate::error::{Error, Result};
+use crate::events::{Event, Events, Progress, Step};
 use crate::util::stop::Stop;
 
 /// Which of the game commands.
@@ -20,6 +25,10 @@ pub enum ToolAction {
     Check,
     /// `game new DIR`: the starter game.
     New,
+    /// `game fetch SOURCE`: download into the cache (and `-o FILE`).
+    Fetch,
+    /// `game list`: the games in the cache.
+    List,
 }
 
 impl ToolAction {
@@ -29,6 +38,8 @@ impl ToolAction {
             ToolAction::Pack => "game pack",
             ToolAction::Check => "game check",
             ToolAction::New => "game new",
+            ToolAction::Fetch => "game fetch",
+            ToolAction::List => "game list",
         }
     }
 }
@@ -48,6 +59,8 @@ pub struct ToolOptions {
     pub strict: bool,
     /// `--browser`: for `--smoke`.
     pub browser: Option<PathBuf>,
+    /// `--refresh`, `--offline` (a game from the internet).
+    pub fetch: FetchOptions,
 }
 
 /// Runs a game command; the report goes to stdout. An error when the
@@ -64,7 +77,61 @@ pub fn run(o: &ToolOptions, stop: Stop) -> Result<()> {
         println!("  tvpipe game pack {d}       pack it into a zip for others");
         return Ok(());
     }
-    let mut c = check::check(&o.path)?;
+    if o.action == ToolAction::List {
+        return list();
+    }
+    let game = o.path.to_string_lossy().into_owned();
+    let src = Source::parse(&game)?;
+    let fetched = match &src {
+        Source::Local(_) if o.action == ToolAction::Fetch => {
+            return Err(Error::usage(format!(
+                "game fetch: {game} is on this computer already (a game from the internet is https://…, gh:… or a name)"
+            )))
+        }
+        Source::Local(_) => None,
+        _ if o.action == ToolAction::Pack => {
+            return Err(Error::usage(format!(
+                "game pack: {game} is not a folder on this computer"
+            )))
+        }
+        _ => {
+            let fetcher = Fetcher::from_env(o.fetch, download_lines(), Some(stop.clone()))?;
+            Some(fetcher.fetch(&src)?)
+        }
+    };
+    if let Some(f) = &fetched {
+        let m = &f.bundle.manifest;
+        println!(
+            "{} (\"{}\"){} from {}",
+            m.name,
+            m.title,
+            m.tvpipe
+                .as_deref()
+                .map(|v| format!(", made for tvpipe {v}"))
+                .unwrap_or_default(),
+            f.shown
+        );
+        if let Some(t) = &f.tag {
+            println!("  release {t}");
+        }
+        println!("  {}, sha256 {}", check::human(f.size), f.sha256);
+        println!("  cached at {}", f.path.display());
+        println!("  pinned: tvpipe game play '{}'", f.pin_hint);
+        if o.action == ToolAction::Fetch {
+            if let Some(out) = &o.out {
+                let bytes = std::fs::read(&f.path)
+                    .map_err(|e| Error::io(format!("read {}", f.path.display()), e))?;
+                write_atomic(out, &bytes)?;
+                println!("wrote {}", out.display());
+            }
+            return Ok(());
+        }
+    }
+    let path = fetched.as_ref().map_or(o.path.clone(), |f| f.path.clone());
+    let mut c = check::check(&path)?;
+    if let Some(f) = &fetched {
+        c.origin = PathBuf::from(&f.key);
+    }
     let out = if o.action == ToolAction::Pack {
         if c.is_zip {
             return Err(Error::usage(format!(
@@ -100,9 +167,13 @@ pub fn run(o: &ToolOptions, stop: Stop) -> Result<()> {
                 check::human(bytes.len() as u64),
                 check::human(size)
             );
+            println!(
+                "sha256 {}",
+                crate::util::hex::encode(&crate::crypto::ring::sha256(&bytes))
+            );
             out.clone()
         }
-        None => o.path.clone(),
+        None => path.clone(),
     };
     if o.smoke {
         let r = smoke::smoke(
@@ -124,6 +195,64 @@ pub fn run(o: &ToolOptions, stop: Stop) -> Result<()> {
         }
         println!("smoke: ok");
     }
+    Ok(())
+}
+
+/// Progress of a download as lines on stderr (the report is stdout's).
+fn download_lines() -> Events {
+    Events::to(|e| match e {
+        Event::Progress(Progress::Begin(Step::Download(what))) => {
+            eprintln!("downloading {what}…")
+        }
+        Event::Progress(Progress::Failed(Step::Download(what), err)) => {
+            eprintln!("downloading {what} failed: {err}")
+        }
+        _ => {}
+    })
+}
+
+/// `game list`: the games in the cache, the last played first.
+fn list() -> Result<()> {
+    let cache = Cache::open()?;
+    let idx = cache.index();
+    let mut rows: Vec<_> = idx
+        .sources
+        .iter()
+        .filter(|(_, r)| cache.blob(&r.sha256).is_some())
+        .collect();
+    if rows.is_empty() {
+        println!("no games downloaded yet ({})", cache.dir().display());
+        return Ok(());
+    }
+    rows.sort_by_key(|a| std::cmp::Reverse(a.1.used));
+    for (source, r) in rows {
+        println!(
+            "{:<20} {}{}",
+            r.name,
+            source,
+            r.tag
+                .as_deref()
+                .filter(|t| !source.contains(&format!("@{t}")))
+                .map(|t| format!(" ({t})"))
+                .unwrap_or_default()
+        );
+        println!(
+            "{:<20} {}, sha256 {}…{}{}",
+            "",
+            check::human(r.size),
+            &r.sha256[..16],
+            r.series
+                .as_deref()
+                .map(|s| format!(", for tvpipe {s}"))
+                .unwrap_or_default(),
+            if r.trusted.as_deref() == Some(r.sha256.as_str()) {
+                ""
+            } else {
+                ", not played yet"
+            }
+        );
+    }
+    println!("cache: {}", cache.dir().display());
     Ok(())
 }
 

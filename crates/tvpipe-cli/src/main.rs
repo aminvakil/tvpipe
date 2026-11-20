@@ -232,7 +232,7 @@ fn run(command: Command, ctx: tvpipe::__cli::Ctx, global: &cli::Global) -> error
         Command::Playshare(_) if global.machine => Err(error::Error::usage(
             "game play is for people: run it without --machine",
         )),
-        Command::Playshare(o) => tvpipe::__cli::playshare::run(&o, &ctx),
+        Command::Playshare(o) => tvpipe::__cli::playshare::run(&o, &ctx, &ask_in_terminal),
         Command::GameTool(o) if global.machine => Err(error::Error::usage(format!(
             "{} prints a report: run it without --machine",
             o.action.command()
@@ -430,6 +430,12 @@ fn prompt_pin(req: &events::PinRequest) -> error::Result<String> {
         return Err(error::Error::usage("no PIN entered"));
     }
     Ok(line.trim().to_owned())
+}
+
+/// Asks a yes/no question on the terminal (`y` + Enter); `None` without
+/// one (or when `cancel` says so first).
+fn ask_in_terminal(question: &str, cancel: &dyn Fn() -> bool) -> Option<bool> {
+    interrupt::ask(question, cancel).map(|a| matches!(a.trim(), "y" | "Y" | "yes" | "Yes" | "YES"))
 }
 
 /// Asks on the terminal (`y` + Enter) whether a share from over the

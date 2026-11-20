@@ -110,6 +110,8 @@ pub struct Renderer {
     since: Option<Duration>,
     phones: usize,
     casting: Vec<String>,
+    /// A download's bytes so far and its length.
+    download: Option<(u64, Option<u64>)>,
     /// Messages already printed (the command's error is not repeated).
     shown: Vec<String>,
 }
@@ -147,6 +149,7 @@ impl Renderer {
             since: None,
             phones: 0,
             casting: Vec::new(),
+            download: None,
             shown: Vec::new(),
         }
     }
@@ -392,6 +395,14 @@ impl Renderer {
                         self.ok(&text, took);
                     }
                     Step::Window => self.ok("Game window open", took),
+                    Step::Download(what) => {
+                        let size = self.download.take().map(|(d, _)| mib(d));
+                        let text = match size {
+                            Some(m) => format!("Downloaded {what} ({m})"),
+                            None => format!("Downloaded {what}"),
+                        };
+                        self.ok(&text, took);
+                    }
                     _ => {}
                 }
             }
@@ -427,6 +438,7 @@ impl Renderer {
                 );
             }
             Progress::Phones(n) => self.phones = *n,
+            Progress::Download { done, total } => self.download = Some((*done, *total)),
             Progress::Casting(to) => {
                 self.casting = to.clone();
                 self.note(&format!("Casting to {}", list(to)));
@@ -929,6 +941,11 @@ impl Renderer {
             Step::Capture => "Waiting for someone to press Share…".to_owned(),
             Step::Viewer => "Waiting for someone to open the page…".to_owned(),
             Step::Discover => "Looking for receivers on this network…".to_owned(),
+            Step::Download(what) => match self.download {
+                Some((d, Some(t))) => format!("Downloading {what}… {} of {}", mib(d), mib(t)),
+                Some((d, None)) => format!("Downloading {what}… {}", mib(d)),
+                None => format!("Downloading {what}…"),
+            },
             _ => "Working…".to_owned(),
         }
     }
@@ -936,6 +953,15 @@ impl Renderer {
 
 // ---------------------------------------------------------------------------
 // Text
+
+/// Bytes as KiB or MiB with one decimal.
+fn mib(b: u64) -> String {
+    if b < 1 << 20 {
+        format!("{:.1} KiB", b as f64 / 1024.0)
+    } else {
+        format!("{:.1} MiB", b as f64 / (1 << 20) as f64)
+    }
+}
 
 /// Visible width: characters, escape sequences left out.
 pub fn visible(s: &str) -> usize {

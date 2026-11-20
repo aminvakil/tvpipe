@@ -42,14 +42,14 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{ClientConnection, ServerConnection, StreamOwned};
 
 use crate::codec::json::Value;
@@ -69,7 +69,7 @@ pub const API_ENV: &str = "TVPIPE_OPENTUNNEL_API";
 /// directory).
 pub const DIR_ENV: &str = "TVPIPE_OPENTUNNEL_DIR";
 /// Mozilla's root list (`net::roots`).
-use super::roots;
+use super::tls::{self, pem_blocks};
 const TIMEOUT: Duration = Duration::from_secs(15);
 const ISSUE_TIMEOUT: Duration = Duration::from_secs(180);
 /// How often the reader wakes up (heartbeat, stop).
@@ -99,24 +99,6 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 // ---------------------------------------------------------------------------
 // PEM and DER
-
-/// The base64 bodies of the PEM blocks labelled `label`, decoded.
-fn pem_blocks(text: &str, label: &str) -> Result<Vec<Vec<u8>>> {
-    let begin = format!("-----BEGIN {label}-----");
-    let end = format!("-----END {label}-----");
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(i) = rest.find(&begin) {
-        let body = &rest[i + begin.len()..];
-        let j = body
-            .find(&end)
-            .ok_or_else(|| Error::malformed(format!("pem: unterminated {label}")))?;
-        let b64: String = body[..j].split_whitespace().collect();
-        out.push(base64::decode(&b64)?);
-        rest = &body[j + end.len()..];
-    }
-    Ok(out)
-}
 
 fn pem(label: &str, der: &[u8]) -> String {
     let b64 = base64::encode(der);
@@ -211,12 +193,7 @@ impl Service {
             .filter(|a| !a.is_empty())
             .unwrap_or_else(|| DEFAULT_API.into());
         let mut s = Service::parse(&api)?;
-        if let Some(f) = std::env::var_os("SSL_CERT_FILE").filter(|f| !f.is_empty()) {
-            match std::fs::read_to_string(&f) {
-                Ok(text) => s.extra_roots = pem_blocks(&text, "CERTIFICATE")?,
-                Err(e) => warn!("opentunnel: SSL_CERT_FILE: {e}"),
-            }
-        }
+        s.extra_roots = tls::env_roots("opentunnel");
         Ok(s)
     }
 
@@ -269,43 +246,17 @@ impl Service {
     }
 
     fn client_config(&self) -> Result<Arc<rustls::ClientConfig>> {
-        let mut roots = roots::store();
-        roots.add_parsable_certificates(self.extra_roots.iter().cloned().map(CertificateDer::from));
-        let mut cfg = rustls::ClientConfig::builder_with_provider(provider())
-            .with_safe_default_protocol_versions()
-            .map_err(|e| Error::crypto(format!("opentunnel: TLS: {e}")))?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-        Ok(Arc::new(cfg))
+        tls::client_config(&self.extra_roots, "opentunnel")
     }
 
     /// A connection to the service (TLS handshake done).
     fn connect(&self) -> Result<Link> {
-        let addr = (self.host.as_str(), self.port)
-            .to_socket_addrs()
-            .map_err(|e| Error::io(format!("opentunnel: resolve {}", self.host), e))?
-            .next()
-            .ok_or_else(|| Error::not_found(format!("opentunnel: no address for {}", self.host)))?;
-        let mut tcp = TcpStream::connect_timeout(&addr, TIMEOUT)
-            .map_err(|e| Error::io(format!("opentunnel: connect {}", self.host), e))?;
-        let _ = tcp.set_nodelay(true);
-        tcp.set_read_timeout(Some(TIMEOUT))
-            .and_then(|()| tcp.set_write_timeout(Some(TIMEOUT)))
-            .map_err(|e| Error::io("opentunnel: socket", e))?;
+        let tcp = tls::tcp(&self.host, self.port, TIMEOUT, "opentunnel")?;
         if !self.tls {
             return Ok(Link::Plain(tcp));
         }
-        let name = ServerName::try_from(self.host.clone())
-            .map_err(|_| Error::usage(format!("opentunnel: bad host {}", self.host)))?;
-        let mut conn = ClientConnection::new(self.client_config()?, name)
-            .map_err(|e| Error::crypto(format!("opentunnel: TLS: {e}")))?;
-        while conn.is_handshaking() {
-            conn.complete_io(&mut tcp).map_err(|e| {
-                Error::io(format!("opentunnel: TLS handshake with {}", self.host), e)
-            })?;
-        }
-        Ok(Link::Tls(Box::new(StreamOwned::new(conn, tcp))))
+        let s = tls::handshake(tcp, self.client_config()?, &self.host, "opentunnel")?;
+        Ok(Link::Tls(Box::new(s)))
     }
 
     /// One API call (`Connection: close`); the JSON body of a 2xx.

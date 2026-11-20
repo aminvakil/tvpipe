@@ -15,16 +15,21 @@
 //! - [`web`]: the library and the launcher, embedded.
 //! - [`check`], [`scan`], [`smoke`], [`tool`]: `tvpipe game pack`/`check`/`new` (checks,
 //!   packing, a run in a headless browser, the starter template).
+//! - [`source`], [`remote`], [`cache`]: games from the internet (§18): what
+//!   a source may be, fetching from GitHub and the games list, the cache.
 
 pub mod backend;
 pub mod bundle;
+pub mod cache;
 pub mod check;
 pub mod conn;
 pub mod hub;
+pub mod remote;
 pub mod resolution;
 pub mod scan;
 pub mod server;
 pub mod smoke;
+pub mod source;
 pub mod surface;
 pub mod tool;
 pub mod web;
@@ -68,8 +73,13 @@ pub enum TunnelChoice {
 /// `tvpipe game play` (the CLI's options).
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// The bundle: a folder or a `.zip`.
-    pub path: PathBuf,
+    /// The game: a folder, a `.zip`, an `https://` URL, `gh:…` or a name
+    /// from the games list (§18).
+    pub game: String,
+    /// `--refresh`, `--offline`.
+    pub fetch: remote::FetchOptions,
+    /// `--yes`: a game from the internet runs without the question.
+    pub yes: bool,
     pub tunnel: TunnelChoice,
     /// `--lan [IP]`: `Some(None)` for the default route's address.
     pub lan: Option<Option<IpAddr>>,
@@ -139,12 +149,52 @@ impl Running {
     }
 }
 
+/// Asks the person a yes/no question (the text ends in `[y/N]`; the
+/// function polls whether to give up): `Some(answer)`, or `None` when there
+/// is nobody to ask.
+pub type Ask<'a> = &'a dyn Fn(&str, &dyn Fn() -> bool) -> Option<bool>;
+
+/// The game of `opts`: a local one as it is; one from the internet
+/// fetched (or from the cache), and run only after the question (§18)
+/// unless pinned, approved before or `--yes`.
+pub fn open_game(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<Bundle> {
+    let src = source::Source::parse(&opts.game)?;
+    if let source::Source::Local(p) = &src {
+        return Bundle::open(p);
+    }
+    let fetcher =
+        remote::Fetcher::from_env(opts.fetch, ctx.events.clone(), Some(ctx.stop.clone()))?;
+    let f = fetcher.fetch(&src)?;
+    if f.pinned || f.trusted || opts.yes {
+        return Ok(f.bundle);
+    }
+    let stop = ctx.stop.clone();
+    match ask(&f.question(), &|| stop.requested()) {
+        Some(true) => {
+            fetcher.trust(&f)?;
+            Ok(f.bundle)
+        }
+        Some(false) => Err(Error::usage(format!(
+            "not playing {}: you said no",
+            f.bundle.manifest.name
+        ))),
+        None if stop.requested() => Err(Error::closed("stopped")),
+        None => Err(Error::usage(format!(
+            "{} is a game from the internet, and there is no terminal to ask whether to run it: \
+             pass --yes, or pin it: tvpipe game play '{}'",
+            f.shown, f.pin_hint
+        ))),
+    }
+}
+
 /// Runs playshare until the window closes, the page quits or `ctx`'s
-/// stop is requested. Prints the window's URL with `--window none`.
-pub fn run(opts: &Options, ctx: &Ctx) -> Result<()> {
+/// stop is requested. Prints the window's URL with `--window none`. A
+/// game from the internet is first fetched and, the first time, asked
+/// about with `ask`.
+pub fn run(opts: &Options, ctx: &Ctx, ask: Ask<'_>) -> Result<()> {
     let stop = ctx.stop.clone();
     let events = ctx.events.clone();
-    let bundle = Bundle::open(&opts.path)?;
+    let bundle = open_game(opts, ctx, ask)?;
     info!(
         "playshare: {} from {}",
         bundle.manifest.title,

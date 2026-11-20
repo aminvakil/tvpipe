@@ -83,6 +83,8 @@ pub enum Step {
     Viewer,
     /// Looking for every receiver on the network (`discover`).
     Discover,
+    /// Downloading a game (`game play` from the internet): what.
+    Download(String),
 }
 
 /// A [`Step`] or `game play` news.
@@ -122,6 +124,13 @@ pub enum Progress {
     CastFailed(String),
     /// `game play`'s cast stopped.
     CastStopped,
+    /// A download's bytes so far, and the total when known.
+    Download {
+        /// Bytes so far.
+        done: u64,
+        /// The length, if the server said.
+        total: Option<u64>,
+    },
 }
 
 /// Defines a string enum with its wire names.
@@ -593,6 +602,7 @@ impl Step {
             Step::Capture => ("capture", None),
             Step::Viewer => ("viewer", None),
             Step::Discover => ("discover", None),
+            Step::Download(n) => ("download", Some(n)),
         }
     }
 
@@ -610,6 +620,7 @@ impl Step {
             "capture" => Step::Capture,
             "viewer" => Step::Viewer,
             "discover" => Step::Discover,
+            "download" => Step::Download(name()?),
             other => return Err(Error::malformed(format!("event: unknown step {other:?}"))),
         })
     }
@@ -641,6 +652,10 @@ fn progress_value(p: &Progress, v: Value) -> Value {
             .with("to", Value::array(to.iter().map(String::as_str))),
         Progress::CastFailed(e) => v.with("kind", "cast-failed").with("error", e.as_str()),
         Progress::CastStopped => v.with("kind", "cast-stopped"),
+        Progress::Download { done, total } => v
+            .with("kind", "download")
+            .with("done", *done)
+            .with_opt("total", *total),
     }
 }
 
@@ -670,6 +685,10 @@ fn progress_from(v: &Value) -> Result<Progress> {
         })?),
         "cast-failed" => Progress::CastFailed(v.require_str("error")?.to_owned()),
         "cast-stopped" => Progress::CastStopped,
+        "download" => Progress::Download {
+            done: v.require_u64("done")?,
+            total: v.get("total").and_then(Value::as_u64),
+        },
         other => {
             return Err(Error::malformed(format!(
                 "event: unknown progress {other:?}"

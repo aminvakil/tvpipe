@@ -10,8 +10,9 @@ game: [`games/drawbluff`](../games/drawbluff/).
 
 Contents: [Building](#building-a-game) (start, layout, `tvpipe.json`,
 pages, the library, the dev loop, assets, checking and packing,
-versions) · [Running](#running-a-game) (start, the launcher, TVs and
-AirPlay PINs, phones and links, ending, troubleshooting).
+versions, [publishing](#publishing)) · [Running](#running-a-game)
+(start, [games from the internet](#playing-from-a-url), the launcher,
+TVs and AirPlay PINs, phones and links, ending, troubleshooting).
 
 ```
  this computer                                          TVs (AirPlay, Cast)
@@ -313,6 +314,11 @@ What it checks (errors stop it with exit code 1, warnings do not):
 
 Finally the result is opened the way `tvpipe game play` opens it.
 
+`game pack` ends with the zip's SHA-256 (`sha256 HEX`): the pin for
+`#sha256=HEX` (below). `game check` also takes a game from the internet
+(a URL, `gh:…` or a name, [below](#playing-from-a-url)): it downloads
+it into the cache and checks it, running nothing.
+
 The zip is **deterministic**: the same files give the same bytes
 (entries sorted, every time 1980-01-01, modes `rw-r--r--`, deflate or
 stored, whichever is smaller). It holds one folder named after the game
@@ -335,6 +341,7 @@ internet warnings. It takes about ten seconds:
 $ tvpipe game pack my-game --smoke
 My game (my-game): 12 files, 9.3 KiB; 0 errors, 0 warnings
 wrote my-game.zip (6.1 KiB, 9.3 KiB unpacked)
+sha256 3b1f…(64 hex digits)
 smoke: tvpipe's launcher loaded
 smoke: the host page attached the relay
 smoke: the TV page loaded (/tv/index.html)
@@ -364,19 +371,117 @@ library on both sides is always tvpipe's, so it matches by itself.
 
 Version your game however you like (a `version` field in `tvpipe.json`
 is ignored by tvpipe); the zip's bytes change only when its files do, so
-a hash of the zip identifies a release.
+a hash of the zip identifies a release. A release's notes can say which
+series it is for (`<!-- tvpipe: 0.2 -->`, [Publishing](#publishing)), so
+an older tvpipe picks the newest release that still runs on it.
+
+## Publishing
+
+A zip anywhere on the web can be played (`tvpipe game play
+https://example.com/my-game.zip`), but a GitHub release is the easiest
+home, and needs no API calls when players name the asset and tag:
+
+1. `tvpipe game pack my-game --strict` (and `--smoke` once); note the
+   `sha256` it prints.
+2. Make a release and attach `my-game.zip`. With
+   `gh release create v1.0.0 my-game.zip --notes "<!-- tvpipe: 0.2 -->"`
+   the marker says the series (optional: without it the zip's own
+   `tvpipe.json` decides after the download).
+3. Players run `tvpipe game play gh:you/my-game` (the latest release's
+   only zip, else `my-game.zip`), `gh:you/my-game@v1.0.0` (that
+   release), or `…#sha256=HEX` (exactly these bytes, no question).
+   `https://github.com/you/my-game/releases/…` links work too.
+
+**Several streams in one repository** (several games, or a program with
+its own releases beside them): tag every game's releases `NAME-vX.Y.Z`,
+create them with `--latest=false` (GitHub's one "latest" belongs to the
+repository's main program), and name the stream:
+`gh:you/repo/NAME@NAME-v*` lists the releases (60 API calls an hour
+without `GITHUB_TOKEN`), orders the tags by the version after the prefix,
+skips drafts, prereleases and releases whose marker names a series this
+tvpipe cannot run, and takes the newest.
+
+**The games list** (`site/static/games.json`, served at
+`https://tvpipe.party/games.json` and rendered on the
+manual's "Games to play" page) maps names to sources: `{"v": 1, "games":
+[{"name", "title", "summary", "players": {"min", "max"}, "languages",
+"source", "home"}]}`. A pull request adds a game; `python3 site/build.py`
+checks the file.
+
+**This repository's games** (drawbluff) release this way through
+`.github/workflows/games.yml`:
+
+1. Bump `games/NAME/package.json`'s `version`; when tvpipe's series
+   changed, also `tvpipe.json`'s `tvpipe` (CI checks it is the
+   workspace's `X.Y`).
+2. Check locally: `npm run check && npm test`, then `npm run zip` (the
+   bundle, packed by `tvpipe game pack` from `$TVPIPE_BINARY` or the
+   PATH) and `tvpipe game check drawbluff.zip --smoke` (the workflow
+   does not run `--smoke`: no browser is promised on the runners).
+3. Tag `NAME-vX.Y.Z` on main and push the tag. The workflow checks the
+   tag against `package.json` and the series against `Cargo.toml`,
+   builds `npm/party`, the game and tvpipe of the same commit, runs
+   `game pack --strict` and `game check --strict`, and publishes
+   `NAME.zip` and `SHA256SUMS` with notes carrying the marker, never as
+   the latest release. Running it by hand (workflow_dispatch, a game
+   name) is a dry run that keeps the zip as an artifact.
+4. A new game also needs its entry in `site/static/games.json`
+   (`gh:mitsuhiko/tvpipe/NAME@NAME-v*`).
+
+tvpipe's own releases (`vX.Y.Z`, `release.yml`) mark themselves latest;
+the installers pick the highest `vX.Y.Z` tag themselves.
 
 ---
 
 # Running a game
 
 ```sh
+tvpipe game play drawbluff                # a name from the games list
 tvpipe game play drawbluff.zip            # a zip
 tvpipe game play ./drawbluff              # or a folder with tvpipe.json
 ```
 
-tvpipe checks the game (errors before anything starts), opens a window
-with the launcher, starts the phones' link in the background, and waits.
+tvpipe finds the game (a path that exists wins; else it is downloaded),
+checks it (errors before anything starts), opens a window with the
+launcher, starts the phones' link in the background, and waits.
+
+## Playing from a URL
+
+| `GAME` | |
+|---|---|
+| `NAME` | a name from the games list (`$TVPIPE_GAMES_URL`, default `https://tvpipe.party/games.json`) |
+| `https://…/game.zip` | a zip by URL (`http://` only for loopback addresses or with a pin) |
+| `gh:OWNER/REPO[/ASSET][@TAG]` | a GitHub release's asset ([Publishing](#publishing)); `@PREFIX*` the newest fitting release of a stream |
+| `https://github.com/OWNER/REPO[/releases/…]` | the same, as a link |
+| `…#sha256=HEX` | pinned: only these bytes |
+
+A downloaded game lands in tvpipe's cache (`~/Library/Caches/tvpipe`,
+`$XDG_CACHE_HOME/tvpipe` or `~/.cache/tvpipe`, `%LOCALAPPDATA%\tvpipe\cache`;
+`$TVPIPE_CACHE_DIR`), in `games/`. Before the first run of a source, and
+again when its bytes change (a new release), `game play` shows where it
+comes from, its name, size, sha256 and tvpipe series, and asks: a game
+runs in tvpipe's window, can cast to the TVs on the network and serves
+pages to phones. A matching pin or `--yes` skips the question; without
+a terminal one of them is needed. The games list's entries are asked
+about like any other source.
+
+| | |
+|---|---|
+| `--yes`, `-y` | play without asking |
+| `--refresh` | ask the server again, even for a release (`@TAG`) downloaded before |
+| `--offline` | the cache only (and the cached games list) |
+| `tvpipe game fetch GAME [-o FILE]` | download and check, run nothing; prints the source pinned to the tag and sha256 |
+| `tvpipe game list` | the downloaded games |
+| `tvpipe game check GAME` | download and check, run nothing |
+
+A source that can move (the latest release, `@PREFIX*`, a URL) is asked
+again each time (with its ETag); when the network fails, the cached copy
+plays with a warning. Downloads go over HTTPS with Mozilla's roots (and
+`$SSL_CERT_FILE`), at most 256 MiB; `GITHUB_TOKEN` or `GH_TOKEN` raises
+GitHub's API limit and is only sent to the API. `$TVPIPE_GITHUB_URL` and
+`$TVPIPE_GITHUB_API` point at another GitHub (tests, mirrors). No proxy
+support yet. Remote games get no service workers on the phones'
+listener. The design: [`playshare-design.md`](playshare-design.md) §18.
 
 ## The launcher: picking TVs
 
