@@ -12,6 +12,7 @@
  * @typedef {import("./tv.js").Ctx} Ctx
  */
 
+import { joinText } from "/_tvpipe/lib/client.js";
 import { A, EASE, fitText, h, hm, rnd, short } from "./dom.js";
 import { dust, floatText, shake } from "./fx.js";
 import { groupReason } from "./jinx.js";
@@ -300,7 +301,8 @@ export function scores(ctx, v, prev) {
   L.append(room);
   // newcomers may join for the next round
   const j = ctx.join;
-  if (v.next && j?.code && j.lateJoin && j.lateJoin !== "closed") room.append(h("div", { class: "joinline" }, "Joining late? Scan in with code ", h("b", null, j.code)));
+  const link = joinText(j);
+  if (v.next && link && j?.lateJoin && j.lateJoin !== "closed") room.append(h("div", { class: "joinline" }, "Joining late? Go to ", h("b", null, link)));
   if (!anim) return {};
 
   A(pad, [{ transform: "translateY(760px) rotate(6deg)" }, { transform: "rotate(-1deg)" }], T(620), { easing: EASE.back });

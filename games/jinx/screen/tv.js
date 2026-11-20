@@ -14,7 +14,7 @@
  * @typedef {import("../game/views.ts").ScreenView} ScreenView
  * @typedef {import("../game/views.ts").Person} Person
  * @typedef {import("../game/views.ts").Tally} Tally
- * @typedef {{ code?: string, url?: string, qr?: unknown, lateJoin?: string, inProgress?: boolean }} Join
+ * @typedef {{ code?: string, url?: string, short?: string, qr?: unknown, lateJoin?: string, inProgress?: boolean }} Join
  * @typedef {{ update?: (v: any, prev: any) => void, sweepDelay?: number, continuous?: boolean }} Scene
  * @typedef {(ctx: Ctx, v: any, prev: ScreenView | null) => Scene} SceneFn
  */

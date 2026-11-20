@@ -2,7 +2,7 @@
 // the party (players, views, actions) with @tvpipe/party, which tvpipe
 // serves at /_tvpipe/lib/. docs/games.md explains the pieces.
 import { Tvpipe, PartyError } from "/_tvpipe/lib/index.js";
-import { joinText, qrSvg } from "/_tvpipe/lib/client.js";
+import { qrSvg } from "/_tvpipe/lib/client.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -60,10 +60,10 @@ $("next").onclick = () => {
 $("quit").onclick = () => void tvpipe.quit(); // ends tvpipe: TVs stop, phones are told
 $("cast").onclick = () => void cast();
 
-// The join link and its QR code (again when a tunnel comes up); the text is
-// the short link (tvpipe.party/CODE) once tvpipe has one.
+// The join link and its QR code (again when a tunnel comes up). People
+// type the short link the TV shows (tvpipe.party/CODE), not this one.
 function showJoin() {
-  $("link").textContent = joinText(party.joinInfo) ?? "this link";
+  $("link").textContent = "this link";
   $("link").href = party.links.join;
   $("qr").innerHTML = qrSvg(party.joinInfo.qr);
 }

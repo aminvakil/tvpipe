@@ -8,6 +8,7 @@
  * @typedef {import("./tv.js").Ctx} Ctx
  */
 
+import { joinText } from "/_tvpipe/lib/client.js";
 import { A, EASE, fitText, h, short } from "./dom.js";
 import { dust } from "./fx.js";
 import { chip } from "./pieces.js";
@@ -48,8 +49,7 @@ export function lobby(ctx, v, prev) {
   L.append(h("div", { class: "tagline", style: "left:66px;top:174px" }, "One word each. ", h("b", null, "Don't think alike.")));
 
   const qrBox = h("div", { class: "qrbox" });
-  const code = h("div", { class: "code" });
-  L.append(h("div", { class: "qrcard paper", style: "left:96px;top:236px;transform:rotate(-2deg)" }, qrBox, h("div", { class: "roomlbl" }, "ROOM CODE"), code));
+  L.append(h("div", { class: "qrcard paper", style: "left:96px;top:236px;transform:rotate(-2deg)" }, qrBox, h("div", { class: "roomlbl" }, "SCAN TO JOIN")));
   L.append(h("div", { class: "tapebit", style: "left:70px;top:226px;transform:rotate(-38deg)" }));
   L.append(h("div", { class: "tapebit", style: "left:342px;top:226px;transform:rotate(34deg)" }));
   const url = h("div", { class: "url", style: "left:64px;top:640px;width:460px" });
@@ -82,13 +82,15 @@ export function lobby(ctx, v, prev) {
   /** @param {LobbyScreen} v @param {boolean} anim */
   const render = (v, anim) => {
     const j = ctx.join;
-    const jk = `${j?.code}|${j?.url}`;
+    // The QR code opens the tunnel's link; people type the short link
+    // (tvpipe.party/CODE, one line), never the tunnel's link.
+    const text = joinText(j) ?? "";
+    const jk = `${j?.url}|${text}`;
     if (jk !== joinKey) {
       joinKey = jk;
       qrBox.innerHTML = ctx.qr(2);
-      code.textContent = j?.code ?? "";
-      url.textContent = (j?.url ?? "").replace(/^https?:\/\//, "");
-      fitText(url, 26, 24, 460, 0.6);
+      url.textContent = text;
+      fitText(url, 40, 24, 460, 0.6);
     }
     const max = Math.min(8, v.maxPlayers || 8);
     const people = v.people.filter((p) => !p.left).slice(0, 8);

@@ -56,12 +56,12 @@ function loadJson<T>(key: string, fallback: T): T {
 
 function renderJoin(): void {
   const j = party.joinInfo;
-  $("code").textContent = party.code;
-  $("link").textContent = j.url.replace(/#.*$/, "");
+  // Only the QR code here: the TV shows the short link to type
+  // (tvpipe.party/CODE); never the tunnel's link or the room code.
   $("qr").innerHTML = qrSvg(j.qr, { quiet: 2 });
   const tunnel = party.info.tunnel;
   $("link-note").textContent =
-    j.mode === "tunnel" ? "" : j.mode === "lan" ? "On this Wi-Fi only" : tunnel.state === "starting" ? "Opening a public link…" : "This computer only (no public link)";
+    j.mode === "tunnel" ? "Phones join with the QR code or the link on the TV" : j.mode === "lan" ? "On this Wi-Fi only" : tunnel.state === "starting" ? "Opening a public link…" : "This computer only (no public link)";
 }
 
 function renderPlayers(): void {
