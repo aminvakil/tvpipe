@@ -15,19 +15,30 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
-const MANIFEST_OK: &str = r#"{
+/// This tvpipe's series (`0.3`).
+fn series() -> String {
+    short_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// A manifest that passes, made for this tvpipe.
+fn manifest_ok() -> String {
+    format!(
+        r#"{{
   "name": "tiny",
   "title": "Tiny",
-  "tvpipe": "0.2",
-  "pages": { "host": "host.html", "tv": "tv.html", "phone": "phone/index.html" },
-  "players": { "min": 1, "max": 8 }
+  "tvpipe": "{}",
+  "pages": {{ "host": "host.html", "tv": "tv.html", "phone": "phone/index.html" }},
+  "players": {{ "min": 1, "max": 8 }}
+}}
+"#,
+        series()
+    )
 }
-"#;
 
 /// A game that passes: host, TV and phone pages with the library.
 fn good() -> Vec<(&'static str, String)> {
     vec![
-        ("tvpipe.json", MANIFEST_OK.into()),
+        ("tvpipe.json", manifest_ok()),
         (
             "host.html",
             "<!doctype html><link rel=stylesheet href=style.css><script type=module src=host.js></script>".into(),
@@ -180,7 +191,7 @@ fn root_is_packed_without_the_rest() {
         .collect();
     files.push((
         "tvpipe.json",
-        MANIFEST_OK.replace(
+        manifest_ok().replace(
             "\"pages\"",
             "\"root\": \"dist\",\n  \"future\": 1,\n  \"pages\"",
         ),
@@ -225,7 +236,7 @@ fn manifest_rules() {
     only(&c, Level::Error, &["tvpipe.json: not JSON"]);
     let c = check(&game(
         "no-tv",
-        &[("tvpipe.json", Some(r#"{"name":"x","tvpipe":"0.2","pages":{"host":"host.html","phone":"phone/index.html"}}"#))],
+        &[("tvpipe.json", Some(&format!(r#"{{"name":"x","tvpipe":"{}","pages":{{"host":"host.html","phone":"phone/index.html"}}}}"#, series())))],
     ))
     .unwrap();
     only(&c, Level::Error, &["\"pages.tv\" is missing"]);
@@ -233,7 +244,7 @@ fn manifest_rules() {
         "bad-name",
         &[(
             "tvpipe.json",
-            Some(&MANIFEST_OK.replace("\"tiny\"", "\"Tiny Game\"")),
+            Some(&manifest_ok().replace("\"tiny\"", "\"Tiny Game\"")),
         )],
     ))
     .unwrap();
@@ -242,7 +253,7 @@ fn manifest_rules() {
         "players",
         &[(
             "tvpipe.json",
-            Some(&MANIFEST_OK.replace("\"max\": 8", "\"max\": 5000")),
+            Some(&manifest_ok().replace("\"max\": 8", "\"max\": 5000")),
         )],
     ))
     .unwrap();
@@ -251,7 +262,7 @@ fn manifest_rules() {
         "typo",
         &[(
             "tvpipe.json",
-            Some(&MANIFEST_OK.replace("\"host\":", "\"hots\": \"x.html\", \"host\":")),
+            Some(&manifest_ok().replace("\"host\":", "\"hots\": \"x.html\", \"host\":")),
         )],
     ))
     .unwrap();
@@ -278,18 +289,21 @@ fn versions() {
     assert!(version_compatible("latest", "0.2.0")
         .unwrap_err()
         .contains("like \"0.2\""));
-    let none = MANIFEST_OK.replace("  \"tvpipe\": \"0.2\",\n", "");
+    let none = manifest_ok().replace(&format!("  \"tvpipe\": \"{}\",\n", series()), "");
     let c = check(&game("no-version", &[("tvpipe.json", Some(&none))])).unwrap();
     only(
         &c,
         Level::Warning,
-        &["no \"tvpipe\" version", "\"tvpipe\": \"0.2\""],
+        &[
+            "no \"tvpipe\" version",
+            &format!("\"tvpipe\": \"{}\"", series()),
+        ],
     );
     let c = check(&game(
         "future",
         &[(
             "tvpipe.json",
-            Some(&MANIFEST_OK.replace("\"0.2\"", "\"9.0\"")),
+            Some(&manifest_ok().replace(&format!("\"{}\"", series()), "\"9.0\"")),
         )],
     ))
     .unwrap();
@@ -620,7 +634,7 @@ fn zip_rules() {
         .collect();
     v.push((
         "tiny/tvpipe.json".into(),
-        MANIFEST_OK.replace("\"pages\"", "\"root\": \"dist\", \"pages\""),
+        manifest_ok().replace("\"pages\"", "\"root\": \"dist\", \"pages\""),
     ));
     v.push(("tiny/src/x.ts".into(), "x".into()));
     let c = check(&zip_of("zip-root", &as_str(&v))).unwrap();
